@@ -26,7 +26,7 @@ import { mountSprtButton } from "./tournament-sprt-button.js";
 import { formatType, formatResign, formatDraw } from "./tournament-format.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
-import { debounce, guard, isCtrlA, markSelectable, ribbonWidthPx } from "./wb-utils.js";
+import { cooldown, debounce, guard, isCtrlA, markSelectable, ribbonWidthPx } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
@@ -34,6 +34,7 @@ const NEW_TOURNAMENT_LABEL = "New tournament";
 const COPY_SUFFIX = " (copy)";
 const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
 const EMPTY_CTA_SUFFIX = " to create one.";
+const REVEAL_COOLDOWN_MS = 1500;
 // Unicode ellipsis is intentional: this glyph is rendered into the
 // tournament-id span (user-facing), not a code token. ASCII-only rule
 // does not apply to surfaced UI text.
@@ -577,13 +578,13 @@ function buildInfoContent(ctx, t, onStatusClick) {
       btn.className = "tournament-info-reveal-btn";
       btn.title = folder;
       btn.innerHTML = `<wa-icon name="folder-open"></wa-icon>`;
-      btn.addEventListener("click", guard(async () => {
+      btn.addEventListener("click", cooldown(async () => {
         try {
           await ctx.api("POST", `/api/tournaments/${t.id}/reveal`);
         } catch (e) {
           reportError({ log: ctx.log }, "Could not open folder", e);
         }
-      }));
+      }, REVEAL_COOLDOWN_MS));
       idCell.appendChild(btn);
     } else {
       idSpan.title = folder;

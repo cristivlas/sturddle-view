@@ -43,6 +43,19 @@ export function debounce(fn, ms) {
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
 }
 
+// Leading-edge throttle: fire immediately, swallow calls for ms after.
+// For actions with external side effects (e.g. opening an OS window) where
+// guard() alone can't help -- the call resolves before the next click lands.
+export function cooldown(fn, ms) {
+  let until = 0;
+  return (...args) => {
+    const now = performance.now();
+    if (now < until) return;
+    until = now + ms;
+    fn(...args);
+  };
+}
+
 // Wraps an async function so concurrent calls are dropped until it resolves.
 // The re-entrancy guard for click/dblclick handlers that await before acting.
 export function guard(fn) {
