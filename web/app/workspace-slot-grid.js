@@ -21,10 +21,15 @@ export function createSlotGrid({ top, left, getCellWidth, cellHeight, gap = SLOT
     const { cols, cw } = gridDims();
     const col = slot % cols;
     const row = Math.floor(slot / cols);
+    // Last column absorbs the floor remainder so the row's right edge reaches
+    // getRight() exactly (no dead strip); other columns stay uniform width.
+    const availW = Math.max(0, getRight() - left);
+    const rowRightEdge = left + cols * cw + (cols - 1) * gap;
+    const extra = col === cols - 1 ? (left + availW) - rowRightEdge : 0;
     return {
       x: left + col * (cw + gap),
       y: top + row * (cellHeight + gap),
-      w: cw,
+      w: cw + extra,
       h: cellHeight,
     };
   }

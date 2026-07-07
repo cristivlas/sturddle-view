@@ -398,20 +398,32 @@ async function navigateTo(ctx, newId) {
   return true;
 }
 
+// Anchor the fixed ribbon's top to the menubar's rendered bottom so the rail
+// starts at the menubar hairline (it extends to the viewport bottom in CSS).
+function syncRibbonTop(ctx) {
+  const menubar = ctx.container.querySelector(".tournaments-menubar");
+  if (!menubar) return;
+  const bottom = Math.round(menubar.getBoundingClientRect().bottom);
+  ctx.container.style.setProperty("--arena-ribbon-top", `${bottom}px`);
+}
+
 function openWorkspace(ctx, t) {
   const menubar = ctx.container.querySelector(".tournaments-menubar");
   const ribbon = ctx.container.querySelector(".tournaments-ribbon");
   const rect = menubar.getBoundingClientRect();
-  const ribbonRect = ribbon ? ribbon.getBoundingClientRect() : null;
   // Reserve the ribbon's width on BOTH edges regardless of which side
   // it docks to (or whether it's floating). Keeps the workspace symmetric
   // and ribbon-side-flips don't reshape the available area.
-  // Prefer the measured ribbon rect; zero width means the in-place ribbon
-  // is hidden (floating mode), so fall back to the --ribbon-w CSS var.
-  const ribbonW = ribbonRect?.width > 0 ? Math.round(ribbonRect.width) : ribbonWidthPx(".tournaments-body");
+  // Measure live so the reservation tracks the ribbon's true rendered width
+  // (including its 1px edge border) and stays correct across resizes; zero
+  // width means the docked ribbon is hidden (floating), so fall back to the var.
+  const ribbonReserveW = () => {
+    const w = ribbon?.getBoundingClientRect().width || 0;
+    return w > 0 ? Math.ceil(w) : ribbonWidthPx(".tournaments-body");
+  };
   const top = Math.round(rect.bottom);
-  const left = Math.max(Math.round(rect.left), ribbonW);
-  const getRight = () => window.innerWidth - ribbonW;
+  const left = ribbonReserveW();
+  const getRight = () => Math.floor(window.innerWidth) - ribbonReserveW();
   openTournamentWorkspace({ api: ctx.api, events: ctx.events, log: ctx.log, token: ctx.token, tournament: t, top, left, getRight });
   // Seed the workspace's view of the other-active tournament so the
   // banner Restart button reflects busy state on open, not just after
@@ -1454,6 +1466,11 @@ export function mountTournaments({ container, api, events, log, token }) {
   mqMobileH.addEventListener("change", ctx.onViewportChange);
   mqMobileHPlay.addEventListener("change", ctx.onViewportChange);
 
+  // Keep the ribbon's top pinned to the menubar bottom across resizes.
+  ctx.onRibbonResize = () => syncRibbonTop(ctx);
+  window.addEventListener("resize", ctx.onRibbonResize);
+  requestAnimationFrame(() => syncRibbonTop(ctx));
+
   return {
     dismissSortToast: () => dismissSortToastNow(ctx),
     restoreWorkspace: () => restoreWorkspace(ctx),
@@ -1465,6 +1482,7 @@ export function mountTournaments({ container, api, events, log, token }) {
       mqMobile.removeEventListener("change", ctx.onViewportChange);
       mqMobileH.removeEventListener("change", ctx.onViewportChange);
       mqMobileHPlay.removeEventListener("change", ctx.onViewportChange);
+      window.removeEventListener("resize", ctx.onRibbonResize);
       document.removeEventListener("click", ctx.onMenuDocClick);
       dismissSortToastNow(ctx);
       // Hide (don't close) so the workspace survives perspective

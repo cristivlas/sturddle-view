@@ -8,6 +8,9 @@
   /* Bottom strip where minimized WinBoxes dock; tournament-workspace.js
      reads this for layout math (MINIMIZE_FOOTER_H). */
   --wb-min-footer-h: 36px;
+  /* Docked ribbon's edge border; centered board areas reserve --ribbon-w plus
+     this so they clear the ribbon exactly (no 1px eat/gap). */
+  --ribbon-border-w: 1px;
   --accent: #f59e0b;
   --accent-rgb: 245, 158, 11;
   /* TODO: revisit unifying --accent and --accent-line into a single token. */
@@ -751,6 +754,10 @@ header {
   align-items: center;
   gap: 16px;
   padding: 8px 16px;
+  position: relative;
+  /* Above the docked ribbons (z-index:10) so they slide under the header
+     instead of painting over it. */
+  z-index: 20;
   background: var(--panel);
   border-bottom: 2px solid var(--accent-line);
 }
@@ -1022,8 +1029,8 @@ svg.cm-chessboard {
    remaining vertical space so perspectives can size their content to fit
    without page-level scrolling. */
 html, body { height: 100%; }
-body { display: flex; flex-direction: column; }
-main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+body { display: flex; flex-direction: column; --main-pad: 16px; }
+main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden; }
 #app-footer {
   flex: 0 0 auto;
   text-align: center;
@@ -1289,16 +1296,23 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   display: flex;
   flex-direction: column;
 }
-.board-ribbon {
+/* Docked ribbons: fixed vertical rail, buttons centered, over the footer.
+   top defaults to 0 (Play, Studio -- under the z-20 header); Arena sets
+   --arena-ribbon-top from JS so its rail starts below the menubar. */
+.board-ribbon,
+.studio-ribbon,
+.tournaments-ribbon {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   padding: 4px 0;
   position: fixed;
-  left: 0; top: 50%; transform: translateY(-50%);
+  left: 0; top: var(--arena-ribbon-top, 0); bottom: 0;
   z-index: 10;
-  border-right: 1px solid var(--border-subtle);
+  background: var(--panel);
+  border-right: var(--ribbon-border-w) solid var(--border-subtle);
 }
 /* Floating mode: hide ribbons still in their original DOM position. */
 body[data-ribbon-float] .play-grid .board-ribbon,
@@ -1460,7 +1474,7 @@ body .side-popover.popover-floating {
   grid-row: 1;
   /* Fixed so it aligns with the ribbon regardless of grid centering. */
   position: fixed;
-  left: calc(var(--ribbon-w) + 1px);
+  left: calc(var(--ribbon-w) + var(--ribbon-border-w));
   /* top, bottom, width set dynamically in JS to align with clock rows and board */
   --dock-grip-size: 5px;
   display: flex;
@@ -1477,7 +1491,7 @@ body .side-popover.popover-floating {
   grid-column: 1;
   grid-row: 1;
   position: fixed;
-  left: calc(var(--ribbon-w) + 1px);
+  left: calc(var(--ribbon-w) + var(--ribbon-border-w));
   /* top/bottom/width set dynamically in JS to align with the board. */
   display: flex;
   flex-direction: column;
@@ -1704,10 +1718,10 @@ body .side-popover.popover-floating {
   .play-ai-inline { display: block; }
   .board-ribbon {
     position: static;
-    transform: none;
     flex-direction: row;
     justify-content: center;
     padding: 6px 0;
+    background: transparent;
     border-right: 0;
     border-bottom: 1px solid var(--border-subtle);
   }
@@ -1717,14 +1731,9 @@ body .side-popover.popover-floating {
     left: 6px; right: 6px; bottom: -1px; top: auto;
     width: auto; height: 2px;
   }
+  /* Applies to plain separators and the (collapsed) push spacer alike --
+     ribbon-sep--push also carries the .ribbon-sep class. */
   .ribbon-sep {
-    width: 1px; height: 18px;
-    margin: 0 4px;
-  }
-  /* Horizontal ribbon: collapse the push spacer (it creates a gap that
-     reads as dead space on mobile). */
-  .board-ribbon .ribbon-sep--push {
-    flex: 0 0 auto;
     width: 1px; height: 18px;
     margin: 0 4px;
   }
@@ -2970,11 +2979,18 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-entry .fs-size { color: inherit; text-align: right; }
 
 /* ---------- Tournaments panel ---------- */
-.tournaments-panel { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
+.tournaments-panel {
+  --ribbon-w: 36px;
+  display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0;
+}
 
 .tournaments-menubar {
   position: relative;
-  display: flex; list-style: none; margin: 0; padding: 0;
+  display: flex; list-style: none;
+  /* Span edge-to-edge: negative margins escape main's padding, matching
+     padding keeps the menu items at their original inset. */
+  margin: 0 calc(-1 * var(--main-pad));
+  padding: 0 var(--main-pad);
   background: #1f232c;
   border-bottom: 1px solid var(--wa-color-border-loud, #333);
   user-select: none;
@@ -3179,13 +3195,12 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .tmb-sort-opt[data-dir="desc"]::before { content: "▼"; }
 .tournaments-body {
-  --ribbon-w: 36px;
   display: flex;
   flex: 1; min-height: 0;
 }
-/* Tournament Studio frame: same gutter geometry as the Arena perspective --
-   fixed action ribbon in a left gutter, matching right gutter, centered
-   main column. Content styles land here as the Studio UX grows. */
+/* Tournament Studio frame: fixed action ribbon in a left gutter, matching
+   right gutter, centered main column. Studio has no menubar, so the ribbon
+   spans the full viewport height like Play (Arena's is menubar-anchored). */
 .studio-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .studio-body {
   --ribbon-w: 36px;
@@ -3193,21 +3208,13 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   flex: 1; min-height: 0;
 }
 .studio-main {
-  width: calc(100vw - 2 * var(--ribbon-w));
+  width: calc(100vw - 2 * (var(--ribbon-w) + var(--ribbon-border-w)));
   margin-left: auto; margin-right: auto;
   display: flex; flex-direction: column;
   min-height: 0;
   /* No extra gap -- the resizer grip itself is the only separation between
      the board area and the bottom row. */
   gap: 0;
-}
-.studio-ribbon {
-  display: flex; flex-direction: column; align-items: center;
-  gap: 4px; padding: 4px 0;
-  border-right: 1px solid var(--border-subtle);
-  position: fixed;
-  left: 0; top: 50%; transform: translateY(-50%);
-  z-index: 10;
 }
 /* Boards (top) vs bottom tab row -- the vertical (top/bottom) split.
    Boards are WinBoxes rooted here (position:relative); the region scrolls
@@ -3617,17 +3624,9 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 /* Running tourney's Games cell: Arena's progress bar + inline label. */
 .studio-progress { display: flex; align-items: center; gap: 8px; }
 .tournaments-body-main {
-  width: calc(100vw - 2 * var(--ribbon-w));
+  width: calc(100vw - 2 * (var(--ribbon-w) + var(--ribbon-border-w)));
   margin-left: auto; margin-right: auto;
   display: flex; flex-direction: column;
-}
-.tournaments-ribbon {
-  display: flex; flex-direction: column; align-items: center;
-  gap: 4px; padding: 4px 0;
-  border-right: 1px solid var(--border-subtle);
-  position: fixed;
-  left: 0; top: 50%; transform: translateY(-50%);
-  z-index: 10;
 }
 .tournament-row {
   display: flex; align-items: center; gap: 8px;
@@ -3650,36 +3649,24 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 @media (max-width: 800px), (max-height: 680px) {
   .tournaments-panel { gap: 0; }
   .tournaments-body { display: flex; flex-direction: column; }
-  .tournaments-ribbon {
-    position: static; transform: none;
-    flex-direction: row; justify-content: center;
-    border-right: 0; border-bottom: 1px solid var(--border-subtle);
-    padding: 6px 0;
-  }
-  .tournaments-ribbon .ribbon-sep {
-    width: 1px; height: 18px;
-    margin: 0 4px;
-  }
-  .tournaments-body-main { padding-left: 0; }
-  .tournaments-ribbon .ribbon-btn::before {
-    left: 6px; right: 6px; top: auto; bottom: 0;
-    width: auto; height: 2px;
-  }
-  .t-workspace, .tmb-window-menu { display: none; }
-
-  /* Studio: same ribbon-to-top switch as Arena; main reclaims full width. */
-  .studio-body { flex-direction: column; }
+  /* Arena and Studio flip to the same horizontal top bar on mobile. */
+  .tournaments-ribbon,
   .studio-ribbon {
-    position: static; transform: none;
+    position: static;
     flex-direction: row; justify-content: center;
+    background: transparent;
     border-right: 0; border-bottom: 1px solid var(--border-subtle);
     padding: 6px 0;
   }
-  .studio-ribbon .ribbon-sep { width: 1px; height: 18px; margin: 0 4px; }
+  .tournaments-ribbon .ribbon-btn::before,
   .studio-ribbon .ribbon-btn::before {
     left: 6px; right: 6px; top: auto; bottom: 0;
     width: auto; height: 2px;
   }
+  .tournaments-body-main { padding-left: 0; }
+  .t-workspace, .tmb-window-menu { display: none; }
+
+  .studio-body { flex-direction: column; }
   /* Mobile Studio uses the document-scroll model (like Play): the page
      scrolls, the footer stays put, the board area is pinned to one board
      (JS sets its height), and the tab groups flow at natural height. */
@@ -4083,7 +4070,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .winbox.sturddle-wb-ribbon .wb-body .studio-ribbon {
   display: flex !important;
   position: static;
-  transform: none;
   border-right: 0;
   border-bottom: 0;
   padding: 4px 0;
@@ -4115,9 +4101,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   height: 18px;
   margin: 0 4px;
 }
-.winbox.sturddle-wb-ribbon.ribbon-horizontal .wb-body .ribbon-sep--push {
-  flex: 0 0 auto;
-}
 .winbox.sturddle-wb-ribbon.ribbon-horizontal .wb-body .ribbon-btn::before {
   left: 6px; right: 6px; bottom: -1px; top: auto;
   width: auto; height: 2px;
@@ -4128,9 +4111,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   width: 18px;
   height: 1px;
   margin: 4px 0;
-}
-.winbox.sturddle-wb-ribbon.ribbon-vertical .wb-body .ribbon-sep--push {
-  flex: 0 0 auto;
 }
 .winbox.sturddle-wb-ribbon.ribbon-vertical .wb-body .ribbon-btn::before {
   top: 6px; bottom: 6px; right: -1px; left: auto;
@@ -4405,8 +4385,9 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-sched-attach-btn--live:hover { background: var(--nav-btn-bg-hover); }
 .wb-sched-pair .wb-sched-icon { color: var(--muted); }
 
-/* Pushes subsequent ribbon buttons to the far end of the ribbon. */
-.ribbon-sep--push { flex: 1 1 auto; }
+/* Ribbons center all buttons as one group everywhere, so the push spacer never
+   expands -- it collapses to a normal divider in every layout. */
+.ribbon-sep--push { flex: 0 0 auto; }
 
 /* UCI log window. Negative margin + sticky top:-8px cancel wb-body's
    default 8px/12px padding so the toolbar pins to the body edge while
@@ -4490,12 +4471,15 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
   }
 }
 
-@media (min-width: 801px) {
+/* min-height guard: below it the mobile block flips the ribbon horizontal,
+   and these vertical-rail right-dock rules would fight that (collapsed
+   underline, stray border). 681px = one past the mobile height clause. */
+@media (min-width: 801px) and (min-height: 681px) {
   body[data-ribbon-side="right"] .board-ribbon {
     left: auto;
     right: 0;
     border-right: 0;
-    border-left: 1px solid var(--border-subtle);
+    border-left: var(--ribbon-border-w) solid var(--border-subtle);
   }
   /* Mirror only the board ribbon's vertical edge stripe. Scoping to
      .board-ribbon keeps the top-edge accent on panel ribbons (engines,
@@ -4514,14 +4498,14 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
   body[data-ribbon-side="right"] .play-comments-host {
     grid-column: 3;
     left: auto;
-    right: calc(var(--ribbon-w) + 1px);
+    right: calc(var(--ribbon-w) + var(--ribbon-border-w));
   }
   body[data-ribbon-side="right"] .tournaments-ribbon,
   body[data-ribbon-side="right"] .studio-ribbon {
     left: auto;
     right: 0;
     border-right: 0;
-    border-left: 1px solid var(--border-subtle);
+    border-left: var(--ribbon-border-w) solid var(--border-subtle);
   }
   body[data-ribbon-side="right"] .tournaments-ribbon .ribbon-btn::before,
   body[data-ribbon-side="right"] .studio-ribbon .ribbon-btn::before {

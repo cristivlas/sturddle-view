@@ -88,7 +88,6 @@ function applyOrientation(el) {
   el.style.display = "flex";
   el.style.flexDirection = vertical ? "column" : "row";
   el.style.position = "static";
-  el.style.transform = "none";
   el.style.left = "auto";
   el.style.top = "auto";
   // Swap padding so the cross-axis is the tight one in both orientations.

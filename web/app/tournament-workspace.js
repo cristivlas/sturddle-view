@@ -537,6 +537,14 @@ function makeBox(ctx, key, title, body, { min = false, max = false } = {}) {
   wireLayoutHandlers(ctx, wb);
   if (ctx.top > 0 && wb.y < ctx.top) wb.move(wb.x, ctx.top);
   if (ctx.left > 0 && wb.x < ctx.left) wb.move(ctx.left, wb.y);
+  // Clamp the right edge so saved geometry never bleeds under the docked
+  // ribbon (WinBox's `right` option only constrains maximize, not x/width).
+  const rightLimit = ctx.getRight();
+  if (wb.x + wb.width > rightLimit) {
+    const x = Math.max(ctx.left, rightLimit - wb.width);
+    if (x + wb.width > rightLimit) wb.resize(rightLimit - x, wb.height);
+    wb.move(x, wb.y);
+  }
   return wb;
 }
 
