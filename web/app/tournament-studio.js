@@ -12,7 +12,7 @@ import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, loadRaw, saveJson, saveRaw } from "./storage.js";
 import { progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
-import { SORT_DIR } from "./col-sort.js";
+import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, nextDir } from "./col-sort.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { reportError, toast } from "./dialogs.js";
@@ -674,10 +674,15 @@ function renderEnginesPane(ctx) {
     pane.innerHTML = `<div class="wb-empty">${NO_ENGINES_MSG}</div>`;
     return;
   }
+  const entries = Array.from(proxies, ([pid, p]) => [pid, p.engineName || pid]);
+  if (ctx.enginesSort === SORT_DIR.ASC) {
+    entries.sort(([, a], [, b]) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  } else if (ctx.enginesSort === SORT_DIR.DESC) {
+    entries.sort(([, a], [, b]) => b.localeCompare(a, undefined, { sensitivity: "base" }));
+  }
   const ul = document.createElement("ul");
   ul.className = "wb-sched-list";
-  for (const [pid, p] of proxies) {
-    const label = p.engineName || pid;
+  for (const [pid, label] of entries) {
     const li = liveRow("&#9881;", label);
     li.appendChild(watchBtn(ctx, pid, { proxyId: pid, label, engineName: label }));
     ul.appendChild(li);
@@ -1056,6 +1061,42 @@ function wireTabPersistence(ctx) {
   }
 }
 
+function loadEnginesSort() {
+  const v = loadRaw(STORAGE_KEY.STUDIO_ENGINES_SORT);
+  return v === SORT_DIR.ASC || v === SORT_DIR.DESC ? v : SORT_DIR.NONE;
+}
+
+const ENGINES_SORT_TITLE = {
+  [SORT_DIR.NONE]: "Engines (double-click to sort A-Z)",
+  [SORT_DIR.ASC]: "Engines, sorted A-Z (double-click to sort Z-A)",
+  [SORT_DIR.DESC]: "Engines, sorted Z-A (double-click to clear sort)",
+};
+
+// Double-click the Engines tab to cycle name sort: none -> A-Z -> Z-A -> none.
+// State is shown via a small caret icon next to the tab label (and its tooltip).
+function wireEnginesSort(ctx) {
+  const tab = ctx.container.querySelector('wa-tab[panel="engines"]');
+  if (!tab) return;
+  const apply = () => {
+    tab.title = ENGINES_SORT_TITLE[ctx.enginesSort];
+    tab.setAttribute("aria-sort",
+      ctx.enginesSort === SORT_DIR.ASC ? "ascending" : ctx.enginesSort === SORT_DIR.DESC ? "descending" : "none");
+    tab.querySelector(`.${ARROW_CLASS}`)?.remove();
+    if (ctx.enginesSort === SORT_DIR.NONE) return;
+    const arrow = document.createElement("wa-icon");
+    arrow.className = ARROW_CLASS;
+    arrow.setAttribute("name", ctx.enginesSort === SORT_DIR.ASC ? ARROW_ASC : ARROW_DESC);
+    tab.append(arrow);
+  };
+  apply();
+  tab.addEventListener("dblclick", () => {
+    ctx.enginesSort = nextDir(ctx.enginesSort, SORT_DIR.ASC);
+    saveRaw(STORAGE_KEY.STUDIO_ENGINES_SORT, ctx.enginesSort);
+    apply();
+    renderEnginesPane(ctx);
+  });
+}
+
 // Ctrl/Cmd+A inside a bottom tab-group selects just the active tab's
 // contents (the visible panel); Ctrl+C then copies it with each row on one
 // line (flex rows otherwise split across lines).
@@ -1110,6 +1151,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     // Tourneys data + selection (selection restored from last session).
     tournaments: [], activeId: null, listGen: 0,
     selectedId: loadRaw(STORAGE_KEY.STUDIO_SELECTED_ID),
+    enginesSort: loadEnginesSort(),
     // Sort stacks are getter fns assigned by build{Tourney,History}Table.
     tourneyTbody: null, tourneyStack: null,
     historyTbody: null, historyStack: null,
@@ -1145,6 +1187,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   wireSplitters(ctx);
   wireTabPersistence(ctx);
   wireTabClipboard(ctx);
+  wireEnginesSort(ctx);
   wireRibbonActions(ctx);
   announceRibbon(ctx.ribbonEl);
 

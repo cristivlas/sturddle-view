@@ -17,13 +17,13 @@ import { loadJson, saveJson } from "./storage.js";
 // (column firstDir). NONE is the cleared/no-sort sentinel.
 export const SORT_DIR = Object.freeze({ ASC: "asc", DESC: "desc", NONE: "none" });
 
-const ARROW_CLASS = "th-sort-arrow";
-const ARROW_DESC = "caret-down";
-const ARROW_ASC = "caret-up";
+export const ARROW_CLASS = "th-sort-arrow";
+export const ARROW_DESC = "caret-down";
+export const ARROW_ASC = "caret-up";
 
 // Click cycle per column: none -> first -> other -> none. firstDir lets a
 // column open ascending (names) or descending (dates/sizes).
-function nextDir(current, firstDir) {
+export function nextDir(current, firstDir) {
   const other = firstDir === SORT_DIR.ASC ? SORT_DIR.DESC : SORT_DIR.ASC;
   if (current === firstDir) return other;
   if (current === other) return SORT_DIR.NONE;
