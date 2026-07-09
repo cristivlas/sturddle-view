@@ -2300,7 +2300,7 @@ wa-dialog .engine-settings-tabs {
   /* Narrow / portrait viewports get a much larger share of the screen
      because the dialog is the *only* surface in view; on desktop the
      dialog is one of many things competing for vertical space. */
-  --engine-settings-panel-h: 40vh;
+  --engine-settings-panel-h: 42vh;
   height: var(--engine-settings-panel-h);
 }
 @media (max-width: 480px) {
