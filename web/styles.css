@@ -1726,6 +1726,7 @@ body .side-popover.popover-floating {
     position: static;
     flex-direction: row;
     justify-content: center;
+    width: auto;
     padding: 6px 0;
     background: transparent;
     border-right: 0;
@@ -3657,6 +3658,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   .studio-ribbon {
     position: static;
     flex-direction: row; justify-content: center;
+    width: auto;
     background: transparent;
     border-right: 0; border-bottom: 1px solid var(--border-subtle);
     padding: 6px 0;
