@@ -412,6 +412,29 @@ export function showEngineOptionsDialog({
       nameRow.append(nameLabel, nameInput);
       form.appendChild(nameRow);
 
+      // Approximate absolute Elo (e.g. CCRL) -- registry metadata like
+      // Name, not a UCI option. Anchors tournament ordo standings.
+      // Blank = unset; leave the engine being calibrated blank.
+      let currentRating = engine.rating ?? null;
+      const ratingRow = document.createElement("div");
+      ratingRow.className = "engine-opt-row";
+      const ratingLabel = document.createElement("label");
+      ratingLabel.className = "engine-opt-label";
+      ratingLabel.textContent = "Rating";
+      const ratingInput = document.createElement("wa-input");
+      ratingInput.size = "small";
+      ratingInput.type = "number";
+      ratingInput.autocomplete = "off";
+      ratingInput.classList.add("engine-opt-input");
+      ratingInput.placeholder = "approx. Elo (optional)";
+      if (currentRating != null) ratingInput.value = String(currentRating);
+      ratingInput.addEventListener("input", () => {
+        const n = parseInt(ratingInput.value, 10);
+        currentRating = Number.isFinite(n) ? n : null;
+      });
+      ratingRow.append(ratingLabel, ratingInput);
+      form.appendChild(ratingRow);
+
       const fields = new Map();
       const names = Object.keys(schema).sort((a, b) => a.localeCompare(b));
       if (names.length === 0 && !probeError) {
@@ -478,6 +501,7 @@ export function showEngineOptionsDialog({
               options: diffFromDefaults(ctx.values, schema),
               args: launchState.args,
               env: launchState.env,
+              rating: currentRating,
             },
             presetName: currentName.trim() ? currentName : null,
             presetDerived: nameDerived,
@@ -504,6 +528,7 @@ export function showEngineOptionsDialog({
             options: {},
             args: launchState.args,
             env: launchState.env,
+            rating: currentRating,
           },
           presetName: restored
             ? dedupName(engine.uci_name, takenNames || new Set())
@@ -528,6 +553,8 @@ export function showEngineOptionsDialog({
           option_schema: schema,
           args: launchState.args,
           env: launchState.env,
+          // Always sent: null clears (server treats omitted as untouched).
+          rating: currentRating,
         };
         if (engine.uci_name != null) {
           body.uci_name = engine.uci_name;

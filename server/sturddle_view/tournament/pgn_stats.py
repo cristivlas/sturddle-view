@@ -77,6 +77,11 @@ class EngineRecord:
     # (all-wins / all-losses).
     elo_ordo: float | None = None
     elo_ordo_margin_95: float | None = None
+    # elo_ordo shifted onto the absolute scale of engines with a known
+    # approximate rating (see compute_standings). None when no anchor
+    # is available; margin is elo_ordo_margin_95 (a constant shift
+    # adds no variance).
+    elo_anchored: float | None = None
 
     @property
     def games(self) -> int:
@@ -105,6 +110,7 @@ class EngineRecord:
             "elo_margin_95": self.elo_margin_95,
             "elo_ordo": self.elo_ordo,
             "elo_ordo_margin_95": self.elo_ordo_margin_95,
+            "elo_anchored": self.elo_anchored,
         }
 
 
@@ -736,6 +742,33 @@ def _ordo_fit_margins(
     return margins
 
 
+def _ordo_prepare(
+    engine_names: list[str],
+    encounters: list[tuple[str, str, float, int]],
+    wins: dict[str, int] | None,
+    losses: dict[str, int] | None,
+) -> tuple[set[str], list[list[str]], list[tuple[str, str, float, int]]]:
+    """Shared ordo-fit prologue: purge all-wins/all-losses engines (their
+    MLE rating diverges), drop their encounters, and split the rest into
+    connected components. Returns (purged, components, encounters)."""
+    purged: set[str] = set()
+    if wins is not None and losses is not None:
+        for n in engine_names:
+            if (wins.get(n, 0) > 0 and losses.get(n, 0) == 0) or \
+               (losses.get(n, 0) > 0 and wins.get(n, 0) == 0):
+                purged.add(n)
+    remaining = [n for n in engine_names if n not in purged]
+    if not remaining:
+        return purged, [], []
+    remaining_set = set(remaining)
+    encs = [
+        (w, b, ws, np_)
+        for (w, b, ws, np_) in encounters
+        if w in remaining_set and b in remaining_set
+    ]
+    return purged, _ordo_connected_groups(remaining, encs), encs
+
+
 def ordo_fit(
     engine_names: list[str],
     encounters: list[tuple[str, str, float, int]],
@@ -757,29 +790,9 @@ def ordo_fit(
     if not engine_names:
         return {}
 
-    # Purge candidates: an engine is "all wins" if it never lost, "all
-    # losses" if it never won. These have divergent rating under MLE; we
-    # exclude them from the joint fit and surface (None, None).
-    purged: set[str] = set()
-    if wins is not None and losses is not None:
-        for n in engine_names:
-            if (wins.get(n, 0) > 0 and losses.get(n, 0) == 0) or \
-               (losses.get(n, 0) > 0 and wins.get(n, 0) == 0):
-                purged.add(n)
-
-    # Remaining engines + encounters not involving purged engines.
-    remaining = [n for n in engine_names if n not in purged]
-    if not remaining:
+    purged, components, encs = _ordo_prepare(engine_names, encounters, wins, losses)
+    if not components:
         return {n: (None, None) for n in engine_names}
-    remaining_set = set(remaining)
-    encs = [
-        (w, b, ws, np_)
-        for (w, b, ws, np_) in encounters
-        if w in remaining_set and b in remaining_set
-    ]
-
-    # Connected-component decomposition; fit each separately.
-    components = _ordo_connected_groups(remaining, encs)
     result: dict[str, tuple[float | None, float | None]] = {
         n: (None, None) for n in purged
     }
@@ -827,11 +840,16 @@ def games_played_from_config(config_path: Path) -> int | None:
 def compute_standings(
     pgn_path: Path,
     tournament_type: str = "roundrobin",
+    ratings: dict[str, int] | None = None,
 ) -> Standings:
     """Tally W/L/D per engine across all games in ``games.pgn``.
 
     The PGN may be empty, missing, or partially-written; results from
     valid games are counted, the rest skipped.
+
+    ``ratings`` maps engine name -> approximate absolute Elo; when at
+    least one fitted engine has one, ``elo_anchored`` is populated (see
+    the anchor block below).
     """
     # wld[a][b] = [wins, losses, draws] for engine a vs engine b
     wld: dict[str, dict[str, list[int]]] = {}
@@ -905,6 +923,21 @@ def compute_standings(
             elo, margin = fit.get(e.name, (None, None))
             e.elo_ordo = elo
             e.elo_ordo_margin_95 = margin
+
+        # Anchor: shift the mean-centered fit onto the absolute scale of
+        # engines with a known rating. Only meaningful when every fitted
+        # engine is mutually comparable (single connected component).
+        if ratings:
+            _, components, _ = _ordo_prepare(names, encs, wins_map, losses_map)
+            fitted = [e for e in engines if e.elo_ordo is not None]
+            anchors = [e for e in fitted if ratings.get(e.name) is not None]
+            if len(components) == 1 and anchors:
+                offset = (
+                    sum(ratings[e.name] for e in anchors)
+                    - sum(e.elo_ordo for e in anchors)
+                ) / len(anchors)
+                for e in fitted:
+                    e.elo_anchored = e.elo_ordo + offset
 
     return Standings(engines=engines, games=games)
 

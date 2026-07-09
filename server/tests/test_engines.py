@@ -184,6 +184,32 @@ def test_update_args_and_env(registry):
     assert got.env == {"X": "1"}
 
 
+def test_rating_persists_and_survives_unrelated_update(registry):
+    e = registry.add(name="A", path="/p/a", rating=3200)
+    fresh = EngineRegistry(path=registry.path)
+    assert fresh.get(e.id).rating == 3200
+    # update() without rating leaves it untouched (UNSET semantics).
+    registry.update(e.id, name="A2")
+    assert registry.get(e.id).rating == 3200
+
+
+def test_rating_explicit_none_clears(registry):
+    e = registry.add(name="A", path="/p/a", rating=3200)
+    registry.update(e.id, rating=None)
+    assert registry.get(e.id).rating is None
+    fresh = EngineRegistry(path=registry.path)
+    assert fresh.get(e.id).rating is None
+
+
+def test_rating_absent_in_legacy_entry_loads_as_none(tmp_path):
+    path = tmp_path / "engines.json"
+    path.write_text(
+        json.dumps({"engines": [{"id": "a", "name": "Old", "path": "/p/old"}]})
+    )
+    [e] = EngineRegistry(path=path).list()
+    assert e.rating is None
+
+
 def test_load_normalizes_duplicate_names(tmp_path):
     path = tmp_path / "engines.json"
     path.write_text(

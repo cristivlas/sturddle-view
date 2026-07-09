@@ -168,6 +168,24 @@ def test_patch_rename_collision_409(client, exe_a, exe_b):
     assert r.status_code == 409
 
 
+def test_rating_roundtrip_and_patch_semantics(client, exe_a):
+    """Omitted = untouched, null = clear, value = set."""
+    created = client.post(
+        "/engines", json={"name": "E", "path": exe_a, "rating": 3000},
+    ).json()
+    eid = created["id"]
+    assert created["rating"] == 3000
+
+    client.patch(f"/engines/{eid}", json={"name": "E2"})
+    assert client.get(f"/engines/{eid}").json()["rating"] == 3000
+
+    client.patch(f"/engines/{eid}", json={"rating": 3150})
+    assert client.get(f"/engines/{eid}").json()["rating"] == 3150
+
+    client.patch(f"/engines/{eid}", json={"rating": None})
+    assert client.get(f"/engines/{eid}").json()["rating"] is None
+
+
 def test_add_rejects_missing_path(client, tmp_path):
     r = client.post("/engines", json={"name": "X", "path": str(tmp_path / "nope")})
     assert r.status_code == 400

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from ..auth import require_token
 from ..engines import (
+    UNSET,
     DuplicateEngineError,
     Engine,
     EngineNotFoundError,
@@ -57,6 +58,8 @@ class EngineCreate(BaseModel):
     options: dict[str, Any] = {}
     args: list[str] = []
     env: dict[str, str] = {}
+    # Approximate logistic Elo (display-only; anchors ordo fits).
+    rating: int | None = None
 
 
 class EngineUpdate(BaseModel):
@@ -71,6 +74,9 @@ class EngineUpdate(BaseModel):
     auto_suffix: bool = False
     args: list[str] | None = None
     env: dict[str, str] | None = None
+    # None clears the rating; omitting the field leaves it untouched
+    # (distinguished via model_fields_set).
+    rating: int | None = None
 
 
 class EngineProbe(BaseModel):
@@ -190,6 +196,7 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
             env=dict(payload.env),
             auto_suffix=not user_supplied,
             uci_name=uci_name,
+            rating=payload.rating,
         )
     except DuplicateEngineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -231,6 +238,7 @@ async def update_engine(engine_id: str, payload: EngineUpdate, request: Request)
             auto_suffix=payload.auto_suffix,
             args=payload.args,
             env=payload.env,
+            rating=payload.rating if "rating" in payload.model_fields_set else UNSET,
         )
     except EngineNotFoundError as exc:
         raise HTTPException(status_code=404, detail="engine not found") from exc

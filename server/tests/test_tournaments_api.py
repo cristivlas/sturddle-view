@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from sturddle_view.api.tournaments import _snap_terminal_sprt_verdict
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
+from sturddle_view.engines import EngineRegistry
 from sturddle_view.tournament import fastchess as fc_mod
 from sturddle_view.tournament.fastchess import FastchessRunner
 from sturddle_view.tournament.pgn_stats import SPRT_CONTINUE, SPRT_H0, SPRT_H1
@@ -57,13 +58,16 @@ def settings(tmp_path):
 
 
 @pytest.fixture
-def client(settings, monkeypatch):
+def client(settings, monkeypatch, tmp_path):
     # Ensure detect_binary returns whatever we configured (sys.executable).
     monkeypatch.setattr(
         FastchessRunner, "detect_binary",
         staticmethod(lambda configured: configured),
     )
-    app = create_app(settings=settings)
+    # Isolated registry: rating resolution reads it during standings
+    # serialization; the default would lazily load the user's real file.
+    registry = EngineRegistry(path=tmp_path / "engines.json")
+    app = create_app(settings=settings, engine_registry=registry)
     with TestClient(app) as c:
         yield c
 
@@ -174,6 +178,48 @@ def test_get_standings_games_from_pgn(client, settings):
     pgn.write_text(_PGN_TWO_GAMES, encoding="utf-8")
     body = client.get(f"/api/tournaments/{tid}").json()
     assert body["standings"]["games"] == 2
+
+
+_PGN_BALANCED = (
+    "[Event \"x\"]\n[White \"A\"]\n[Black \"B\"]\n[Result \"1-0\"]\n\n1-0\n\n"
+    "[Event \"x\"]\n[White \"B\"]\n[Black \"A\"]\n[Result \"1-0\"]\n\n1-0\n\n"
+)
+
+
+def test_standings_anchor_live_first_frozen_fallback(client, settings):
+    """Rating resolution: create freezes the registry rating into the
+    ref; standings prefer the live value (edits re-anchor a finished
+    tournament); a deleted engine falls back to its frozen snapshot."""
+    reg = client.app.state.engines
+    a = reg.add(name="A", path="/bin/A", rating=3000)
+    b = reg.add(name="B", path="/bin/B")
+    created = client.post("/api/tournaments", json={
+        "name": "anchored",
+        "engines": [
+            {"id": a.id, "name": "A", "cmd": "/bin/A"},
+            {"id": b.id, "name": "B", "cmd": "/bin/B"},
+        ],
+    }).json()
+    tid = created["id"]
+    assert created["engines"][0]["rating"] == 3000
+    assert "rating" not in created["engines"][1]
+
+    pgn = Path(settings.tournament_root) / tid / "games.pgn"
+    pgn.parent.mkdir(parents=True, exist_ok=True)
+    pgn.write_text(_PGN_BALANCED, encoding="utf-8")
+
+    def anchored():
+        body = client.get(f"/api/tournaments/{tid}").json()
+        return {e["name"]: e["elo_anchored"] for e in body["standings"]["engines"]}
+
+    # Balanced 1-1 -> elo_ordo 0 for both -> anchored == A's rating.
+    assert anchored() == {"A": pytest.approx(3000), "B": pytest.approx(3000)}
+    # Live registry edit re-anchors on next read; nothing frozen consulted.
+    reg.update(a.id, rating=3200)
+    assert anchored()["A"] == pytest.approx(3200)
+    # Deleted engine: frozen snapshot (3000) is all we have.
+    reg.remove(a.id)
+    assert anchored()["A"] == pytest.approx(3000)
 
 
 def test_list_returns_created(client):

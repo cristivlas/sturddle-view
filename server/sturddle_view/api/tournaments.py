@@ -32,6 +32,7 @@ from ..auth import AUTH_COOKIE, check_token_value, origin_ok, require_token
 from ..env_utils import env_bool
 from ..engines import (
     EngineNotFoundError,
+    EngineRegistry,
     InvalidLaunchProfileError,
     validate_launch_profile,
 )
@@ -97,6 +98,10 @@ class EngineRef(BaseModel):
     # create/edit; accepted on input so a direct API edit can round-trip
     # a snapshot whose engine was since deleted from the registry.
     options: dict[str, Any] | None = None
+    # Frozen approximate-Elo snapshot, same lifecycle as ``options``.
+    # Fallback only: standings prefer the live registry rating (display-
+    # only, so edits re-anchor past tournaments); the drift gate ignores it.
+    rating: int | None = None
 
     @field_validator("args", "env")
     @classmethod
@@ -169,21 +174,49 @@ def _freeze_engine_defaults(settings) -> dict:
 def _freeze_engines(payload_engines, request: Request) -> list[dict]:
     """Snapshot the picked engines into the tournament: the client-sent
     ref (id/name/cmd/args/env) plus each engine's current registry UCI
-    options. An engine missing from the registry keeps whatever options
-    the caller round-tripped (edit after the engine was deleted). The
-    key is omitted when there are no options either way."""
+    options and rating. An engine missing from the registry keeps
+    whatever the caller round-tripped (edit after the engine was
+    deleted). Keys are omitted when unset either way."""
     reg = getattr(request.app.state, "engines", None)
     out = []
     for e in payload_engines:
         ref = e.model_dump(exclude_none=True)
         if reg is not None:
             try:
-                ref["options"] = dict(reg.get(ref["id"]).options or {})
+                live = reg.get(ref["id"])
             except EngineNotFoundError:
                 pass
+            else:
+                ref["options"] = dict(live.options or {})
+                ref["rating"] = live.rating
         if not ref.get("options"):
             ref.pop("options", None)
+        if ref.get("rating") is None:
+            ref.pop("rating", None)
         out.append(ref)
+    return out
+
+
+def _resolve_ratings(t, registry: EngineRegistry | None) -> dict[str, int]:
+    """Standings-name -> approximate Elo for a tournament's engines.
+
+    Live registry value first (matched by frozen ref id, then name, then
+    cmd -- mirrors the client's buildEngineMatcher), falling back to the
+    frozen ref's snapshot when the engine was deleted. A live match with
+    no rating is an intentional clear, not a fallback case."""
+    live = registry.list() if registry is not None else []
+    by_id = {e.id: e for e in live}
+    by_name = {e.name: e for e in live}
+    by_cmd = {e.path: e for e in live}
+    out: dict[str, int] = {}
+    for ref in t.engines or []:
+        name = ref.get("name")
+        if not name:
+            continue
+        e = by_id.get(ref.get("id")) or by_name.get(name) or by_cmd.get(ref.get("cmd"))
+        rating = e.rating if e is not None else ref.get("rating")
+        if rating is not None:
+            out[name] = rating
     return out
 
 
@@ -263,6 +296,7 @@ def _serialize(
     with_standings: bool = False,
     store: TournamentStore | None = None,
     orch: Orchestrator | None = None,
+    registry: EngineRegistry | None = None,
 ) -> dict:
     out = t.to_dict()
     if (with_stats or with_standings) and store is not None:
@@ -270,6 +304,7 @@ def _serialize(
         try:
             standings = compute_standings(
                 store.pgn_path(t.id), tournament_type=tournament_type,
+                ratings=_resolve_ratings(t, registry),
             ).to_dict()
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
@@ -314,7 +349,8 @@ def list_tournaments(request: Request) -> dict:
     return {
         "active_id": _orch(request).active_id(),
         "tournaments": [
-            _serialize(t, with_standings=True, store=s, orch=_orch(request))
+            _serialize(t, with_standings=True, store=s, orch=_orch(request),
+                       registry=getattr(request.app.state, "engines", None))
             for t in s.list()
         ],
     }
@@ -351,7 +387,8 @@ def get_tournament(tournament_id: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="tournament not found") from e
     except CorruptStateError as e:
         raise HTTPException(status_code=500, detail=f"corrupt state: {e}") from e
-    return _serialize(t, with_stats=True, store=s, orch=_orch(request))
+    return _serialize(t, with_stats=True, store=s, orch=_orch(request),
+                      registry=getattr(request.app.state, "engines", None))
 
 
 @router.patch("/api/tournaments/{tournament_id}")

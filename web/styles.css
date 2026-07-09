@@ -2370,11 +2370,10 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   contain: layout;
   /* Padding budget: 4px each side leaves clearance for input focus
      rings, which the form's scroll container would otherwise clip
-     (scroll containers always clip overflow — `contain` doesn't help).
-     Bottom padding clears the dialog footer overlap. Trade-off: input
-     right edge sits ~4px short of the Save button, but focus rings
-     stay visible. */
-  padding: 4px 4px 28px 4px;
+     (scroll containers always clip overflow -- `contain` doesn't help).
+     Trade-off: input right edge sits ~4px short of the Save button,
+     but focus rings stay visible. */
+  padding: 4px;
 }
 .engine-launch-form {
   display: flex;
