@@ -8,9 +8,15 @@
   /* Bottom strip where minimized WinBoxes dock; tournament-workspace.js
      reads this for layout math (MINIMIZE_FOOTER_H). */
   --wb-min-footer-h: 36px;
-  /* Docked ribbon's edge border; centered board areas reserve --ribbon-w plus
-     this so they clear the ribbon exactly (no 1px eat/gap). */
+  /* Docked ribbon rail width and its edge border; centered board areas and
+     toast stacks reserve --ribbon-w plus this so they clear the ribbon
+     exactly (no 1px eat/gap). */
+  --ribbon-w: 44px;
   --ribbon-border-w: 1px;
+  /* Viewport-edge breathing room beside the moves-list rail; the fork/xgame
+     toast stack aligns to this outer edge, not the ribbon. Paired with
+     RAIL_EDGE_GAP_REM in game-view.js (CSS can't read the JS constant). */
+  --rail-edge-gap: 1rem;
   --accent: #f59e0b;
   --accent-rgb: 245, 158, 11;
   /* TODO: revisit unifying --accent and --accent-line into a single token. */
@@ -957,16 +963,16 @@ svg.cm-chessboard {
 #toast-stack,
 #xgame-toast-stack {
   position: fixed;
-  /* Co-located with the ribbon: default is left; right-ribbon override
-     below moves it to the right edge. Side inset clears the 36px ribbon
-     so toasts don't overlap ribbon buttons; #xgame-toast-stack lives on
-     the opposite (moves-list) side. Longhand on purpose: top/right also
-     override the UA popover inset:0, and bottom stays owned by this rule
-     plus .toast-stack-lifted only. */
+  /* Shared base for both stacks. #toast-stack is ribbon-side: left inset is
+     --ribbon-w to clear the ribbon buttons (right-ribbon override below flips
+     it right). #xgame-toast-stack lives on the opposite (moves-list) side and
+     the override below re-anchors it to --rail-edge-gap, not the ribbon.
+     Longhand on purpose: top/right also override the UA popover inset:0, and
+     bottom stays owned by this rule plus .toast-stack-lifted only. */
   top: auto;
   right: auto;
   bottom: 4px;
-  left: 36px;
+  left: var(--ribbon-w);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -986,7 +992,7 @@ svg.cm-chessboard {
   max-height: none;
   color: inherit;
 }
-#xgame-toast-stack { left: auto; right: 36px; }
+#xgame-toast-stack { left: auto; right: var(--rail-edge-gap); }
 /* Lifted above the WinBox minimize dock when a minimized window actually
    overlaps the stack horizontally; dialogs.js toggles the class. Side
    placement rules set only left/right so this bottom always wins. */
@@ -1278,7 +1284,6 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   --rail-w: 240px;
   --grid-gap: 16px;
   display: grid;
-  --ribbon-w: 36px;
   grid-template-columns: var(--left-rail-w, var(--rail-w)) var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
   grid-template-rows: auto 1fr;
   grid-template-areas:
@@ -1310,6 +1315,7 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   padding: 4px 0;
   position: fixed;
   left: 0; top: var(--arena-ribbon-top, 0); bottom: 0;
+  width: var(--ribbon-w);
   z-index: 10;
   background: var(--panel);
   border-right: var(--ribbon-border-w) solid var(--border-subtle);
@@ -2979,7 +2985,6 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 
 /* ---------- Tournaments panel ---------- */
 .tournaments-panel {
-  --ribbon-w: 36px;
   display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0;
 }
 
@@ -3202,7 +3207,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    spans the full viewport height like Play (Arena's is menubar-anchored). */
 .studio-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .studio-body {
-  --ribbon-w: 36px;
   display: flex;
   flex: 1; min-height: 0;
 }
@@ -4450,10 +4454,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    docks the ribbon horizontally and is unaffected.
    ------------------------------------------------------------------ */
 body[data-ribbon-side="right"] #toast-stack {
-  left: auto; right: 36px;
+  left: auto; right: var(--ribbon-w);
 }
 body[data-ribbon-side="right"] #xgame-toast-stack {
-  left: 36px; right: auto;
+  left: var(--rail-edge-gap); right: auto;
 }
 @media (max-width: 800px) {
   /* Ribbon is horizontal at top on mobile, so toasts don't need a side
