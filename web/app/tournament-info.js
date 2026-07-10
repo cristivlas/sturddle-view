@@ -6,7 +6,7 @@
 
 import { progressBarHtml, progressLabelHtml, totalGames } from "./tournament-row.js";
 import { STATUS, sprtVerdict } from "./tournament-events.js";
-import { escapeHtml } from "./wb-utils.js";
+import { basename, escapeHtml } from "./wb-utils.js";
 import { formatType, shortResign, shortDraw } from "./tournament-format.js";
 
 // Max engine chips on the wall before collapsing the rest into "+K more".
@@ -32,10 +32,6 @@ function nameSizeCeiling(name) {
   return Math.round(Math.max(IW_NAME_MIN_PX, Math.min(IW_NAME_MAX_PX, px)));
 }
 
-function basename(p) {
-  if (!p) return "";
-  return String(p).replace(/[\\/]+$/, "").split(/[\\/]/).pop();
-}
 
 // Structured adjudication marks (label + detail), or [] if none set.
 function adjudicationParts(tpl) {

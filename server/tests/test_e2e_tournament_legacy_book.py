@@ -1,8 +1,9 @@
 """E2E: a legacy tournament (engine_defaults snapshot predating opening-book
-support, so it lacks book_* keys) seeds its Edit dialog from the Common book
-defaults -- rather than showing an empty book -- so edits/duplicates start from
-a sensible value. A tournament whose snapshot DOES carry book_path (including an
-explicit book-less null) is authoritative and is NOT re-seeded.
+support, so it lacks book_* keys) opens its Edit dialog in the book INHERIT
+state -- empty field with an "inherits: <book>" placeholder resolving down the
+settings chain to the Common book -- and Apply freezes that inherited book into
+the tournament. A snapshot that DOES carry book_path (including an explicit
+book-less null) is authoritative and is NOT re-seeded.
 
 Skipped if Playwright/Chromium isn't installed.
 """
@@ -92,13 +93,14 @@ async def _open_edit(page):
     await page.locator(".ttf-book .path-field").first.wait_for(state="attached")
 
 
-async def _book_path_value(page):
+async def _book_field(page):
     return await page.evaluate(
-        """() => document.querySelector('.ttf-book .path-field')?.value ?? null""")
+        """() => { const f = document.querySelector('.ttf-book .path-field');
+            return f ? { value: f.value || "", placeholder: f.placeholder } : null; }""")
 
 
 @pytest.mark.asyncio
-async def test_legacy_tournament_edit_seeds_common_book(tmp_path, make_page):
+async def test_legacy_tournament_edit_inherits_common_book(tmp_path, make_page):
     env = _env(tmp_path)
     with run_uvicorn_subprocess(env_overrides=env) as base:
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
@@ -127,5 +129,20 @@ async def test_legacy_tournament_edit_seeds_common_book(tmp_path, make_page):
         await wait_perspective_ready(page)
 
         await _open_edit(page)
-        assert (await _book_path_value(page)) == COMMON_BOOK, \
-            "legacy tournament (no frozen book) should seed Common book in Edit"
+        field = await _book_field(page)
+        assert field == {"value": "", "placeholder": "inherits: opening.epd"}, \
+            f"legacy tournament should INHERIT the Common book, got {field}"
+
+        # Apply resolves the inherited book into the frozen snapshot.
+        async with page.expect_response(
+            lambda r: "/api/tournaments/" in r.url and r.request.method == "PATCH"
+        ):
+            await page.evaluate(
+                """() => [...document.querySelectorAll('wa-dialog wa-button[slot="footer"]')]
+                    .find(b => b.textContent.trim() === 'Apply').click()""")
+        frozen = await page.evaluate(
+            """() => fetch('/api/tournaments').then(r => r.json()).then(l => {
+                const t = (l.tournaments || []).find(x => x.name === 'legacy');
+                return t ? t.engine_defaults.book_path : null;
+            })""")
+        assert frozen == COMMON_BOOK, f"Apply should freeze the inherited Common book, got {frozen}"

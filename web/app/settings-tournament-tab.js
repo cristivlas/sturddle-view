@@ -3,21 +3,8 @@
 // passed in rather than duplicated. Server I/O flows through
 // putTournamentSettings.
 
-import { BOOK_KEYS, mountTournamentTemplateForm } from "./tournament-template-form.js";
+import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { toast } from "./dialogs.js";
-
-// The default-template editor stores tournament defaults only. Book fields left
-// empty must NOT be baked into default_template as empty values -- an empty
-// book_path there would suppress the Common-book fallback that create applies.
-// Drop empty/absent book keys so the create-time cascade (default_template ->
-// Common) stays intact; a book explicitly set here is kept and wins.
-function stripEmptyBook(template) {
-  const out = { ...template };
-  for (const k of BOOK_KEYS) {
-    if (out[k] == null || out[k] === "") delete out[k];
-  }
-  return out;
-}
 
 export function buildTournamentTab({ tournamentInitial, putTournamentSettings, pathRow, debounce }) {
   const tournamentTab = document.createElement("wa-tab");
@@ -53,11 +40,19 @@ export function buildTournamentTab({ tournamentInitial, putTournamentSettings, p
 
   const tplHost = document.createElement("div");
   tplHost.className = "settings-tournament-tpl-mount";
+  // Book tri-state: this tab inherits from the Common book; raw emit keeps
+  // the inherit state as absent keys in the stored default_template.
   const tplCtl = mountTournamentTemplateForm({
     container: tplHost,
     initialValues: tournamentInitial.default_template || {},
     syzygyPath: tournamentInitial.engine_default_syzygy_path || "",
     pathRow,
+    inheritedBook: {
+      path: tournamentInitial.engine_default_book_path,
+      plies: tournamentInitial.engine_default_book_plies,
+      order: tournamentInitial.engine_default_book_order,
+    },
+    rawBookEmit: true,
   });
   tournamentPanel.appendChild(tplHost);
 
@@ -70,7 +65,7 @@ export function buildTournamentTab({ tournamentInitial, putTournamentSettings, p
       toast(e.message, { variant: "danger" });
       return;
     }
-    putTournamentSettings({ default_template: stripEmptyBook(template) });
+    putTournamentSettings({ default_template: template });
   }, 400);
   tplHost.addEventListener("input", persistTemplate);
   tplHost.addEventListener("change", persistTemplate);

@@ -3,9 +3,11 @@
 //   2. New Tournament dialog -> editable; pre-filled from defaults; save = create.
 //
 // Native fields: time control, games-in-parallel, rounds, tournament type /
-// seeds, ponder, resign, draw.
-// Hash / Threads / SyzygyPath / opening book live in the global Settings
-// "Defaults" tab -- applied uniformly to all engines at launch time.
+// seeds, ponder, resign, draw, opening book (tri-state, inheriting from the
+// Common book). Hash / Threads / SyzygyPath live in the global Settings
+// "Common" tab -- applied uniformly to all engines at launch time.
+
+import { basename } from "./wb-utils.js";
 
 const TOURNAMENT_TYPES = [
   { value: "roundrobin", label: "Round robin" },
@@ -75,14 +77,40 @@ function collapsedDisclosure(summary, body, className) {
 }
 
 
+// Opening-book tri-state. Each layer (Common -> tournament settings -> a
+// tournament) either SETs a book, turns it OFF, or INHERITs the previous
+// layer's choice. The empty field's placeholder disambiguates the two empty
+// states, and X cycles: set -> off -> inherit -> off.
+const BOOK_MODE = { SET: "set", OFF: "off", INHERIT: "inherit" };
+const BOOK_OFF_PLACEHOLDER = "(no book)";
+const BOOK_INHERIT_PREFIX = "inherits: ";
+const BOOK_PLIES_PLACEHOLDER = "engine default";
+const BOOK_X_OFF_TITLE = "No book";
+const BOOK_X_INHERIT_TITLE = "Restore inherited book";
+
 // Opening-book section: a path row (via the shared pathRow builder) plus a
-// ply-depth input and an order select. Depth/order grey out until a book is
-// set. Returns the section element and getBook() -> {book_path, book_plies,
-// book_order} for getValues to fold in. pathRow may be null (no file picker
+// ply-depth input and an order select, with the tri-state above. Mode seeds
+// from initialValues' raw encoding: book_path key present -> set/off by value;
+// absent -> inherit when the caller supplies `inherited` ({path, plies,
+// order}), else off. getBook() emits per `rawEmit`: raw keeps the tri-state
+// encoding (inherit -> no keys) for storage; effective resolves inherit to the
+// inherited values for create/edit payloads. pathRow may be null (no picker
 // wired); then the section is omitted and getBook returns {}.
-function buildOpeningBookSection(initialValues, pathRow) {
+function buildOpeningBookSection(initialValues, pathRow, { inherited = null, rawEmit = false } = {}) {
   if (!pathRow) return { section: null, getBook: () => ({}), validateBook: () => null, pliesInput: null };
-  let bookPath = initialValues.book_path || "";
+  if (inherited && !inherited.path) inherited = null;
+
+  let mode;
+  if ("book_path" in initialValues) {
+    mode = initialValues.book_path ? BOOK_MODE.SET : BOOK_MODE.OFF;
+  } else {
+    mode = inherited ? BOOK_MODE.INHERIT : BOOK_MODE.OFF;
+  }
+  // OFF is only worth storing when chosen (stored "" or a user action). A
+  // defaulted OFF (nothing to inherit, key never stored) must keep emitting
+  // no keys, or it would bake "" into default_template and silently suppress
+  // a Common book configured later.
+  let userOff = "book_path" in initialValues && !initialValues.book_path;
 
   const plies = document.createElement("wa-input");
   plies.size = "small";
@@ -91,7 +119,6 @@ function buildOpeningBookSection(initialValues, pathRow) {
   plies.setAttribute("step", "1");
   plies.setAttribute("autocomplete", "off");
   plies.label = "Book ply depth";
-  plies.placeholder = "engine default";
   if (initialValues.book_plies != null) plies.value = String(initialValues.book_plies);
 
   const order = document.createElement("wa-select");
@@ -105,14 +132,65 @@ function buildOpeningBookSection(initialValues, pathRow) {
     order.append(o);
   }
 
-  const setEnabled = (on) => { plies.disabled = !on; order.disabled = !on; };
-  setEnabled(!!bookPath);
+  // X clicks and Browse picks set .value programmatically -- no native event
+  // reaches the mount container, whose input/change listeners drive the
+  // Settings tab's debounced persist. Announce those mutations explicitly.
+  const notifyChange = () =>
+    section.dispatchEvent(new Event("change", { bubbles: true }));
 
   const row = pathRow(
-    OPENING_BOOK_LABEL, bookPath, "file", BOOK_PICK_TITLE,
-    (p) => { bookPath = p; setEnabled(!!p); },
-    { editable: true, placeholder: "(none)" },
+    OPENING_BOOK_LABEL, mode === BOOK_MODE.SET ? initialValues.book_path : "",
+    "file", BOOK_PICK_TITLE,
+    (p) => {
+      mode = p ? BOOK_MODE.SET : BOOK_MODE.OFF;
+      if (!p) userOff = true;
+      sync();
+      notifyChange();
+    },
+    { editable: true, onClear: () => {
+      if (mode === BOOK_MODE.SET) mode = BOOK_MODE.OFF;
+      else if (mode === BOOK_MODE.OFF && inherited) mode = BOOK_MODE.INHERIT;
+      else mode = BOOK_MODE.OFF;
+      userOff = mode === BOOK_MODE.OFF;
+      row.pathField.value = "";
+      sync();
+      notifyChange();
+    } },
   );
+
+  // Placeholder carries the empty-field state. Depth/order stay editable with
+  // any book in effect (set or inherited) -- an inherited book can still get a
+  // local depth/order override; only OFF greys them out.
+  function sync() {
+    const inh = mode === BOOK_MODE.INHERIT;
+    row.pathField.placeholder = inh
+      ? BOOK_INHERIT_PREFIX + basename(inherited.path) : BOOK_OFF_PLACEHOLDER;
+    const off = mode === BOOK_MODE.OFF;
+    plies.disabled = off;
+    order.disabled = off;
+    plies.placeholder = inh && inherited.plies != null
+      ? BOOK_INHERIT_PREFIX + inherited.plies : BOOK_PLIES_PLACEHOLDER;
+    row.clearBtn.disabled = off && !inherited;
+    row.clearBtn.title = off && inherited
+      ? BOOK_X_INHERIT_TITLE : BOOK_X_OFF_TITLE;
+  }
+  if (mode === BOOK_MODE.INHERIT && inherited.order && !("book_order" in initialValues)) {
+    order.value = inherited.order;
+  }
+  sync();
+
+  // Spinning an unset depth should step from the inherited value, not from
+  // empty (which the native input treats as 0/min). Prefill just before the
+  // step applies -- arrow keys or a click on the spinner.
+  const prefillPlies = () => {
+    if (mode === BOOK_MODE.INHERIT && !plies.value && inherited.plies != null) {
+      plies.value = String(inherited.plies);
+    }
+  };
+  plies.addEventListener("keydown", (ev) => {
+    if (ev.key === "ArrowUp" || ev.key === "ArrowDown") prefillPlies();
+  });
+  plies.addEventListener("mousedown", prefillPlies);
 
   const opts = document.createElement("div");
   opts.className = "ttf-book-opts";
@@ -122,13 +200,35 @@ function buildOpeningBookSection(initialValues, pathRow) {
   section.className = "ttf-book";
   section.append(row, opts);
 
-  // Always emit book_path (empty string when cleared) so the server can tell
-  // "no book" from "unset" -- an omitted key falls back to Common, an explicit
-  // "" turns the book off. Depth/order only travel when a path is set.
-  const getBook = () => {
-    const out = { book_path: bookPath };
-    if (!bookPath) return out;
+  const setValues = () => {
+    const out = { book_path: (row.pathField.value || "").trim() };
     if (plies.value !== "" && plies.value != null) out.book_plies = Number(plies.value);
+    out.book_order = order.value;
+    return out;
+  };
+
+  const getBook = () => {
+    if (mode === BOOK_MODE.SET) return setValues();
+    // Raw storage of a defaulted (never chosen) OFF stays keyless -- see
+    // userOff above.
+    if (mode === BOOK_MODE.OFF) {
+      return rawEmit && !userOff ? {} : { book_path: "" };
+    }
+    // Inherit: the path stays inherited, but depth/order may be locally
+    // overridden. Raw storage keeps book_path absent and carries only actual
+    // divergence (a value merely equal to the inherited one -- e.g. the
+    // spinner prefill -- is not an override); effective payloads resolve the
+    // path and fall back for depth.
+    if (rawEmit) {
+      const out = {};
+      const p = plies.value !== "" && plies.value != null ? Number(plies.value) : null;
+      if (p != null && p !== inherited.plies) out.book_plies = p;
+      if (order.value !== (inherited.order ?? BOOK_ORDER_DEFAULT)) out.book_order = order.value;
+      return out;
+    }
+    const out = { book_path: inherited.path };
+    const p = plies.value !== "" && plies.value != null ? Number(plies.value) : inherited.plies;
+    if (p != null) out.book_plies = p;
     out.book_order = order.value;
     return out;
   };
@@ -136,7 +236,7 @@ function buildOpeningBookSection(initialValues, pathRow) {
   // Ply depth (when a book is set and a value is entered) must be a positive
   // integer. Returns an error message or null; the caller decorates the input.
   const validateBook = () => {
-    if (!bookPath) return null;
+    if (mode === BOOK_MODE.OFF) return null;
     const raw = (plies.value || "").trim();
     if (raw === "") return null;
     const n = Number(raw);
@@ -157,6 +257,8 @@ export function mountTournamentTemplateForm({
   initialValues = {},
   syzygyPath = "",
   pathRow = null,
+  inheritedBook = null,
+  rawBookEmit = false,
 }) {
   container.innerHTML = "";
   container.classList.add("tournament-template-form");
@@ -376,7 +478,7 @@ export function mountTournamentTemplateForm({
   // the dialog) and behave as an accordion with EXACTLY one open at all times.
   const adjDetails = collapsedDisclosure(ADJUDICATION_SUMMARY, adjSection, "ttf-details");
   const { section: bookSection, getBook, validateBook, pliesInput } =
-    buildOpeningBookSection(initialValues, pathRow);
+    buildOpeningBookSection(initialValues, pathRow, { inherited: inheritedBook, rawEmit: rawBookEmit });
   if (pliesInput) inputs["book_plies"] = pliesInput;
   const bookDetails = bookSection
     ? collapsedDisclosure(OPENING_BOOK_SUMMARY, bookSection, "ttf-details") : null;

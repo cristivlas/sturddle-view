@@ -1,3 +1,9 @@
+// Last path segment (handles / and \); "" for empty input.
+export function basename(p) {
+  if (!p) return "";
+  return String(p).replace(/[\\/]+$/, "").split(/[\\/]/).pop() || String(p);
+}
+
 // Read a px-valued CSS custom property from the element matching
 // `selector` (default: document root), with a numeric fallback when the
 // var is unset, zero, or unparsable.

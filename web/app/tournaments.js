@@ -27,7 +27,7 @@ import { mountSprtButton } from "./tournament-sprt-button.js";
 import { formatType, formatResign, formatDraw } from "./tournament-format.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
-import { cooldown, debounce, guard, isCtrlA, markSelectable, ribbonWidthPx } from "./wb-utils.js";
+import { basename, cooldown, debounce, guard, isCtrlA, markSelectable, ribbonWidthPx } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
@@ -139,11 +139,6 @@ function lastWriteWins(fetch, commit, onError) {
 }
 
 // ---- Pure formatters ----------------------------------------------------
-
-function basename(p) {
-  if (!p) return p;
-  return p.split(/[\\/]/).pop() || p;
-}
 
 function fitMiddleEllipsis(el, full) {
   el.textContent = full;
@@ -692,45 +687,61 @@ function buildInfoContent(ctx, t, onStatusClick) {
 
 // ---- New / Edit Tournament dialogs --------------------------------------
 
-// Shared dialog body for both create and edit flows.
-// Returns a Promise that resolves to {name, template, engines} or null.
-// Fold book fields into the form's initialValues in-place.
-//
-// Edit/Duplicate pass the tournament's engine_defaults snapshot (initialBook).
-// A snapshot that CARRIES a book_path key is authoritative -- used as-is, so a
-// deliberately book-less tournament (book_path: null) is NOT re-seeded. A
-// legacy snapshot predating book support LACKS the key entirely; that -- like a
-// fresh create (no initialBook) -- falls back to the Common defaults so edits
-// and duplicates start from a sensible book.
-function seedBookDefaults(defaults, initialBook, saved) {
-  const hasFrozenBook = initialBook && "book_path" in initialBook;
-  if (hasFrozenBook) {
-    for (const k of BOOK_KEYS) defaults[k] = initialBook[k] ?? null;
-    return;
-  }
-  const common = {
-    book_path: saved.engine_default_book_path,
-    book_plies: saved.engine_default_book_plies,
-    book_order: saved.engine_default_book_order,
+// Effective book of the settings chain, each field resolved independently:
+// tournament default_template values win, absent ones fall through to the
+// Common defaults. The New dialog's book INHERITs this; null = no book
+// anywhere up the chain (or the default_template explicitly turned it off).
+function effectiveSettingsBook(saved) {
+  const tpl = saved.default_template || {};
+  const path = "book_path" in tpl ? tpl.book_path : saved.engine_default_book_path;
+  if (!path) return null;
+  return {
+    path,
+    plies: tpl.book_plies ?? saved.engine_default_book_plies,
+    order: tpl.book_order ?? saved.engine_default_book_order,
   };
-  for (const k of BOOK_KEYS) {
-    if (defaults[k] == null && common[k] != null) defaults[k] = common[k];
-  }
 }
 
+// Prepare the form's book state in `defaults` (mutated) and return the
+// inherited book for the tri-state X-cycle. Edit/Duplicate (initialBook = the
+// frozen engine_defaults) rewrite the template book keys from the snapshot: a
+// set book prefills and doubles as the restore target; an explicitly book-less
+// snapshot pins OFF (nothing to restore). A legacy snapshot without book keys
+// -- like a fresh create (no initialBook) -- leaves the keys absent so the
+// form INHERITs the settings chain.
+function prepareBookMount(defaults, initialBook, saved) {
+  for (const k of BOOK_KEYS) delete defaults[k];
+  if (initialBook && "book_path" in initialBook) {
+    if (!initialBook.book_path) {
+      defaults.book_path = "";
+      return null;
+    }
+    defaults.book_path = initialBook.book_path;
+    if (initialBook.book_plies != null) defaults.book_plies = initialBook.book_plies;
+    if (initialBook.book_order) defaults.book_order = initialBook.book_order;
+    return {
+      path: initialBook.book_path,
+      plies: initialBook.book_plies,
+      order: initialBook.book_order,
+    };
+  }
+  return effectiveSettingsBook(saved);
+}
+
+// Shared dialog body for both create and edit flows.
+// Returns a Promise that resolves to {name, template, engines} or null.
 async function openTournamentDialog(ctx, { label, actionLabel, initialName, initialEngines, initialTemplate, initialBook, available, onSubmit, onOpened }) {
   // Read the saved defaults fresh from the server store here, not from a
   // per-view settings cache: Arena and Studio refresh that cache differently
   // (Studio not at all), so the shared dialog must own its source of truth.
   // Edit passes initialTemplate (the frozen template), which still wins.
   const saved = await ctx.api("GET", "/api/tournament-settings").catch(() => ({}));
-  const defaults =
-    initialTemplate ||
-    saved.default_template ||
-    { tc: "10+0.1", rounds: 10, games_in_parallel: 1 };
-  // Book fields live in the tournament's engine_defaults (Edit/Duplicate) or,
-  // for a fresh create, seed from Tournament settings then Common defaults.
-  seedBookDefaults(defaults, initialBook, saved);
+  const defaults = {
+    ...(initialTemplate ||
+      saved.default_template ||
+      { tc: "10+0.1", rounds: 10, games_in_parallel: 1 }),
+  };
+  const inheritedBook = prepareBookMount(defaults, initialBook, saved);
   const sprtDefaults = saved.sprt_defaults;
   const pathRow = makePathRow(ctx.api);
 
@@ -775,6 +786,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         initialValues: defaults,
         syzygyPath: saved.engine_default_syzygy_path || "",
         pathRow,
+        inheritedBook,
       });
 
       const sprtCtl = mountSprtButton({

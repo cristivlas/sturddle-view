@@ -3996,13 +3996,17 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 /* Desktop: reserve a FIXED height so opening a section never grows the dialog
    nor scrolls the body -- the tallest section (Adjudication, single-row fields)
-   plus both collapsed headers. overflow:hidden contains the open panel. On
-   mobile the fields stack (much taller) and the dialog scrolls anyway, so the
-   reserve is dropped there to avoid clipping. */
+   plus both collapsed headers. overflow:hidden contains the open panel; the
+   padding + negative margin give focus rings room inside the clip box (height
+   includes the vertical padding). On mobile the fields stack (much taller) and
+   the dialog scrolls anyway, so the reserve is dropped there to avoid
+   clipping. */
 @media (min-width: 601px) {
   .tournament-template-form .ttf-sections {
-    height: 240px;
+    height: 248px;
     overflow: hidden;
+    padding: 4px;
+    margin: -4px;
   }
 }
 
@@ -4026,6 +4030,12 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournament-template-form .ttf-book-opts {
   display: grid; gap: 6px;
   grid-template-columns: 1fr 1fr;
+}
+/* The X-cycle toggles these fields' disabled state; WA's opacity/border
+   transition reads as a flash there, so disable it. */
+.tournament-template-form .ttf-book-opts wa-input::part(base),
+.tournament-template-form .ttf-book-opts wa-select::part(combobox) {
+  transition: none;
 }
 @media (max-width: 600px) {
   .tournament-template-form .ttf-book-opts { grid-template-columns: 1fr; }
