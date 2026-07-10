@@ -12,7 +12,7 @@ import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs.js";
-import { guard, markSelectable } from "./wb-utils.js";
+import { guard, markSelectable, suppressMultiClickSelect } from "./wb-utils.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 import { attachEngineColResize, createWrapSizer } from "./engines-list-layout.js";
 
@@ -455,12 +455,7 @@ export function mountEngineList(container, api, opts = {}) {
   const teardownSearch = setupEngineSearch(ctx);
 
   ctx.detailUseBtn.addEventListener("click", ctx.activateGuarded);
-  // The table is data-selectable (Ctrl+A copy), so a double/triple-click
-  // otherwise paints a word/paragraph selection over the row. Cancel the
-  // multi-click gesture; click/dblclick and drag-select still work.
-  ctx.list.addEventListener("mousedown", (ev) => {
-    if (ev.detail > 1) ev.preventDefault();
-  });
+  suppressMultiClickSelect(ctx.list);
   ctx.list.addEventListener("keydown", (ev) => {
     if (ev.key !== " ") return;
     ev.preventDefault();

@@ -163,6 +163,14 @@ export function markSelectable(el, { rows = null, target = null } = {}) {
   if (target) el._selTarget = target;
 }
 
+// A markSelectable region's rows are `user-select: text`, so a double/triple
+// click on a row that drives an action (select/open/commit) paints a word or
+// paragraph selection first. Attach to the list container to cancel the
+// multi-click text gesture; single-click, dblclick, and drag-select still work.
+export function suppressMultiClickSelect(el) {
+  el.addEventListener("mousedown", (ev) => { if (ev.detail > 1) ev.preventDefault(); });
+}
+
 const closestRegion = (node) => {
   const el = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
   return el?.closest(`[${SELECTABLE_ATTR}]`) || null;

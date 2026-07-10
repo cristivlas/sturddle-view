@@ -27,7 +27,7 @@ import { mountSprtButton } from "./tournament-sprt-button.js";
 import { formatType, formatResign, formatDraw } from "./tournament-format.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
-import { basename, cooldown, debounce, guard, isCtrlA, markSelectable, ribbonWidthPx } from "./wb-utils.js";
+import { basename, cooldown, debounce, guard, isCtrlA, markSelectable, ribbonWidthPx, suppressMultiClickSelect } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
@@ -1449,12 +1449,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     tournamentsTabActive: false,
   };
   markSelectable(ctx.listEl, { rows: ".tournament-row" });
-  // Rows are data-selectable (Ctrl+A copy), so a double-click (row Info) would
-  // otherwise paint a word selection first. Cancel the multi-click gesture;
-  // single-click select, dblclick Info, and drag-select still work.
-  ctx.listEl.addEventListener("mousedown", (ev) => {
-    if (ev.detail > 1) ev.preventDefault();
-  });
+  suppressMultiClickSelect(ctx.listEl);
 
   ctx.loadSettings = lastWriteWins(
     () => ctx.api("GET", "/api/tournament-settings"),

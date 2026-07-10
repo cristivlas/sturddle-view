@@ -7,7 +7,7 @@ import { attachColumnResize } from "./col-resize.js";
 import { attachColumnSort } from "./col-sort.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
-import { markSelectable, rafCoalesce } from "./wb-utils.js";
+import { markSelectable, rafCoalesce, suppressMultiClickSelect } from "./wb-utils.js";
 
 const FS_COL_DEFAULT_PCTS = [55, 30, 15];
 const FS_MIN_COL_PCT = 8;
@@ -310,6 +310,7 @@ export function pickFile({
       table.className = "fs-picker-table";
       table.tabIndex = 0;
       markSelectable(table);
+      suppressMultiClickSelect(table);
       const colgroup = document.createElement("colgroup");
       for (let i = 0; i < 3; i++) colgroup.append(document.createElement("col"));
       const thead = document.createElement("thead");
