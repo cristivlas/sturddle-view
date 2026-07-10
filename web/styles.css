@@ -2719,6 +2719,11 @@ wa-dialog .settings-tabs wa-tab-panel[name="general"] > * + * {
 wa-dialog .settings-tabs wa-tab-panel[name="play"] .settings-panel-col {
   width: 440px;
 }
+/* Extra breathing room between the PGN directory row and the clock section:
+   two row-gaps, tied to the shared token so it tracks the settings rhythm. */
+wa-dialog .settings-tabs wa-tab-panel[name="play"] .settings-panel-col > .settings-section:first-of-type {
+  margin-top: calc(var(--settings-row-gap) * 2);
+}
 /* Gameplay tab: pair two short selects (e.g. Human plays as + Eval
    display) on the same line. Each takes equal share. */
 .settings-pair-row {
