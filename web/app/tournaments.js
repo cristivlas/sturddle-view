@@ -34,6 +34,7 @@ const NEW_TOURNAMENT_LABEL = "New tournament";
 const COPY_SUFFIX = " (copy)";
 const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
 const EMPTY_CTA_SUFFIX = " to create one.";
+const SHOW_STANDINGS_TITLE = "Show standings";
 const REVEAL_COOLDOWN_MS = 1500;
 // Unicode ellipsis is intentional: this glyph is rendered into the
 // tournament-id span (user-facing), not a code token. ASCII-only rule
@@ -552,9 +553,9 @@ async function openInfoDialog(ctx, t) {
       dialog.classList.add("tournament-info-dialog");
       const wrap = document.createElement("div");
       wrap.className = "tournament-info";
-      // onStatusClick (Studio only): renders Status as a link that closes the
-      // dialog and jumps to the Standings tab. Absent in Arena, where
-      // Standings is a workspace window with no unambiguous deep-link target.
+      // onStatusClick (Studio only): renders the Games tally as a link that
+      // closes the dialog and jumps to Standings (only when games exist).
+      // Absent in Arena, where Standings has no unambiguous deep-link target.
       const onStatus = ctx.onStatusClick
         ? () => { resolve(); ctx.onStatusClick(detailed); }
         : null;
@@ -603,17 +604,7 @@ function buildInfoContent(ctx, t, onStatusClick) {
     }
   }
   row("ID", idCell);
-  if (onStatusClick) {
-    const link = document.createElement("button");
-    link.type = "button";
-    link.className = "tournament-info-status-link";
-    link.textContent = t.status;
-    link.title = "Show standings";
-    link.addEventListener("click", onStatusClick);
-    row("Status", link);
-  } else {
-    row("Status", t.status);
-  }
+  row("Status", t.status);
   if (t.last_error) {
     const tail = (t.last_error.stderr_tail || []).slice(-10).join("\n");
     const pre = document.createElement("pre");
@@ -631,7 +622,21 @@ function buildInfoContent(ctx, t, onStatusClick) {
     row("Rounds", tpl.rounds);
   }
   row("Parallel games", tpl.games_in_parallel);
-  row("Games", formatGames(t));
+  // Studio-only: link the games tally to Standings, but only once games
+  // exist (idle, or stopped/failed before any played, has none to show).
+  const games = formatGames(t);
+  const hasGames = (t.standings?.games ?? 0) > 0;
+  if (onStatusClick && hasGames) {
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "tournament-info-games-link";
+    link.textContent = games;
+    link.title = SHOW_STANDINGS_TITLE;
+    link.addEventListener("click", onStatusClick);
+    row("Games", link);
+  } else {
+    row("Games", games);
+  }
   if (tpl.tournament_type === "gauntlet") row("Seeds", tpl.seeds);
   row("Ponder", tpl.ponder ? "On" : "Off");
   row("CPU affinity", tpl.pin_affinity ? "Pinned" : "Off");
