@@ -694,12 +694,17 @@ function buildInfoContent(ctx, t, onStatusClick) {
 
 // Shared dialog body for both create and edit flows.
 // Returns a Promise that resolves to {name, template, engines} or null.
-// Fold book fields into the form's initialValues in-place. Edit/Duplicate pass
-// the tournament's own engine_defaults snapshot (initialBook) -- authoritative,
-// used as-is so a deliberately book-less tournament is NOT re-seeded from
-// Common. Only a fresh create (no initialBook) falls back to Common defaults.
+// Fold book fields into the form's initialValues in-place.
+//
+// Edit/Duplicate pass the tournament's engine_defaults snapshot (initialBook).
+// A snapshot that CARRIES a book_path key is authoritative -- used as-is, so a
+// deliberately book-less tournament (book_path: null) is NOT re-seeded. A
+// legacy snapshot predating book support LACKS the key entirely; that -- like a
+// fresh create (no initialBook) -- falls back to the Common defaults so edits
+// and duplicates start from a sensible book.
 function seedBookDefaults(defaults, initialBook, saved) {
-  if (initialBook) {
+  const hasFrozenBook = initialBook && "book_path" in initialBook;
+  if (hasFrozenBook) {
     for (const k of BOOK_KEYS) defaults[k] = initialBook[k] ?? null;
     return;
   }
