@@ -12,6 +12,17 @@ const TOURNAMENT_TYPES = [
   { value: "gauntlet",   label: "Gauntlet" },
 ];
 
+// Template keys carrying the per-tournament opening-book snapshot. Shared with
+// the dialog + settings-tab seeding so the set is defined once.
+export const BOOK_KEYS = ["book_path", "book_plies", "book_order"];
+
+const ADJUDICATION_SUMMARY = "Adjudication";
+const OPENING_BOOK_SUMMARY = "Opening book";
+const OPENING_BOOK_LABEL = "Opening book";
+const BOOK_PICK_TITLE = "Pick opening book (.epd / .pgn)";
+const BOOK_ORDER_DEFAULT = "sequential";
+const BOOK_ORDER_OPTIONS = [["sequential", "Sequential"], ["random", "Random"]];
+
 const PONDER_TITLE = "Engines think on opponent's time.";
 const AFFINITY_TITLE =
   "Pass -affinity to fastchess so each game-slot is bound to fixed cores. " +
@@ -19,6 +30,121 @@ const AFFINITY_TITLE =
 const RESTART_TITLE =
   "Restart each engine between games (fastchess restart=on). Clears " +
   "hash/internal state for a clean start; slower than reusing processes.";
+
+
+// Shared accordion group name: same value on every section disclosure makes
+// wa-details close the others when one opens (native, no JS).
+const DISCLOSURE_GROUP = "ttf-section";
+
+// Accordion with exactly one panel open at all times: the first starts open.
+// Opening another closes the prior via the shared `name`. Collapsing the open
+// panel (clicking its own header) instead advances to the next panel (wrap-
+// around), so the set is never all-collapsed.
+function enforceOneOpen(items) {
+  if (!items.length) return;
+  items[0].open = true;
+  // A panel opening in the same tick means the incoming hide is an accordion
+  // swap (another panel took over) -- leave it. A hide with no such show is a
+  // user self-collapse: roll to the next panel so the set is never all-closed.
+  let swapping = false;
+  for (const d of items) {
+    d.addEventListener("wa-show", (ev) => {
+      if (ev.target !== d) return;
+      swapping = true;
+      requestAnimationFrame(() => { swapping = false; });
+    });
+    d.addEventListener("wa-hide", (ev) => {
+      if (ev.target !== d || swapping) return;
+      const next = items[(items.indexOf(d) + 1) % items.length];
+      requestAnimationFrame(() => { next.open = true; });
+    });
+  }
+}
+
+// Wrap a section in a collapsed disclosure with the chevron beside the label
+// (icon-placement="start"), so the header reads left-to-right: > Summary.
+// All share DISCLOSURE_GROUP so only one is open at a time.
+function collapsedDisclosure(summary, body, className) {
+  const d = document.createElement("wa-details");
+  d.summary = summary;
+  d.iconPlacement = "start";
+  d.name = DISCLOSURE_GROUP;
+  d.className = className;
+  d.appendChild(body);
+  return d;
+}
+
+
+// Opening-book section: a path row (via the shared pathRow builder) plus a
+// ply-depth input and an order select. Depth/order grey out until a book is
+// set. Returns the section element and getBook() -> {book_path, book_plies,
+// book_order} for getValues to fold in. pathRow may be null (no file picker
+// wired); then the section is omitted and getBook returns {}.
+function buildOpeningBookSection(initialValues, pathRow) {
+  if (!pathRow) return { section: null, getBook: () => ({}), validateBook: () => null, pliesInput: null };
+  let bookPath = initialValues.book_path || "";
+
+  const plies = document.createElement("wa-input");
+  plies.size = "small";
+  plies.type = "number";
+  plies.setAttribute("min", "1");
+  plies.setAttribute("step", "1");
+  plies.setAttribute("autocomplete", "off");
+  plies.label = "Book ply depth";
+  plies.placeholder = "engine default";
+  if (initialValues.book_plies != null) plies.value = String(initialValues.book_plies);
+
+  const order = document.createElement("wa-select");
+  order.size = "small";
+  order.label = "Order";
+  order.value = initialValues.book_order ?? BOOK_ORDER_DEFAULT;
+  for (const [val, label] of BOOK_ORDER_OPTIONS) {
+    const o = document.createElement("wa-option");
+    o.value = val;
+    o.textContent = label;
+    order.append(o);
+  }
+
+  const setEnabled = (on) => { plies.disabled = !on; order.disabled = !on; };
+  setEnabled(!!bookPath);
+
+  const row = pathRow(
+    OPENING_BOOK_LABEL, bookPath, "file", BOOK_PICK_TITLE,
+    (p) => { bookPath = p; setEnabled(!!p); },
+    { editable: true, placeholder: "(none)" },
+  );
+
+  const opts = document.createElement("div");
+  opts.className = "ttf-book-opts";
+  opts.append(plies, order);
+
+  const section = document.createElement("div");
+  section.className = "ttf-book";
+  section.append(row, opts);
+
+  // Always emit book_path (empty string when cleared) so the server can tell
+  // "no book" from "unset" -- an omitted key falls back to Common, an explicit
+  // "" turns the book off. Depth/order only travel when a path is set.
+  const getBook = () => {
+    const out = { book_path: bookPath };
+    if (!bookPath) return out;
+    if (plies.value !== "" && plies.value != null) out.book_plies = Number(plies.value);
+    out.book_order = order.value;
+    return out;
+  };
+
+  // Ply depth (when a book is set and a value is entered) must be a positive
+  // integer. Returns an error message or null; the caller decorates the input.
+  const validateBook = () => {
+    if (!bookPath) return null;
+    const raw = (plies.value || "").trim();
+    if (raw === "") return null;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1) return "Book ply depth must be a positive integer.";
+    return null;
+  };
+  return { section, getBook, validateBook, pliesInput: plies };
+}
 
 
 // oversized-ok: form controller -- every section registers fields into a
@@ -30,6 +156,7 @@ export function mountTournamentTemplateForm({
   container,
   initialValues = {},
   syzygyPath = "",
+  pathRow = null,
 }) {
   container.innerHTML = "";
   container.classList.add("tournament-template-form");
@@ -80,13 +207,21 @@ export function mountTournamentTemplateForm({
   const seedsInput = addInput("seeds", "Seeds", { type: "number", min: 1, defaultValue: 1 });
   grid.appendChild(seedsInput);
 
+  // Cap the spinner at engines-1 (a seed needs at least one non-seed to face);
+  // validate() still guards on submit. Clamp any over-max current value down.
+  function setMaxSeeds(numEngines) {
+    const max = Math.max(1, (numEngines || 2) - 1);
+    seedsInput.setAttribute("max", String(max));
+    if (Number(seedsInput.value) > max) seedsInput.value = String(max);
+  }
+
   function syncSeedsVisibility() {
     const isGauntlet = typeSelect.value === "gauntlet";
     seedsInput.style.display = isGauntlet ? "" : "none";
     grid.classList.toggle("ttf-grid--no-seeds", !isGauntlet);
   }
   syncSeedsVisibility();
-  typeSelect.addEventListener("wa-change", syncSeedsVisibility);
+  typeSelect.addEventListener("change", syncSeedsVisibility);
 
   // ---- Ponder + Affinity (single row) -----------------------------------
 
@@ -237,7 +372,21 @@ export function mountTournamentTemplateForm({
   resignBlock.sw.addEventListener("change", () => syncEnabled(resignBlock, resignFields));
   drawBlock.sw.addEventListener("change", () => syncEnabled(drawBlock, drawFields));
 
-  container.append(grid, switchRow, adjSection);
+  // Collapsible sections live in a fixed-height area (so expanding never grows
+  // the dialog) and behave as an accordion with EXACTLY one open at all times.
+  const adjDetails = collapsedDisclosure(ADJUDICATION_SUMMARY, adjSection, "ttf-details");
+  const { section: bookSection, getBook, validateBook, pliesInput } =
+    buildOpeningBookSection(initialValues, pathRow);
+  if (pliesInput) inputs["book_plies"] = pliesInput;
+  const bookDetails = bookSection
+    ? collapsedDisclosure(OPENING_BOOK_SUMMARY, bookSection, "ttf-details") : null;
+
+  const sections = document.createElement("div");
+  sections.className = "ttf-sections";
+  sections.appendChild(adjDetails);
+  if (bookDetails) sections.appendChild(bookDetails);
+  container.append(grid, switchRow, sections);
+  enforceOneOpen([adjDetails, bookDetails].filter(Boolean));
 
   // ---- Public API --------------------------------------------------------
 
@@ -282,6 +431,7 @@ export function mountTournamentTemplateForm({
         score:      Number(drawScore.value),
       };
     }
+    Object.assign(out, getBook());
     return out;
   }
 
@@ -322,6 +472,8 @@ export function mountTournamentTemplateForm({
       if (!Number.isFinite(mc) || mc < 1) push("resign.movecount", "Resign moves must be ≥ 1.");
       if (!Number.isFinite(sc) || sc < 1) push("resign.score", "Resign score must be > 0 cp.");
     }
+    const bookErr = validateBook();
+    if (bookErr) push("book_plies", bookErr);
     if (drawBlock.sw.checked) {
       const mn = Number(drawStart.value);
       const mc = Number(drawMoves.value);
@@ -342,14 +494,14 @@ export function mountTournamentTemplateForm({
       const clear = () => {
         inp.classList.remove("ttf-invalid");
         inp.removeEventListener("input", clear);
-        inp.removeEventListener("wa-change", clear);
+        inp.removeEventListener("change", clear);
       };
       inp.addEventListener("input", clear);
-      inp.addEventListener("wa-change", clear);
+      inp.addEventListener("change", clear);
     }
 
     return { ok: errors.length === 0, errors };
   }
 
-  return { getValues, validate, applySprt };
+  return { getValues, validate, applySprt, setMaxSeeds };
 }

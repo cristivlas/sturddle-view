@@ -453,6 +453,10 @@ def test_get_settings(client):
     assert "default_template" in body
     assert "fastchess_detected" in body
     assert "engine_default_syzygy_path" in body
+    # Book defaults are surfaced so the tourney form can seed from Common.
+    assert "engine_default_book_path" in body
+    assert "engine_default_book_plies" in body
+    assert "engine_default_book_order" in body
 
 
 def test_put_settings_updates(client, tmp_path):
@@ -693,6 +697,130 @@ def test_create_freezes_unset_engine_defaults_as_none(client, settings):
         "threads": None, "hash_mb": None, "syzygy_path": None,
         "book_path": None, "book_plies": None, "book_order": None,
     }
+
+
+def test_create_book_from_template_overrides_settings(client, settings):
+    # Book fields are per-tournament: the template payload wins over Common
+    # settings. Non-book defaults (threads/hash/syzygy) still freeze from
+    # settings.
+    settings.engine_default_threads = 4
+    settings.engine_default_syzygy_path = "/tb/syzygy"
+    settings.engine_default_book_path = "/common/book.pgn"
+    settings.engine_default_book_plies = 12
+    settings.engine_default_book_order = "sequential"
+
+    body = client.post("/api/tournaments", json={
+        "name": "bookover", "engines": _engines_payload(),
+        "template": {
+            "tc": "10+0.1", "rounds": 4,
+            "book_path": "/tourney/book.epd", "book_plies": 6, "book_order": "random",
+        },
+    }).json()
+
+    ed = body["engine_defaults"]
+    assert ed["book_path"] == "/tourney/book.epd"
+    assert ed["book_plies"] == 6
+    assert ed["book_order"] == "random"
+    # Non-book defaults remain frozen from settings.
+    assert ed["threads"] == 4
+    assert ed["syzygy_path"] == "/tb/syzygy"
+
+
+def test_create_book_falls_back_to_settings_when_template_omits(client, settings):
+    # Template without book keys -> Common settings still seed the snapshot.
+    settings.engine_default_book_path = "/common/book.pgn"
+    settings.engine_default_book_plies = 12
+    settings.engine_default_book_order = "sequential"
+
+    body = client.post("/api/tournaments", json={
+        "name": "bookfallback", "engines": _engines_payload(),
+        "template": {"tc": "10+0.1", "rounds": 4},
+    }).json()
+
+    ed = body["engine_defaults"]
+    assert ed["book_path"] == "/common/book.pgn"
+    assert ed["book_plies"] == 12
+    assert ed["book_order"] == "sequential"
+
+
+def test_edit_book_from_template_overrides_settings(client, settings):
+    settings.engine_default_book_path = "/common/book.pgn"
+    created = client.post("/api/tournaments", json={
+        "name": "edit-book", "engines": _engines_payload(),
+        "template": {"tc": "10+0.1", "rounds": 4},
+    }).json()
+    assert created["engine_defaults"]["book_path"] == "/common/book.pgn"
+
+    edited = client.patch(f"/api/tournaments/{created['id']}", json={
+        "name": "edit-book", "engines": _engines_payload(),
+        "template": {"tc": "10+0.1", "rounds": 4, "book_path": "/new/book.epd"},
+    }).json()
+    assert edited["engine_defaults"]["book_path"] == "/new/book.epd"
+
+
+def test_create_empty_book_path_turns_book_off(client, settings):
+    # An explicit empty book_path overrides Common: no book, and dependent
+    # depth/order are cleared too (they'd be meaningless without a path).
+    settings.engine_default_book_path = "/common/book.pgn"
+    settings.engine_default_book_plies = 8
+    settings.engine_default_book_order = "random"
+
+    body = client.post("/api/tournaments", json={
+        "name": "nobook", "engines": _engines_payload(),
+        "template": {"tc": "10+0.1", "rounds": 4, "book_path": ""},
+    }).json()
+
+    ed = body["engine_defaults"]
+    assert ed["book_path"] is None
+    assert ed["book_plies"] is None
+    assert ed["book_order"] is None
+
+
+def test_edit_empty_book_path_turns_book_off(client, settings):
+    # Editing a book-configured tournament to an empty path removes the book;
+    # Common must NOT leak back in.
+    settings.engine_default_book_path = "/common/book.pgn"
+    created = client.post("/api/tournaments", json={
+        "name": "edit-off", "engines": _engines_payload(),
+        "template": {"tc": "10+0.1", "rounds": 4, "book_path": "/t/book.epd", "book_plies": 6},
+    }).json()
+    assert created["engine_defaults"]["book_path"] == "/t/book.epd"
+
+    edited = client.patch(f"/api/tournaments/{created['id']}", json={
+        "name": "edit-off", "engines": _engines_payload(),
+        "template": {"tc": "10+0.1", "rounds": 4, "book_path": ""},
+    }).json()
+    assert edited["engine_defaults"]["book_path"] is None
+    assert edited["engine_defaults"]["book_plies"] is None
+
+
+def test_book_depth_and_order_round_trip(client, settings):
+    body = client.post("/api/tournaments", json={
+        "name": "book-rt", "engines": _engines_payload(),
+        "template": {
+            "tc": "10+0.1", "rounds": 4,
+            "book_path": "/t/b.epd", "book_plies": 10, "book_order": "sequential",
+        },
+    }).json()
+    ed = body["engine_defaults"]
+    assert (ed["book_path"], ed["book_plies"], ed["book_order"]) == \
+        ("/t/b.epd", 10, "sequential")
+
+
+def test_duplicate_carries_book(client, settings):
+    # Duplicate posts a new tournament from the source's frozen values; the
+    # book snapshot must ride along (client re-sends it in the template).
+    src = client.post("/api/tournaments", json={
+        "name": "orig", "engines": _engines_payload(),
+        "template": {"tc": "10+0.1", "rounds": 4, "book_path": "/t/b.epd", "book_plies": 7},
+    }).json()
+    dup = client.post("/api/tournaments", json={
+        "name": "orig (copy)", "engines": _engines_payload(),
+        "template": {"tc": "10+0.1", "rounds": 4, "book_path": "/t/b.epd", "book_plies": 7},
+    }).json()
+    assert dup["engine_defaults"]["book_path"] == "/t/b.epd"
+    assert dup["engine_defaults"]["book_plies"] == 7
+    assert src["engine_defaults"]["book_path"] == dup["engine_defaults"]["book_path"]
 
 
 def test_create_snapshots_engine_options_from_registry(client):

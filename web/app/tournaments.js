@@ -21,7 +21,8 @@ import {
   loadGlobalEngineDefaults,
   resolveResourceParams,
 } from "./tournament-restart.js";
-import { mountTournamentTemplateForm } from "./tournament-template-form.js";
+import { BOOK_KEYS, mountTournamentTemplateForm } from "./tournament-template-form.js";
+import { makePathRow } from "./settings-path-row.js";
 import { mountSprtButton } from "./tournament-sprt-button.js";
 import { formatType, formatResign, formatDraw } from "./tournament-format.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
@@ -693,7 +694,26 @@ function buildInfoContent(ctx, t, onStatusClick) {
 
 // Shared dialog body for both create and edit flows.
 // Returns a Promise that resolves to {name, template, engines} or null.
-async function openTournamentDialog(ctx, { label, actionLabel, initialName, initialEngines, initialTemplate, available, onSubmit, onOpened }) {
+// Fold book fields into the form's initialValues in-place. Edit/Duplicate pass
+// the tournament's own engine_defaults snapshot (initialBook) -- authoritative,
+// used as-is so a deliberately book-less tournament is NOT re-seeded from
+// Common. Only a fresh create (no initialBook) falls back to Common defaults.
+function seedBookDefaults(defaults, initialBook, saved) {
+  if (initialBook) {
+    for (const k of BOOK_KEYS) defaults[k] = initialBook[k] ?? null;
+    return;
+  }
+  const common = {
+    book_path: saved.engine_default_book_path,
+    book_plies: saved.engine_default_book_plies,
+    book_order: saved.engine_default_book_order,
+  };
+  for (const k of BOOK_KEYS) {
+    if (defaults[k] == null && common[k] != null) defaults[k] = common[k];
+  }
+}
+
+async function openTournamentDialog(ctx, { label, actionLabel, initialName, initialEngines, initialTemplate, initialBook, available, onSubmit, onOpened }) {
   // Read the saved defaults fresh from the server store here, not from a
   // per-view settings cache: Arena and Studio refresh that cache differently
   // (Studio not at all), so the shared dialog must own its source of truth.
@@ -703,11 +723,18 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
     initialTemplate ||
     saved.default_template ||
     { tc: "10+0.1", rounds: 10, games_in_parallel: 1 };
+  // Book fields live in the tournament's engine_defaults (Edit/Duplicate) or,
+  // for a fresh create, seed from Tournament settings then Common defaults.
+  seedBookDefaults(defaults, initialBook, saved);
   const sprtDefaults = saved.sprt_defaults;
+  const pathRow = makePathRow(ctx.api);
 
   return showDialog({
     label,
     width: "min(660px, 94vw)",
+    // Tall enough that the body fits the form with a section expanded (the
+    // ttf-sections area reserves a fixed height), so nothing scrolls or shifts.
+    height: "min(780px, 92vh)",
     defaultValue: null,
     body: (resolve, dialog) => {
       const wrap = document.createElement("div");
@@ -742,6 +769,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         container: formHost,
         initialValues: defaults,
         syzygyPath: saved.engine_default_syzygy_path || "",
+        pathRow,
       });
 
       const sprtCtl = mountSprtButton({
@@ -773,9 +801,11 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
       }
       refreshValidity();
       sprtCtl.setAvailable(builder.getEngines().length === 2);
+      tplCtl.setMaxSeeds(builder.getEngines().length);
       nameInput.addEventListener("input", refreshValidity);
       builder.onChange(() => {
         sprtCtl.setAvailable(builder.getEngines().length === 2);
+        tplCtl.setMaxSeeds(builder.getEngines().length);
         refreshValidity();
       });
 
@@ -983,6 +1013,7 @@ async function openEditTournamentDialog(ctx, t) {
     initialName: t.name,
     initialEngines,
     initialTemplate: t.template || null,
+    initialBook: t.engine_defaults || null,
     available,
     onOpened: () => warnDroppedEngines(droppedCount, "applying"),
     onSubmit: async (data) => {
@@ -1052,6 +1083,7 @@ async function openDuplicateTournamentDialog(ctx, t) {
     initialName,
     initialEngines,
     initialTemplate: t.template || null,
+    initialBook: t.engine_defaults || null,
     available,
     onOpened: () => warnDroppedEngines(droppedCount, "creating the copy"),
     onSubmit: async (data) => {

@@ -3986,10 +3986,50 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   }
 }
 
+.tournament-template-form .ttf-sections {
+  display: flex; flex-direction: column; gap: 16px;
+}
+/* Desktop: reserve a FIXED height so opening a section never grows the dialog
+   nor scrolls the body -- the tallest section (Adjudication, single-row fields)
+   plus both collapsed headers. overflow:hidden contains the open panel. On
+   mobile the fields stack (much taller) and the dialog scrolls anyway, so the
+   reserve is dropped there to avoid clipping. */
+@media (min-width: 601px) {
+  .tournament-template-form .ttf-sections {
+    height: 240px;
+    overflow: hidden;
+  }
+}
+
+/* Section disclosures (Adjudication, Opening book): strip wa-details chrome
+   so the header reads as a section label, not a boxed card. Chevron sits left
+   of the label via icon-placement="start"; nudge the gap tighter. */
+.tournament-template-form .ttf-details::part(base) {
+  border: none; background: none;
+}
+.tournament-template-form .ttf-details::part(header) {
+  padding: 0; font-size: 0.75rem; color: var(--muted); gap: 6px;
+}
+.tournament-template-form .ttf-details::part(content) {
+  padding: 10px 0 0;
+}
+
+/* Opening-book section: path row on top, ply-depth + order beneath. */
+.tournament-template-form .ttf-book {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.tournament-template-form .ttf-book-opts {
+  display: grid; gap: 6px;
+  grid-template-columns: 1fr 1fr;
+}
+@media (max-width: 600px) {
+  .tournament-template-form .ttf-book-opts { grid-template-columns: 1fr; }
+}
+
 .inspect-form { display: flex; flex-direction: column; gap: 10px; }
 .inspect-meta { font-size: 0.75rem; }
 
-/* Tournament workspace windows (Slice 8) */
+/* Tournament workspace windows */
 /* opacity: WinBox's fade-in keyframe ends at 0.85 with no closing 100%
    stop, leaving every window permanently faded; force full opacity. */
 .winbox.sturddle-wb {

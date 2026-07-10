@@ -133,8 +133,10 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
   await showDialog({
     label: "Settings",
     width: "min(690px, 94vw)",
-    // Phones get the full vertical share; desktops cap at 580px.
-    height: mqNarrowDialog.matches ? "92vh" : "min(580px, 92vh)",
+    // Phones get the full vertical share; desktops cap high enough that the
+    // Tournament tab's fixed-height disclosure area (ttf-sections) fits without
+    // the body scrolling.
+    height: mqNarrowDialog.matches ? "92vh" : "min(640px, 92vh)",
     body: (resolve, dialog) => {
       // Listeners on long-lived globals (e.g. the mqMobile media query) must
       // be torn down when the dialog closes, or each open leaks a pair and

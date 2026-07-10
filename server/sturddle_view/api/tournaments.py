@@ -162,13 +162,29 @@ _ENGINE_DEFAULT_KEYS = (
     "threads", "hash_mb", "syzygy_path",
     "book_path", "book_plies", "book_order",
 )
+# Book keys are per-tournament: taken from the template payload (which the
+# dialog prefills from settings), not re-read from global Settings. The rest
+# stay frozen from Settings. Missing book keys fall back to Settings.
+_TEMPLATE_BOOK_KEYS = ("book_path", "book_plies", "book_order")
 
 
-def _freeze_engine_defaults(settings) -> dict:
-    return {
+def _freeze_engine_defaults(settings, template: dict | None = None) -> dict:
+    template = template or {}
+    out = {
         k: getattr(settings, f"engine_default_{k}", None)
         for k in _ENGINE_DEFAULT_KEYS
     }
+    # A book key present in the template overrides Settings; absent -> keep the
+    # Settings fallback. An explicit empty book_path means "no book": clear the
+    # dependent depth/order too so stale values don't ride along.
+    for k in _TEMPLATE_BOOK_KEYS:
+        if k in template:
+            out[k] = template[k]
+    if "book_path" in template and not template["book_path"]:
+        out["book_path"] = None
+        out["book_plies"] = None
+        out["book_order"] = None
+    return out
 
 
 def _freeze_engines(payload_engines, request: Request) -> list[dict]:
@@ -365,7 +381,7 @@ def create_tournament(payload: TournamentCreate, request: Request) -> dict:
         raise HTTPException(status_code=400, detail="at least two engines required")
     name = payload.name.strip() or "tournament"
     settings = request.app.state.settings
-    engine_defaults = _freeze_engine_defaults(settings)
+    engine_defaults = _freeze_engine_defaults(settings, payload.template)
     try:
         t = s.create(
             name=name,
@@ -409,7 +425,7 @@ def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Requ
     s = _store(request)
     name = payload.name.strip() or "tournament"
     settings = request.app.state.settings
-    engine_defaults = _freeze_engine_defaults(settings)
+    engine_defaults = _freeze_engine_defaults(settings, payload.template)
     try:
         t = s.update(
             tournament_id,
@@ -595,6 +611,9 @@ def _serialize_settings(s) -> dict:
         "sprt_defaults": dict(s.tournament_sprt_defaults or {}),
         "fastchess_detected": FastchessRunner.detect_binary(s.tournament_fastchess_path),
         "engine_default_syzygy_path": s.engine_default_syzygy_path,
+        "engine_default_book_path": s.engine_default_book_path,
+        "engine_default_book_plies": s.engine_default_book_plies,
+        "engine_default_book_order": s.engine_default_book_order,
     }
 
 
