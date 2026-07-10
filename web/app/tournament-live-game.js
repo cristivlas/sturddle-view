@@ -656,7 +656,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       handlePairedParsed(parsed, msg.thinking_side);
       return;
     }
-    handleParsed(parsed);
+    handleParsed(parsed, !!msg.snapshot);
   });
 
   // Route own/opponent info feeds to the color-fixed panels. Before the
@@ -743,7 +743,9 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     } catch { /* non-fatal: next position message will correct the board */ }
   }
 
-  function handleParsed(p) {
+  // `snapshot`: replayed state from a fresh subscribe -- paint values but
+  // never start clock timers (the `go` may predate the game's end).
+  function handleParsed(p, snapshot = false) {
     switch (p.kind) {
       case "position":
         if (p.fen) {
@@ -776,6 +778,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         lastWtime = p.wtime ?? lastWtime;
         lastBtime = p.btime ?? lastBtime;
         updateClocks(p.wtime, p.btime);
+        if (snapshot) break;
         clockTopEl.classList.remove("active");
         clockBottomEl.classList.toggle("active", !!engineColor);
         if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
