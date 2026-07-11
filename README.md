@@ -1,7 +1,6 @@
 # SturddleView
 
-Browser-based chess GUI for human vs engine play and live observation of headless
-engine tournaments.
+Browser-based chess GUI for human vs engine play and live observation of engine tournaments.
 
 ## Getting started
 
