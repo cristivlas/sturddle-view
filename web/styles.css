@@ -3930,12 +3930,12 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .tournament-template-form .ttf-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr) 9.8em 0.9fr;
+  grid-template-columns: repeat(3, 1fr) 9.815em 0.75fr;
   gap: 8px;
   align-items: end;
 }
 .tournament-template-form .ttf-grid.ttf-grid--no-seeds {
-  grid-template-columns: repeat(3, 1fr) 9.8em;
+  grid-template-columns: repeat(3, 1fr) 9.815em;
 }
 .tournament-template-form .ttf-grid > * { min-width: 0; }
 /* Narrow viewports: collapse the 5-column row (TC, parallel, rounds,
