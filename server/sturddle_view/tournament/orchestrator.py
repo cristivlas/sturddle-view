@@ -1299,7 +1299,9 @@ class Orchestrator:
                     continue
                 # Snapshot replay bypasses coalescing -- these are all
                 # the latest values already, no benefit to slotting.
-                payload = {"proxy_id": proxy_id, "line": line}
+                # ``snapshot`` tells the client to paint state without
+                # starting clock timers (the ``go`` may be stale).
+                payload = {"proxy_id": proxy_id, "line": line, "snapshot": True}
                 if kind == "info":
                     q.put_info(payload)
                 else:
@@ -1349,7 +1351,8 @@ class Orchestrator:
                     raw = snap.get(kind)
                     if raw:
                         payload = {"proxy_id": pid, "line": raw,
-                                   "parsed": parse_uci_line(raw)}
+                                   "parsed": parse_uci_line(raw),
+                                   "snapshot": True}
                         if kind == "info":
                             q.put_info(payload)
                         else:

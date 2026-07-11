@@ -25,3 +25,4 @@ import "../vendor/webawesome/components/option/option.js";
 import "../vendor/webawesome/components/tab-group/tab-group.js";
 import "../vendor/webawesome/components/tab/tab.js";
 import "../vendor/webawesome/components/tab-panel/tab-panel.js";
+import "../vendor/webawesome/components/details/details.js";

@@ -1987,3 +1987,85 @@ def test_forget_drops_memo_so_wipe_reparses(tmp_path):
     assert after["opening"] == "Queen's Gambit Declined"
 
 
+
+# ---------------------------------------------------------------------------
+# Anchored Elo -- ordo fit shifted onto known approximate ratings
+# ---------------------------------------------------------------------------
+
+
+def test_standings_no_ratings_leaves_anchored_none(tmp_path):
+    p = _write_pgn(tmp_path, _game("A", "B", "1-0") + _game("B", "A", "1-0"))
+    s = compute_standings(p)
+    assert all(e.elo_anchored is None for e in s.engines)
+
+
+def test_standings_anchored_single_rated_engine(tmp_path):
+    # Balanced 1-1 -> elo_ordo 0 for both; anchoring A at 3000 shifts both.
+    p = _write_pgn(tmp_path, _game("A", "B", "1-0") + _game("B", "A", "1-0"))
+    s = compute_standings(p, ratings={"A": 3000})
+    by = {e.name: e for e in s.engines}
+    assert by["A"].elo_anchored == pytest.approx(3000, abs=1e-6)
+    assert by["B"].elo_anchored == pytest.approx(3000, abs=1e-6)
+    assert by["A"].to_dict()["elo_anchored"] == pytest.approx(3000, abs=1e-6)
+
+
+def test_standings_anchor_offset_is_mean_over_rated(tmp_path):
+    # Both rated: offset = mean(ratings) - mean(fit). The fit's relative
+    # gap (0 here) is preserved; the input ratings' gap is NOT imposed.
+    p = _write_pgn(tmp_path, _game("A", "B", "1-0") + _game("B", "A", "1-0"))
+    s = compute_standings(p, ratings={"A": 3100, "B": 2900})
+    by = {e.name: e for e in s.engines}
+    assert by["A"].elo_anchored == pytest.approx(3000, abs=1e-6)
+    assert by["B"].elo_anchored == pytest.approx(3000, abs=1e-6)
+
+
+def test_standings_anchor_rating_for_unknown_name_ignored(tmp_path):
+    p = _write_pgn(tmp_path, _game("A", "B", "1-0") + _game("B", "A", "1-0"))
+    s = compute_standings(p, ratings={"Z": 3000})
+    assert all(e.elo_anchored is None for e in s.engines)
+
+
+def test_standings_anchor_skips_purged_engine(tmp_path):
+    # C loses everything -> purged from the fit -> no anchored value;
+    # the surviving single component (A, B) still anchors.
+    body = (
+        _game("A", "B", "1-0") + _game("B", "A", "1-0")
+        + _game("A", "C", "1-0") + _game("B", "C", "1-0")
+    )
+    p = _write_pgn(tmp_path, body)
+    s = compute_standings(p, ratings={"A": 3000})
+    by = {e.name: e for e in s.engines}
+    assert by["C"].elo_ordo is None
+    assert by["C"].elo_anchored is None
+    assert by["A"].elo_anchored is not None
+    assert by["B"].elo_anchored is not None
+
+
+def test_standings_anchor_requires_single_component(tmp_path):
+    # Two disjoint pairs: each fits mean-centered independently, so a
+    # rating in one component says nothing about the other -> no anchor.
+    body = (
+        _game("A", "B", "1-0") + _game("B", "A", "1-0")
+        + _game("C", "D", "1-0") + _game("D", "C", "1-0")
+    )
+    p = _write_pgn(tmp_path, body)
+    s = compute_standings(p, ratings={"A": 3000})
+    assert all(e.elo_anchored is None for e in s.engines)
+    assert any(e.elo_ordo is not None for e in s.engines)
+
+
+def test_standings_anchor_preserves_fit_gap(tmp_path):
+    # A beats B 3-1 -> nonzero ordo gap; anchoring shifts both by the
+    # same constant, so the anchored gap equals the ordo gap.
+    body = (
+        _game("A", "B", "1-0") + _game("B", "A", "0-1")
+        + _game("A", "B", "1-0") + _game("B", "A", "1-0")
+    )
+    p = _write_pgn(tmp_path, body)
+    s = compute_standings(p, ratings={"B": 2800})
+    by = {e.name: e for e in s.engines}
+    assert by["B"].elo_anchored == pytest.approx(2800, abs=1e-6)
+    gap_ordo = by["A"].elo_ordo - by["B"].elo_ordo
+    gap_anchored = by["A"].elo_anchored - by["B"].elo_anchored
+    assert gap_anchored == pytest.approx(gap_ordo, abs=1e-9)
+    assert gap_ordo > 0

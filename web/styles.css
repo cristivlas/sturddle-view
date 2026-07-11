@@ -8,9 +8,15 @@
   /* Bottom strip where minimized WinBoxes dock; tournament-workspace.js
      reads this for layout math (MINIMIZE_FOOTER_H). */
   --wb-min-footer-h: 36px;
-  /* Docked ribbon's edge border; centered board areas reserve --ribbon-w plus
-     this so they clear the ribbon exactly (no 1px eat/gap). */
+  /* Docked ribbon rail width and its edge border; centered board areas and
+     toast stacks reserve --ribbon-w plus this so they clear the ribbon
+     exactly (no 1px eat/gap). */
+  --ribbon-w: 44px;
   --ribbon-border-w: 1px;
+  /* Viewport-edge breathing room beside the moves-list rail; the fork/xgame
+     toast stack aligns to this outer edge, not the ribbon. Paired with
+     RAIL_EDGE_GAP_REM in game-view.js (CSS can't read the JS constant). */
+  --rail-edge-gap: 1rem;
   --accent: #f59e0b;
   --accent-rgb: 245, 158, 11;
   /* TODO: revisit unifying --accent and --accent-line into a single token. */
@@ -957,16 +963,16 @@ svg.cm-chessboard {
 #toast-stack,
 #xgame-toast-stack {
   position: fixed;
-  /* Co-located with the ribbon: default is left; right-ribbon override
-     below moves it to the right edge. Side inset clears the 36px ribbon
-     so toasts don't overlap ribbon buttons; #xgame-toast-stack lives on
-     the opposite (moves-list) side. Longhand on purpose: top/right also
-     override the UA popover inset:0, and bottom stays owned by this rule
-     plus .toast-stack-lifted only. */
+  /* Shared base for both stacks. #toast-stack is ribbon-side: left inset is
+     --ribbon-w to clear the ribbon buttons (right-ribbon override below flips
+     it right). #xgame-toast-stack lives on the opposite (moves-list) side and
+     the override below re-anchors it to --rail-edge-gap, not the ribbon.
+     Longhand on purpose: top/right also override the UA popover inset:0, and
+     bottom stays owned by this rule plus .toast-stack-lifted only. */
   top: auto;
   right: auto;
   bottom: 4px;
-  left: 36px;
+  left: var(--ribbon-w);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -986,7 +992,7 @@ svg.cm-chessboard {
   max-height: none;
   color: inherit;
 }
-#xgame-toast-stack { left: auto; right: 36px; }
+#xgame-toast-stack { left: auto; right: var(--rail-edge-gap); }
 /* Lifted above the WinBox minimize dock when a minimized window actually
    overlaps the stack horizontally; dialogs.js toggles the class. Side
    placement rules set only left/right so this bottom always wins. */
@@ -1278,7 +1284,6 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   --rail-w: 240px;
   --grid-gap: 16px;
   display: grid;
-  --ribbon-w: 36px;
   grid-template-columns: var(--left-rail-w, var(--rail-w)) var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
   grid-template-rows: auto 1fr;
   grid-template-areas:
@@ -1310,6 +1315,7 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   padding: 4px 0;
   position: fixed;
   left: 0; top: var(--arena-ribbon-top, 0); bottom: 0;
+  width: var(--ribbon-w);
   z-index: 10;
   background: var(--panel);
   border-right: var(--ribbon-border-w) solid var(--border-subtle);
@@ -1720,6 +1726,7 @@ body .side-popover.popover-floating {
     position: static;
     flex-direction: row;
     justify-content: center;
+    width: auto;
     padding: 6px 0;
     background: transparent;
     border-right: 0;
@@ -2294,7 +2301,7 @@ wa-dialog .engine-settings-tabs {
   /* Narrow / portrait viewports get a much larger share of the screen
      because the dialog is the *only* surface in view; on desktop the
      dialog is one of many things competing for vertical space. */
-  --engine-settings-panel-h: 40vh;
+  --engine-settings-panel-h: 42vh;
   height: var(--engine-settings-panel-h);
 }
 @media (max-width: 480px) {
@@ -2370,11 +2377,10 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   contain: layout;
   /* Padding budget: 4px each side leaves clearance for input focus
      rings, which the form's scroll container would otherwise clip
-     (scroll containers always clip overflow — `contain` doesn't help).
-     Bottom padding clears the dialog footer overlap. Trade-off: input
-     right edge sits ~4px short of the Save button, but focus rings
-     stay visible. */
-  padding: 4px 4px 28px 4px;
+     (scroll containers always clip overflow -- `contain` doesn't help).
+     Trade-off: input right edge sits ~4px short of the Save button,
+     but focus rings stay visible. */
+  padding: 4px;
 }
 .engine-launch-form {
   display: flex;
@@ -2713,6 +2719,11 @@ wa-dialog .settings-tabs wa-tab-panel[name="general"] > * + * {
 wa-dialog .settings-tabs wa-tab-panel[name="play"] .settings-panel-col {
   width: 440px;
 }
+/* Extra breathing room between the PGN directory row and the clock section:
+   two row-gaps, tied to the shared token so it tracks the settings rhythm. */
+wa-dialog .settings-tabs wa-tab-panel[name="play"] .settings-panel-col > .settings-section:first-of-type {
+  margin-top: calc(var(--settings-row-gap) * 2);
+}
 /* Gameplay tab: pair two short selects (e.g. Human plays as + Eval
    display) on the same line. Each takes equal share. */
 .settings-pair-row {
@@ -2980,7 +2991,6 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 
 /* ---------- Tournaments panel ---------- */
 .tournaments-panel {
-  --ribbon-w: 36px;
   display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0;
 }
 
@@ -3203,7 +3213,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    spans the full viewport height like Play (Arena's is menubar-anchored). */
 .studio-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .studio-body {
-  --ribbon-w: 36px;
   display: flex;
   flex: 1; min-height: 0;
 }
@@ -3654,6 +3663,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   .studio-ribbon {
     position: static;
     flex-direction: row; justify-content: center;
+    width: auto;
     background: transparent;
     border-right: 0; border-bottom: 1px solid var(--border-subtle);
     padding: 6px 0;
@@ -3810,11 +3820,11 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   color: #ffd7d7;
 }
 .tournament-info-default { color: var(--accent); }
-.tournament-info-status-link {
+.tournament-info-games-link {
   background: none; border: none; padding: 0; font: inherit;
   color: var(--accent); cursor: pointer;
 }
-.tournament-info-status-link:hover { text-decoration: underline; }
+.tournament-info-games-link:hover { text-decoration: underline; }
 .tournament-info-error {
   margin: 0;
   padding: 6px 8px;
@@ -3920,12 +3930,12 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .tournament-template-form .ttf-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr) 11em 1fr;
+  grid-template-columns: repeat(3, 1fr) 9.815em 0.75fr;
   gap: 8px;
   align-items: end;
 }
 .tournament-template-form .ttf-grid.ttf-grid--no-seeds {
-  grid-template-columns: repeat(3, 1fr) 11em;
+  grid-template-columns: repeat(3, 1fr) 9.815em;
 }
 .tournament-template-form .ttf-grid > * { min-width: 0; }
 /* Narrow viewports: collapse the 5-column row (TC, parallel, rounds,
@@ -3981,10 +3991,60 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   }
 }
 
+.tournament-template-form .ttf-sections {
+  display: flex; flex-direction: column; gap: 16px;
+}
+/* Desktop: reserve a FIXED height so opening a section never grows the dialog
+   nor scrolls the body -- the tallest section (Adjudication, single-row fields)
+   plus both collapsed headers. overflow:hidden contains the open panel; the
+   padding + negative margin give focus rings room inside the clip box (height
+   includes the vertical padding). On mobile the fields stack (much taller) and
+   the dialog scrolls anyway, so the reserve is dropped there to avoid
+   clipping. */
+@media (min-width: 601px) {
+  .tournament-template-form .ttf-sections {
+    height: 248px;
+    overflow: hidden;
+    padding: 4px;
+    margin: -4px;
+  }
+}
+
+/* Section disclosures (Adjudication, Opening book): strip wa-details chrome
+   so the header reads as a section label, not a boxed card. Chevron sits left
+   of the label via icon-placement="start"; nudge the gap tighter. */
+.tournament-template-form .ttf-details::part(base) {
+  border: none; background: none;
+}
+.tournament-template-form .ttf-details::part(header) {
+  padding: 0; font-size: 0.75rem; color: var(--muted); gap: 6px;
+}
+.tournament-template-form .ttf-details::part(content) {
+  padding: 10px 0 0;
+}
+
+/* Opening-book section: path row on top, ply-depth + order beneath. */
+.tournament-template-form .ttf-book {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.tournament-template-form .ttf-book-opts {
+  display: grid; gap: 6px;
+  grid-template-columns: 1fr 1fr;
+}
+/* The X-cycle toggles these fields' disabled state; WA's opacity/border
+   transition reads as a flash there, so disable it. */
+.tournament-template-form .ttf-book-opts wa-input::part(base),
+.tournament-template-form .ttf-book-opts wa-select::part(combobox) {
+  transition: none;
+}
+@media (max-width: 600px) {
+  .tournament-template-form .ttf-book-opts { grid-template-columns: 1fr; }
+}
+
 .inspect-form { display: flex; flex-direction: column; gap: 10px; }
 .inspect-meta { font-size: 0.75rem; }
 
-/* Tournament workspace windows (Slice 8) */
+/* Tournament workspace windows */
 /* opacity: WinBox's fade-in keyframe ends at 0.85 with no closing 100%
    stop, leaving every window permanently faded; force full opacity. */
 .winbox.sturddle-wb {
@@ -4451,10 +4511,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    docks the ribbon horizontally and is unaffected.
    ------------------------------------------------------------------ */
 body[data-ribbon-side="right"] #toast-stack {
-  left: auto; right: 36px;
+  left: auto; right: var(--ribbon-w);
 }
 body[data-ribbon-side="right"] #xgame-toast-stack {
-  left: 36px; right: auto;
+  left: var(--rail-edge-gap); right: auto;
 }
 @media (max-width: 800px) {
   /* Ribbon is horizontal at top on mobile, so toasts don't need a side

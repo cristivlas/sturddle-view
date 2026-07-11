@@ -13,7 +13,7 @@ import { guard } from "./wb-utils.js";
 
 export function makePathRow(api) {
   return function pathRow(labelText, value, mode, pickerTitle, onPick, opts = {}) {
-    const { hint, editable = false, placeholder } = opts;
+    const { hint, editable = false, placeholder, onClear } = opts;
     const row = document.createElement("div");
     row.className = "settings-tournament-path-row";
     const lbl = document.createElement("div");
@@ -51,6 +51,7 @@ export function makePathRow(api) {
     clearIcon.setAttribute("name", "xmark");
     clear.appendChild(clearIcon);
     const syncClear = () => {
+      if (onClear) return;
       clear.disabled = !(field.value || "").trim();
     };
 
@@ -77,7 +78,10 @@ export function makePathRow(api) {
       syncClear();
       onPick(path);
     }));
+    // With onClear the caller owns the X semantics (e.g. a tri-state cycle),
+    // including when it is enabled -- so the empty-disables-X default is off.
     clear.addEventListener("click", () => {
+      if (onClear) return onClear();
       field.value = "";
       syncClear();
       onPick("");
@@ -86,6 +90,10 @@ export function makePathRow(api) {
     inner_actions.append(browse, clear);
     inner.append(field, inner_actions);
     row.append(lbl, inner);
+    // Expose the working parts so tri-state callers can drive placeholder,
+    // value, and X tooltip without reaching through fragile selectors.
+    row.pathField = field;
+    row.clearBtn = clear;
     return row;
   };
 }

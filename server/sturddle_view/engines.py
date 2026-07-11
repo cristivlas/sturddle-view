@@ -187,6 +187,9 @@ class Engine:
     # Per-engine environment overrides. Overlaid on top of the parent
     # process env at spawn time (parent env is always inherited).
     env: dict[str, str] = field(default_factory=dict)
+    # Approximate logistic Elo (e.g. from CCRL/CEGT). Display-only:
+    # anchors tournament ordo fits; never affects play or drift checks.
+    rating: int | None = None
 
     @staticmethod
     def new(
@@ -197,6 +200,7 @@ class Engine:
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
         uci_name: str | None = None,
+        rating: int | None = None,
     ) -> "Engine":
         return Engine(
             id=uuid.uuid4().hex[:12],
@@ -207,7 +211,13 @@ class Engine:
             option_schema=option_schema or {},
             args=list(args or []),
             env=dict(env or {}),
+            rating=rating,
         )
+
+
+# Sentinel for update() kwargs where None is a meaningful value
+# (e.g. rating=None clears the rating; UNSET leaves it untouched).
+UNSET: object = object()
 
 
 class EngineNotFoundError(KeyError):
@@ -328,6 +338,7 @@ class EngineRegistry:
                 option_schema=entry.get("option_schema", {}),
                 args=args,
                 env=env,
+                rating=entry.get("rating"),
             )
             engines[e.id] = e
         self._engines = engines
@@ -391,6 +402,7 @@ class EngineRegistry:
         env: dict[str, str] | None = None,
         auto_suffix: bool = False,
         uci_name: str | None = None,
+        rating: int | None = None,
     ) -> Engine:
         self._ensure_loaded()
         validate_launch_profile(args, env)
@@ -409,6 +421,7 @@ class EngineRegistry:
             args=args,
             env=env,
             uci_name=uci_name,
+            rating=rating,
         )
         self._engines[engine.id] = engine
         self._save()
@@ -426,6 +439,7 @@ class EngineRegistry:
         env: dict[str, str] | None = None,
         uci_name: str | None = None,
         auto_suffix: bool = False,
+        rating: int | None | object = UNSET,
     ) -> Engine:
         self._ensure_loaded()
         validate_launch_profile(args, env)
@@ -452,6 +466,8 @@ class EngineRegistry:
             engine.env = dict(env)
         if uci_name is not None:
             engine.uci_name = uci_name
+        if rating is not UNSET:
+            engine.rating = rating
         self._save()
         return engine
 

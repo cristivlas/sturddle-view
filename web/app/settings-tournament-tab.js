@@ -40,10 +40,19 @@ export function buildTournamentTab({ tournamentInitial, putTournamentSettings, p
 
   const tplHost = document.createElement("div");
   tplHost.className = "settings-tournament-tpl-mount";
+  // Book tri-state: this tab inherits from the Common book; raw emit keeps
+  // the inherit state as absent keys in the stored default_template.
   const tplCtl = mountTournamentTemplateForm({
     container: tplHost,
     initialValues: tournamentInitial.default_template || {},
     syzygyPath: tournamentInitial.engine_default_syzygy_path || "",
+    pathRow,
+    inheritedBook: {
+      path: tournamentInitial.engine_default_book_path,
+      plies: tournamentInitial.engine_default_book_plies,
+      order: tournamentInitial.engine_default_book_order,
+    },
+    rawBookEmit: true,
   });
   tournamentPanel.appendChild(tplHost);
 

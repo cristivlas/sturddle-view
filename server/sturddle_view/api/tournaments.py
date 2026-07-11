@@ -32,6 +32,7 @@ from ..auth import AUTH_COOKIE, check_token_value, origin_ok, require_token
 from ..env_utils import env_bool
 from ..engines import (
     EngineNotFoundError,
+    EngineRegistry,
     InvalidLaunchProfileError,
     validate_launch_profile,
 )
@@ -97,6 +98,10 @@ class EngineRef(BaseModel):
     # create/edit; accepted on input so a direct API edit can round-trip
     # a snapshot whose engine was since deleted from the registry.
     options: dict[str, Any] | None = None
+    # Frozen approximate-Elo snapshot, same lifecycle as ``options``.
+    # Fallback only: standings prefer the live registry rating (display-
+    # only, so edits re-anchor past tournaments); the drift gate ignores it.
+    rating: int | None = None
 
     @field_validator("args", "env")
     @classmethod
@@ -157,33 +162,77 @@ _ENGINE_DEFAULT_KEYS = (
     "threads", "hash_mb", "syzygy_path",
     "book_path", "book_plies", "book_order",
 )
+# Book keys are per-tournament: taken from the template payload (which the
+# dialog prefills from settings), not re-read from global Settings. The rest
+# stay frozen from Settings. Missing book keys fall back to Settings.
+_TEMPLATE_BOOK_KEYS = ("book_path", "book_plies", "book_order")
 
 
-def _freeze_engine_defaults(settings) -> dict:
-    return {
+def _freeze_engine_defaults(settings, template: dict | None = None) -> dict:
+    template = template or {}
+    out = {
         k: getattr(settings, f"engine_default_{k}", None)
         for k in _ENGINE_DEFAULT_KEYS
     }
+    # A book key present in the template overrides Settings; absent -> keep the
+    # Settings fallback. An explicit empty book_path means "no book": clear the
+    # dependent depth/order too so stale values don't ride along.
+    for k in _TEMPLATE_BOOK_KEYS:
+        if k in template:
+            out[k] = template[k]
+    if "book_path" in template and not template["book_path"]:
+        out["book_path"] = None
+        out["book_plies"] = None
+        out["book_order"] = None
+    return out
 
 
 def _freeze_engines(payload_engines, request: Request) -> list[dict]:
     """Snapshot the picked engines into the tournament: the client-sent
     ref (id/name/cmd/args/env) plus each engine's current registry UCI
-    options. An engine missing from the registry keeps whatever options
-    the caller round-tripped (edit after the engine was deleted). The
-    key is omitted when there are no options either way."""
+    options and rating. An engine missing from the registry keeps
+    whatever the caller round-tripped (edit after the engine was
+    deleted). Keys are omitted when unset either way."""
     reg = getattr(request.app.state, "engines", None)
     out = []
     for e in payload_engines:
         ref = e.model_dump(exclude_none=True)
         if reg is not None:
             try:
-                ref["options"] = dict(reg.get(ref["id"]).options or {})
+                live = reg.get(ref["id"])
             except EngineNotFoundError:
                 pass
+            else:
+                ref["options"] = dict(live.options or {})
+                ref["rating"] = live.rating
         if not ref.get("options"):
             ref.pop("options", None)
+        if ref.get("rating") is None:
+            ref.pop("rating", None)
         out.append(ref)
+    return out
+
+
+def _resolve_ratings(t, registry: EngineRegistry | None) -> dict[str, int]:
+    """Standings-name -> approximate Elo for a tournament's engines.
+
+    Live registry value first (matched by frozen ref id, then name, then
+    cmd -- mirrors the client's buildEngineMatcher), falling back to the
+    frozen ref's snapshot when the engine was deleted. A live match with
+    no rating is an intentional clear, not a fallback case."""
+    live = registry.list() if registry is not None else []
+    by_id = {e.id: e for e in live}
+    by_name = {e.name: e for e in live}
+    by_cmd = {e.path: e for e in live}
+    out: dict[str, int] = {}
+    for ref in t.engines or []:
+        name = ref.get("name")
+        if not name:
+            continue
+        e = by_id.get(ref.get("id")) or by_name.get(name) or by_cmd.get(ref.get("cmd"))
+        rating = e.rating if e is not None else ref.get("rating")
+        if rating is not None:
+            out[name] = rating
     return out
 
 
@@ -263,6 +312,7 @@ def _serialize(
     with_standings: bool = False,
     store: TournamentStore | None = None,
     orch: Orchestrator | None = None,
+    registry: EngineRegistry | None = None,
 ) -> dict:
     out = t.to_dict()
     if (with_stats or with_standings) and store is not None:
@@ -270,6 +320,7 @@ def _serialize(
         try:
             standings = compute_standings(
                 store.pgn_path(t.id), tournament_type=tournament_type,
+                ratings=_resolve_ratings(t, registry),
             ).to_dict()
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
@@ -314,7 +365,8 @@ def list_tournaments(request: Request) -> dict:
     return {
         "active_id": _orch(request).active_id(),
         "tournaments": [
-            _serialize(t, with_standings=True, store=s, orch=_orch(request))
+            _serialize(t, with_standings=True, store=s, orch=_orch(request),
+                       registry=getattr(request.app.state, "engines", None))
             for t in s.list()
         ],
     }
@@ -329,7 +381,7 @@ def create_tournament(payload: TournamentCreate, request: Request) -> dict:
         raise HTTPException(status_code=400, detail="at least two engines required")
     name = payload.name.strip() or "tournament"
     settings = request.app.state.settings
-    engine_defaults = _freeze_engine_defaults(settings)
+    engine_defaults = _freeze_engine_defaults(settings, payload.template)
     try:
         t = s.create(
             name=name,
@@ -351,7 +403,8 @@ def get_tournament(tournament_id: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="tournament not found") from e
     except CorruptStateError as e:
         raise HTTPException(status_code=500, detail=f"corrupt state: {e}") from e
-    return _serialize(t, with_stats=True, store=s, orch=_orch(request))
+    return _serialize(t, with_stats=True, store=s, orch=_orch(request),
+                      registry=getattr(request.app.state, "engines", None))
 
 
 @router.patch("/api/tournaments/{tournament_id}")
@@ -372,7 +425,7 @@ def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Requ
     s = _store(request)
     name = payload.name.strip() or "tournament"
     settings = request.app.state.settings
-    engine_defaults = _freeze_engine_defaults(settings)
+    engine_defaults = _freeze_engine_defaults(settings, payload.template)
     try:
         t = s.update(
             tournament_id,
@@ -558,6 +611,9 @@ def _serialize_settings(s) -> dict:
         "sprt_defaults": dict(s.tournament_sprt_defaults or {}),
         "fastchess_detected": FastchessRunner.detect_binary(s.tournament_fastchess_path),
         "engine_default_syzygy_path": s.engine_default_syzygy_path,
+        "engine_default_book_path": s.engine_default_book_path,
+        "engine_default_book_plies": s.engine_default_book_plies,
+        "engine_default_book_order": s.engine_default_book_order,
     }
 
 

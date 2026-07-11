@@ -14,6 +14,9 @@ const STANDINGS_COL_PCTS_KEY = STORAGE_KEY.TOURNAMENTS_STANDINGS_COL_PCTS;
 const STANDINGS_DEFAULT_PCTS = [25, 7, 7, 7, 7, 7, 8, 14];
 const STANDINGS_MIN_PCT = 4;
 
+// Ordo-cell tooltip when the fit is anchored to known engine ratings.
+const ANCHORED_TITLE = "Absolute Elo, anchored to rated engines";
+
 export function makeStandingsBody() {
   const el = document.createElement("div");
   el.className = "wb-standings";
@@ -83,9 +86,13 @@ export function renderStandings(el, detail, studio = false) {
       const eloCell = e.elo == null
         ? "--"
         : fmtSignedElo(e.elo) + fmtMargin(e.elo_margin_95);
-      const ordoCell = e.elo_ordo == null
-        ? "--"
-        : fmtSignedElo(e.elo_ordo) + fmtMargin(e.elo_ordo_margin_95);
+      // Anchored (absolute, unsigned) when any engine carries a known
+      // rating; mean-centered signed relative otherwise.
+      const ordoCell = e.elo_anchored != null
+        ? `<span title="${ANCHORED_TITLE}">${Math.round(e.elo_anchored)}${fmtMargin(e.elo_ordo_margin_95)}</span>`
+        : e.elo_ordo == null
+          ? "--"
+          : fmtSignedElo(e.elo_ordo) + fmtMargin(e.elo_ordo_margin_95);
       return `
       <tr>
         <td class="wb-eng-name" title="${escapeHtml(e.name)}">${escapeHtml(e.name)}</td>

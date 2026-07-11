@@ -1,3 +1,9 @@
+// Last path segment (handles / and \); "" for empty input.
+export function basename(p) {
+  if (!p) return "";
+  return String(p).replace(/[\\/]+$/, "").split(/[\\/]/).pop() || String(p);
+}
+
 // Read a px-valued CSS custom property from the element matching
 // `selector` (default: document root), with a numeric fallback when the
 // var is unset, zero, or unparsable.
@@ -9,7 +15,7 @@ export function cssVarPx(name, fallback, selector) {
 
 // Ribbon strip width; matches the `--ribbon-w` CSS var on the
 // perspective's grid/body. Callers decide which edge(s) to reserve.
-const RIBBON_W_FALLBACK_PX = 36;
+const RIBBON_W_FALLBACK_PX = 44;
 export function ribbonWidthPx(selector) {
   return cssVarPx("--ribbon-w", RIBBON_W_FALLBACK_PX, selector);
 }
@@ -155,6 +161,14 @@ export function markSelectable(el, { rows = null, target = null } = {}) {
   el.setAttribute(SELECTABLE_ATTR, "");
   if (rows) el.setAttribute(ROWS_ATTR, rows);
   if (target) el._selTarget = target;
+}
+
+// A markSelectable region's rows are `user-select: text`, so a double/triple
+// click on a row that drives an action (select/open/commit) paints a word or
+// paragraph selection first. Attach to the list container to cancel the
+// multi-click text gesture; single-click, dblclick, and drag-select still work.
+export function suppressMultiClickSelect(el) {
+  el.addEventListener("mousedown", (ev) => { if (ev.detail > 1) ev.preventDefault(); });
 }
 
 const closestRegion = (node) => {
