@@ -13,6 +13,17 @@ import { installSelection } from "./wb-utils.js";
 
 installSelection();
 
+// F11 toggles native fullscreen ("theater mode") in the desktop shell via the
+// pywebview bridge -- the OS/browser F11 handling doesn't apply to the
+// chromeless native window, so this is a no-op outside desktop mode.
+window.addEventListener("keydown", (ev) => {
+  if (ev.key !== "F11") return;
+  const toggle = window.pywebview?.api?.toggle_fullscreen;
+  if (!toggle) return;
+  ev.preventDefault();
+  toggle();
+});
+
 // Auth is carried by the HttpOnly cookie set during the /auth handshake.
 const token = "";
 

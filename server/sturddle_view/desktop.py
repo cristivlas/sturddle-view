@@ -86,6 +86,11 @@ class JsApi:
             return {"ok": False, "error": str(exc), "path": str(path)}
         return {"ok": True, "path": str(path)}
 
+    def toggle_fullscreen(self) -> None:
+        window = self._window
+        if window is not None:
+            window.toggle_fullscreen()
+
 
 def _port_in_use(host: str, port: int) -> bool:
     """True iff binding (host, port) fails with address-in-use/permission.
