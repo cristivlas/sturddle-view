@@ -28,6 +28,15 @@ export function headerBottomPx() {
   return h ? Math.round(h.getBoundingClientRect().bottom) : HEADER_H_FALLBACK_PX;
 }
 
+// Hover tooltip showing the full value on inputs that may overflow.
+// Tracks user edits; returns the updater for programmatic value changes.
+export function syncTooltip(input) {
+  const update = () => { input.title = input.value || ""; };
+  input.addEventListener("input", update);
+  update();
+  return update;
+}
+
 // Coalesce repeated calls into one requestAnimationFrame: however many
 // times the returned schedule() fires before the frame, fn runs once.
 // cancel() drops a pending frame.

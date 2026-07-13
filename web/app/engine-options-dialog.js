@@ -6,7 +6,7 @@
 // profile) so the user sees what the new launch profile actually exposes.
 
 import { showDialog, pickFile, toast, reportError } from "./dialogs.js";
-import { guard } from "./wb-utils.js";
+import { guard, syncTooltip } from "./wb-utils.js";
 import { mqNarrowDialog } from "./breakpoints.js";
 
 const PATH_NAME_RE = /(Path|File|Dir)$/i;
@@ -99,6 +99,7 @@ function buildField(name, entry, current, ctx) {
         text.addEventListener("input", () => {
           ctx.values[name] = text.value;
         });
+        const syncTitle = syncTooltip(text);
         const browse = document.createElement("wa-button");
         browse.size = "small";
         browse.title = "Browse…";
@@ -114,6 +115,7 @@ function buildField(name, entry, current, ctx) {
           });
           if (picked) {
             text.value = picked;
+            syncTitle();
             ctx.values[name] = picked;
           }
         }));
@@ -125,6 +127,7 @@ function buildField(name, entry, current, ctx) {
         input.addEventListener("input", () => {
           ctx.values[name] = input.value;
         });
+        syncTooltip(input);
       }
       break;
     }
@@ -197,6 +200,7 @@ function buildLaunchTab(engine, launchState) {
         launchState.argsRows[idx] = input.value;
         syncArgs();
       });
+      syncTooltip(input);
       const removeBtn = document.createElement("wa-button");
       removeBtn.size = "small";
       removeBtn.appearance = "plain";
@@ -300,6 +304,8 @@ function buildLaunchTab(engine, launchState) {
         syncEnv();
         renderEnvRows();
       });
+      syncTooltip(keyInput);
+      syncTooltip(valInput);
       row.append(keyInput, valInput, removeBtn);
       envGrid.appendChild(row);
     });
@@ -409,6 +415,7 @@ export function showEngineOptionsDialog({
         currentName = nameInput.value;
         nameDerived = false;
       });
+      syncTooltip(nameInput);
       nameRow.append(nameLabel, nameInput);
       form.appendChild(nameRow);
 

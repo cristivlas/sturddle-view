@@ -9,7 +9,7 @@
 // bound to the dialog's api (for the file picker).
 
 import { pickFile } from "./dialogs.js";
-import { guard } from "./wb-utils.js";
+import { guard, syncTooltip } from "./wb-utils.js";
 
 export function makePathRow(api) {
   return function pathRow(labelText, value, mode, pickerTitle, onPick, opts = {}) {
@@ -50,7 +50,9 @@ export function makePathRow(api) {
     const clearIcon = document.createElement("wa-icon");
     clearIcon.setAttribute("name", "xmark");
     clear.appendChild(clearIcon);
+    const syncTitle = syncTooltip(field);
     const syncClear = () => {
+      syncTitle();
       if (onClear) return;
       clear.disabled = !(field.value || "").trim();
     };
@@ -81,7 +83,11 @@ export function makePathRow(api) {
     // With onClear the caller owns the X semantics (e.g. a tri-state cycle),
     // including when it is enabled -- so the empty-disables-X default is off.
     clear.addEventListener("click", () => {
-      if (onClear) return onClear();
+      if (onClear) {
+        onClear();
+        syncClear();
+        return;
+      }
       field.value = "";
       syncClear();
       onPick("");
