@@ -7,6 +7,9 @@
 // grid (.play-dock-left). Dock state is persisted in localStorage; when
 // two or more windows are docked, drag-grips between adjacent slots
 // resize them (per-slot flex-grow ratios stored in DOCK_GROW_KEY).
+// Besides the header buttons, windows dock/undock by drag: dropping a
+// floating title bar on the dock column docks; dragging a slot header
+// past a small threshold undocks into a float that follows the pointer.
 //
 // The exported createDockableWindow factory is reused by play-commentary-
 // window.js, which supplies its own dock container (.play-comments-host)
@@ -31,6 +34,7 @@ import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
 import {
   AUTOSCROLL_SLACK_LINE_PX,
+  headerBottomPx,
   isPinnedToBottom,
   markSelectable,
   rafCoalesce,
@@ -55,8 +59,14 @@ const UCI_LOG_MAX_LINES = 1000;
 // Once the buffer overflows, trim this many lines in one go instead of
 // one-per-incoming-line -- amortizes the layout cost at high info rates.
 const UCI_LOG_TRIM_CHUNK = 100;
-const HEADER_H = 44; // px -- approximate nav header height
 const WIN_MARGIN = 8; // gap between window edge and WinBox
+// Keep at least this much of a manually dragged window above the viewport
+// bottom so its title bar stays reachable.
+const FLOAT_DRAG_BOTTOM_MARGIN_PX = 44;
+// Pointer travel before a slot-header drag undocks / a title-bar drag
+// shows the dock drop hint; small enough to feel immediate, big enough
+// that a sloppy click doesn't tear a window out.
+const DRAG_DOCK_THRESHOLD_PX = 5;
 
 // Set by play.js on perspective mount/unmount.
 let dockEl = null;
@@ -180,7 +190,7 @@ function winboxBase(title, className, width, height, x, y) {
     minheight: 120,
     x,
     y,
-    top: HEADER_H,
+    top: headerBottomPx(),
     left,
     right,
   };
@@ -399,6 +409,45 @@ function syncDockVisibility() {
   rebuildDockGrips();
 }
 
+function pointerOverEl(el, e) {
+  const r = el.getBoundingClientRect();
+  return e.clientX >= r.left && e.clientX <= r.right &&
+         e.clientY >= r.top && e.clientY <= r.bottom;
+}
+
+// Track a pointer drag against a dock container. Past DRAG_DOCK_THRESHOLD_PX
+// the container shows its drop hint (visible even when dock-empty), hovering
+// it toggles the active state, and onEnd reports whether the pointer was
+// released over the container. Listeners go on document so they survive the
+// originating element being detached mid-drag (slot removal on undock).
+function watchDockDrop(container, eDown, { onFirstMove, onMove, onEnd }) {
+  const x0 = eDown.clientX, y0 = eDown.clientY;
+  let started = false, over = false;
+  const move = (e) => {
+    if (!started) {
+      if (Math.hypot(e.clientX - x0, e.clientY - y0) < DRAG_DOCK_THRESHOLD_PX) return;
+      started = true;
+      container.classList.add("dock-drop-eligible");
+      if (onFirstMove) onFirstMove(e);
+    }
+    over = pointerOverEl(container, e);
+    container.classList.toggle("dock-drop-active", over);
+    if (onMove) onMove(e);
+  };
+  const finish = (drop) => {
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", up);
+    document.removeEventListener("pointercancel", cancel);
+    container.classList.remove("dock-drop-eligible", "dock-drop-active");
+    if (onEnd) onEnd(drop && started && over);
+  };
+  const up = () => finish(true);
+  const cancel = () => finish(false);
+  document.addEventListener("pointermove", move);
+  document.addEventListener("pointerup", up);
+  document.addEventListener("pointercancel", cancel);
+}
+
 function makeDockSlot(title, bodyEl, onUndock, onClose, titleActions) {
   const slot = document.createElement("div");
   slot.className = "dock-slot";
@@ -485,6 +534,70 @@ export function createDockableWindow(config) {
     if (onUserClose) onUserClose();
   }
 
+  // Dragging a slot header past the threshold undocks into a float that
+  // then follows the pointer manually (WinBox's own drag never started, so
+  // we own this one). Dropping back on the dock re-docks. Buttons in the
+  // header keep their click behavior via the closest() guard.
+  function attachSlotDragUndock(slotEl) {
+    const header = slotEl.querySelector(".dock-slot-header");
+    header.addEventListener("pointerdown", (eDown) => {
+      if (eDown.button !== 0 || eDown.target.closest("button")) return;
+      if (isMobileLayout()) return;
+      const container = getDockEl();
+      if (!container) return;
+      eDown.preventDefault(); // no text selection while dragging
+      // Grab offsets: the pointer stays on the same spot of the header
+      // once the slot becomes a floating window.
+      const rect0 = slotEl.getBoundingClientRect();
+      const grabX = eDown.clientX - Math.round(rect0.left);
+      const grabY = eDown.clientY - Math.round(rect0.top);
+      const moveFloatTo = (e) => {
+        if (!wb) return;
+        const vw = window.innerWidth;
+        const x = Math.max(wb.left,
+          Math.min(e.clientX - grabX, vw - wb.right - wb.width));
+        const y = Math.max(wb.top,
+          Math.min(e.clientY - grabY,
+                   window.innerHeight - FLOAT_DRAG_BOTTOM_MARGIN_PX));
+        wb.move(x, y);
+      };
+      watchDockDrop(container, eDown, {
+        onFirstMove(e) {
+          // Tear-off: float at the slot's own position/size. (The header
+          // undock button keeps restoring the last floating geometry.)
+          saved = {
+            x: Math.round(rect0.left), y: Math.round(rect0.top),
+            width: Math.round(rect0.width), height: Math.round(rect0.height),
+          };
+          undock();
+          // openFloat restores a persisted min/max state; force normal so
+          // the window is actually draggable under the pointer.
+          if (wb && (wb.min || wb.max)) wb.restore();
+          moveFloatTo(e);
+        },
+        onMove: moveFloatTo,
+        onEnd(overDock) { if (overDock && wb) dock(); },
+      });
+    });
+  }
+
+  // Dropping a floating window's title bar on the dock column docks it.
+  // WinBox's own drag keeps moving the window; we only watch the pointer.
+  // Its drag-end handler is safe to run after dock() closed the window
+  // (it only clears the wb-lock class and its own listeners).
+  function attachFloatDragDock() {
+    const dragEl = wb.g.querySelector(".wb-drag");
+    if (!dragEl) return;
+    dragEl.addEventListener("pointerdown", (eDown) => {
+      if (eDown.button !== 0) return;
+      const container = getDockEl();
+      if (!container || isMobileLayout() || wb.min || wb.max) return;
+      watchDockDrop(container, eDown, {
+        onEnd(overDock) { if (overDock && wb && !wb.max) dock(); },
+      });
+    });
+  }
+
   function dock() {
     const container = getDockEl();
     if (!container) return;
@@ -497,6 +610,7 @@ export function createDockableWindow(config) {
     }
     setDocked(dockedKey, true);
     slot = makeDockSlot(currentTitle, body, undock, closable ? userClose : null, titleActions);
+    attachSlotDragUndock(slot);
     // Insert in dockOrder ascending; lower order goes on top. The
     // `instances` array is in module-load order, not dockOrder, so we
     // must scan for the MIN-order sibling that's still higher than us
@@ -556,6 +670,10 @@ export function createDockableWindow(config) {
       onresize()   { saveGeo(geoKey, wb); },
     });
     clampFloatX(wb, ribbonReserve());
+    // WinBox clamps drags against `top` but takes a saved/initial y as-is;
+    // re-clamp so a stale geometry can't sit above the header line.
+    if (wb.y < wb.top) wb.move(wb.x, wb.top);
+    attachFloatDragDock();
     // WinBox addControl with index:0 PREPENDS into .wb-control, so the
     // LAST call ends up leftmost. Add dock first so it stays rightmost,
     // then actions in declaration order (each new one goes leftmost).
@@ -875,7 +993,7 @@ const pvTable = createDockableWindow({
   openKey: PV_OPEN_KEY,
   defaultW: () => rightColumnWidth(560),
   defaultH: 260,
-  defaultY: () => HEADER_H,
+  defaultY: () => headerBottomPx(),
   build: buildPvTableBody,
   dockOrder: DOCK_ORDER.SEARCH_LINES,
   closable: true,
