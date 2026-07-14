@@ -1549,6 +1549,20 @@ body .side-popover.popover-floating {
 .play-dock-left:not(.dock-empty),
 .play-comments-host:not(.dock-empty) { border: 1px solid #454952; }
 .play-comments-host.dock-empty { visibility: hidden; }
+/* Drag-to-dock drop hints (play-dock-windows.js). Eligible: a window title
+   bar is being dragged, so reveal the drop zone even when dock-empty (must
+   sit after the .dock-empty rules to win the specificity tie). Active: the
+   pointer is over the zone and releasing will dock. */
+.play-dock-left.dock-drop-eligible,
+.play-comments-host.dock-drop-eligible {
+  visibility: visible;
+  outline: 1px solid color-mix(in srgb, var(--row-bg-selected), white 30%);
+  outline-offset: -1px;
+}
+.play-dock-left.dock-drop-active,
+.play-comments-host.dock-drop-active {
+  background: color-mix(in srgb, var(--row-bg-selected), white 15%);
+}
 .dock-slot {
   display: flex;
   flex-direction: column;
@@ -1575,6 +1589,7 @@ body .side-popover.popover-floating {
   flex: 0 0 auto;
   background: var(--nav-btn-bg);
   border-bottom: 1px solid var(--border-subtle);
+  cursor: grab; /* drag-to-undock affordance; inline-slot rule overrides */
 }
 .dock-slot-title {
   flex: 1 1 auto;

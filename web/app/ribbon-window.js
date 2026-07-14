@@ -7,13 +7,13 @@
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
+import { headerBottomPx } from "./wb-utils.js";
 
 // LocalStorage keys: side selection ("left"|"right"|"float"), the
 // WinBox geometry, and orientation ("h"|"v") for the floating mode.
 export const RIBBON_SIDE_KEY = STORAGE_KEY.RIBBON_SIDE;
 const GEO_KEY = STORAGE_KEY.RIBBON_GEO;
 const ORIENT_KEY = STORAGE_KEY.RIBBON_ORIENT;
-const HEADER_H = 44;     // px -- nav header height (top boundary)
 const ORIENT_H = "h";
 const ORIENT_V = "v";
 const DEFAULT_GEO_X = 8;      // px -- default float window left offset
@@ -41,7 +41,7 @@ function clampGeo(x, y, w, h) {
   const vh = window.innerHeight;
   return {
     x: Math.max(0, Math.min(x, vw - w)),
-    y: Math.max(HEADER_H, Math.min(y, vh - h)),
+    y: Math.max(headerBottomPx(), Math.min(y, vh - h)),
   };
 }
 
@@ -142,7 +142,7 @@ export function openRibbonWindow(el) {
   const isVertical = loadOrient() === ORIENT_V;
   const rawW = isVertical ? WB_VERT_W : WB_HORIZ_W;
   const rawH = isVertical ? WB_VERT_H : WB_HORIZ_H;
-  const { x, y } = clampGeo(geo?.x ?? DEFAULT_GEO_X, geo?.y ?? HEADER_H, rawW, rawH);
+  const { x, y } = clampGeo(geo?.x ?? DEFAULT_GEO_X, geo?.y ?? headerBottomPx(), rawW, rawH);
   wb = new WinBox({
     title: "Controls",
     class: "sturddle-wb sturddle-wb-ribbon no-full no-resize no-min no-max",
@@ -152,7 +152,7 @@ export function openRibbonWindow(el) {
     minheight: WB_MIN_H,
     x,
     y,
-    top: HEADER_H,
+    top: headerBottomPx(),
     onclose() {
       restoreElementToOrigin();
       currentEl = null;
