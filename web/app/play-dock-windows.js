@@ -43,6 +43,12 @@ import {
 } from "./wb-utils.js";
 
 const PLAY_GRID_SEL = ".play-grid";
+const DOCK_SLOT_CLASS = "dock-slot";
+const DOCK_GHOST_CLASS = "dock-ghost";
+const DOCK_EMPTY_CLASS = "dock-empty";
+const DOCK_DROP_ELIGIBLE_CLASS = "dock-drop-eligible";
+const DOCK_SLOT_SEL = `.${DOCK_SLOT_CLASS}`;
+const DOCK_GHOST_SEL = `.${DOCK_GHOST_CLASS}`;
 
 // Vertical stack order for docked windows. Lower values render higher
 // in the column. Centralized so adding a new window doesn't require
@@ -281,36 +287,49 @@ function setOpen(key, val) {
 //     .dock-slot-header  (title + undock button)
 //     .dock-slot-body    (the window's body div, transplanted here)
 
+// Toggle a container's dock-empty class from its live slot count, emitting
+// LAYOUT_CHANGED on transition. Shared by both dock containers.
+function syncEmptyClass(el) {
+  const wasEmpty = el.classList.contains(DOCK_EMPTY_CLASS);
+  const isEmpty = el.querySelectorAll(DOCK_SLOT_SEL).length === 0;
+  el.classList.toggle(DOCK_EMPTY_CLASS, isEmpty);
+  if (wasEmpty !== isEmpty) emitLayoutChanged();
+}
+
 function syncExtraDocksVisibility() {
-  for (const { el } of extraDocks.values()) {
-    const wasEmpty = el.classList.contains("dock-empty");
-    const isEmpty = el.querySelectorAll(".dock-slot").length === 0;
-    el.classList.toggle("dock-empty", isEmpty);
-    if (wasEmpty !== isEmpty) emitLayoutChanged();
-  }
+  for (const { el } of extraDocks.values()) syncEmptyClass(el);
 }
 
 function emitLayoutChanged() {
   window.dispatchEvent(new CustomEvent(APP_EVT.LAYOUT_CHANGED));
 }
 
-function applyDockGrows() {
+// Stored flex-grow for a dockedKey, falling back to the default. `grows` is a
+// once-parsed store; passing it avoids re-reading localStorage per slot.
+function growFor(grows, key) {
+  const g = Number(grows[key]);
+  return Number.isFinite(g) && g > 0 ? g : DEFAULT_DOCK_GROW;
+}
+
+// Size the dock's flex children. `extraKey` (the drop-ghost's dockedKey, when
+// previewing) is counted as a virtual slot so the preview split matches the
+// post-dock split exactly. A lone slot OR lone ghost fills the whole dock,
+// ignoring any stored ratio from a prior multi-slot session.
+function applyDockGrows(extraKey = null) {
   if (!dockEl) return;
-  const slots = dockEl.querySelectorAll(".dock-slot");
-  // Single docked slot: force flex-grow=1 so it fills the whole dock
-  // regardless of any stored ratio from a prior multi-slot session.
-  if (slots.length <= 1) {
+  const slots = dockEl.querySelectorAll(DOCK_SLOT_SEL);
+  const ghost = dockEl.querySelector(DOCK_GHOST_SEL);
+  if (slots.length + (ghost ? 1 : 0) <= 1) {
     for (const slot of slots) slot.style.flexGrow = "1";
+    if (ghost) ghost.style.flexGrow = "1";
     return;
   }
   const grows = loadDockGrows();
   for (const slot of slots) {
     const inst = instances.find(i => i.slot === slot);
-    if (!inst) continue;
-    const g = Number(grows[inst.dockedKey]);
-    const value = Number.isFinite(g) && g > 0 ? g : DEFAULT_DOCK_GROW;
-    slot.style.flexGrow = String(value);
+    if (inst) slot.style.flexGrow = String(growFor(grows, inst.dockedKey));
   }
+  if (ghost && extraKey) ghost.style.flexGrow = String(growFor(grows, extraKey));
 }
 
 function persistGrow(key, value) {
@@ -382,7 +401,7 @@ function clearDockGrips() {
 function rebuildDockGrips() {
   clearDockGrips();
   if (!dockEl) return;
-  const slots = Array.from(dockEl.querySelectorAll(".dock-slot"));
+  const slots = Array.from(dockEl.querySelectorAll(DOCK_SLOT_SEL));
   for (let i = 0; i + 1 < slots.length; i++) {
     const topSlot = slots[i];
     const botSlot = slots[i + 1];
@@ -400,11 +419,7 @@ function rebuildDockGrips() {
 function syncDockVisibility() {
   syncExtraDocksVisibility();
   if (!dockEl) return;
-  const slots = dockEl.querySelectorAll(".dock-slot");
-  const wasEmpty = dockEl.classList.contains("dock-empty");
-  const isEmpty = slots.length === 0;
-  dockEl.classList.toggle("dock-empty", isEmpty);
-  if (wasEmpty !== isEmpty) emitLayoutChanged();
+  syncEmptyClass(dockEl);
   applyDockGrows();
   rebuildDockGrips();
 }
@@ -415,30 +430,84 @@ function pointerOverEl(el, e) {
          e.clientY >= r.top && e.clientY <= r.bottom;
 }
 
+// The sibling slot that `inst` docks before, or null to append last. Shared
+// by dock() and the drop-ghost so the preview lands exactly where dock() puts
+// it: the MIN-dockOrder slot in this container still ranked below inst.
+function findDockAnchor(container, inst) {
+  let anchor = null;
+  for (const other of instances) {
+    if (other === inst) continue;
+    if (!other.slot || other.slot.parentElement !== container) continue;
+    if (other.dockOrder <= inst.dockOrder) continue;
+    if (anchor === null || other.dockOrder < anchor.dockOrder) anchor = other;
+  }
+  return anchor;
+}
+
+// Place `el` (a real slot or the drop-ghost) at inst's dockOrder boundary.
+function insertInDockOrder(container, el, inst) {
+  const anchor = findDockAnchor(container, inst);
+  if (anchor) container.insertBefore(el, anchor.slot);
+  else container.appendChild(el);
+}
+
+// Preview where a dragged window will dock: a ghost flex child inserted at
+// inst's landing boundary with its would-be flex-grow, so the browser reflows
+// existing slots to their true post-dock heights. Idempotent; the ghost is a
+// real flex sibling, not an overlay, so the split matches dock() exactly.
+function showDockGhost(container, inst) {
+  if (!container) return;
+  let ghost = container.querySelector(DOCK_GHOST_SEL);
+  if (!ghost) {
+    ghost = document.createElement("div");
+    ghost.className = DOCK_GHOST_CLASS;
+  }
+  insertInDockOrder(container, ghost, inst);
+  // Size existing slots + ghost with the same pass dock() uses, so the
+  // preview split equals the post-dock split (the lone-slot flex:1 override
+  // no longer applies once the ghost is a second child).
+  applyDockGrows(inst.dockedKey);
+}
+
+function hideDockGhost(container) {
+  const ghost = container?.querySelector(DOCK_GHOST_SEL);
+  if (!ghost) return;
+  ghost.remove();
+  // Restore real-slot sizing: a now-lone slot must snap back to flex:1,
+  // which the ghost's virtual-slot pass had suppressed.
+  if (container === dockEl) applyDockGrows();
+}
+
 // Track a pointer drag against a dock container. Past DRAG_DOCK_THRESHOLD_PX
 // the container shows its drop hint (visible even when dock-empty), hovering
 // it toggles the active state, and onEnd reports whether the pointer was
-// released over the container. Listeners go on document so they survive the
-// originating element being detached mid-drag (slot removal on undock).
-function watchDockDrop(container, eDown, { onFirstMove, onMove, onEnd }) {
+// released over the container. When ghostInst is given, a landing preview is
+// shown at its dock boundary while the pointer is over the zone. Listeners go
+// on document so they survive the originating element being detached mid-drag
+// (slot removal on undock).
+function watchDockDrop(container, eDown, { onFirstMove, onMove, onEnd, ghostInst }) {
   const x0 = eDown.clientX, y0 = eDown.clientY;
   let started = false, over = false;
   const move = (e) => {
     if (!started) {
       if (Math.hypot(e.clientX - x0, e.clientY - y0) < DRAG_DOCK_THRESHOLD_PX) return;
       started = true;
-      container.classList.add("dock-drop-eligible");
+      container.classList.add(DOCK_DROP_ELIGIBLE_CLASS);
       if (onFirstMove) onFirstMove(e);
     }
     over = pointerOverEl(container, e);
-    container.classList.toggle("dock-drop-active", over);
+    if (ghostInst) {
+      if (over) showDockGhost(container, ghostInst);
+      else hideDockGhost(container);
+    }
     if (onMove) onMove(e);
   };
   const finish = (drop) => {
     document.removeEventListener("pointermove", move);
     document.removeEventListener("pointerup", up);
     document.removeEventListener("pointercancel", cancel);
-    container.classList.remove("dock-drop-eligible", "dock-drop-active");
+    container.classList.remove(DOCK_DROP_ELIGIBLE_CLASS);
+    hideDockGhost(container);
     if (onEnd) onEnd(drop && started && over);
   };
   const up = () => finish(true);
@@ -450,7 +519,7 @@ function watchDockDrop(container, eDown, { onFirstMove, onMove, onEnd }) {
 
 function makeDockSlot(title, bodyEl, onUndock, onClose, titleActions) {
   const slot = document.createElement("div");
-  slot.className = "dock-slot";
+  slot.className = DOCK_SLOT_CLASS;
   const closeBtnHtml = onClose
     ? `<button type="button" class="dock-slot-close" title="Close" aria-label="Close">
          <wa-icon name="xmark"></wa-icon>
@@ -577,6 +646,7 @@ export function createDockableWindow(config) {
         },
         onMove: moveFloatTo,
         onEnd(overDock) { if (overDock && wb) dock(); },
+        ghostInst: inst,
       });
     });
   }
@@ -594,6 +664,7 @@ export function createDockableWindow(config) {
       if (!container || isMobileLayout() || wb.min || wb.max) return;
       watchDockDrop(container, eDown, {
         onEnd(overDock) { if (overDock && wb && !wb.max) dock(); },
+        ghostInst: inst,
       });
     });
   }
@@ -611,21 +682,8 @@ export function createDockableWindow(config) {
     setDocked(dockedKey, true);
     slot = makeDockSlot(currentTitle, body, undock, closable ? userClose : null, titleActions);
     attachSlotDragUndock(slot);
-    // Insert in dockOrder ascending; lower order goes on top. The
-    // `instances` array is in module-load order, not dockOrder, so we
-    // must scan for the MIN-order sibling that's still higher than us
-    // -- inserting before the first match in array order would put a
-    // slot in the wrong place when higher-order siblings were created
-    // first (e.g. UCI loads before AI).
-    let anchor = null;
-    for (const other of instances) {
-      if (other === inst) continue;
-      if (!other.slot || other.slot.parentElement !== container) continue;
-      if (other.dockOrder <= dockOrder) continue;
-      if (anchor === null || other.dockOrder < anchor.dockOrder) anchor = other;
-    }
-    if (anchor) container.insertBefore(slot, anchor.slot);
-    else container.appendChild(slot);
+    hideDockGhost(container);
+    insertInDockOrder(container, slot, inst);
     syncDockVisibility();
     applyDockBounds(container);
   }
@@ -873,7 +931,7 @@ export function registerExtraDock(el) {
   extraDocks.set(el, entry);
   window.addEventListener("resize", updateDockBounds);
   applyDockBounds(el);
-  el.classList.toggle("dock-empty", el.querySelectorAll(".dock-slot").length === 0);
+  syncEmptyClass(el);
   return () => {
     const e = extraDocks.get(el);
     if (e?.resizeObs) e.resizeObs.disconnect();

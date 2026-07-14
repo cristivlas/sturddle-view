@@ -1549,20 +1549,28 @@ body .side-popover.popover-floating {
 .play-dock-left:not(.dock-empty),
 .play-comments-host:not(.dock-empty) { border: 1px solid #454952; }
 .play-comments-host.dock-empty { visibility: hidden; }
-/* Drag-to-dock drop hints (play-dock-windows.js). Eligible: a window title
-   bar is being dragged, so reveal the drop zone even when dock-empty (must
-   sit after the .dock-empty rules to win the specificity tie). Active: the
-   pointer is over the zone and releasing will dock. */
+/* Drag-to-dock drop hint (play-dock-windows.js): a window title bar is being
+   dragged, so reveal the drop zone even when dock-empty (must sit after the
+   .dock-empty rules to win the specificity tie). The over-the-zone highlight
+   is the landing ghost below, not a class on the container. */
 .play-dock-left.dock-drop-eligible,
 .play-comments-host.dock-drop-eligible {
   visibility: visible;
   outline: 1px solid color-mix(in srgb, var(--row-bg-selected), white 30%);
   outline-offset: -1px;
 }
-.play-dock-left.dock-drop-active,
-.play-comments-host.dock-drop-active {
+/* Landing preview: a ghost flex child inserted at the drop boundary while the
+   pointer is over the zone (play-dock-windows.js). Being a real flex sibling,
+   it reflows existing slots to their post-dock heights and, when the column is
+   empty, grows to fill it -- so it doubles as the full-area drop highlight. */
+.dock-ghost {
+  flex: 1 1 0;
+  min-height: 0;
   background: color-mix(in srgb, var(--row-bg-selected), white 15%);
+  border-top: 2px solid color-mix(in srgb, var(--row-bg-selected), white 40%);
+  pointer-events: none;
 }
+.dock-ghost:first-child { border-top: 0; }
 .dock-slot {
   display: flex;
   flex-direction: column;
