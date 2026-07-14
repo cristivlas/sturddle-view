@@ -31,7 +31,18 @@ import { basename, cooldown, debounce, guard, isCtrlA, markSelectable, ribbonWid
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
+// Ribbon tooltips; New/Edit/Copy double as their dialog titles. Studio
+// shares them through ribbonHtml()/setStartVerb(), not direct imports.
 const NEW_TOURNAMENT_LABEL = "New tournament";
+const START_TOURNAMENT_LABEL = "Start tournament";
+const RESTART_TOURNAMENT_LABEL = "Restart tournament";
+const STOP_TOURNAMENT_LABEL = "Stop tournament";
+const OPEN_WORKSPACE_LABEL = "Open workspace";
+const TOURNAMENT_DETAILS_LABEL = "Tournament details";
+const EDIT_TOURNAMENT_LABEL = "Edit tournament";
+const COPY_TOURNAMENT_LABEL = "Copy tournament";
+const DELETE_TOURNAMENT_LABEL = "Delete tournament";
+const CREATE_ACTION_LABEL = "Create";
 const COPY_SUFFIX = " (copy)";
 const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
 const EMPTY_CTA_SUFFIX = " to create one.";
@@ -43,6 +54,41 @@ const REVEAL_COOLDOWN_MS = 1500;
 const ID_ELLIPSIS = "…";
 const VALID_SORTS = new Set(["name", "status", "created_at", "started_at"]);
 const IS_LOCAL = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+
+// One builder for both action ribbons; prefix scopes the button classes
+// (t-*, studio-*), withWorkspace adds Arena's workspace button.
+export function ribbonHtml({ className, ariaLabel, prefix, withWorkspace }) {
+  const sep = '<span class="ribbon-sep" aria-hidden="true"></span>';
+  const btn = (suffix, icon, title, { danger = false, enabled = false, iconClass = "" } = {}) => `
+          <button class="ribbon-btn ${danger ? "ribbon-btn--danger " : ""}${prefix}-${suffix}"${enabled ? "" : " disabled"} aria-label="${title}" title="${title}">
+            <wa-icon${iconClass ? ` class="${iconClass}"` : ""} name="${icon}"></wa-icon>
+          </button>`;
+  return `<div class="${className}" role="toolbar" aria-label="${ariaLabel}">
+          ${btn("new", "plus", NEW_TOURNAMENT_LABEL, { enabled: true })}
+          ${sep}
+          ${btn("start", "play", START_TOURNAMENT_LABEL, { iconClass: `${prefix}-start-icon` })}
+          ${btn("stop", "hand", STOP_TOURNAMENT_LABEL)}
+          ${sep}
+          ${withWorkspace ? btn("workspace", "window-restore", OPEN_WORKSPACE_LABEL) : ""}
+          ${btn("info", "circle-info", TOURNAMENT_DETAILS_LABEL)}
+          ${btn("edit", "pen-to-square", EDIT_TOURNAMENT_LABEL)}
+          ${btn("duplicate", "copy", COPY_TOURNAMENT_LABEL)}
+          ${sep}
+          ${btn("remove", "trash", DELETE_TOURNAMENT_LABEL, { danger: true })}
+        </div>`;
+}
+
+const START_ICON_HTML = '<wa-icon class="t-start-icon" name="play"></wa-icon>';
+const SPINNER_HTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
+
+// Swap a ribbon start button between its Start and Restart presentations.
+export function setStartVerb(btn, isRestart) {
+  const icon = btn.querySelector("wa-icon");
+  if (icon) icon.setAttribute("name", isRestart ? "rotate-right" : "play");
+  const label = isRestart ? RESTART_TOURNAMENT_LABEL : START_TOURNAMENT_LABEL;
+  btn.setAttribute("aria-label", label);
+  btn.setAttribute("title", label);
+}
 
 const PANEL_HTML = `
     <div class="tournaments-panel">
@@ -80,35 +126,7 @@ const PANEL_HTML = `
       </menu>
 
       <div class="tournaments-body">
-        <div class="tournaments-ribbon" role="toolbar" aria-label="Tournament actions">
-          <button class="ribbon-btn t-new" aria-label="New tournament" title="New tournament">
-            <wa-icon name="plus"></wa-icon>
-          </button>
-          <span class="ribbon-sep" aria-hidden="true"></span>
-          <button class="ribbon-btn t-start" disabled aria-label="Start" title="Start">
-            <wa-icon class="t-start-icon" name="play"></wa-icon>
-          </button>
-          <button class="ribbon-btn t-stop" disabled aria-label="Stop" title="Stop">
-            <wa-icon name="hand"></wa-icon>
-          </button>
-          <span class="ribbon-sep" aria-hidden="true"></span>
-          <button class="ribbon-btn t-workspace" disabled aria-label="Open workspace" title="Open workspace">
-            <wa-icon name="window-restore"></wa-icon>
-          </button>
-          <button class="ribbon-btn t-info" disabled aria-label="Info" title="Info">
-            <wa-icon name="circle-info"></wa-icon>
-          </button>
-          <button class="ribbon-btn t-edit" disabled aria-label="Edit" title="Edit">
-            <wa-icon name="pen-to-square"></wa-icon>
-          </button>
-          <button class="ribbon-btn t-duplicate" disabled aria-label="Duplicate" title="Duplicate">
-            <wa-icon name="copy"></wa-icon>
-          </button>
-          <span class="ribbon-sep" aria-hidden="true"></span>
-          <button class="ribbon-btn ribbon-btn--danger t-remove" disabled aria-label="Remove" title="Remove">
-            <wa-icon name="trash"></wa-icon>
-          </button>
-        </div>
+        ${ribbonHtml({ className: "tournaments-ribbon", ariaLabel: "Tournament actions", prefix: "t", withWorkspace: true })}
 
         <div class="tournaments-body-main">
           <div class="tournaments-empty hidden">
@@ -299,10 +317,8 @@ function syncRibbon(ctx) {
     ctx.ribbonEditBtn.disabled = true;
     ctx.ribbonDuplicateBtn.disabled = true;
     ctx.ribbonRemoveBtn.disabled = true;
-    if (!ctx.ribbonStartBtn.querySelector("wa-icon")) ctx.ribbonStartBtn.innerHTML = '<wa-icon class="t-start-icon" name="play"></wa-icon>';
-    else ctx.ribbonStartBtn.querySelector("wa-icon").setAttribute("name", "play");
-    ctx.ribbonStartBtn.setAttribute("aria-label", "Start");
-    ctx.ribbonStartBtn.setAttribute("title", "Start");
+    if (!ctx.ribbonStartBtn.querySelector("wa-icon")) ctx.ribbonStartBtn.innerHTML = START_ICON_HTML;
+    setStartVerb(ctx.ribbonStartBtn, false);
     return;
   }
   const isActive = t.id === ctx.activeId;
@@ -323,21 +339,16 @@ function syncRibbon(ctx) {
   ctx.ribbonDuplicateBtn.disabled = false;
 
   const starting = t.id === ctx.startingId;
-  const startIconName = isRestart ? "rotate-right" : "play";
   if (starting) {
-    ctx.ribbonStartBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
+    ctx.ribbonStartBtn.innerHTML = SPINNER_HTML;
   } else if (!ctx.ribbonStartBtn.querySelector("wa-icon")) {
-    ctx.ribbonStartBtn.innerHTML = `<wa-icon class="t-start-icon" name="${startIconName}"></wa-icon>`;
-  } else {
-    ctx.ribbonStartBtn.querySelector("wa-icon").setAttribute("name", startIconName);
+    ctx.ribbonStartBtn.innerHTML = START_ICON_HTML;
   }
-  const startLabel = isRestart ? "Restart" : "Start";
-  ctx.ribbonStartBtn.setAttribute("aria-label", startLabel);
-  ctx.ribbonStartBtn.setAttribute("title", startLabel);
+  setStartVerb(ctx.ribbonStartBtn, isRestart);
   const stopping = t.id === ctx.stoppingId;
   if (stopping) {
     ctx.ribbonStopBtn.disabled = true;
-    ctx.ribbonStopBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
+    ctx.ribbonStopBtn.innerHTML = SPINNER_HTML;
   } else {
     ctx.ribbonStopBtn.innerHTML = '<wa-icon name="hand"></wa-icon>';
   }
@@ -935,8 +946,8 @@ async function openNewTournamentDialog(ctx) {
   }
 
   await openTournamentDialog(ctx, {
-    label: "New tournament",
-    actionLabel: "Create",
+    label: NEW_TOURNAMENT_LABEL,
+    actionLabel: CREATE_ACTION_LABEL,
     initialName: "",
     initialEngines: [],
     // No initialTemplate: New has no frozen template. The dialog prefills
@@ -1025,7 +1036,7 @@ async function openEditTournamentDialog(ctx, t) {
   const { initialEngines, droppedCount } = resolveInitialEngines(available, t.engines);
 
   await openTournamentDialog(ctx, {
-    label: `Edit "${t.name}"`,
+    label: EDIT_TOURNAMENT_LABEL,
     actionLabel: "Apply",
     initialName: t.name,
     initialEngines,
@@ -1095,8 +1106,8 @@ async function openDuplicateTournamentDialog(ctx, t) {
   const initialName = suggestCopyName(t.name, existing.map((x) => x.name));
 
   await openTournamentDialog(ctx, {
-    label: "Copy tournament",
-    actionLabel: "Create",
+    label: COPY_TOURNAMENT_LABEL,
+    actionLabel: CREATE_ACTION_LABEL,
     initialName,
     initialEngines,
     initialTemplate: t.template || null,

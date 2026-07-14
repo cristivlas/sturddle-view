@@ -18,7 +18,7 @@ import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { reportError, toast } from "./dialogs.js";
 import { debounce, escapeHtml, markSelectable } from "./wb-utils.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
-import { newTournamentCta, tournamentActions } from "./tournaments.js";
+import { newTournamentCta, ribbonHtml, setStartVerb, tournamentActions } from "./tournaments.js";
 import { RESULT, SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
 import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow, replayTournamentGame } from "./tournament-live-game.js";
@@ -91,32 +91,7 @@ export function getTournamentUx() {
 const STUDIO_HTML = `
   <div class="studio-panel">
     <div class="studio-body">
-      <div class="studio-ribbon" role="toolbar" aria-label="Studio actions">
-        <button class="ribbon-btn studio-new" aria-label="New tournament" title="New tournament">
-          <wa-icon name="plus"></wa-icon>
-        </button>
-        <span class="ribbon-sep" aria-hidden="true"></span>
-        <button class="ribbon-btn studio-start" disabled aria-label="Start" title="Start">
-          <wa-icon name="play"></wa-icon>
-        </button>
-        <button class="ribbon-btn studio-stop" disabled aria-label="Stop" title="Stop">
-          <wa-icon name="hand"></wa-icon>
-        </button>
-        <span class="ribbon-sep" aria-hidden="true"></span>
-        <button class="ribbon-btn studio-info" disabled aria-label="Info" title="Info">
-          <wa-icon name="circle-info"></wa-icon>
-        </button>
-        <button class="ribbon-btn studio-edit" disabled aria-label="Edit" title="Edit">
-          <wa-icon name="pen-to-square"></wa-icon>
-        </button>
-        <button class="ribbon-btn studio-duplicate" disabled aria-label="Duplicate" title="Duplicate">
-          <wa-icon name="copy"></wa-icon>
-        </button>
-        <span class="ribbon-sep" aria-hidden="true"></span>
-        <button class="ribbon-btn ribbon-btn--danger studio-remove" disabled aria-label="Remove" title="Remove">
-          <wa-icon name="trash"></wa-icon>
-        </button>
-      </div>
+      ${ribbonHtml({ className: "studio-ribbon", ariaLabel: "Studio actions", prefix: "studio", withWorkspace: false })}
 
       <div class="studio-main">
         <div class="studio-boards"><div class="studio-boards-wall" hidden></div><div class="studio-boards-canvas"></div></div>
@@ -389,11 +364,7 @@ function syncRibbon(ctx) {
   b.info.disabled = false;
   b.edit.disabled = isActive || status === STATUS.DONE;
   b.duplicate.disabled = false;
-  const icon = b.start.querySelector("wa-icon");
-  if (icon) icon.setAttribute("name", isRestart ? "rotate-right" : "play");
-  const startLabel = isRestart ? "Restart" : "Start";
-  b.start.setAttribute("aria-label", startLabel);
-  b.start.setAttribute("title", startLabel);
+  setStartVerb(b.start, isRestart);
 }
 
 // Fetch the tournament list; a generation guard drops out-of-order

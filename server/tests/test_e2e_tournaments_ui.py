@@ -134,11 +134,11 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, make_p
         assert row_info["name"] == "smoke"
         assert row_info["status"].strip() == "idle"
         assert row_info["ribbon_labels"] == {
-            "start": "Start",
-            "stop": "Stop",
+            "start": "Start tournament",
+            "stop": "Stop tournament",
             "workspace": "Open workspace",
-            "info": "Info",
-            "remove": "Remove",
+            "info": "Tournament details",
+            "remove": "Delete tournament",
         }
         assert row_info["new_button_disabled"] is False
 
