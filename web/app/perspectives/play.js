@@ -209,9 +209,11 @@ const MSG = {
   CONFIRM_IMPORT: "Cancel the current game and import another?",
   CONFIRM_EDIT_FROM_PLAY: "Cancel the game in progress and edit the position?",
   CONFIRM_EDIT_STOP_ANALYSIS: "Stop analysis and edit the position?",
+  CONFIRM_MOVE_STOP_ANALYSIS: "Stop analysis and play this move?",
   CONFIRM_LEAVE_EDIT: "Leaving will cancel your position edit. Continue?",
   KEEP_PLAYING: "Keep playing",
   KEEP_ANALYZING: "Keep analyzing",
+  PLAY_MOVE: "Play move",
   NEW_GAME: "New game",
   EDIT_POSITION: "Edit position",
   RESIGN: "Resign",
@@ -858,15 +860,16 @@ function setAnalyzing(state, v) {
 
 // Stop side of the analyze toggle, shared so the AI-window close handler can
 // trigger the same flow (snapshot + endpoint + toast + panels) as the toolbar
-// Stop button.
+// Stop button. Returns false when the stop POST failed (error already
+// toasted) so callers chaining resume/move can bail.
 async function stopAnalysisFromUi(state) {
-  if (!state.analyzing) return;
+  if (!state.analyzing) return true;
   snapshotViewAnalysisState();
   try {
     await state.ctx.api("POST", "/game/analysis/stop", {});
   } catch (e) {
     reportError(state.ctx, MSG.STOP_ANALYSIS_FAILED, e);
-    return;
+    return false;
   }
   state.aiShared.turnFinished = false;
   state.aiShared.dismissAnalysisToast?.();
@@ -875,6 +878,7 @@ async function stopAnalysisFromUi(state) {
   // always closes on stop. PV/UCI close only if analysis opened them.
   if (isAiOpen()) closeAi();
   closeAnalysisOpenedWindows();
+  return true;
 }
 
 // Edit-mode side/castling popover handlers. Operate on the shared `state`
@@ -1022,6 +1026,13 @@ async function refreshSettings(state, { notifyOnDrift = false } = {}) {
 }
 
 // Ribbon button state, computed from the shared `state`.
+
+// Board input: on in live play, and during play-mode analysis (a drop
+// offers to stop analysis and play the move). Off while paused or viewing.
+function syncBoardInputEnabled(state) {
+  if (state.viewing) return;
+  state.view.setEnabled(state.analyzing || !state.paused);
+}
 
 // Paused overlay + badge (hidden while analyzing, which has its own affordance).
 function syncPausedUi(state) {
@@ -1248,8 +1259,8 @@ async function onPauseImpl(state) {
   // lands in PAUSED) then resumes to PLAY, so one click returns to the
   // game. stopAnalysisFromUi tears down the AI window and replay buffer.
   if (aiAnalysisDone(state)) {
+    if (!await stopAnalysisFromUi(state)) return;
     try {
-      await stopAnalysisFromUi(state);
       await state.ctx.api("POST", "/game/resume", {});
     } catch (e) {
       reportError(state.ctx, MSG.RESUME_FAILED, e);
@@ -1831,9 +1842,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       feedEvalBar(state, evt.payload.eval_history);
       if (typeof evt.payload.analyzing === "boolean") {
         setAnalyzing(state, evt.payload.analyzing);
-        // Don't re-enable interactivity in view mode regardless of
-        // analysis state.
-        if (!state.viewing) state.view.setEnabled(!state.analyzing && !state.paused);
+        syncBoardInputEnabled(state);
         syncPausedUi(state);
         pushNavToUi(state);
         if (!state.analyzing) {
@@ -1880,7 +1889,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
     case KIND.CLOCK_TICK:
       if (typeof evt.payload.paused === "boolean" && evt.payload.paused !== state.paused) {
         state.paused = evt.payload.paused;
-        state.view.setEnabled(!state.paused);
+        syncBoardInputEnabled(state);
         syncPausedUi(state);
         refreshButtons(state);
       }
@@ -2063,6 +2072,36 @@ export const playPerspective = {
       sideContainer: sideHost,
       boardStyle: initialBoardStyle,
       onMove: async (uci) => {
+        // Drop during analysis: exit analysis and play the move. A running
+        // session asks first; a finished AI turn exits silently, matching
+        // the ribbon's one-click Resume (see onPauseImpl).
+        if (state.analyzing) {
+          // Snap the optimistically-moved piece back on any bail-out.
+          const snapBack = () => ctx.api("POST", "/game/sync", {}).catch(() => {});
+          if (!aiAnalysisDone(state)) {
+            const ok = await confirm({
+              message: MSG.CONFIRM_MOVE_STOP_ANALYSIS,
+              okLabel: MSG.PLAY_MOVE,
+              cancelLabel: MSG.KEEP_ANALYZING,
+              destructive: true,
+            });
+            if (!ok) {
+              await snapBack();
+              return;
+            }
+          }
+          if (!await stopAnalysisFromUi(state)) {
+            await snapBack();
+            return;
+          }
+          try {
+            await ctx.api("POST", "/game/resume", {});
+          } catch (e) {
+            reportError(ctx, MSG.RESUME_FAILED, e);
+            await snapBack();
+            return;
+          }
+        }
         try {
           await ctx.api("POST", "/game/move", { uci });
         } catch (e) {
