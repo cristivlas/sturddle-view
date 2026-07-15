@@ -14,12 +14,13 @@ import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs
 import { guard, markSelectable, suppressMultiClickSelect } from "./wb-utils.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 import { attachEngineColResize, createWrapSizer } from "./engines-list-layout.js";
-import { attachButtonSort, attachColumnSort, baseCompare, modelACompare } from "./col-sort.js";
+import { attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { saveRaw } from "./storage.js";
 
 const COL_NAME = "name";
 const COL_ACTIVE = "active";
 const COL_PATH = "path";
+const SELECTED_ROW_SEL = "tr.focused";
 
 const COL_PCTS_KEY = STORAGE_KEY.ENGINES_COL_PCTS;
 // Height of the overlaid search bar; matches the CSS rule. Added as
@@ -365,7 +366,7 @@ function setupEngineSearch(ctx) {
     renderList(ctx);
     // Clearing the filter re-renders the full list; keep the picked row
     // in view so the selection doesn't scroll off-screen (matches openings).
-    tableWrap.querySelector("tr.focused")?.scrollIntoView({ block: "nearest" });
+    scrollSortedRowIntoView(tableWrap, SELECTED_ROW_SEL);
     document.removeEventListener("pointerdown", onOutsideClick);
     document.removeEventListener("keydown", onSearchKey, true);
   }
@@ -478,6 +479,7 @@ export function mountEngineList(container, api, opts = {}) {
       ctx.sort = state ? { key: state.key, dir: state.dir } : null;
       nameBtnSort.sync();
       renderList(ctx);
+      scrollSortedRowIntoView(ctx.list, SELECTED_ROW_SEL);
     },
   });
   const nameBtnSort = attachButtonSort({

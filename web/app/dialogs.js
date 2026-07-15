@@ -4,7 +4,7 @@
 
 import { APP_EVT } from "./app-events.js";
 import { attachColumnResize } from "./col-resize.js";
-import { attachColumnSort, baseCompare, modelACompare } from "./col-sort.js";
+import { attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import { markSelectable, rafCoalesce, suppressMultiClickSelect } from "./wb-utils.js";
@@ -488,7 +488,10 @@ export function pickFile({
         renderRows(rows);
         if (selected) {
           const row = listing.querySelector(`.fs-entry[data-path="${CSS.escape(selected)}"]`);
-          if (row) row.classList.add("selected");
+          if (row) {
+            row.classList.add("selected");
+            scrollSortedRowIntoView(listing, ".selected");
+          }
         }
       }
 

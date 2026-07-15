@@ -10,7 +10,7 @@ import { apiErrorDetail, apiErrorObject, showDialog, toast } from "./dialogs.js"
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize } from "./col-resize.js";
-import { attachButtonSort, attachColumnSort, baseCompare, modelACompare } from "./col-sort.js";
+import { attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { loadJson, saveJson } from "./storage.js";
 import { mqNarrowDialog } from "./breakpoints.js";
 import { markSelectable, suppressMultiClickSelect } from "./wb-utils.js";
@@ -177,6 +177,8 @@ const OPENINGS_COL_MIN_PCT = 8;
 const OPENINGS_COL_ECO = "eco";
 const OPENINGS_COL_NAME = "name";
 const OPENINGS_COL_MOVES = "moves";
+const SELECTED_CLASS = "selected";
+const SELECTED_ROW_SEL = `tr.${SELECTED_CLASS}`;
 
 // Combining diacritical marks block (U+0300-U+036F). Built via RegExp ctor
 // from hex escapes so the source stays ASCII-only.
@@ -346,12 +348,12 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
   function clearSelection() {
     selectedPgn = "";
     selectedRow = null;
-    for (const r of list.querySelectorAll("tr.selected")) r.classList.remove("selected");
+    for (const r of list.querySelectorAll(SELECTED_ROW_SEL)) r.classList.remove(SELECTED_CLASS);
     onChange?.();
   }
 
   function scrollSelectedIntoView() {
-    list.querySelector("tr.selected")?.scrollIntoView({ block: "nearest" });
+    scrollSortedRowIntoView(list, SELECTED_ROW_SEL);
   }
 
   function renderList() {
@@ -388,10 +390,10 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
       tr.append(ecoTd, nameTd, movesTd);
       // Re-apply the highlight to the still-selected row after a re-render
       // so the pick stays visible (e.g. when the search filter is cleared).
-      if (selectedRow && row === selectedRow) tr.classList.add("selected");
+      if (selectedRow && row === selectedRow) tr.classList.add(SELECTED_CLASS);
       const pick = () => {
-        for (const r of list.querySelectorAll("tr.selected")) r.classList.remove("selected");
-        tr.classList.add("selected");
+        for (const r of list.querySelectorAll(SELECTED_ROW_SEL)) r.classList.remove(SELECTED_CLASS);
+        tr.classList.add(SELECTED_CLASS);
         selectedPgn = row.pgn;
         selectedRow = row;
         onChange?.();
@@ -428,10 +430,10 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
       onSort: (state) => {
         sort = state ? { key: state.key, dir: state.dir } : null;
         nameBtnSort.sync();
-        // Reordering invalidates the visible pick (same as filtering); drop it
-        // so Open never imports a selection the user can no longer see.
-        clearSelection();
+        // Sorting only reorders rows, so the pick stays valid; re-render and
+        // keep it visible rather than dropping it.
         renderList();
+        scrollSelectedIntoView();
       },
     });
     nameBtnSort = attachButtonSort({

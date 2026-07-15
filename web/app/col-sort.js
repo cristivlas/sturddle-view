@@ -41,6 +41,34 @@ export function modelACompare({ dir, primary, tiebreak, group }) {
   };
 }
 
+// Nearest scrollable ancestor; null when everything fits (nothing to scroll).
+function scrollParent(el) {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const o = getComputedStyle(p).overflowY;
+    if ((o === "auto" || o === "scroll") && p.scrollHeight > p.clientHeight) return p;
+  }
+  return null;
+}
+
+// After a sort-triggered re-render, bring the still-selected row back into
+// view -- FULLY visible. scrollIntoView({block:"nearest"}) aligns to the
+// scroller's edges, which leaves the row obscured under a sticky <thead> at
+// the top or under a bottom overlay (search bar) whose height the caller
+// reserved as scroller padding-bottom; treat both as viewport insets.
+export function scrollSortedRowIntoView(root, selector) {
+  const row = root.querySelector(selector);
+  if (!row) return;
+  const scroller = scrollParent(row);
+  if (!scroller) return;
+  const rowRect = row.getBoundingClientRect();
+  const scRect = scroller.getBoundingClientRect();
+  const thead = row.closest("table")?.querySelector("thead");
+  const top = scRect.top + (thead?.getBoundingClientRect().height || 0);
+  const bottom = scRect.bottom - (parseFloat(getComputedStyle(scroller).paddingBottom) || 0);
+  if (rowRect.top < top) scroller.scrollTop -= top - rowRect.top;
+  else if (rowRect.bottom > bottom) scroller.scrollTop += rowRect.bottom - bottom;
+}
+
 // Click cycle per column: none -> first -> other -> none. firstDir lets a
 // column open ascending (names) or descending (dates/sizes).
 export function nextDir(current, firstDir) {
