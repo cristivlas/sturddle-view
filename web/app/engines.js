@@ -4,20 +4,24 @@
 // height is sized to fit the dialog body via JS measurement.
 //
 // The controller closes over a single `ctx` object (engines, selectedDetailId,
-// activeId, filterText, sortOrder, dom refs, api) so render/CRUD/search/sort
+// activeId, filterText, sort, dom refs, api) so render/CRUD/search/sort
 // can live as module-level functions instead of one giant closure. Pure-DOM
 // layout (column resize, wrap sizing) lives in engines-list-layout.js.
 
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
-import { loadRaw, saveRaw } from "./storage.js";
 import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs.js";
 import { guard, markSelectable, suppressMultiClickSelect } from "./wb-utils.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 import { attachEngineColResize, createWrapSizer } from "./engines-list-layout.js";
+import { attachButtonSort, attachColumnSort, baseCompare, modelACompare } from "./col-sort.js";
+import { saveRaw } from "./storage.js";
+
+const COL_NAME = "name";
+const COL_ACTIVE = "active";
+const COL_PATH = "path";
 
 const COL_PCTS_KEY = STORAGE_KEY.ENGINES_COL_PCTS;
-const SORT_KEY_LS = STORAGE_KEY.ENGINES_SORT_ORDER;
 // Height of the overlaid search bar; matches the CSS rule. Added as
 // bottom padding on the list while open so the last row stays visible
 // above the bar.
@@ -117,6 +121,17 @@ function renderAll(ctx) {
   syncDetailButtons(ctx);
 }
 
+// Active column orders by the active engine first/last; name is the fixed
+// final tiebreaker so order is deterministic (Model A).
+function engineCompare(ctx, key, dir) {
+  const byName = (a, b) => baseCompare(a.name, b.name);
+  const primary =
+    key === COL_ACTIVE ? (a, b) => (a.id === ctx.activeId ? 1 : 0) - (b.id === ctx.activeId ? 1 : 0)
+      : key === COL_PATH ? (a, b) => baseCompare(a.path || "", b.path || "")
+        : byName;
+  return modelACompare({ dir, primary, tiebreak: byName });
+}
+
 function renderList(ctx) {
   const { list, emptyEl, emptyMsg, addBtn } = ctx;
   list.innerHTML = "";
@@ -124,10 +139,7 @@ function renderList(ctx) {
   let visible = needle
     ? ctx.engines.filter((e) => e.name.toLowerCase().includes(needle))
     : ctx.engines.slice();
-  if (ctx.sortOrder === "asc" || ctx.sortOrder === "desc") {
-    const dir = ctx.sortOrder === "asc" ? 1 : -1;
-    visible.sort((a, b) => dir * a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-  }
+  if (ctx.sort) visible.sort(engineCompare(ctx, ctx.sort.key, ctx.sort.dir));
 
   function emptyRow(text) {
     const tr = document.createElement("tr");
@@ -208,18 +220,6 @@ function syncDetailButtons(ctx) {
   ctx.detailOptionsBtn.disabled = !has;
   ctx.detailRemoveBtn.disabled = !has;
   ctx.detailUseBtn.disabled = !has || (e && e.id === ctx.activeId);
-}
-
-function syncSortButtons(ctx) {
-  ctx.sortAscBtn.classList.toggle("is-active", ctx.sortOrder === "asc");
-  ctx.sortDescBtn.classList.toggle("is-active", ctx.sortOrder === "desc");
-}
-
-function setSort(ctx, next) {
-  ctx.sortOrder = ctx.sortOrder === next ? "none" : next;
-  saveRaw(SORT_KEY_LS, ctx.sortOrder);
-  syncSortButtons(ctx);
-  renderList(ctx);
 }
 
 async function activateSelected(ctx) {
@@ -414,6 +414,7 @@ export function mountEngineList(container, api, opts = {}) {
   const { colPctsKey = COL_PCTS_KEY } = opts;
   container.innerHTML = ENGINES_LIST_HTML;
   markSelectable(container.querySelector(".engines-table"));
+  saveRaw(STORAGE_KEY.ENGINES_SORT_ORDER_LEGACY, null);  // clear orphaned pre-header-sort key
 
   const ctx = {
     container,
@@ -425,8 +426,7 @@ export function mountEngineList(container, api, opts = {}) {
     selectedDetailId: null,
     activeId: null,
     filterText: "",
-    sortOrder: ["asc", "desc", "none"].includes(loadRaw(SORT_KEY_LS))
-      ? loadRaw(SORT_KEY_LS) : "none",
+    sort: null,
     // Last (count, activeId) pair broadcast on sturddle:engines-changed.
     // Tracks across refreshes so the initial mount doesn't fire spuriously
     // if state matches what listeners (e.g. Play) already fetched.
@@ -448,10 +448,6 @@ export function mountEngineList(container, api, opts = {}) {
   ctx.openOptionsGuarded = guard(() => openOptionsForSelected(ctx));
   ctx.addGuarded = guard(() => addEngine(ctx));
 
-  ctx.sortAscBtn.addEventListener("click", () => setSort(ctx, "asc"));
-  ctx.sortDescBtn.addEventListener("click", () => setSort(ctx, "desc"));
-  syncSortButtons(ctx);
-
   const teardownSearch = setupEngineSearch(ctx);
 
   ctx.detailUseBtn.addEventListener("click", ctx.activateGuarded);
@@ -466,6 +462,34 @@ export function mountEngineList(container, api, opts = {}) {
   ctx.addBtn.addEventListener("click", ctx.addGuarded);
 
   attachEngineColResize(container, colPctsKey);
+
+  // One sort state, two UIs: the header arrows (attachColumnSort) and the
+  // ribbon Name asc/desc buttons (attachButtonSort). Both drive/read the same
+  // { key, dir } through sortCtrl, so either stays in sync with the other.
+  const sortCtrl = attachColumnSort({
+    table: container.querySelector(".engines-table"),
+    columns: [
+      { key: COL_NAME, firstDir: "asc" },
+      { key: COL_ACTIVE, firstDir: "desc" },
+      { key: COL_PATH, firstDir: "asc" },
+    ],
+    storageKey: STORAGE_KEY.ENGINES_HEADER_SORT,
+    onSort: (state) => {
+      ctx.sort = state ? { key: state.key, dir: state.dir } : null;
+      nameBtnSort.sync();
+      renderList(ctx);
+    },
+  });
+  const nameBtnSort = attachButtonSort({
+    ascBtn: ctx.sortAscBtn,
+    descBtn: ctx.sortDescBtn,
+    key: COL_NAME,
+    get: () => ctx.sort,
+    set: (state) => sortCtrl.set(state),
+  });
+  const initial = sortCtrl.current();
+  ctx.sort = initial ? { key: initial.key, dir: initial.dir } : null;
+  nameBtnSort.sync();
 
   const sizer = createWrapSizer(container);
   sizer.sizeWrap();
