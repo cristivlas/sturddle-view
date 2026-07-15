@@ -48,31 +48,18 @@ import { getConfiguredPlayerName } from "../settings-dialog.js";
 // board mirrors `input.fen` while a call with this name is in flight.
 const ANALYZE_TOOL_NAME = "analyze";
 
-// Module-scope mirror of "user has a live human-vs-engine game running"
-// so other modules (e.g. tournament Replay button) can decide whether
-// to confirm before discarding it. Updated from the perspective's
-// board_update / game_result handlers below.
+// Module-scope mirror of "user has a live human-vs-engine game running",
+// persisting across perspective remounts. Updated from the perspective's
+// board_update / game_result handlers below. Cross-module consumers
+// (tournament replay) must NOT read a client mirror -- it is unseeded on a
+// fresh page load; they ask the server via GET /game/status instead.
 let _playInProgress = false;
-export function isPlayInProgress() {
-  return _playInProgress;
-}
-
-// Mirrors the server-reported `analyzing` flag (board_update.analyzing) so
-// other modules can decide whether to warn before discarding analysis work.
-let _analyzing = false;
-export function isAnalyzing() {
-  return _analyzing;
-}
 
 // SHA-256 hash and summary of the game currently in view (null when in
-// play mode). Used by the tournament replay path to skip confirmation
-// when the game being replayed is already loaded.
+// play mode). Lets the import path skip confirmation when the incoming
+// game is already loaded.
 let _viewingHash = null;
 let _viewingSummary = null;
-let _viewing = false;
-export function isViewing() { return _viewing; }
-export function getViewingHash() { return _viewingHash; }
-export function getViewingSummary() { return _viewingSummary; }
 
 // Last board_update seen by this perspective. Survives unmount so the
 // next mount can render the cached state synchronously and resolve
@@ -847,11 +834,10 @@ async function doViewNav(state, endpoint, payload = {}) {
 // Analysis state setter + stop flow operating on shared `state`.
 
 // Single sync point: every analyzing write goes through this setter so the
-// module-scope mirror (_analyzing) used by isAnalyzing() stays current.
+// AI-finished latch and the x-game lock class stay consistent.
 // Direct `state.analyzing = ...` writes will drift -- always call setAnalyzing.
 function setAnalyzing(state, v) {
   state.analyzing = !!v;
-  _analyzing = state.analyzing;
   // Server flipped out of ANALYSIS -- clear the AI-finished latch
   // so the ribbon can re-enable when the game is paused again.
   if (!state.analyzing) state.aiShared.turnFinished = false;
@@ -1776,7 +1762,6 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         state.lastViewComment = v.comment ?? null;
         _viewingHash = v.view_hash ?? null;
         _viewingSummary = v.view_summary ?? null;
-        _viewing = true;
         // Single source of truth for commentary navigation. The server
         // ships fresh prev/next with every view payload, so game
         // switches (import while open) can't leave stale plies behind.
@@ -1814,7 +1799,6 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         state.lastViewComment = null;
         _viewingHash = null;
         _viewingSummary = null;
-        _viewing = false;
         state.commentNavPrev = null;
         state.commentNavNext = null;
         pushNavToUi(state);

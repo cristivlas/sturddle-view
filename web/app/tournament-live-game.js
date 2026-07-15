@@ -5,7 +5,6 @@
 
 import { mountBoard } from "./board.js";
 import { confirm, reportError, toast } from "./dialogs.js";
-import { isPlayInProgress, isViewing, isAnalyzing, getViewingHash, getViewingSummary } from "./perspectives/play.js";
 import { confirmReplaceViewedGame } from "./import-position-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { SIDE, FEN_STM } from "./chess-consts.js";
@@ -49,19 +48,26 @@ function fenPly(fen) {
 
 export async function replayTournamentGame({ tournamentId, gameN, token, pairId = null }) {
   const headers = { "Content-Type": "application/json" };
-  let pgn, pgnHash, pgnSummary;
+  let pgn, pgnHash, pgnSummary, status;
   try {
-    const res = await fetch(`/api/tournaments/${encodeURIComponent(tournamentId)}/games/${gameN}/pgn`, { headers });
+    // Play/view state comes from the server, not a client mirror: mirrors
+    // are unseeded on a fresh page load and would skip the confirmations.
+    const [res, statusRes] = await Promise.all([
+      fetch(`/api/tournaments/${encodeURIComponent(tournamentId)}/games/${gameN}/pgn`, { headers }),
+      fetch("/game/status", { headers }),
+    ]);
     if (!res.ok) throw new Error(`fetch pgn -> ${res.status}`);
+    if (!statusRes.ok) throw new Error(`fetch status -> ${statusRes.status}`);
     const rec = await res.json();
     pgn = rec.pgn;
     pgnHash = rec.hash ?? null;
     pgnSummary = rec.summary ?? null;
+    status = await statusRes.json();
   } catch (e) {
     reportError(null, "Review: fetch failed", e);
     return;
   }
-  if (isPlayInProgress()) {
+  if (status.in_progress) {
     const ok = await confirm({
       message: "Discard your in-progress game and review this tournament game?",
       okLabel: "Review",
@@ -69,8 +75,8 @@ export async function replayTournamentGame({ tournamentId, gameN, token, pairId 
       destructive: true,
     });
     if (!ok) return;
-  } else if (isViewing()) {
-    if (pgnHash && pgnHash === getViewingHash()) {
+  } else if (status.viewing) {
+    if (pgnHash && pgnHash === status.view_hash) {
       // Same game already viewed: switch perspective and surface a
       // toast carrying the pair id. The toast doubles as a live
       // invariant check for the game_id-unification refactor -- if
@@ -82,11 +88,11 @@ export async function replayTournamentGame({ tournamentId, gameN, token, pairId 
       return;
     }
     const ok = await confirmReplaceViewedGame({
-      currentHash: getViewingHash(),
-      currentSummary: getViewingSummary(),
+      currentHash: status.view_hash,
+      currentSummary: status.view_summary,
       incomingHash: pgnHash,
       incomingSummary: pgnSummary,
-      analysisRunning: isAnalyzing(),
+      analysisRunning: status.analyzing,
     });
     if (!ok) return;
   }

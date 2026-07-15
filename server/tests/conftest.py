@@ -14,9 +14,18 @@ import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from unittest.mock import AsyncMock
 
+import chess
 import pytest
 import pytest_asyncio
+from fastapi.testclient import TestClient
+
+from sturddle_view.app import create_app
+from sturddle_view.config import Settings
+from sturddle_view.engines import EngineRegistry
+from sturddle_view.play.chess_clock import ChessClock, TimeControl
+from sturddle_view.play.human_vs_engine import HumanVsEngine
 
 
 SNAPSHOT_UPDATE_FLAG = "--snapshot-update"
@@ -722,10 +731,61 @@ async def wait_for_async_predicate(page, body: str, *, poll_ms: int = 100) -> No
     await page.wait_for_function(f"() => window['{key}'] === true")
 
 
-# localStorage key + value that pin the Arena (classic) Tournaments UX;
-# the default is Studio, whose DOM the Arena-era e2e tests don't drive.
+def watch_page_errors(page) -> list[str]:
+    """Collect page JS exceptions + console errors; assert empty at test end."""
+    errors: list[str] = []
+    page.on("pageerror", lambda exc: errors.append(str(exc)))
+    page.on("console", lambda msg: errors.append(f"console.{msg.type}: {msg.text}")
+            if msg.type == "error" else None)
+    return errors
+
+
+def install_active_game(
+    app, *, engine_path: str, human_white: bool = True,
+    moves_uci: list[str] | None = None,
+) -> HumanVsEngine:
+    """Plant a fully-initialized HVE on app.state without a real UCI subprocess."""
+    hve = HumanVsEngine(
+        engine_path=engine_path,
+        bus=app.state.event_bus,
+        openings=getattr(app.state, "openings", None),
+        settings=app.state.settings,
+    )
+    hve._engine_to_move = AsyncMock()
+    hve._board = chess.Board()
+    for uci in moves_uci or []:
+        hve._board.push_uci(uci)
+    hve._human_white = human_white
+    hve._clock = ChessClock(TimeControl(60.0, 0.0))
+    hve._clock.white_time = 60.0
+    hve._clock.black_time = 60.0
+    hve._game_id = "test-game"
+    hve._clock.start_turn()
+    app.state.hve = hve
+    return hve
+
+
+@pytest.fixture
+def game_api_client(tmp_path):
+    # _resolve_engine reads settings.engine_path (a Path) when no registry
+    # entry is selected. The path does not need to exist — _get_hve only
+    # passes it as a string into HumanVsEngine.engine_path comparison.
+    fake_engine = tmp_path / "engine"
+    fake_engine.write_text("")
+    settings = Settings(token="t", auth_disabled=True)
+    settings.engine_path = fake_engine
+    registry = EngineRegistry(path=tmp_path / "engines.json")
+    app = create_app(settings=settings, engine_registry=registry)
+    with TestClient(app) as c:
+        yield c, app, str(fake_engine)
+
+
+# localStorage keys + values that pin a Tournaments UX shell; Studio is the
+# default, but seeding it explicitly keeps tests honest if the default flips.
+# Arena-era e2e tests must pin Arena, whose DOM they drive.
 TOURNAMENT_UX_KEY = "sturddle:tournament:ux"
 TOURNAMENT_UX_ARENA = "arena"
+TOURNAMENT_UX_STUDIO = "studio"
 
 
 async def pin_arena_tournament_ux(page) -> None:

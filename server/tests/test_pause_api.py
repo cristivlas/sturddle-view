@@ -2,56 +2,12 @@
 from __future__ import annotations
 
 
-import chess
-import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock
-
-from sturddle_view.app import create_app
-from sturddle_view.config import Settings
-from sturddle_view.engines import EngineRegistry
-from sturddle_view.play.chess_clock import ChessClock, TimeControl
-from sturddle_view.play.human_vs_engine import HumanVsEngine
+from .conftest import install_active_game
 
 
-def _install_active_game(app, *, engine_path: str, human_white: bool = True) -> HumanVsEngine:
-    """Plant a fully-initialized HVE on app.state without a real UCI subprocess."""
-    hve = HumanVsEngine(
-        engine_path=engine_path,
-        bus=app.state.event_bus,
-        openings=getattr(app.state, "openings", None),
-        settings=app.state.settings,
-    )
-    hve._engine_to_move = AsyncMock()
-    hve._board = chess.Board()
-    hve._human_white = human_white
-    hve._clock = ChessClock(TimeControl(60.0, 0.0))
-    hve._clock.white_time = 60.0
-    hve._clock.black_time = 60.0
-    hve._game_id = "test-game"
-    hve._clock.start_turn()
-    app.state.hve = hve
-    return hve
-
-
-@pytest.fixture
-def client(tmp_path):
-    # _resolve_engine reads settings.engine_path (a Path) when no registry
-    # entry is selected. The path does not need to exist — _get_hve only
-    # passes it as a string into HumanVsEngine.engine_path comparison.
-    fake_engine = tmp_path / "engine"
-    fake_engine.write_text("")
-    settings = Settings(token="t", auth_disabled=True)
-    settings.engine_path = fake_engine
-    registry = EngineRegistry(path=tmp_path / "engines.json")
-    app = create_app(settings=settings, engine_registry=registry)
-    with TestClient(app) as c:
-        yield c, app, str(fake_engine)
-
-
-def test_pause_then_resume_round_trip(client):
-    c, app, engine_path = client
-    _install_active_game(app, engine_path=engine_path, human_white=True)
+def test_pause_then_resume_round_trip(game_api_client):
+    c, app, engine_path = game_api_client
+    install_active_game(app, engine_path=engine_path, human_white=True)
 
     r = c.post("/game/pause", json={})
     assert r.status_code == 200
@@ -62,19 +18,19 @@ def test_pause_then_resume_round_trip(client):
     assert app.state.hve.is_paused is False
 
 
-def test_pause_off_turn_returns_400(client):
-    c, app, engine_path = client
+def test_pause_off_turn_returns_400(game_api_client):
+    c, app, engine_path = game_api_client
     # Human is black -> on a fresh board, white (engine) is to move.
-    _install_active_game(app, engine_path=engine_path, human_white=False)
+    install_active_game(app, engine_path=engine_path, human_white=False)
 
     r = c.post("/game/pause", json={})
     assert r.status_code == 400
     assert "your turn" in r.json()["detail"]
 
 
-def test_resume_when_not_paused_is_noop(client):
-    c, app, engine_path = client
-    _install_active_game(app, engine_path=engine_path, human_white=True)
+def test_resume_when_not_paused_is_noop(game_api_client):
+    c, app, engine_path = game_api_client
+    install_active_game(app, engine_path=engine_path, human_white=True)
 
     r = c.post("/game/resume", json={})
     assert r.status_code == 200, r.text

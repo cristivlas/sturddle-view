@@ -25,10 +25,14 @@ from sturddle_view.tournament.pgn_stats import (  # noqa: E402
     elo_margin_from_wld,
 )
 
-from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
+from .conftest import (  # noqa: E402
+    TOURNAMENT_UX_KEY,
+    TOURNAMENT_UX_STUDIO,
+    run_uvicorn_subprocess,
+    wait_perspective_ready,
+    watch_page_errors,
+)
 
-# Client-only setting that selects the Studio shell over Arena.
-UX_LS_KEY = "sturddle:tournament:ux"
 WHITE_WIN, BLACK_WIN, DRAW = "1-0", "0-1", "1/2-1/2"
 
 # Tolerances: rendered values are toFixed(1); expected are unrounded, and the
@@ -146,21 +150,15 @@ _READ_ROWS = """() => {
 
 async def _open_h2h(page, base):
     """Mount Studio, switch to the engines perspective, open the H2H tab."""
-    await page.add_init_script(f"localStorage.setItem('{UX_LS_KEY}', 'studio')")
+    await page.add_init_script(
+        f"localStorage.setItem('{TOURNAMENT_UX_KEY}', '{TOURNAMENT_UX_STUDIO}')"
+    )
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective")
     await wait_perspective_ready(page)
     await page.click('button[data-perspective="engines"]')
     await page.wait_for_selector(".studio-panel")
     await page.click('.studio-bottom-right wa-tab[panel="h2h"]')
-
-
-def _watch_errors(page):
-    errors: list[str] = []
-    page.on("pageerror", lambda exc: errors.append(str(exc)))
-    page.on("console", lambda msg: errors.append(f"console.{msg.type}: {msg.text}")
-            if msg.type == "error" else None)
-    return errors
 
 
 @pytest.mark.asyncio
@@ -185,7 +183,7 @@ async def test_h2h_two_engine_values_and_banner(tmp_path, make_page):
 
     with run_uvicorn_subprocess(env_overrides=_server_env(tmp_path)) as base:
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
-        errors = _watch_errors(page)
+        errors = watch_page_errors(page)
         await _open_h2h(page, base)
         await page.wait_for_selector(".h2h-banner")
         await page.wait_for_function(
@@ -229,7 +227,7 @@ async def test_h2h_three_engine_no_banner(tmp_path, make_page):
 
     with run_uvicorn_subprocess(env_overrides=_server_env(tmp_path)) as base:
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
-        errors = _watch_errors(page)
+        errors = watch_page_errors(page)
         await _open_h2h(page, base)
         await page.wait_for_function(
             "() => document.querySelectorAll('.h2h-tbl tbody tr.h2h-group').length === 3",

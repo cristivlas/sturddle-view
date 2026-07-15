@@ -697,6 +697,25 @@ class HumanVsEngine:
         if kick_engine:
             await self._engine_to_move()
 
+    async def status(self) -> dict:
+        """Server-authoritative snapshot of the state behind the client's
+        discard/replace confirmations (GET /game/status). in_progress mirrors
+        the client's moves>0 && !over && !viewing gate; every game-end path
+        nulls the board, so board presence implies the game isn't over."""
+        async with self._lock:
+            viewing = self._viewing
+            return {
+                "in_progress": (
+                    not viewing
+                    and self._board is not None
+                    and bool(self._board.move_stack)
+                ),
+                "viewing": viewing,
+                "view_hash": self._view_hash if viewing else None,
+                "view_summary": self._view_summary if viewing else None,
+                "analyzing": self._analysis_mode,
+            }
+
     async def _republish_last_analysis_info(self) -> None:
         """Re-emit the most recent analysis info payload so a freshly
         mounted client can restore the board arrow without waiting for

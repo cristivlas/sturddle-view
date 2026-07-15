@@ -779,6 +779,27 @@ async def sync(request: Request) -> dict:
     return {"ok": True}
 
 
+# /status response when no HVE exists yet (nothing to guard).
+_IDLE_STATUS = {
+    "in_progress": False,
+    "viewing": False,
+    "view_hash": None,
+    "view_summary": None,
+    "analyzing": False,
+}
+
+
+@router.get("/status")
+async def game_status(request: Request) -> dict:
+    """Authoritative state for the client's discard/replace confirmations
+    (tournament replay). Client mirrors of this die on page reload; this
+    endpoint doesn't. Never creates an HVE."""
+    s = request.app.state
+    if s.hve is None:
+        return dict(_IDLE_STATUS)
+    return await s.hve.status()
+
+
 @router.post("/pause")
 async def pause(request: Request) -> dict:
     hve = await _get_hve(request)
