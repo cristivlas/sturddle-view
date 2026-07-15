@@ -12,6 +12,7 @@ import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OP
 import { openSettingsDialog } from "./settings-dialog.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, sprtParamErrors, STATUS } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
+import { scrollSortedRowIntoView } from "./col-sort.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import {
@@ -1156,6 +1157,7 @@ function applySort(ctx, nextBy, nextAsc) {
   saveRaw(STORAGE_KEY.TOURNAMENTS_SORT_ASC, String(ctx.sortAsc));
   syncSortMenu(ctx);
   renderList(ctx);
+  scrollSortedRowIntoView(ctx.listEl, ".tournament-row.selected");
 }
 
 // Persistent sort toast -- reuse DOM in place to avoid flicker on re-sort.

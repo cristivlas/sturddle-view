@@ -4,7 +4,7 @@
 
 import { APP_EVT } from "./app-events.js";
 import { attachColumnResize } from "./col-resize.js";
-import { attachColumnSort } from "./col-sort.js";
+import { attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import { markSelectable, rafCoalesce, suppressMultiClickSelect } from "./wb-utils.js";
@@ -19,17 +19,15 @@ const FS_COL_SIZE = "size";
 // Folders always group before files; within a group the active column
 // orders, with name as the fixed final tiebreaker (Model A, deterministic).
 function fsCompare(key, dir) {
-  const sign = dir === "asc" ? 1 : -1;
-  const byName = (a, b) =>
-    a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
-  return (a, b) => {
-    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-    let primary = 0;
-    if (key === FS_COL_NAME) primary = byName(a, b);
-    else if (key === FS_COL_DATE) primary = (a.mtime || 0) - (b.mtime || 0);
-    else if (key === FS_COL_SIZE) primary = (a.size || 0) - (b.size || 0);
-    return primary !== 0 ? sign * primary : byName(a, b);
-  };
+  const byName = (a, b) => baseCompare(a.name, b.name);
+  const primary =
+    key === FS_COL_DATE ? (a, b) => (a.mtime || 0) - (b.mtime || 0)
+      : key === FS_COL_SIZE ? (a, b) => (a.size || 0) - (b.size || 0)
+        : byName;
+  return modelACompare({
+    dir, primary, tiebreak: byName,
+    group: (a, b) => (a.is_dir === b.is_dir ? 0 : a.is_dir ? -1 : 1),
+  });
 }
 
 function ensureContainer() {
@@ -490,7 +488,10 @@ export function pickFile({
         renderRows(rows);
         if (selected) {
           const row = listing.querySelector(`.fs-entry[data-path="${CSS.escape(selected)}"]`);
-          if (row) row.classList.add("selected");
+          if (row) {
+            row.classList.add("selected");
+            scrollSortedRowIntoView(listing, ".selected");
+          }
         }
       }
 

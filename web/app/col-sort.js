@@ -21,6 +21,54 @@ export const ARROW_CLASS = "th-sort-arrow";
 export const ARROW_DESC = "caret-down";
 export const ARROW_ASC = "caret-up";
 
+// Locale string compare shared by every table's name/text tiebreak and
+// text-column primaries (case-insensitive, natural numeric order).
+export function baseCompare(a, b) {
+  return String(a).localeCompare(String(b), undefined, { sensitivity: "base", numeric: true });
+}
+
+// Model-A comparator factory. `primary` is the active column's dir-agnostic
+// comparator; the result applies `dir` to it, then falls back to `tiebreak`
+// (also dir-agnostic) so equal rows stay in a deterministic order. `group`,
+// if given, orders before everything and is NOT dir-flipped -- for fixed
+// partitions like folders-before-files.
+export function modelACompare({ dir, primary, tiebreak, group }) {
+  const sign = dir === SORT_DIR.ASC ? 1 : -1;
+  return (a, b) => {
+    if (group) { const g = group(a, b); if (g) return g; }
+    const p = primary(a, b);
+    return p !== 0 ? sign * p : tiebreak(a, b);
+  };
+}
+
+// Nearest scrollable ancestor; null when everything fits (nothing to scroll).
+function scrollParent(el) {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const o = getComputedStyle(p).overflowY;
+    if ((o === "auto" || o === "scroll") && p.scrollHeight > p.clientHeight) return p;
+  }
+  return null;
+}
+
+// After a sort-triggered re-render, bring the still-selected row back into
+// view -- FULLY visible. scrollIntoView({block:"nearest"}) aligns to the
+// scroller's edges, which leaves the row obscured under a sticky <thead> at
+// the top or under a bottom overlay (search bar) whose height the caller
+// reserved as scroller padding-bottom; treat both as viewport insets.
+export function scrollSortedRowIntoView(root, selector) {
+  const row = root.querySelector(selector);
+  if (!row) return;
+  const scroller = scrollParent(row);
+  if (!scroller) return;
+  const rowRect = row.getBoundingClientRect();
+  const scRect = scroller.getBoundingClientRect();
+  const thead = row.closest("table")?.querySelector("thead");
+  const top = scRect.top + (thead?.getBoundingClientRect().height || 0);
+  const bottom = scRect.bottom - (parseFloat(getComputedStyle(scroller).paddingBottom) || 0);
+  if (rowRect.top < top) scroller.scrollTop -= top - rowRect.top;
+  else if (rowRect.bottom > bottom) scroller.scrollTop += rowRect.bottom - bottom;
+}
+
 // Click cycle per column: none -> first -> other -> none. firstDir lets a
 // column open ascending (names) or descending (dates/sizes).
 export function nextDir(current, firstDir) {
@@ -28,6 +76,40 @@ export function nextDir(current, firstDir) {
   if (current === firstDir) return other;
   if (current === other) return SORT_DIR.NONE;
   return firstDir;
+}
+
+// Companion controller for a pair of direction buttons (asc / desc) that sort
+// one fixed column, sharing the same { key, dir } state that attachColumnSort
+// drives. Both controllers read/write via the caller's get/set, so a header
+// click lights the matching button and vice versa -- one state, two UIs.
+// set(state|null) is the caller's apply+persist+re-render; get() returns the
+// live state. Returns { sync } to re-light the buttons after external changes.
+export function attachButtonSort({
+  ascBtn,
+  descBtn,
+  key,
+  activeClass = "is-active",
+  get,
+  set,
+}) {
+  function sync() {
+    const s = get();
+    const dir = s && s.key === key ? s.dir : SORT_DIR.NONE;
+    ascBtn.classList.toggle(activeClass, dir === SORT_DIR.ASC);
+    descBtn.classList.toggle(activeClass, dir === SORT_DIR.DESC);
+  }
+
+  function click(dir) {
+    const s = get();
+    const active = s && s.key === key && s.dir === dir;
+    set(active ? null : { key, dir });
+    sync();
+  }
+
+  ascBtn.addEventListener("click", () => click(SORT_DIR.ASC));
+  descBtn.addEventListener("click", () => click(SORT_DIR.DESC));
+  sync();
+  return { sync };
 }
 
 export function attachColumnSort({
@@ -92,6 +174,13 @@ export function attachColumnSort({
     // applied to the initial render without a header click.
     current() {
       return active ? { ...active, column: columnFor(active.key) } : null;
+    },
+    // Programmatic sort (e.g. a companion button pair), routed through the same
+    // arrow-sync + persist + onSort path a header click takes.
+    set(state) {
+      active = state && state.key ? { key: state.key, dir: state.dir } : null;
+      syncIndicators();
+      emit();
     },
     destroy() {
       ths.forEach((th) => th.querySelector(`.${ARROW_CLASS}`)?.remove());

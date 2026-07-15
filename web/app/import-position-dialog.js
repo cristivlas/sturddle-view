@@ -10,6 +10,7 @@ import { apiErrorDetail, apiErrorObject, showDialog, toast } from "./dialogs.js"
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize } from "./col-resize.js";
+import { attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { loadJson, saveJson } from "./storage.js";
 import { mqNarrowDialog } from "./breakpoints.js";
 import { markSelectable, suppressMultiClickSelect } from "./wb-utils.js";
@@ -173,6 +174,12 @@ const TEXTAREA_ROWS = 8;
 const OPENINGS_DEFAULT_PCTS = [12, 50, 38];
 const OPENINGS_COL_MIN_PCT = 8;
 
+const OPENINGS_COL_ECO = "eco";
+const OPENINGS_COL_NAME = "name";
+const OPENINGS_COL_MOVES = "moves";
+const SELECTED_CLASS = "selected";
+const SELECTED_ROW_SEL = `tr.${SELECTED_CLASS}`;
+
 // Combining diacritical marks block (U+0300-U+036F). Built via RegExp ctor
 // from hex escapes so the source stays ASCII-only.
 const COMBINING_MARKS_RE = new RegExp("[\\u0300-\\u036f]", "g");
@@ -266,6 +273,17 @@ function wireOpeningsSearch(el, { setFilter, renderList, clearSelection, scrollS
   });
 }
 
+// Name is the fixed final tiebreaker so order is deterministic regardless of
+// which column is active (Model A).
+function openingCompare(key, dir) {
+  const byName = (a, b) => baseCompare(a.name, b.name);
+  const primary =
+    key === OPENINGS_COL_ECO ? (a, b) => baseCompare(a.eco, b.eco)
+      : key === OPENINGS_COL_MOVES ? (a, b) => baseCompare(a.pgn, b.pgn)
+        : byName;
+  return modelACompare({ dir, primary, tiebreak: byName });
+}
+
 // Build the Openings tab: a resizable-column table (ECO / Name / Moves)
 // loaded once, filtered locally, with a toggle-overlay search bar that
 // mirrors the Engines list. Selecting a row exposes its PGN via
@@ -275,7 +293,7 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
   let selectedRow = null;
   let rows = [];
   let filterText = "";
-  let sortOrder = "none";  // none = backend order (ECO, name); else by name
+  let sort = null;  // { key, dir } | null (null = backend order: ECO, name)
 
   const el = document.createElement("div");
   el.className = "openings-panel";
@@ -323,22 +341,19 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
     let out = needle
       ? rows.filter((r) => r._fold.includes(needle) || r.eco.toLowerCase().includes(needle))
       : rows.slice();
-    if (sortOrder === "asc" || sortOrder === "desc") {
-      const dir = sortOrder === "asc" ? 1 : -1;
-      out.sort((a, b) => dir * a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-    }
+    if (sort) out.sort(openingCompare(sort.key, sort.dir));
     return out;
   }
 
   function clearSelection() {
     selectedPgn = "";
     selectedRow = null;
-    for (const r of list.querySelectorAll("tr.selected")) r.classList.remove("selected");
+    for (const r of list.querySelectorAll(SELECTED_ROW_SEL)) r.classList.remove(SELECTED_CLASS);
     onChange?.();
   }
 
   function scrollSelectedIntoView() {
-    list.querySelector("tr.selected")?.scrollIntoView({ block: "nearest" });
+    scrollSortedRowIntoView(list, SELECTED_ROW_SEL);
   }
 
   function renderList() {
@@ -375,10 +390,10 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
       tr.append(ecoTd, nameTd, movesTd);
       // Re-apply the highlight to the still-selected row after a re-render
       // so the pick stays visible (e.g. when the search filter is cleared).
-      if (selectedRow && row === selectedRow) tr.classList.add("selected");
+      if (selectedRow && row === selectedRow) tr.classList.add(SELECTED_CLASS);
       const pick = () => {
-        for (const r of list.querySelectorAll("tr.selected")) r.classList.remove("selected");
-        tr.classList.add("selected");
+        for (const r of list.querySelectorAll(SELECTED_ROW_SEL)) r.classList.remove(SELECTED_CLASS);
+        tr.classList.add(SELECTED_CLASS);
         selectedPgn = row.pgn;
         selectedRow = row;
         onChange?.();
@@ -398,24 +413,39 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
     renderList, clearSelection, scrollSelectedIntoView,
   });
 
-  // Sort A-Z / Z-A, mirroring the Engines list (third click clears).
+  // One sort state, two UIs: the header arrows (attachColumnSort) and the
+  // ribbon Name asc/desc buttons (attachButtonSort). Both drive/read the same
+  // { key, dir } through sortCtrl, so either stays in sync with the other
+  // (mirrors the Engines list).
   {
-    const ascBtn = el.querySelector(".openings-sort-asc");
-    const descBtn = el.querySelector(".openings-sort-desc");
-    function syncSortButtons() {
-      ascBtn.classList.toggle("is-active", sortOrder === "asc");
-      descBtn.classList.toggle("is-active", sortOrder === "desc");
-    }
-    function setSort(next) {
-      sortOrder = sortOrder === next ? "none" : next;
-      syncSortButtons();
-      // Reordering invalidates the visible pick (same as filtering); drop it
-      // so Open never imports a selection the user can no longer see.
-      clearSelection();
-      renderList();
-    }
-    ascBtn.addEventListener("click", () => setSort("asc"));
-    descBtn.addEventListener("click", () => setSort("desc"));
+    let nameBtnSort;
+    const sortCtrl = attachColumnSort({
+      table: openingsTable,
+      columns: [
+        { key: OPENINGS_COL_ECO, firstDir: "asc" },
+        { key: OPENINGS_COL_NAME, firstDir: "asc" },
+        { key: OPENINGS_COL_MOVES, firstDir: "asc" },
+      ],
+      storageKey: STORAGE_KEY.OPENINGS_SORT,
+      onSort: (state) => {
+        sort = state ? { key: state.key, dir: state.dir } : null;
+        nameBtnSort.sync();
+        // Sorting only reorders rows, so the pick stays valid; re-render and
+        // keep it visible rather than dropping it.
+        renderList();
+        scrollSelectedIntoView();
+      },
+    });
+    nameBtnSort = attachButtonSort({
+      ascBtn: el.querySelector(".openings-sort-asc"),
+      descBtn: el.querySelector(".openings-sort-desc"),
+      key: OPENINGS_COL_NAME,
+      get: () => sort,
+      set: (state) => sortCtrl.set(state),
+    });
+    const initial = sortCtrl.current();
+    sort = initial ? { key: initial.key, dir: initial.dir } : null;
+    nameBtnSort.sync();
   }
 
   // Column resize over the three cols.

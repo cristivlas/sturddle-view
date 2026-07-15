@@ -5,6 +5,8 @@ Covers:
   * /game/new threads it into the server's HVE snapshot.
   * The play-mode clock label reflects the name.
   * The exported PGN [White]/[Black] headers carry the name.
+  * Export -> import round trip: the re-imported PGN's view-mode clock
+    labels still show the custom name.
   * After a page reload the rehydrated game still surfaces the name --
     the regression case where the name lived only in localStorage and
     was lost when the server's board_update payload didn't carry it.
@@ -173,23 +175,70 @@ async def test_custom_name_survives_page_reload(server, page):
     await _wait_for_bottom_label(page, CUSTOM_NAME)
 
 
-@pytest.mark.asyncio
-async def test_custom_name_in_exported_pgn(server, page):
-    """The exported PGN must carry the custom name in the [White] header
-    when the human plays White, and the engine's name in [Black].
+async def _play_and_export(page, base: str) -> str:
+    """Open the app, start a human-white game with the custom name, play one
+    move each side, and return the exported PGN text. Forces human_white via
+    direct POST so we don't depend on the random side selection the New-game
+    button would otherwise apply.
     """
-    base = server
     await _open_app(page, base)
-    await _set_name_in_settings(page, CUSTOM_NAME)
-    # Force human_white via direct POST so we don't depend on the random
-    # side selection the New-game button would otherwise apply.
     httpx.post(
         f"{base}/game/new",
         json={"player_name": CUSTOM_NAME, "human_side": "white"},
     ).raise_for_status()
     httpx.post(f"{base}/game/move", json={"uci": "e2e4"}).raise_for_status()
     await _wait_for_engine_reply(page)
+    return httpx.get(f"{base}/game/pgn").text
 
-    pgn = httpx.get(f"{base}/game/pgn").text
+
+@pytest.mark.asyncio
+async def test_custom_name_in_exported_pgn(server, page):
+    """The exported PGN must carry the custom name in the [White] header
+    when the human plays White, and the engine's name in [Black].
+    """
+    base = server
+    pgn = await _play_and_export(page, base)
     assert f'[White "{CUSTOM_NAME}"]' in pgn, pgn
     assert f'[Black "{ENGINE_NAME}"]' in pgn, pgn
+
+
+@pytest.mark.asyncio
+async def test_custom_name_roundtrip_export_import(server, page):
+    """Full save/load loop: play with the custom name, export the PGN,
+    import that exact text back -- the view-mode clock labels must show
+    the custom name, proving the name survives the whole round trip.
+
+    Deliberately does NOT set the name in Settings: localStorage stays
+    empty, so the label assertion can only be satisfied by the PGN-header
+    path, not a localStorage fallback.
+    """
+    base = server
+    pgn = await _play_and_export(page, base)
+    # Save half: the exported PGN carries the custom name.
+    assert f'[White "{CUSTOM_NAME}"]' in pgn, pgn
+
+    # Load half: import the exact exported text and hard-reload into view
+    # mode; the clock names must come from the PGN headers.
+    httpx.post(
+        f"{base}/game/import",
+        json={"text": pgn, "format": "pgn"},
+    ).raise_for_status()
+    await page.reload()
+    await _open_app(page, base)
+    await page.wait_for_function(
+        "() => getComputedStyle(document.querySelector('#view-controls'))"
+        ".display !== 'none'",
+    )
+
+    names = await page.evaluate(
+        """() => ({
+            top: document.querySelector('.clock-name[data-side="top"]')?.textContent ?? null,
+            bottom: document.querySelector('.clock-name[data-side="bottom"]')?.textContent ?? null,
+        })"""
+    )
+    assert names["bottom"] == CUSTOM_NAME, (
+        f"bottom clock name should be the custom name ({CUSTOM_NAME!r}), got {names['bottom']!r}"
+    )
+    assert names["top"] == ENGINE_NAME, (
+        f"top clock name should be the engine ({ENGINE_NAME!r}), got {names['top']!r}"
+    )

@@ -12,7 +12,7 @@ import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, loadRaw, saveJson, saveRaw } from "./storage.js";
 import { progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
-import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, nextDir } from "./col-sort.js";
+import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, nextDir, scrollSortedRowIntoView } from "./col-sort.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { reportError, toast } from "./dialogs.js";
@@ -257,7 +257,10 @@ function buildTourneyTable(ctx) {
   ctx.tourneyStack = attachLayeredSort({
     table, columns: TOURNEY_SORT_COLS,
     sortKey: STORAGE_KEY.STUDIO_TOURNEY_SORT, stackKey: STORAGE_KEY.STUDIO_TOURNEY_STACK,
-    onChange: () => renderTourneys(ctx),
+    onChange: () => {
+      renderTourneys(ctx);
+      scrollSortedRowIntoView(ctx.tourneyTbody, "tr.selected");
+    },
   }).get;
   const colEls = Array.from(table.querySelectorAll("col"));
   attachColumnResize({
