@@ -90,6 +90,11 @@ _RESULT_UNKNOWN = "*"
 _TERMINATION_UNKNOWN = "unknown"
 
 
+def _info_carries_eval(stripped: str) -> bool:
+    """``info`` line carries a score or PV -- the only kinds clients use."""
+    return " score " in stripped or " pv " in stripped
+
+
 def _fanout(subs: "set[CoalescingQueue]", payload: dict) -> None:
     """Route a payload to all subscribers. `info` lines coalesce per
     proxy (latest wins, flushed on timer or on next non-info); other
@@ -735,8 +740,12 @@ class Orchestrator:
                 new_pairs, orphaned = self._pairing_apply_bestmove(proxy_id, parsed)
                 await self._emit_group_events(new_pairs, orphaned)
             elif stripped.startswith("info "):
-                if " score " in stripped or " pv " in stripped:
-                    snap["info"] = line
+                # Scoreless infos (currmove/nodes/string) have no consumer;
+                # skip fan-out so latest-wins coalescing can't let one
+                # overwrite the scored info a subscriber needs.
+                if not _info_carries_eval(stripped):
+                    continue
+                snap["info"] = line
                 state = self._pairing_state.get(proxy_id)
                 if state is not None:
                     fen, my_color = state

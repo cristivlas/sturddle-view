@@ -430,6 +430,36 @@ async def test_non_info_event_flushes_pending_info(orch):
 
 
 @pytest.mark.asyncio
+async def test_scoreless_info_cannot_evict_scored_info(orch):
+    """Scoreless infos (currmove/nodes/string) are skipped at ingest, so
+    latest-wins coalescing can't let one overwrite the scored info a
+    subscriber needs for the eval graph (missing-bar bug)."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    pair_id = next(iter(orch._pair_proxies))
+    q = orch.subscribe_to_game(pair_id)
+    while not q.empty():
+        q.get_nowait()
+
+    # Scored info, then scoreless trailers, then bestmove -- all within
+    # the coalesce window.
+    await orch.ingest_proxy_lines(_PROXY_A, [
+        "info depth 12 score cp 50 pv e2e4",
+        "info currmove d2d4 currmovenumber 2",
+        "info nodes 123456 time 87",
+        "bestmove e2e4",
+    ])
+
+    items = []
+    while not q.empty():
+        items.append(q.get_nowait())
+    lines = [m["line"] for m in items if isinstance(m.get("line"), str)]
+    infos = [ln for ln in lines if ln.startswith("info ")]
+    assert infos == ["info depth 12 score cp 50 pv e2e4"]
+
+
+@pytest.mark.asyncio
 async def test_dissolve_sentinel_survives_full_queue(orch):
     """Game-WS queue can fill under fast TC + slow consumer. Terminal
     lives on a sticky side channel so it lands regardless of queue

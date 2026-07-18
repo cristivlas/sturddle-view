@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sturddle-view"
-version = "0.4.9"
+version = "0.5.0"
 description = "Browser-based chess GUI for human vs engine play and headless tournament observation."
 requires-python = ">=3.10"
 readme = "README.md"
