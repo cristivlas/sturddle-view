@@ -53,6 +53,7 @@ from .engine_supervisor import EngineSupervisor
 from .game_store import DEFAULT_PLAYER_NAME, GameState, GameStore
 from .import_position import explain_invalid
 from .mode import Mode, ModeConflictError, Op
+from .opening_lines import BookRef, book_reply
 from .tablebase import TablebaseProber
 
 log = logging.getLogger(__name__)
@@ -234,14 +235,14 @@ class HumanVsEngine:
         # (self._game = it) by cancel_edit and the FEN-unchanged commit_edit.
         self._edit_saved_view: GameBundle | None = None
         self._tb: TablebaseProber | None = None
-        # Active opening-book line (UCI) the engine follows this game. The
-        # engine plays the next book move while the moves played so far are
-        # a prefix of this line; the first human deviation clears it (out of
-        # book). None when no book is active. Reset per new_game; never set
-        # by restore_from, so a rehydrated mid-game is out of book.
-        self._book_line: tuple[str, ...] | None = None
-        # Source file of the active book line, for logging only.
-        self._book_path: str | None = None
+        # Per-game PGN book reference. Each engine turn prefix-matches the
+        # moves played so far against the book's lines (book_reply); the
+        # first empty pool latches _out_of_book so later turns skip the
+        # lookup (takeback unlatches -- a shorter prefix can match again).
+        # None when no book. Reset per new_game; never set by
+        # restore_from, so a rehydrated mid-game is out of book.
+        self._book: BookRef | None = None
+        self._out_of_book = False
         self._lock = asyncio.Lock()
 
     # Coherent-game fields delegate to the self._game bundle, so call sites
@@ -540,8 +541,7 @@ class HumanVsEngine:
         seed_final_black_time: float | None = None,
         seed_comments: list[str | None] | None = None,
         seed_root_comment: str | None = None,
-        book_line: tuple[str, ...] | None = None,
-        book_path: str | None = None,
+        book: BookRef | None = None,
     ) -> str:
         """Start a fresh game.
 
@@ -555,6 +555,9 @@ class HumanVsEngine:
         comment storage when forking from a view game (play_from_here),
         so imported annotations survive into the eventual PGN export and
         recents save.
+
+        `book` arms the PGN opening book for this game (startpos games
+        only; the lookup gate also checks start_fen).
         """
         async with self._lock:
             if not (self._mode & Op.NEW_GAME._mask):
@@ -615,8 +618,8 @@ class HumanVsEngine:
             # /view/start suspend (so a later view entry can't resume it).
             self._fork_link = None
             self._suspended_play = None
-            self._book_line = book_line or None
-            self._book_path = book_path if self._book_line else None
+            self._book = book
+            self._out_of_book = False
             engine.send_line("ucinewgame")
             self._game = next_game
             await self._persist()
@@ -772,6 +775,10 @@ class HumanVsEngine:
                 if len(self._board.move_stack) < 1:
                     raise RuntimeError("nothing to take back")
                 _pop_one()
+            # Undo shortens the played prefix, so book lines that fell out
+            # of the matching pool may match again: unlatch and let the
+            # next engine turn re-check the book.
+            self._out_of_book = False
             # Preserve pause state across takeback: undoing should not
             # silently resume the clock.
             if self._paused:
@@ -1748,37 +1755,22 @@ class HumanVsEngine:
             capture_score=capture_score,
         )  # cancel handled via asyncio task cancellation, not cancel_token
 
-    def _next_book_move(self) -> chess.Move | None:
-        """The engine's book move for the current position, or None if out
-        of book. In book only while the moves played so far are an exact
-        prefix of `_book_line` (startpos lines only). A human deviation, a
-        finished line, or an illegal book move clears `_book_line`."""
-        line = self._book_line
-        if line is None or self._start_fen is not None:
-            return None
-        stack = self._board.move_stack
-        played = len(stack)
-        if played >= len(line) or any(
-            stack[i].uci() != line[i] for i in range(played)
-        ):
-            reason = "line exhausted" if played >= len(line) else "human deviated"
-            log.debug("opening book: out of book (%s) for %s", reason, self._book_path)
-            self._book_line = None
-            return None
-        try:
-            move = chess.Move.from_uci(line[played])
-        except ValueError:
-            log.debug("opening book: out of book (bad UCI %r) for %s", line[played], self._book_path)
-            self._book_line = None
-            return None
-        if move not in self._board.legal_moves:
-            log.debug("opening book: out of book (illegal %s) for %s", line[played], self._book_path)
-            self._book_line = None
-            return None
-        log.debug(
-            "opening book: playing %s (ply %d) from %s", move.uci(), played, self._book_path,
+    async def _book_move(
+        self, book: BookRef, played: list[str], game_id: str, gen: int,
+    ) -> chess.Move | None:
+        """Prefix-match book lookup, run off the event loop (a big book's
+        first index build takes real time). A miss latches _out_of_book
+        under the same game/gen guard a move commit uses, so a stale
+        lookup can't latch a game started meanwhile."""
+        uci = await asyncio.to_thread(
+            book_reply, book.path, played, book.plies, book.order, book.anchor,
         )
-        return move
+        if uci is not None:
+            return chess.Move.from_uci(uci)
+        async with self._lock:
+            if self._game_id == game_id and self._think_gen == gen:
+                self._out_of_book = True
+        return None
 
     async def _think_and_play(self) -> None:
         async with self._lock:
@@ -1787,18 +1779,36 @@ class HumanVsEngine:
             game_id = self._game_id
             board = self._board
             gen = self._think_gen
-            book_move = self._next_book_move()
-            if book_move is None:
-                try:
-                    engine = await self._ensure_engine()
-                except Exception:
-                    log.error("could not start engine for search", exc_info=True)
-                    return
+            # Book gate: armed, not latched out, startpos game. The played
+            # moves are snapshotted under the lock; the lookup itself runs
+            # outside it and commits under the usual cancel guard.
+            book = (
+                self._book
+                if not self._out_of_book and self._start_fen is None
+                else None
+            )
+            played = [m.uci() for m in board.move_stack]
         # Book move: skip the search entirely. _commit_engine_move re-acquires
         # the lock under the same cancel guard as a finished search would.
-        if book_move is not None:
-            await self._commit_engine_move(book_move, {}, game_id, gen)
-            return
+        if book is not None:
+            book_move = await self._book_move(book, played, game_id, gen)
+            if book_move is not None:
+                # Blank the live engine panel: without this, a prior
+                # search's info (possibly from a taken-back position)
+                # would sit under an instant book reply.
+                await self._bus.publish(
+                    Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={})
+                )
+                await self._commit_engine_move(book_move, {}, game_id, gen)
+                return
+        async with self._lock:
+            if self._board is None or self._game_id != game_id or self._think_gen != gen:
+                return
+            try:
+                engine = await self._ensure_engine()
+            except Exception:
+                log.error("could not start engine for search", exc_info=True)
+                return
         # Use the live remaining time, not the snapshot at turn start.
         white_clock = self._remaining(chess.WHITE)
         black_clock = self._remaining(chess.BLACK)
@@ -1809,8 +1819,9 @@ class HumanVsEngine:
             black_inc=self._clock.tc.increment_seconds,
         )
         # Clear the live engine panel at search start; real info events will
-        # repopulate it. Book moves return bestmove without info, leaving it
-        # blank -- which is the signal we want.
+        # repopulate it. The book branch publishes the same clear before
+        # committing, so the panel is blank after a book move -- the
+        # signal we want.
         await self._bus.publish(
             Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={})
         )

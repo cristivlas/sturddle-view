@@ -177,14 +177,14 @@ class Settings(BaseSettings):
     engine_default_book_plies: int | None = None
     # "sequential" | "random". None = fastchess default (sequential).
     engine_default_book_order: str | None = None
-    # HVE-only: seed new games from the opening book above. Tournaments
-    # always use it; HVE opts in here (off by default -- no surprise
-    # seeded games). When on and a book path is set, each new HVE game
-    # is seeded from a book line.
+    # HVE-only: use the opening book above. Tournaments always use it;
+    # HVE opts in here (off by default -- no surprise seeded games).
+    # EPD books seed the start position; PGN books feed the engine book
+    # replies while the played moves prefix-match a book line.
     hve_use_opening_book: bool = False
-    # Per-server sequential cursor: advances on each book-seeded HVE game
-    # (order != random), modulo the book's line count, so "sequential"
-    # walks the book across games. Reset to 0 when the book path changes.
+    # Per-server sequential cursor: advances on each book HVE game
+    # (order != random). EPD: walks positions (modulo line count); PGN:
+    # rotates the matching-pool anchor. Reset when the book path changes.
     engine_default_book_cursor: int = 0
 
     # AI analysis & commentary. Master toggle gates the engine+AI behavior

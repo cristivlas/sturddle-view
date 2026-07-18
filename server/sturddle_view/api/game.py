@@ -4,6 +4,7 @@ import asyncio
 import logging
 import random
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
@@ -16,7 +17,7 @@ from ..play.canonical_hash import canonical_hash, canonical_hash_from_game
 from ..play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
 from ..config import BOOK_ORDER_RANDOM, BOOK_ORDER_SEQUENTIAL
 from ..play.import_position import PositionImportError, parse_fen, parse_pgn
-from ..play.opening_lines import OpeningSeed, select_seed
+from ..play.opening_lines import BookRef, is_epd_book, select_epd_seed
 from ..recent_imports import RemoveStatus
 
 log = logging.getLogger(__name__)
@@ -96,60 +97,68 @@ async def new_game(payload: dict, request: Request) -> dict:
     )
     player_name = (payload.get("player_name") or "").strip() or None
     await _cancel_ai_analysis(request)
-    seed = await _resolve_book_seed(s)
+    seed_fen, book = await _resolve_book(s)
     try:
         game_id = await hve.new_game(
             human_white=human_white,
             tc=tc,
             player_name=player_name,
-            start_fen=seed.start_fen if seed else None,
-            book_line=seed.moves_uci if seed else None,
-            book_path=s.engine_default_book_path if seed else None,
+            start_fen=seed_fen,
+            book=book,
         )
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=f"engine not found: {e}") from e
     return {"game_id": game_id, "human_white": human_white}
 
 
-async def _resolve_book_seed(s) -> OpeningSeed | None:
-    """Pick an opening-book seed for a new HVE game when the toggle is on
-    and a book is configured. Advances the per-server sequential cursor
-    (saved to settings) for the next sequential game; random ignores it.
-
-    The parse + selection runs off the event loop: a large PGN/EPD book
-    takes real time to read and parse on the first game (before the
-    mtime cache is warm), and would otherwise stall the whole server for
-    that duration."""
+async def _resolve_book(s) -> tuple[str | None, BookRef | None]:
+    """Book config for a new HVE game when the toggle is on and a book is
+    set. EPD books seed a start position here (selection runs off the
+    event loop: a large book takes real time to index before the mtime
+    cache is warm, and would otherwise stall the whole server). PGN books
+    return a BookRef the game consults on every engine turn. Either way
+    the sequential cursor advances per game (random ignores it); for PGN
+    it becomes the game's matching-pool anchor."""
     if not s.hve_use_opening_book or not s.engine_default_book_path:
-        return None
-    seed = await asyncio.to_thread(
-        select_seed,
-        s.engine_default_book_path,
-        s.engine_default_book_plies,
-        s.engine_default_book_order,
-        s.engine_default_book_cursor,
-    )
-    if seed is None:
-        return None
-    order = s.engine_default_book_order or BOOK_ORDER_SEQUENTIAL
-    if seed.start_fen is not None:
+        return None, None
+    path = s.engine_default_book_path
+    order = s.engine_default_book_order
+    # Missing book: no seed, no BookRef, and -- matching the EPD miss
+    # below -- no cursor advance.
+    if not Path(path).is_file():
+        return None, None
+    if is_epd_book(path):
+        fen = await asyncio.to_thread(
+            select_epd_seed, path, order, s.engine_default_book_cursor,
+        )
+        if fen is None:
+            return None, None
         log.debug(
             "opening book: seeding position from %s (order=%s, cursor=%d): %s",
-            s.engine_default_book_path, order, s.engine_default_book_cursor, seed.start_fen,
+            path, order or BOOK_ORDER_SEQUENTIAL, s.engine_default_book_cursor, fen,
         )
-    else:
-        log.debug(
-            "opening book: following line from %s (order=%s, cursor=%d): %s",
-            s.engine_default_book_path, order, s.engine_default_book_cursor,
-            " ".join(seed.moves_uci),
-        )
-    if s.engine_default_book_order != BOOK_ORDER_RANDOM:
-        s.engine_default_book_cursor += 1
-        try:
-            s.save_persisted()
-        except OSError:
-            log.warning("failed to persist opening-book cursor", exc_info=True)
-    return seed
+        _advance_book_cursor(s)
+        return fen, None
+    book = BookRef(
+        path=path,
+        plies=s.engine_default_book_plies,
+        order=order,
+        anchor=s.engine_default_book_cursor,
+    )
+    _advance_book_cursor(s)
+    return None, book
+
+
+def _advance_book_cursor(s) -> None:
+    """Sequential order walks the book across games (EPD: next position;
+    PGN: rotates the anchor). Random leaves the cursor alone."""
+    if s.engine_default_book_order == BOOK_ORDER_RANDOM:
+        return
+    s.engine_default_book_cursor += 1
+    try:
+        s.save_persisted()
+    except OSError:
+        log.warning("failed to persist opening-book cursor", exc_info=True)
 
 
 def _parse_import_payload(payload: dict) -> dict:

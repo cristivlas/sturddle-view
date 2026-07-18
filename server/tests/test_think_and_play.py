@@ -3,15 +3,23 @@
 The full search lifecycle (analysis context, info pump, bestmove) needs
 a real UCI subprocess and is covered by integration tests. Here we hit
 the cheap, hard-edge guards: board-None early exit, ensure_engine
-failure, and the lock-re-entry consistency checks."""
+failure, the lock-re-entry consistency checks, and the opening-book
+branch wiring (lookup gate, out-of-book latch, commit-without-search).
+Book matching itself is pure logic covered by test_opening_lines."""
 from __future__ import annotations
 
 
 import chess
 import pytest
 
-from sturddle_view.events import EventBus
+from sturddle_view.events import EVT_ENGINE_SEARCH_START, EventBus
+from sturddle_view.play import human_vs_engine as hve_mod
+from sturddle_view.play.chess_clock import ChessClock, TimeControl
 from sturddle_view.play.human_vs_engine import HumanVsEngine
+from sturddle_view.play.mode import Mode
+from sturddle_view.play.opening_lines import BookRef
+
+_BOOK = BookRef(path="book.pgn", plies=None, order=None, anchor=0)
 
 
 @pytest.fixture
@@ -22,6 +30,38 @@ def hve():
 def _play(board, *ucis):
     for u in ucis:
         board.push(chess.Move.from_uci(u))
+
+
+def _arm(hve, book=_BOOK):
+    """Minimal live-game state so _think_and_play passes its entry guard."""
+    hve._board = chess.Board()
+    hve._game_id = "test-game"
+    hve._book = book
+
+
+def _boom(message):
+    async def raiser():
+        raise RuntimeError(message)
+    return raiser
+
+
+def _engine_spy(hve, monkeypatch):
+    """_ensure_engine failures are swallowed by design, so asserting 'the
+    search path never ran' needs a call recorder, not a raiser."""
+    called = []
+
+    async def spy():
+        called.append(True)
+        raise RuntimeError("stop before real spawn")
+
+    monkeypatch.setattr(hve, "_ensure_engine", spy)
+    return called
+
+
+def _forbidden(message):
+    def raiser(*args):
+        raise AssertionError(message)
+    return raiser
 
 
 async def test_think_and_play_returns_when_board_is_none(hve):
@@ -38,14 +78,8 @@ async def test_think_and_play_swallows_ensure_engine_failure(hve, caplog, monkey
     coroutine logs and returns instead of propagating. Kills
     ExceptionReplacer mutations on the `except Exception` catch (a
     replacement non-parent class would let the exception escape)."""
-    # Put HVE in a state that passes the board-None guard.
-    hve._board = chess.Board()
-    hve._game_id = "test-game"
-
-    async def boom():
-        raise RuntimeError("cannot start engine")
-
-    monkeypatch.setattr(hve, "_ensure_engine", boom)
+    _arm(hve, book=None)
+    monkeypatch.setattr(hve, "_ensure_engine", _boom("cannot start engine"))
 
     with caplog.at_level("ERROR", logger="sturddle_view.play.human_vs_engine"):
         await hve._think_and_play()  # must not raise
@@ -53,65 +87,95 @@ async def test_think_and_play_swallows_ensure_engine_failure(hve, caplog, monkey
     assert any("could not start engine" in m for m in caplog.messages)
 
 
-# ----- _next_book_move: follow the line / fall out of book -----
+# ----- opening-book branch -----
 
-def test_next_book_move_none_when_no_line(hve):
-    hve._board = chess.Board()
-    hve._book_line = None
-    assert hve._next_book_move() is None
+async def test_book_hit_commits_without_search(hve, monkeypatch):
+    _arm(hve)
+    _play(hve._board, "e2e4")
+    calls = {}
 
+    def fake_reply(path, played, plies, order, anchor):
+        calls["played"] = played
+        return "e7e5"
 
-def test_next_book_move_plays_at_startpos(hve):
-    hve._board = chess.Board()
-    hve._book_line = ("e2e4", "e7e5", "g1f3")
-    assert hve._next_book_move() == chess.Move.from_uci("e2e4")
-    assert hve._book_line is not None  # still in book
+    async def fake_commit(move, captured, game_id, gen):
+        calls["move"] = move
 
-
-def test_next_book_move_follows_after_prefix(hve):
-    board = chess.Board()
-    _play(board, "e2e4", "e7e5")
-    hve._board = board
-    hve._book_line = ("e2e4", "e7e5", "g1f3")
-    assert hve._next_book_move() == chess.Move.from_uci("g1f3")
-
-
-def test_next_book_move_human_deviation_clears_line(hve):
-    board = chess.Board()
-    _play(board, "e2e4", "c7c5")  # book wanted e7e5
-    hve._board = board
-    hve._book_line = ("e2e4", "e7e5", "g1f3")
-    assert hve._next_book_move() is None
-    assert hve._book_line is None
+    monkeypatch.setattr(hve_mod, "book_reply", fake_reply)
+    monkeypatch.setattr(hve, "_commit_engine_move", fake_commit)
+    searched = _engine_spy(hve, monkeypatch)
+    events = await hve._bus.subscribe()
+    await hve._think_and_play()
+    assert calls["played"] == ["e2e4"]
+    assert calls["move"] == chess.Move.from_uci("e7e5")
+    assert not searched
+    # The book branch blanks the live engine panel, so stale search info
+    # (e.g. from before a takeback) never sits under an instant reply.
+    kinds = [events.get_nowait().kind for _ in range(events.qsize())]
+    assert EVT_ENGINE_SEARCH_START in kinds
 
 
-def test_next_book_move_exhausted_line_clears(hve):
-    board = chess.Board()
-    _play(board, "e2e4", "e7e5")
-    hve._board = board
-    hve._book_line = ("e2e4", "e7e5")
-    assert hve._next_book_move() is None
-    assert hve._book_line is None
+async def test_book_miss_latches_out_of_book(hve, monkeypatch):
+    _arm(hve)
+    monkeypatch.setattr(hve_mod, "book_reply", lambda *args: None)
+    monkeypatch.setattr(hve, "_ensure_engine", _boom("cannot start engine"))
+    await hve._think_and_play()
+    assert hve._out_of_book is True
 
 
-def test_next_book_move_illegal_book_move_clears(hve):
-    board = chess.Board()  # startpos; e2e5 is not legal
-    hve._board = board
-    hve._book_line = ("e2e5",)
-    assert hve._next_book_move() is None
-    assert hve._book_line is None
+async def test_latched_game_skips_book_lookup(hve, monkeypatch):
+    _arm(hve)
+    hve._out_of_book = True
+    monkeypatch.setattr(
+        hve_mod, "book_reply", _forbidden("book_reply must not run once latched"),
+    )
+    monkeypatch.setattr(hve, "_ensure_engine", _boom("cannot start engine"))
+    await hve._think_and_play()
 
 
-def test_next_book_move_bad_uci_clears(hve):
-    hve._board = chess.Board()
-    hve._book_line = ("notamove",)
-    assert hve._next_book_move() is None
-    assert hve._book_line is None
-
-
-def test_next_book_move_disabled_when_start_fen_set(hve):
-    # EPD-seeded games start from a FEN and must NOT follow a UCI line.
-    hve._board = chess.Board()
+async def test_book_skipped_for_non_startpos_game(hve, monkeypatch):
+    """EPD-seeded (or any FEN-seeded) games must not consult the PGN book,
+    and must not latch out-of-book either."""
+    _arm(hve)
     hve._start_fen = "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1"
-    hve._book_line = ("g1f3",)
-    assert hve._next_book_move() is None
+    monkeypatch.setattr(
+        hve_mod, "book_reply", _forbidden("book_reply must not run for seeded games"),
+    )
+    monkeypatch.setattr(hve, "_ensure_engine", _boom("cannot start engine"))
+    await hve._think_and_play()
+    assert hve._out_of_book is False
+
+
+async def test_takeback_clears_out_of_book_latch(hve):
+    """Undo shortens the played prefix, so book lines that fell out of the
+    pool may match again -- the latch must not survive a takeback."""
+    _arm(hve)
+    hve._mode = Mode.PLAY
+    hve._human_white = True
+    hve._clock = ChessClock(TimeControl(initial_seconds=60, increment_seconds=0))
+    hve._clock.start_turn()
+    for uci in ("e2e4", "e7e5"):
+        hve._clock.append_snapshot()
+        hve._board.push(chess.Move.from_uci(uci))
+        hve._eval_history.append(None)
+    hve._out_of_book = True
+    await hve.takeback()
+    assert len(hve._board.move_stack) == 0
+    assert hve._out_of_book is False
+
+
+async def test_stale_book_miss_does_not_latch_new_game(hve, monkeypatch):
+    """A lookup that loses to a concurrent cancel/new-game (gen bump) must
+    not latch the successor game out of book, and must not reach the
+    search path either (the post-book lock re-checks the gen)."""
+    _arm(hve)
+
+    def miss_and_bump(*args):
+        hve._think_gen += 1
+        return None
+
+    monkeypatch.setattr(hve_mod, "book_reply", miss_and_bump)
+    searched = _engine_spy(hve, monkeypatch)
+    await hve._think_and_play()
+    assert hve._out_of_book is False
+    assert not searched

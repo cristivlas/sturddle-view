@@ -37,6 +37,7 @@ isolated instances). Each falls back to the platform default when unset.
 | `SV_ENGINE_PROBE_TIMEOUT_SEC` | `3.0` | Timeout for the engine UCI handshake probe (floored at `0.05`). |
 | `SV_MAX_IMPORT_BYTES` | `2097152` | Cap on `/game/import` payload size (2 MiB). |
 | `SV_MAX_ANNOTATION_LENGTH` | `10000` | Cap on individual move-annotation text length. |
+| `SV_BOOK_INDEX_MAX_PLIES` | `40` | Plies tokenized per line when indexing an HVE opening book; also the hard cap on book depth (the plies setting is clamped to it). |
 
 ## Debug flags
 
