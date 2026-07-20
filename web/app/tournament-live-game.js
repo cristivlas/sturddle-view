@@ -523,16 +523,16 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     },
   });
   const { wb, body, board, refs, showResult, disposeShared } = built;
-  refs.pvTableWhiteEl.appendChild(pvSideWhite.el);
-  refs.pvTableBlackEl.appendChild(pvSideBlack.el);
-  refs.evalGraphHostEl.appendChild(evalGraph.el);
   const {
     evalScoreEl, evalDepthEl, evalNpsEl, evalHashEl, evalTbhitsEl, pvEl,
     oppEvalScoreEl, oppEvalDepthEl, oppEvalNpsEl, oppEvalHashEl, oppEvalTbhitsEl, oppPvEl,
     clockTopEl, clockBottomEl,
     topNameEl, bottomNameEl, topTimeEl, bottomTimeEl,
-    pvNameBlackEl, pvNameWhiteEl,
+    pvNameBlackEl, pvNameWhiteEl, pvTableBlackEl, pvTableWhiteEl, evalGraphHostEl,
   } = refs;
+  pvTableWhiteEl.appendChild(pvSideWhite.el);
+  pvTableBlackEl.appendChild(pvSideBlack.el);
+  evalGraphHostEl.appendChild(evalGraph.el);
 
   let ws = null;
   let engineColor = null;
@@ -700,7 +700,17 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     }
     clockBottomEl.dataset.color = color;
     clockTopEl.dataset.color = oppColor;
+    orientPvGutter();
     syncPvSideNames();
+  }
+
+  // The left gutter is built black-over-white; move the watched
+  // engine's (name, table) pair to the bottom to match the board.
+  function orientPvGutter() {
+    const own = engineColor === SIDE.BLACK
+      ? [pvNameBlackEl, pvTableBlackEl]
+      : [pvNameWhiteEl, pvTableWhiteEl];
+    pvNameBlackEl.parentElement.append(...own);
   }
 
   // Panel headers are color-fixed (black over white); write each
