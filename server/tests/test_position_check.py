@@ -366,6 +366,56 @@ def test_named_side_two_wrong_color_bishops_pluralizes_fact():
     assert "its bishop on" not in fact
 
 
+# From the wild (2026-07-20): prose called the f5 bishop "dark-squared" but f5
+# is light. Dark bishops exist (g3, g5) and a bishop sits on f5, so each check
+# alone passes -- only the color+square conjunction is false. White to move.
+_WILD_F5_FEN = "2rq1rk1/6p1/p2p3p/1p1P1bb1/1P1p4/P2P2B1/4B1PP/R2Q1RK1 w - - 3 21"
+_WILD_F5_TEXT = (
+    "The move 21. Bg4 challenges your opponent's dark-squared bishop on f5 "
+    "and forces an immediate decision regarding the tension on the light "
+    "squares. This exchange aims to reduce the pressure your opponent exerts "
+    "on your kingside while simplifying the central structure."
+)
+
+
+def test_wild_bishop_color_square_conjunction_flagged():
+    board = _board(_WILD_F5_FEN)
+    assert find_false_bishop_color_refs(_WILD_F5_TEXT, board) == [
+        "dark-squared bishop on f5"
+    ]
+
+
+def test_bishop_color_matching_square_not_flagged():
+    # f5 is light and holds Black's light-squared bishop -- a correct
+    # color+square binding passes.
+    board = _board(_WILD_F5_FEN)
+    assert find_false_bishop_color_refs(
+        "the light-squared bishop on f5 is strong", board
+    ) == []
+
+
+def test_plural_bishop_color_ref_not_matched():
+    # "bishops" (plural) is not a claim the recognizer owns; without the \b
+    # after "bishop" it would match inside the plural and false-flag a
+    # post-trade "exchange of light-squared bishops".
+    board = _board(_BISHOP_DARK_ONLY_FEN)
+    assert find_false_bishop_color_refs(
+        "the exchange of light-squared bishops helped", board
+    ) == []
+
+
+def test_wild_bishop_color_square_surface_and_fact():
+    # Surface spans the opponent cue through the square; the fact anchors the
+    # square's real color so the corrective can't just restate.
+    board = _board(_WILD_F5_FEN)
+    rows = list(iter_false_bishop_color_refs(_WILD_F5_TEXT, board))
+    assert len(rows) == 1
+    surface, label, fact = rows[0]
+    assert surface == "your opponent's dark-squared bishop on f5"
+    assert label == "dark-squared bishop on f5"
+    assert "f5 is light-squared" in fact
+
+
 # --- find_illegal_piece_moves ('<piece> to <square>') ---------------------
 
 def test_piece_to_unreachable_square_flagged():
