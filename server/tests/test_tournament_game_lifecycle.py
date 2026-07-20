@@ -460,6 +460,53 @@ async def test_scoreless_info_cannot_evict_scored_info(orch):
 
 
 @pytest.mark.asyncio
+async def test_wants_info_stable_across_move_boundary_race(orch):
+    """The thinker's ``position`` can be ingested before the waiter's
+    ``bestmove`` (independent batched POSTs). The FEN rendezvous is
+    broken in that hole; wants_info must still be True via the
+    confirmed peer, else the proxy is told to drop the whole search's
+    infos (missing eval-graph bar)."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    await orch.ingest_proxy_lines(_PROXY_B, ["bestmove e7e5"])
+    await orch.ingest_proxy_lines(_PROXY_A, ["position startpos moves e2e4 e7e5"])
+    orch.subscribe_to_proxy(_PROXY_A)
+
+    # Race: B's next position lands before A's bestmove.
+    await orch.ingest_proxy_lines(_PROXY_B, ["position startpos moves e2e4 e7e5 g1f3"])
+    assert orch.wants_info(_PROXY_B) is True
+
+
+@pytest.mark.asyncio
+async def test_paired_info_survives_move_boundary_race(orch):
+    """Scored infos the thinker emits inside the boundary race hole must
+    still reach the confirmed peer's subscribers."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    await orch.ingest_proxy_lines(_PROXY_B, ["bestmove e7e5"])
+    await orch.ingest_proxy_lines(_PROXY_A, ["position startpos moves e2e4 e7e5"])
+    q = orch.subscribe_to_proxy(_PROXY_A)
+    while not q.empty():
+        q.get_nowait()
+
+    # Race hole: B thinks at the new position while A's bestmove is in
+    # flight; A's late bestmove then flushes the coalescing slot.
+    await orch.ingest_proxy_lines(_PROXY_B, ["position startpos moves e2e4 e7e5 g1f3"])
+    await orch.ingest_proxy_lines(_PROXY_B, ["info depth 12 score cp 33 pv d7d5"])
+    await orch.ingest_proxy_lines(_PROXY_A, ["bestmove g1f3"])
+
+    items = []
+    while not q.empty():
+        items.append(q.get_nowait())
+    paired_infos = [m for m in items if m.get("paired")
+                    and isinstance(m.get("line"), str)
+                    and m["line"].lstrip().startswith("info ")]
+    assert any("score cp 33" in m["line"] for m in paired_infos)
+
+
+@pytest.mark.asyncio
 async def test_dissolve_sentinel_survives_full_queue(orch):
     """Game-WS queue can fill under fast TC + slow consumer. Terminal
     lives on a sticky side channel so it lands regardless of queue

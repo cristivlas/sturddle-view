@@ -1191,12 +1191,18 @@ class Orchestrator:
     def _paired_subscribers(
         self, proxy_id: str, fen: str, side: str
     ) -> "set[CoalescingQueue]":
-        """WS queues of opposite-color proxies at ``fen`` (the waiter)."""
+        """WS queues watching the opposite side: the confirmed peer's
+        subscribers (stable all game -- the FEN rendezvous below breaks
+        transiently when the thinker's position outruns the waiter's
+        bestmove), plus opposite-color proxies at ``fen`` pre-pairing."""
+        out: set[CoalescingQueue] = set()
+        peer = self._confirmed_pairs.get(proxy_id)
+        if peer is not None:
+            out.update(self._proxy_subscribers.get(peer) or set())
         bucket = self._pairing_map.get(fen)
         if not bucket:
-            return set()
+            return out
         target_side = _opposite_side(side)
-        out: set[CoalescingQueue] = set()
         for pid, s in bucket:
             if pid == proxy_id or s != target_side:
                 continue
