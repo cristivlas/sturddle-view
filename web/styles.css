@@ -4526,6 +4526,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .dock-slot-body:has(> .wb-pvtable) { padding: 0; }
 .wb-pvtable-col-pv { min-width: 200px; }
 .wb-pvtable-pv { white-space: nowrap; }
+.wb-pv-movenum { color: var(--muted, #888); font-weight: 600; }
 
 /* ------------------------------------------------------------------
    Ribbon-side mirror: when body[data-ribbon-side="right"], flip the

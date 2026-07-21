@@ -12,6 +12,30 @@ import { fmtCount, fmtScore, markSelectable, rafCoalesce } from "./wb-utils.js";
 const COL_MIN_PX = 30;
 const DEFAULT_COL_WIDTHS = [50, 50, 55, 45];
 
+// Matches SAN move-number tokens ("12." / "12...") emitted by python-chess's
+// variation_san; UCI-only PV strings (tournament panels) have none, so this
+// is a no-op there.
+const MOVE_NUM_RE = /\d+\.(\.\.)?/g;
+
+// Splits pvText on move-number tokens and appends alternating text/span
+// nodes so move numbers can be styled distinctly. DOM nodes, not innerHTML,
+// so no HTML-escaping concerns even though PV text is server-derived.
+function renderPvInto(cell, pvText) {
+  cell.textContent = "";
+  MOVE_NUM_RE.lastIndex = 0;
+  let last = 0;
+  let m;
+  while ((m = MOVE_NUM_RE.exec(pvText))) {
+    if (m.index > last) cell.appendChild(document.createTextNode(pvText.slice(last, m.index)));
+    const span = document.createElement("span");
+    span.className = "wb-pv-movenum";
+    span.textContent = m[0];
+    cell.appendChild(span);
+    last = m.index + m[0].length;
+  }
+  if (last < pvText.length) cell.appendChild(document.createTextNode(pvText.slice(last)));
+}
+
 // Live instances per colWidthsKey: a drag-end in one table pushes the new
 // widths to every sibling sharing the key (stacked/side-by-side tables
 // would otherwise misalign until recreated).
@@ -154,7 +178,7 @@ export function createPvTable({ colWidthsKey }) {
     if (score) tr.cells[1].textContent = fmtScore(score);
     if (nodes != null) tr.cells[2].textContent = fmtCount(nodes);
     if (nps != null) tr.cells[3].textContent = fmtCount(nps);
-    if (pvText) tr.cells[4].textContent = pvText;
+    if (pvText) renderPvInto(tr.cells[4], pvText);
     fit();
   }
 
