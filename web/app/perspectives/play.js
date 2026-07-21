@@ -2059,7 +2059,14 @@ export const playPerspective = {
         // Drop during analysis: exit analysis and play the move. A running
         // session asks first; a finished AI turn exits silently, matching
         // the ribbon's one-click Resume (see onPauseImpl).
+        let held = false;
         if (state.analyzing) {
+          // Hold piece rendering: stop_analysis republishes the pre-move
+          // FEN, which would snap the dropped piece back before the move's
+          // own update re-animates it (visible stutter). Release BEFORE
+          // snapBack so the sync echo still lands via the normal path.
+          view.holdBoard();
+          held = true;
           // Snap the optimistically-moved piece back on any bail-out.
           const snapBack = () => ctx.api("POST", "/game/sync", {}).catch(() => {});
           if (!aiAnalysisDone(state)) {
@@ -2070,11 +2077,13 @@ export const playPerspective = {
               destructive: true,
             });
             if (!ok) {
+              view.releaseBoard();
               await snapBack();
               return;
             }
           }
           if (!await stopAnalysisFromUi(state)) {
+            view.releaseBoard();
             await snapBack();
             return;
           }
@@ -2082,14 +2091,19 @@ export const playPerspective = {
             await ctx.api("POST", "/game/resume", {});
           } catch (e) {
             reportError(ctx, MSG.RESUME_FAILED, e);
+            view.releaseBoard();
             await snapBack();
             return;
           }
         }
         try {
           await ctx.api("POST", "/game/move", { uci });
+          if (held) view.releaseBoard();
         } catch (e) {
           reportError(ctx, MSG.MOVE_REJECTED, e);
+          // Rejection while held: the server's same-FEN rebroadcast may
+          // have been swallowed by the hold, so force the snap-back.
+          if (held) view.releaseBoard({ snap: true });
         }
       },
       // Click on a move in the list (view mode only) → jump cursor to

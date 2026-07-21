@@ -572,7 +572,14 @@ function applyBoardUpdate(ctx, evt) {
     // at the same fork ply.
     const sameFen = !ctx.firstBoardUpdate && ctx.currentFen === evt.payload.fen;
     const animate = !ctx.firstBoardUpdate && !sameFen;
-    board.setPosition(evt.payload.fen, evt.payload.last_move, animate);
+    if (ctx.boardHold) {
+      // Held (optimistic move in flight over a stop/resume-analysis
+      // round trip): don't touch the pieces -- a stale pre-move echo
+      // would snap the dropped piece back. releaseBoard() reconciles.
+      ctx.holdPending = { fen: evt.payload.fen, lastMove: evt.payload.last_move };
+    } else {
+      board.setPosition(evt.payload.fen, evt.payload.last_move, animate);
+    }
   }
   if (ctx.firstBoardUpdate) {
     ctx.firstBoardUpdate = false;
@@ -828,6 +835,33 @@ function buildViewApi(ctx) {
       ctx.board.setPosition(ctx.currentFen, null, animate);
       ctx.board.enableInput(ctx.previewInputWasEnabled);
     },
+    // Hold piece rendering across a stop-analysis/resume/move round trip:
+    // board_updates still apply (FEN text, move list, ...) but pieces
+    // don't, so the stale pre-move echo from stop_analysis can't snap an
+    // optimistically-dropped piece back mid-move.
+    holdBoard() {
+      if (ctx.boardHold) return;
+      ctx.boardHold = true;
+      ctx.holdPending = null;
+      ctx.holdBaseFen = ctx.currentFen;
+    },
+    // `snap: true` (move rejected) discards the hold and forces the
+    // pieces back to the server position immediately.
+    releaseBoard({ snap = false } = {}) {
+      const pending = ctx.holdPending;
+      const baseFen = ctx.holdBaseFen;
+      ctx.boardHold = false;
+      ctx.holdPending = null;
+      ctx.holdBaseFen = null;
+      if (snap) {
+        ctx.board.setPosition(ctx.currentFen, null, false);
+      } else if (pending && pending.fen !== baseFen) {
+        // A real position change landed while held (the move's own
+        // update raced the release); apply it. Stale same-FEN echoes
+        // are dropped -- that's the whole point of the hold.
+        ctx.board.setPosition(pending.fen, pending.lastMove, true);
+      }
+    },
     clearArrows() { ctx.board.clearArrows(); },
     clearEngineInfo() {
       clearEngineInfoFields(ctx);
@@ -949,6 +983,11 @@ export function mountGameView(container, opts = {}) {
     // FEN (typically an AI `analyze` arg) and input is suppressed.
     previewActive: false,
     previewInputWasEnabled: false,
+    // Piece-rendering hold during an optimistic move's stop/resume window;
+    // see holdBoard/releaseBoard.
+    boardHold: false,
+    holdPending: null,
+    holdBaseFen: null,
     scheduleRecompute: null,
     off: null,
   };
