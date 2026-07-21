@@ -638,6 +638,20 @@ _BISHOP_ON_COLOR_RE = re.compile(
     rf"(?P<sqcolor>{_SQUARE_COLOR_ALT})\s+squares?\b",
     re.IGNORECASE,
 )
+# Present/past/gerund forms of "this move takes that bishop" verbs. Closed
+# set, like _MOVE_VERB, so ordinary prose can't bind a SAN to a bishop claim.
+_ELIM_VERB = (
+    r"(?:eliminat(?:es|ed|ing)|captur(?:es|ed|ing)|tak(?:es|ing)|took|"
+    r"remov(?:es|ed|ing)|wins|won|trad(?:es|ed|ing)(?:\s+off)?|exchang(?:es|ed|ing))"
+)
+# Capture-bound form: "Bxg5 eliminates ... light-squared bishop" binds the
+# color claim to the SAN's target square. Case-sensitive for the SAN token;
+# the prose tail is case-insensitive via the scoped (?i:) group.
+_CAPTURE_BISHOP_COLOR_RE = re.compile(
+    rf"\b(?P<san>(?:{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}){_SAN_GLYPHS})\s+"
+    rf"(?i:{_ELIM_VERB}\s+{_COLOR_OPT}(?:\w+\s+){{0,2}}"
+    rf"(?P<sqcolor>{_SQUARE_COLOR_ALT})(?:[-\s](?:squares?|squared))?\s+bishop\b)"
+)
 
 
 def _is_light_square(square: int) -> bool:
@@ -714,10 +728,10 @@ def describe_bishops(board: chess.Board, color_word: str, light: bool) -> str:
 
 
 def _iter_bishop_color_refs(text: str):
-    """Yield (surface, color_word, light, square_name) for every light/dark-
-    squared bishop reference, both phrasings. `square_name` is the bound square
-    of an "on <square>" tail (adjective form only), else None. A capture-verb
-    lead marks a past trade, not a live-board claim, and is skipped."""
+    """Yield (surface, span, color_word, light, square_name) for every light/
+    dark-squared bishop reference, both phrasings. `square_name` is the bound
+    square of an "on <square>" tail (adjective form only), else None. A
+    capture-verb lead marks a past trade, not a live-board claim: skipped."""
     for regex in (_BISHOP_COLOR_ADJ_RE, _BISHOP_ON_COLOR_RE):
         for m in regex.finditer(text):
             if m.group("cap"):
@@ -725,7 +739,44 @@ def _iter_bishop_color_refs(text: str):
             color_word = (m.group("color") or "").lower()
             light = _SQUARE_COLOR_WORDS[m.group("sqcolor").lower()]
             square_name = (m.groupdict().get("square") or "").lower() or None
-            yield m.group(0), color_word, light, square_name
+            yield m.group(0), m.span(), color_word, light, square_name
+
+
+def _iter_capture_bound_refs(text: str, board: chess.Board):
+    """Yield (surface, span, color_word, light, to_square) for each capture SAN
+    whose prose names the taken bishop's square color and which really takes a
+    bishop on `board`. A SAN that does not parse, takes nothing, or takes a
+    non-bishop is not owned here (left to the other recognizers)."""
+    for m in _CAPTURE_BISHOP_COLOR_RE.finditer(text):
+        move = _parse_san_real(board, _strip_annotation_glyphs(m.group("san")))
+        if move is None or not board.is_capture(move):
+            continue
+        victim = board.piece_at(move.to_square)
+        if victim is None or victim.piece_type != chess.BISHOP:
+            continue
+        color_word = (m.group("color") or "").lower()
+        light = _SQUARE_COLOR_WORDS[m.group("sqcolor").lower()]
+        yield m.group(0), m.span(), color_word, light, move.to_square
+
+
+def _square_bound_flag(
+    surface: str, color_word: str, light: bool, square: int, seen: set[str],
+):
+    """(surface, label, fact) for a square-bound color mismatch, or None when
+    an equal claim was already flagged. The fact anchors the square's real
+    color ('g5 is dark-squared') so the corrective can't just restate."""
+    want = _square_color_name(light)
+    square_name = chess.square_name(square)
+    key = f"{color_word}|{want}|{square_name}"
+    if key in seen:
+        return None
+    seen.add(key)
+    prefix = f"{color_word} " if color_word else ""
+    return (
+        surface,
+        f"{prefix}{want}-squared bishop on {square_name}",
+        _bishop_square_part(square),
+    )
 
 
 def iter_false_bishop_color_refs(text: str, board: chess.Board):
@@ -735,28 +786,38 @@ def iter_false_bishop_color_refs(text: str, board: chess.Board):
     bishop'; `fact` the corrective ground truth (see `describe_bishops`).
     Square color is invariant, so this is board-state only -- no reachability.
 
-    A square-bound claim ('dark-squared bishop on f5') checks only that the
-    square's color matches the adjective -- presence on the square is the
-    piece-claim recognizer's job."""
+    A square-bound claim checks only that the square's color matches the
+    adjective: an explicit 'on f5' tail, or a capture SAN's target ('Bxg5
+    eliminates ... light-squared bishop' binds to g5). Presence on the square
+    is the piece-claim recognizer's job. An owned capture span suppresses the
+    plain recognizers inside it, so one claim is never struck twice."""
     seen: set[str] = set()
-    for surface, color_word, light, square_name in _iter_bishop_color_refs(text):
-        want = _square_color_name(light)
-        key = f"{color_word}|{want}|{square_name or ''}"
-        if key in seen:
+    owned_spans: list[tuple[int, int]] = []
+    for surface, span, color_word, light, to_sq in _iter_capture_bound_refs(text, board):
+        owned_spans.append(span)
+        if _is_light_square(to_sq) == light:
             continue
-        seen.add(key)
-        prefix = f"{color_word} " if color_word else ""
+        row = _square_bound_flag(surface, color_word, light, to_sq, seen)
+        if row is not None:
+            yield row
+    for surface, span, color_word, light, square_name in _iter_bishop_color_refs(text):
+        if _in_spans(span[0], owned_spans):
+            continue
         if square_name is not None:
             square = chess.parse_square(square_name)
             if _is_light_square(square) != light:
-                yield (
-                    surface,
-                    f"{prefix}{want}-squared bishop on {square_name}",
-                    _bishop_square_part(square),
-                )
+                row = _square_bound_flag(surface, color_word, light, square, seen)
+                if row is not None:
+                    yield row
             continue
+        want = _square_color_name(light)
+        key = f"{color_word}|{want}|"
+        if key in seen:
+            continue
+        seen.add(key)
         if _bishop_color_ref_holds(board, color_word, light):
             continue
+        prefix = f"{color_word} " if color_word else ""
         yield surface, f"{prefix}{want}-squared bishop", describe_bishops(
             board, color_word, light,
         )

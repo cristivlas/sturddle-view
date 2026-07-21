@@ -416,6 +416,60 @@ def test_wild_bishop_color_square_surface_and_fact():
     assert "f5 is light-squared" in fact
 
 
+# From the wild (2026-07-20): "Bxg5 eliminates ... light-squared bishop" but
+# the captured g5 bishop is dark-squared. Bare color refs clear (f5 and e2
+# are light), so only the capture-target binding catches it. White to move.
+_WILD_G5_FEN = "2rq1rk1/6p1/p2p3p/1p1P1bb1/1P1p1B2/P2P4/3QB1PP/R4RK1 w - - 3 21"
+_WILD_G5_TEXT = (
+    "21. Bxg5 eliminates your opponent's active light-squared bishop, which "
+    "is a key piece in their defensive setup. This exchange eases the tension "
+    "in the center and simplifies the position in your favor."
+)
+
+
+def test_wild_capture_bound_bishop_color_flagged():
+    board = _board(_WILD_G5_FEN)
+    assert find_false_bishop_color_refs(_WILD_G5_TEXT, board) == [
+        "light-squared bishop on g5"
+    ]
+
+
+def test_capture_bound_correct_color_not_flagged():
+    board = _board(_WILD_G5_FEN)
+    assert find_false_bishop_color_refs(
+        "21. Bxg5 eliminates the dark-squared bishop with tempo", board
+    ) == []
+
+
+def test_capture_bound_non_bishop_victim_not_flagged():
+    # Bxd6 takes a pawn: the color+square mismatch check applies only when a
+    # bishop is actually captured (d6 is dark, claim says light).
+    board = _board(_WILD_G5_FEN)
+    assert find_false_bishop_color_refs(
+        "Bxd6 eliminates the light-squared bishop", board
+    ) == []
+
+
+def test_capture_bound_surface_and_fact():
+    board = _board(_WILD_G5_FEN)
+    rows = list(iter_false_bishop_color_refs(_WILD_G5_TEXT, board))
+    assert len(rows) == 1
+    surface, label, fact = rows[0]
+    assert surface == "Bxg5 eliminates your opponent's active light-squared bishop"
+    assert label == "light-squared bishop on g5"
+    assert "g5 is dark-squared" in fact
+
+
+def test_capture_bound_owned_span_suppresses_plain_ref():
+    # No light-squared bishop exists here, so the inner bare ref would flag
+    # too; the owned capture span suppresses it -- one flag, not two.
+    board = _board("6k1/8/8/6b1/5B2/8/8/6K1 w - - 0 1")
+    rows = list(iter_false_bishop_color_refs(
+        "Bxg5 eliminates the light-squared bishop", board
+    ))
+    assert [r[1] for r in rows] == ["light-squared bishop on g5"]
+
+
 # --- find_illegal_piece_moves ('<piece> to <square>') ---------------------
 
 def test_piece_to_unreachable_square_flagged():
