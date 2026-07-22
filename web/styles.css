@@ -653,7 +653,7 @@ wa-select::part(listbox) {
    only as tall as the text. A hair smaller than the prose. */
 .play-ai-verdict > .play-ai-revision-summary {
   font-style: normal;
-  font-size: 0.95em;
+  font-size: 0.85em;
   line-height: 1.2;
 }
 .play-ai-tool-label {
