@@ -17,6 +17,13 @@ from .config import Settings
 from .logging_setup import configure_logging
 from .tournament.proxy import main as _proxy_main
 
+_ALREADY_RUNNING_DETAILS = (
+    f"Every {APP_NAME} process stores its settings and game data in the "
+    "same on-disk folder, so only one instance may run at a time. To start "
+    "another instance side by side, give it its own storage: "
+    f"`{APP_NAME} --instance <name>` (add `--port <n>` if the port is taken too)."
+)
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sturddle-view")
@@ -98,7 +105,7 @@ def main() -> None:
             print(msg, file=sys.stderr)
             if args.desktop:
                 from .desktop import show_error
-                show_error(APP_NAME, msg)
+                show_error(APP_NAME, msg, details=_ALREADY_RUNNING_DETAILS)
             sys.exit(1)
 
     if args.no_auth and args.host and args.host != "127.0.0.1":

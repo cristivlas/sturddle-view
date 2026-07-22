@@ -1,9 +1,11 @@
 """PyWebView wrapper. Runs uvicorn in a background thread, then opens a native window."""
 from __future__ import annotations
 
+import ctypes
 import errno
 import logging
 import os
+import re
 import socket
 import threading
 from html import escape as html_escape
@@ -15,7 +17,7 @@ from platformdirs import user_data_dir
 from . import app_dir_name
 from ._uvicorn_signal import make_signalling_server
 from .app import create_app
-from .config import Settings
+from .config import WEB_DIR, Settings
 
 _SERVER_STARTUP_TIMEOUT = 5.0
 _SERVER_SHUTDOWN_TIMEOUT = 5.0
@@ -34,6 +36,17 @@ _STARTUP_FAILED_MESSAGE = (
 _STARTUP_TIMEOUT_MESSAGE = (
     "The local server did not start within {timeout:.0f}s on port {port}."
 )
+_WINDOW_ICON = WEB_DIR / "app.ico"
+# Win32 constants for WM_SETICON (see _apply_window_icon).
+_WM_SETICON = 0x0080
+_ICON_SMALL, _ICON_BIG = 0, 1
+_IMAGE_ICON = 1
+_LR_LOADFROMFILE = 0x0010
+_LR_DEFAULTSIZE = 0x0040
+_ERROR_WINDOW_WIDTH = 460
+_ERROR_WINDOW_HEIGHT = 160
+_ERROR_WINDOW_HEIGHT_DETAILS = 300
+_ERROR_DETAILS_SUMMARY = "Why am I seeing this?"
 _PGN_FILE_TYPES = ("PGN (*.pgn)", "All files (*.*)")
 _CLOSE_CONFIRM_TITLE = "Tournament in progress"
 _CLOSE_CONFIRM_MESSAGE = (
@@ -114,20 +127,71 @@ def _port_in_use(host: str, port: int) -> bool:
         probe.close()
 
 
-def show_error(title: str, message: str) -> None:
+def _apply_window_icon(window) -> None:
+    """Windows only: a window's icon comes from the launcher exe (the
+    Python logo in dev), so set app.ico explicitly via WM_SETICON."""
+    if os.name != "nt" or not _WINDOW_ICON.is_file():
+        return
+    try:
+        user32 = ctypes.windll.user32
+        user32.LoadImageW.restype = ctypes.c_void_p
+        user32.SendMessageW.argtypes = (
+            ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p,
+        )
+        hicon = user32.LoadImageW(
+            None, str(_WINDOW_ICON), _IMAGE_ICON, 0, 0,
+            _LR_LOADFROMFILE | _LR_DEFAULTSIZE,
+        )
+        if not hicon:
+            log.error("window icon: LoadImageW failed for %s", _WINDOW_ICON)
+            return
+        hwnd = window.native.Handle.ToInt64()
+        for which in (_ICON_SMALL, _ICON_BIG):
+            user32.SendMessageW(hwnd, _WM_SETICON, which, hicon)
+    except Exception:
+        log.error("window icon: failed to apply", exc_info=True)
+
+
+def show_error(title: str, message: str, details: str | None = None) -> None:
     try:
         import webview  # type: ignore[import-untyped]
         # Escape first, then turn newlines into breaks: messages can carry a
         # raw exception string, so never interpolate it unescaped into HTML.
         safe = html_escape(message).replace("\n", "<br>")
+        details_block = ""
+        height = _ERROR_WINDOW_HEIGHT
+        if details:
+            safe_details = html_escape(details).replace("\n", "<br>")
+            # Backtick spans become <code> chips (escape first, so the
+            # substitution can never introduce markup from the message).
+            safe_details = re.sub(r"`([^`]+)`", r"<code>\1</code>", safe_details)
+            details_block = (
+                "<details><summary>" + _ERROR_DETAILS_SUMMARY + "</summary><p>"
+                + safe_details + "</p></details>"
+            )
+            height = _ERROR_WINDOW_HEIGHT_DETAILS
         html = (
             "<html><head><style>"
-            "body{margin:0;display:flex;align-items:center;justify-content:center;"
-            "height:100vh;font-family:system-ui,sans-serif;background:#1e1e1e;color:#ccc;}"
+            "body{margin:0;display:flex;flex-direction:column;align-items:center;"
+            "justify-content:center;height:100vh;font-family:system-ui,sans-serif;"
+            "background:#1e1e1e;color:#ccc;}"
             "p{text-align:center;font-size:14px;padding:0 24px;line-height:1.5;}"
-            "</style></head><body><p>" + safe + "</p></body></html>"
+            "details{font-size:13px;padding:0 24px;}"
+            "summary{cursor:pointer;text-align:center;color:#8ab4f8;}"
+            "details p{text-align:left;font-size:13px;color:#aaa;}"
+            "code{font-family:ui-monospace,Consolas,monospace;font-size:12px;"
+            "color:#f59e0b;background:#2a2a2a;padding:1px 4px;border-radius:3px;}"
+            "</style></head><body><p>" + safe + "</p>" + details_block
+            + "</body></html>"
         )
-        webview.create_window(title, html=html, width=460, height=160)
+        # Passing screen= makes pywebview compute a centered Location itself;
+        # the CenterScreen default is applied too late (post handle creation)
+        # and the window lands at the OS default cascade position instead.
+        window = webview.create_window(
+            title, html=html, width=_ERROR_WINDOW_WIDTH, height=height,
+            screen=webview.screens[0],
+        )
+        window.events.shown += _apply_window_icon
         webview.start()
     except Exception:
         pass
@@ -240,6 +304,7 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
         min_size=(_MIN_WINDOW_WIDTH, _MIN_WINDOW_HEIGHT), js_api=api,
     )
     api.attach(window)
+    window.events.shown += _apply_window_icon
     window.events.closing += _make_close_handler(app, window)
     webview.start(private_mode=False, storage_path=user_data_dir(app_dir_name(), appauthor=False))
 
