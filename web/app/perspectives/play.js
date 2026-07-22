@@ -392,6 +392,15 @@ function dispatchAiEvent(aiCtx, evt) {
       noteAiPosition({ round: p.round ?? 0, surfaces: p.surfaces || [] });
       return true;
     }
+    case KIND.AI_RECOMMENDATION: {
+      // GameView owns the arrow (its own applyEvent draws it live); route
+      // through it so replay redraws identically. Stash the event + FEN so
+      // the resync board_update on remount, which clears arrows, can
+      // re-apply it (same-FEN guard in handleBusEvent).
+      view.applyEvent(evt);
+      aiShared.recommendation = { evt, fen: view.getFen() };
+      return true;
+    }
   }
   return false;
 }
@@ -402,7 +411,9 @@ function dispatchAiEvent(aiCtx, evt) {
 // also 1 would be swallowed.
 function dispatchAiEventOrdered(ai, aiCtx, evt) {
   const seq = evt?.payload?.seq ?? 0;
-  if (seq === 1) ai.maxSeq = 0;
+  // seq=1 marks a new turn: drop the prior turn's stashed recommendation so
+  // a fresh analysis can't resurrect a stale arrow before its own lands.
+  if (seq === 1) { ai.maxSeq = 0; aiCtx.aiShared.recommendation = null; }
   else if (seq && seq <= ai.maxSeq) return;
   if (seq) ai.maxSeq = seq;
   dispatchAiEvent(aiCtx, evt);
@@ -1849,6 +1860,16 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       setDisabled(state.el.newGameBtn, false);
       refreshButtons(state);
       _playInProgress = state.movesPlayed > 0 && !state.gameOver && !state.viewing;
+      // GameView cleared arrows above (runs before this handler on the same
+      // bus). Re-apply the AI recommendation when the position is unchanged
+      // -- restores the arrow after a remount resync; a real move (new FEN)
+      // correctly drops the stale one. Cleared once analysis ends.
+      const rec = state.aiShared.recommendation;
+      if (rec && state.analyzing && rec.fen === evt.payload.fen) {
+        state.view.applyEvent(rec.evt);
+      } else if (rec && !state.analyzing) {
+        state.aiShared.recommendation = null;
+      }
       break;
     }
     case KIND.GAME_RESULT:
