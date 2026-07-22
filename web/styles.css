@@ -4429,7 +4429,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   filter: brightness(1.1);
 }
 .wb-livegame .lg-eval {
-  display: flex; gap: 0.5em; align-items: baseline;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--muted);
   font-family: var(--wa-font-family-code); font-size: 0.8125rem;
   /* Reserve the populated row height so the board doesn't snap-shrink
      when the first eval event arrives. 1.4 line-height matches the
@@ -4437,6 +4438,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
      a 1em reserve. */
   min-height: 1.4em; line-height: 1.4; flex-shrink: 0;
 }
+.wb-livegame .lg-eval > span:not(:empty) ~ span:not(:empty) { margin-left: 0.5em; }
 .wb-livegame .lg-eval-score { color: var(--accent); font-weight: 500; }
 .wb-livegame .lg-pv {
   font-family: var(--wa-font-family-code); font-size: 0.6875rem;
