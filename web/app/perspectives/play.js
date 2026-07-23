@@ -611,8 +611,12 @@ async function fetchXgameInfo(state, gameId) {
     state.xgame.parentToastDismissed = d.parent;
     state.xgame.childrenToastDismissed = d.children;
     // After data lands, re-render the move list so glyphs appear
-    // without waiting for the next board_update.
-    if (_cachedBoardUpdate) state.view.applyEvent(_cachedBoardUpdate);
+    // without waiting for the next board_update. Direct apply bypasses
+    // the bus handler, so restore the AI arrow it just wiped.
+    if (_cachedBoardUpdate) {
+      state.view.applyEvent(_cachedBoardUpdate);
+      reapplyAiRecommendation(state, _cachedBoardUpdate.payload.fen);
+    }
     refreshXgameToasts(state);
   } catch (_e) {
     // The current game may not be in recents (e.g. brand-new play
@@ -846,6 +850,20 @@ function setAnalyzing(state, v) {
   // so the ribbon can re-enable when the game is paused again.
   if (!state.analyzing) state.aiShared.turnFinished = false;
   document.body.classList.toggle(XGAME_LOCK_CLASS, state.analyzing);
+}
+
+// Re-apply the stashed AI recommendation arrow after a board_update wiped
+// the arrows (GameView clears them on every apply). Same-FEN guard: a real
+// move correctly drops the stale arrow. Cleared once analysis ends. Shared
+// by the bus handler and fetchXgameInfo's direct cached-update re-apply.
+function reapplyAiRecommendation(state, fen) {
+  const rec = state.aiShared.recommendation;
+  if (!rec) return;
+  if (state.analyzing && rec.fen === fen) {
+    state.view.applyEvent(rec.evt);
+  } else if (!state.analyzing) {
+    state.aiShared.recommendation = null;
+  }
 }
 
 // Stop side of the analyze toggle, shared so the AI-window close handler can
@@ -1854,15 +1872,8 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       refreshButtons(state);
       _playInProgress = state.movesPlayed > 0 && !state.gameOver && !state.viewing;
       // GameView cleared arrows above (runs before this handler on the same
-      // bus). Re-apply the AI recommendation when the position is unchanged
-      // -- restores the arrow after a remount resync; a real move (new FEN)
-      // correctly drops the stale one. Cleared once analysis ends.
-      const rec = state.aiShared.recommendation;
-      if (rec && state.analyzing && rec.fen === evt.payload.fen) {
-        state.view.applyEvent(rec.evt);
-      } else if (rec && !state.analyzing) {
-        state.aiShared.recommendation = null;
-      }
+      // bus); restore the AI recommendation arrow.
+      reapplyAiRecommendation(state, evt.payload.fen);
       break;
     }
     case KIND.GAME_RESULT:
