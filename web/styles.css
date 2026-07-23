@@ -1547,7 +1547,8 @@ body .side-popover.popover-floating {
   cursor: default;
 }
 .play-dock-left:not(.dock-empty),
-.play-comments-host:not(.dock-empty) { border: 1px solid #454952; }
+.play-comments-host:not(.dock-empty),
+.play-rail-dock:not(.dock-empty) { border: 1px solid #454952; }
 .play-comments-host.dock-empty { visibility: hidden; }
 /* Drag-to-dock drop hint (play-dock-windows.js): a window title bar is being
    dragged, so reveal the drop zone even when dock-empty (must sit after the
@@ -1799,7 +1800,7 @@ body .side-popover.popover-floating {
   .game-view-moves { flex: 0 0 auto; }
   /* Desktop-only widget: it's fixed-positioned off the board geometry,
      which the mobile document-flow layout doesn't provide. */
-  .game-view-eval-panel { display: none; }
+  .play-rail-dock { display: none; }
   .game-view-moves .move-list {
     flex: 0 0 auto;
     max-height: none;
@@ -1871,35 +1872,33 @@ body .side-popover.popover-floating {
   height: auto;
   max-height: none;
 }
-/* Eval panel under the moves box. Fixed-positioned (left/top/width/height
-   set by positionSideRail) so it occupies the gap between the board bottom
-   and the clock bottom without touching the moves-list flow. A dock-style
-   title header sits above the horizontal eval strip. */
-.game-view-eval-panel {
+/* Rail dock under the moves box: a capacity-one dock destination. Fixed-
+   positioned (left/top/width/height set by positionSideRail) so it occupies
+   the gap between the board bottom and the clock bottom without touching
+   the moves-list flow. Default home of the Engine Eval window; visibility
+   and drop-hint classes managed by play-dock-windows.js. */
+.play-rail-dock {
   position: fixed;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
   overflow: hidden;
+  z-index: 8;
 }
-.game-view-eval-title {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  height: 24px;
-  padding: 0 8px;
-  background: var(--nav-btn-bg);
-  border-bottom: 1px solid var(--border-subtle);
-  font-size: 0.75rem;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.play-rail-dock.dock-empty { visibility: hidden; }
+/* Auto-hide: a docked slot holding an empty eval strip (view mode / no
+   evals yet) disappears entirely; play-dock-windows.js stamps the class and
+   counts such slots out of dock-empty/grip accounting. */
+.dock-slot.dock-slot-hidden { display: none; }
+.play-rail-dock.dock-drop-eligible {
+  visibility: visible;
+  outline: 1px solid color-mix(in srgb, var(--row-bg-selected), white 30%);
+  outline-offset: -1px;
 }
+/* Eval strip body: fills its host (dock-slot body or WinBox body); the
+   strip scrolls horizontally itself. */
 .game-view-eval-bar {
-  flex: 1 1 auto;
-  min-height: 0;
+  height: 100%;
   overflow-x: auto;
   overflow-y: hidden;
 }
@@ -4526,6 +4525,11 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-pvtable-tbl td.wb-pvtable-pv { overflow: visible; text-overflow: clip; }
 .winbox.sturddle-wb-pvtable .wb-body,
 .dock-slot-body:has(> .wb-pvtable) { padding: 0; }
+.dock-slot-body:has(> .game-view-eval-bar) { padding: 0; overflow: hidden; }
+.sturddle-wb-evalbar .wb-body { overflow: hidden; }
+/* Auto-hide parity with docked slots: an empty strip hides the float too
+   (e.g. view mode); it pops back when evals arrive. */
+.winbox.sturddle-wb-evalbar:has(.eval-empty) { display: none; }
 .wb-pvtable-col-pv { min-width: 200px; }
 .wb-pvtable-pv { white-space: nowrap; }
 .wb-pv-movenum { color: var(--muted, #888); font-weight: 600; }

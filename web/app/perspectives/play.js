@@ -3,14 +3,13 @@
 // Resign).
 
 import { mountGameView } from "../game-view.js";
-import { createEvalBar } from "../eval-graph.js";
 import { APP_EVT } from "../app-events.js";
 import { KIND, AI_KIND_PREFIX } from "../game-events.js";
 import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
 import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, reportVerboseError, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setUciLogEngine, isMobileLayout } from "../play-dock-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, getEvalBarApi, setUciLogEngine, isMobileLayout } from "../play-dock-windows.js";
 import {
   setCommentaryDockContainer,
   setOnUserCloseCommentary,
@@ -87,10 +86,6 @@ function resultBadge(result) {
   return result === RESULT.DRAW ? "½-½" : result;
 }
 
-// Title on the eval strip's panel header (dock-panel style) + its tooltip.
-const EVAL_PANEL_TITLE = "Engine Eval";
-const EVAL_PANEL_TOOLTIP = "Evaluation from the engine's point of view";
-
 // Cap server-supplied error detail (engine path / exception text) in toasts.
 const MAX_TOAST_DETAIL = 200;
 
@@ -106,7 +101,7 @@ function evalToEnginePov(ev, engineWhite) {
 // plies only (human slots are null), in engine POV. Null history (view
 // mode / no game) clears it.
 function feedEvalBar(state, evalHistory) {
-  const bar = state.evalBar;
+  const bar = getEvalBarApi();
   if (!bar) return;
   const engineWhite = !state.humanWhite;
   // Carry each entry's ply (0-based move index) so a bar click can navigate
@@ -117,8 +112,6 @@ function feedEvalBar(state, evalHistory) {
       if (ev != null) items.push({ score: evalToEnginePov(ev, engineWhite), ply });
     });
   }
-  // Hide when viewing or when no evals exist yet.
-  state.evalPanel.style.display = state.viewing || !items.length ? "none" : "";
   bar.setSamples(items, engineWhite);
 }
 
@@ -2174,31 +2167,23 @@ export const playPerspective = {
     });
     state.view = view;
 
-    // Horizontal eval strip under the moves list: one bar per engine ply,
-    // engine POV, fed from the server's per-ply eval_history on board_update.
-    // Click an eval bar -> enter view mode at that ply (same as clicking the
-    // move in the list); the handler ignores clicks on the live last move.
-    const evalBar = createEvalBar({
+    // Rail dock: capacity-one dock destination in the band under the moves
+    // list (positioned by positionSideRail). Default home of the Engine Eval
+    // window; any dock window can be dragged into it while it's free.
+    // Bar click -> enter view mode at that ply (same as clicking the move in
+    // the list); handlers go through setEvalBarCallbacks because the window
+    // body outlives this mount's closures.
+    const railDock = document.createElement("div");
+    railDock.className = "play-rail-dock dock-empty";
+    const sideRail = sideHost.querySelector(".game-view-side");
+    const movesSection = sideRail?.querySelector(".game-view-moves");
+    if (movesSection) movesSection.after(railDock);
+    else sideRail?.appendChild(railDock);
+    setRailDockContainer(railDock);
+    setEvalBarCallbacks({
       onBarClick: (ply) => enterViewAtPly(state, ply),
       isBarNavigable: (ply) => canEnterViewAtPly(state, ply),
     });
-    // Wrap in a dock-panel-style titled panel; positionSideRail places the
-    // panel and the bar fills the area below its header.
-    const evalPanel = document.createElement("div");
-    evalPanel.className = "game-view-eval-panel";
-    const evalTitle = document.createElement("div");
-    evalTitle.className = "game-view-eval-title";
-    evalTitle.textContent = EVAL_PANEL_TITLE;
-    evalTitle.title = EVAL_PANEL_TOOLTIP;
-    evalPanel.append(evalTitle, evalBar.el);
-    evalPanel.style.display = "none"; // shown by feedEvalBar once evals arrive
-    const sideRail = sideHost.querySelector(".game-view-side");
-    const movesSection = sideRail?.querySelector(".game-view-moves");
-    if (movesSection) movesSection.after(evalPanel);
-    else sideRail?.appendChild(evalPanel);
-    evalBar.setVisible(true);
-    state.evalBar = evalBar;
-    state.evalPanel = evalPanel;
 
     const commentsHost = root.querySelector(".play-comments-host");
     state.el.commentsHost = commentsHost;
@@ -2420,6 +2405,8 @@ export const playPerspective = {
         // Announce no active ribbon so the global float manager unmounts it.
         window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: null } }));
         setDockContainer(null);
+        setRailDockContainer(null);
+        setEvalBarCallbacks(null);
         closeCommentary();
         setCommentaryDockContainer(null);
         setOnUserCloseCommentary(null);
@@ -2435,7 +2422,6 @@ export const playPerspective = {
         showFinishedBadge(state, "");
         offCrash();
         offEvent();
-        state.evalBar?.dispose();
         view.unmount();
         // Close any live x-game toasts so they don't outlive the
         // perspective. Plain close (not via the X handler), so the

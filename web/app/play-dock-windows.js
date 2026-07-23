@@ -2,9 +2,13 @@
 // 1. Search Lines: per-iteration principal variation, cutechess-style.
 // 2. AI Analysis: streamed prose commentary from the AI agent.
 // 3. UCI log: raw lines flowing between python-chess and the engine.
+// 4. Engine Eval: the horizontal per-ply eval strip.
 //
 // Each window can float (WinBox) or dock into the left column of the play
-// grid (.play-dock-left). Dock state is persisted in localStorage; when
+// grid (.play-dock-left) -- or into the rail dock (.play-rail-dock), a
+// capacity-one destination under the moves list where the eval strip lives
+// by default. Which destination a window last docked into is persisted per
+// window in DOCK_DEST_KEY. Dock state is persisted in localStorage; when
 // two or more windows are docked, drag-grips between adjacent slots
 // resize them (per-slot flex-grow ratios stored in DOCK_GROW_KEY).
 // Besides the header buttons, windows dock/undock by drag: dropping a
@@ -29,6 +33,7 @@ import { toast } from "./dialogs.js";
 import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
+import { createEvalBar, EVAL_EMPTY_CLASS } from "./eval-graph.js";
 import { createPvTable } from "./pv-table.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
@@ -59,6 +64,7 @@ export const DOCK_ORDER = Object.freeze({
   AI_ANALYSIS: 20,
   SEARCH_LINES: 30,
   UCI_LOG: 40,
+  ENGINE_EVAL: 50,
 });
 
 const UCI_LOG_MAX_LINES = 1000;
@@ -76,6 +82,9 @@ const DRAG_DOCK_THRESHOLD_PX = 5;
 
 // Set by play.js on perspective mount/unmount.
 let dockEl = null;
+// Rail dock: capacity-one destination under the moves list, positioned by
+// game-view's positionSideRail. Also set by play.js on mount/unmount.
+let railDockEl = null;
 let dockResizeObs = null;
 // Drag handles between adjacent docked slots. With N slots there are
 // (N-1) grips; the array is rebuilt each time slots change via
@@ -287,11 +296,31 @@ function setOpen(key, val) {
 //     .dock-slot-header  (title + undock button)
 //     .dock-slot-body    (the window's body div, transplanted here)
 
-// Toggle a container's dock-empty class from its live slot count, emitting
-// LAYOUT_CHANGED on transition. Shared by both dock containers.
+const EVAL_EMPTY_SEL = `.${EVAL_EMPTY_CLASS}`;
+// Set on a slot whose occupant is an empty eval strip; CSS display:none's it.
+const SLOT_HIDDEN_CLASS = "dock-slot-hidden";
+
+// A slot holding an empty eval strip is hidden; count it out of dock-empty
+// accounting so the container collapses/expands with the data.
+function slotHidden(slot) {
+  return !!slot.querySelector(EVAL_EMPTY_SEL);
+}
+
+// Stamp the hidden class on every live slot from its occupant's state.
+// Driven from syncDockVisibility so all dock/undock/feed paths converge.
+function syncHiddenSlots() {
+  for (const inst of instances) {
+    for (const el of [inst.slot, inst.inlineSlot]) {
+      if (el) el.classList.toggle(SLOT_HIDDEN_CLASS, slotHidden(el));
+    }
+  }
+}
+
+// Toggle a container's dock-empty class from its live (visible) slot count,
+// emitting LAYOUT_CHANGED on transition. Shared by all dock containers.
 function syncEmptyClass(el) {
   const wasEmpty = el.classList.contains(DOCK_EMPTY_CLASS);
-  const isEmpty = el.querySelectorAll(DOCK_SLOT_SEL).length === 0;
+  const isEmpty = Array.from(el.querySelectorAll(DOCK_SLOT_SEL)).every(slotHidden);
   el.classList.toggle(DOCK_EMPTY_CLASS, isEmpty);
   if (wasEmpty !== isEmpty) emitLayoutChanged();
 }
@@ -311,17 +340,26 @@ function growFor(grows, key) {
   return Number.isFinite(g) && g > 0 ? g : DEFAULT_DOCK_GROW;
 }
 
-// Size the dock's flex children. `extraKey` (the drop-ghost's dockedKey, when
-// previewing) is counted as a virtual slot so the preview split matches the
-// post-dock split exactly. A lone slot OR lone ghost fills the whole dock,
-// ignoring any stored ratio from a prior multi-slot session.
+// Main-dock slots that participate in the flex-grow/grip ratio system:
+// all visible ones (empty-eval-hidden slots are counted out).
+function growSlots() {
+  if (!dockEl) return [];
+  return Array.from(dockEl.querySelectorAll(DOCK_SLOT_SEL)).filter(s => !slotHidden(s));
+}
+
+// Size the dock's growing flex children. `extraKey` (the drop-ghost's
+// dockedKey, when previewing) is counted as a virtual slot so the preview
+// split matches the post-dock split exactly. A lone slot OR lone ghost
+// fills the whole dock, ignoring any stored ratio from a prior multi-slot
+// session. Hidden slots are left alone.
 function applyDockGrows(extraKey = null) {
   if (!dockEl) return;
-  const slots = dockEl.querySelectorAll(DOCK_SLOT_SEL);
+  const slots = growSlots();
   const ghost = dockEl.querySelector(DOCK_GHOST_SEL);
-  if (slots.length + (ghost ? 1 : 0) <= 1) {
+  const ghostCounts = !!ghost && !!extraKey;
+  if (slots.length + (ghostCounts ? 1 : 0) <= 1) {
     for (const slot of slots) slot.style.flexGrow = "1";
-    if (ghost) ghost.style.flexGrow = "1";
+    if (ghostCounts) ghost.style.flexGrow = "1";
     return;
   }
   const grows = loadDockGrows();
@@ -329,13 +367,43 @@ function applyDockGrows(extraKey = null) {
     const inst = instances.find(i => i.slot === slot);
     if (inst) slot.style.flexGrow = String(growFor(grows, inst.dockedKey));
   }
-  if (ghost && extraKey) ghost.style.flexGrow = String(growFor(grows, extraKey));
+  if (ghostCounts) ghost.style.flexGrow = String(growFor(grows, extraKey));
 }
 
 function persistGrow(key, value) {
   const grows = loadDockGrows();
   grows[key] = value;
   saveDockGrows(grows);
+}
+
+// Which dock a main-dock window lands in when docking: the shared left
+// column or the rail slot. Keyed by dockedKey, like DOCK_GROW_KEY.
+const DOCK_DEST_KEY = STORAGE_KEY.PLAY_DOCK_DEST;
+const DOCK_DEST_MAIN = "main";
+const DOCK_DEST_RAIL = "rail";
+
+function loadDockDests() {
+  const parsed = loadJson(DOCK_DEST_KEY, {});
+  return (parsed && typeof parsed === "object") ? parsed : {};
+}
+
+function destFor(key, fallback) {
+  const d = loadDockDests()[key];
+  return d === DOCK_DEST_MAIN || d === DOCK_DEST_RAIL ? d : fallback;
+}
+
+function setDest(key, val) {
+  const dests = loadDockDests();
+  dests[key] = val;
+  saveJson(DOCK_DEST_KEY, dests);
+}
+
+// The rail dock holds at most one slot; it's free for `inst` when empty
+// or when the occupant is inst's own slot (re-dock while dragging out).
+function railFreeFor(inst) {
+  if (!railDockEl) return false;
+  const occupant = railDockEl.querySelector(DOCK_SLOT_SEL);
+  return !occupant || occupant === inst.slot;
 }
 
 function attachGripDrag(grip, topInst, botInst) {
@@ -376,13 +444,16 @@ function attachGripDrag(grip, topInst, botInst) {
       botSlot.style.flexGrow = String(botG);
     };
 
+    // Collapse closes the window -- except non-closable ones (nothing could
+    // revive them), which pop out to a float instead.
+    const collapse = (inst) => { if (inst.closable) inst.close(); else inst.undock(); };
     const onUp = () => {
       grip.classList.remove("dragging");
       grip.removeEventListener("pointermove", onMove);
       grip.removeEventListener("pointerup", onUp);
       grip.removeEventListener("pointercancel", onUp);
-      if (pendingCollapse === "top") { topInst.close(); return; }
-      if (pendingCollapse === "bottom") { botInst.close(); return; }
+      if (pendingCollapse === "top") { collapse(topInst); return; }
+      if (pendingCollapse === "bottom") { collapse(botInst); return; }
       persistGrow(topInst.dockedKey, parseFloat(topSlot.style.flexGrow));
       persistGrow(botInst.dockedKey, parseFloat(botSlot.style.flexGrow));
     };
@@ -401,7 +472,9 @@ function clearDockGrips() {
 function rebuildDockGrips() {
   clearDockGrips();
   if (!dockEl) return;
-  const slots = Array.from(dockEl.querySelectorAll(DOCK_SLOT_SEL));
+  // Only visible slots get grips: a grip against a hidden neighbor would
+  // be a stray handle resizing nothing.
+  const slots = growSlots();
   for (let i = 0; i + 1 < slots.length; i++) {
     const topSlot = slots[i];
     const botSlot = slots[i + 1];
@@ -417,7 +490,9 @@ function rebuildDockGrips() {
 }
 
 function syncDockVisibility() {
+  syncHiddenSlots();
   syncExtraDocksVisibility();
+  if (railDockEl) syncEmptyClass(railDockEl);
   if (!dockEl) return;
   syncEmptyClass(dockEl);
   applyDockGrows();
@@ -465,8 +540,9 @@ function showDockGhost(container, inst) {
   insertInDockOrder(container, ghost, inst);
   // Size existing slots + ghost with the same pass dock() uses, so the
   // preview split equals the post-dock split (the lone-slot flex:1 override
-  // no longer applies once the ghost is a second child).
-  applyDockGrows(inst.dockedKey);
+  // no longer applies once the ghost is a second child). The rail dock holds
+  // a single slot, so its ghost just fills it (CSS flex:1) -- no grow pass.
+  if (container === dockEl) applyDockGrows(inst.dockedKey);
 }
 
 function hideDockGhost(container) {
@@ -478,27 +554,29 @@ function hideDockGhost(container) {
   if (container === dockEl) applyDockGrows();
 }
 
-// Track a pointer drag against a dock container. Past DRAG_DOCK_THRESHOLD_PX
-// the container shows its drop hint (visible even when dock-empty), hovering
-// it toggles the active state, and onEnd reports whether the pointer was
-// released over the container. When ghostInst is given, a landing preview is
-// shown at its dock boundary while the pointer is over the zone. Listeners go
-// on document so they survive the originating element being detached mid-drag
-// (slot removal on undock).
-function watchDockDrop(container, eDown, { onFirstMove, onMove, onEnd, ghostInst }) {
+// Track a pointer drag against a set of dock containers. Past
+// DRAG_DOCK_THRESHOLD_PX every container shows its drop hint (visible even
+// when dock-empty), hovering one toggles its active state, and onEnd reports
+// the container the pointer was released over (or null). When ghostInst is
+// given, a landing preview is shown at its dock boundary in the hovered
+// container. Listeners go on document so they survive the originating
+// element being detached mid-drag (slot removal on undock).
+function watchDockDrop(containers, eDown, { onFirstMove, onMove, onEnd, ghostInst }) {
   const x0 = eDown.clientX, y0 = eDown.clientY;
-  let started = false, over = false;
+  let started = false, over = null;
   const move = (e) => {
     if (!started) {
       if (Math.hypot(e.clientX - x0, e.clientY - y0) < DRAG_DOCK_THRESHOLD_PX) return;
       started = true;
-      container.classList.add(DOCK_DROP_ELIGIBLE_CLASS);
+      for (const c of containers) c.classList.add(DOCK_DROP_ELIGIBLE_CLASS);
       if (onFirstMove) onFirstMove(e);
     }
-    over = pointerOverEl(container, e);
+    over = containers.find(c => pointerOverEl(c, e)) ?? null;
     if (ghostInst) {
-      if (over) showDockGhost(container, ghostInst);
-      else hideDockGhost(container);
+      for (const c of containers) {
+        if (c === over) showDockGhost(c, ghostInst);
+        else hideDockGhost(c);
+      }
     }
     if (onMove) onMove(e);
   };
@@ -506,9 +584,11 @@ function watchDockDrop(container, eDown, { onFirstMove, onMove, onEnd, ghostInst
     document.removeEventListener("pointermove", move);
     document.removeEventListener("pointerup", up);
     document.removeEventListener("pointercancel", cancel);
-    container.classList.remove(DOCK_DROP_ELIGIBLE_CLASS);
-    hideDockGhost(container);
-    if (onEnd) onEnd(drop && started && over);
+    for (const c of containers) {
+      c.classList.remove(DOCK_DROP_ELIGIBLE_CLASS);
+      hideDockGhost(c);
+    }
+    if (onEnd) onEnd(drop && started ? over : null);
   };
   const up = () => finish(true);
   const cancel = () => finish(false);
@@ -580,7 +660,10 @@ export function createDockableWindow(config) {
     onUserClose,
     closable = false,
     titleActions = [],
+    defaultDest = DOCK_DEST_MAIN,
+    railDockable = false,
   } = config;
+  const mainDock = !config.getDockEl;
 
   let wb = null;
   let slot = null;
@@ -595,6 +678,43 @@ export function createDockableWindow(config) {
 
   function loadWinState() { return loadRaw(winStateKey); }
   function saveWinState(v) { saveRaw(winStateKey, v || null); }
+
+  // A non-closable window is always open, so its openKey must not exist:
+  // clear any stale entry persisted back when the window was closable, and
+  // refuse writes -- persisting "closed" for one is a bug, not a state.
+  if (!closable) saveRaw(openKey, null);
+
+  function persistOpen(v) {
+    if (!closable) {
+      if (!v) throw new Error(`${title}: cannot persist closed on a non-closable window`);
+      return; // open is implied; keep the key absent
+    }
+    setOpen(openKey, v);
+  }
+
+  function openState() {
+    return !closable || isOpen(openKey);
+  }
+
+  // Container this window docks into absent an explicit drop target: the
+  // rail slot when that's its persisted destination and the slot is free,
+  // else its own dock (main column or extra dock).
+  function resolveDockEl() {
+    if (railDockable && destFor(dockedKey, defaultDest) === DOCK_DEST_RAIL
+        && railFreeFor(inst)) {
+      return railDockEl;
+    }
+    return getDockEl();
+  }
+
+  // Every container this window may be drag-docked into.
+  function dropTargets() {
+    const targets = [];
+    const own = getDockEl();
+    if (own) targets.push(own);
+    if (railDockable && railFreeFor(inst)) targets.push(railDockEl);
+    return targets;
+  }
 
   function setOff(fn) { off = fn; }
 
@@ -612,8 +732,8 @@ export function createDockableWindow(config) {
     header.addEventListener("pointerdown", (eDown) => {
       if (eDown.button !== 0 || eDown.target.closest("button")) return;
       if (isMobileLayout()) return;
-      const container = getDockEl();
-      if (!container) return;
+      const targets = dropTargets();
+      if (!targets.length) return;
       eDown.preventDefault(); // no text selection while dragging
       // Grab offsets: the pointer stays on the same spot of the header
       // once the slot becomes a floating window.
@@ -630,7 +750,7 @@ export function createDockableWindow(config) {
                    window.innerHeight - FLOAT_DRAG_BOTTOM_MARGIN_PX));
         wb.move(x, y);
       };
-      watchDockDrop(container, eDown, {
+      watchDockDrop(targets, eDown, {
         onFirstMove(e) {
           // Tear-off: float at the slot's own position/size. (The header
           // undock button keeps restoring the last floating geometry.)
@@ -645,7 +765,7 @@ export function createDockableWindow(config) {
           moveFloatTo(e);
         },
         onMove: moveFloatTo,
-        onEnd(overDock) { if (overDock && wb) dock(); },
+        onEnd(overDock) { if (overDock && wb) dock(overDock); },
         ghostInst: inst,
       });
     });
@@ -660,17 +780,17 @@ export function createDockableWindow(config) {
     if (!dragEl) return;
     dragEl.addEventListener("pointerdown", (eDown) => {
       if (eDown.button !== 0) return;
-      const container = getDockEl();
-      if (!container || isMobileLayout() || wb.min || wb.max) return;
-      watchDockDrop(container, eDown, {
-        onEnd(overDock) { if (overDock && wb && !wb.max) dock(); },
+      const targets = dropTargets();
+      if (!targets.length || isMobileLayout() || wb.min || wb.max) return;
+      watchDockDrop(targets, eDown, {
+        onEnd(overDock) { if (overDock && wb && !wb.max) dock(overDock); },
         ghostInst: inst,
       });
     });
   }
 
-  function dock() {
-    const container = getDockEl();
+  function dock(toContainer = null) {
+    const container = toContainer ?? resolveDockEl();
     if (!container) return;
     if (wb) {
       saveGeo(geoKey, wb);
@@ -680,12 +800,17 @@ export function createDockableWindow(config) {
       docking = false;
     }
     setDocked(dockedKey, true);
+    if (railDockable && railDockEl) {
+      setDest(dockedKey, container === railDockEl ? DOCK_DEST_RAIL : DOCK_DEST_MAIN);
+    }
     slot = makeDockSlot(currentTitle, body, undock, closable ? userClose : null, titleActions);
     attachSlotDragUndock(slot);
     hideDockGhost(container);
     insertInDockOrder(container, slot, inst);
     syncDockVisibility();
-    applyDockBounds(container);
+    // The rail's geometry is owned by game-view's positionSideRail; writing
+    // left-column bounds onto it would flash it at the board's left edge.
+    if (container !== railDockEl) applyDockBounds(container);
   }
 
   function undock() {
@@ -706,7 +831,9 @@ export function createDockableWindow(config) {
     const y = geo?.y ?? defaultY(h);
     saved = null;
     wb = new WinBox({
-      ...winboxBase(currentTitle, className, w, h, x, y),
+      // no-close: WinBox's native hide-the-X modifier; a non-closable
+      // window would otherwise be unrevivable once its float is closed.
+      ...winboxBase(currentTitle, closable ? className : `${className} no-close`, w, h, x, y),
       mount: body,
       onclose() {
         if (wb) saveGeo(geoKey, wb);
@@ -716,7 +843,7 @@ export function createDockableWindow(config) {
         // Persist the closed state so a hard refresh doesn't reopen.
         const userInitiated = !programmaticClose;
         if (userInitiated) inst.openedByAnalysis = false;
-        setOpen(openKey, false);
+        persistOpen(false);
         if (off) { off(); off = null; }
         body = null;
         if (userInitiated && onUserClose) onUserClose();
@@ -735,7 +862,8 @@ export function createDockableWindow(config) {
     // WinBox addControl with index:0 PREPENDS into .wb-control, so the
     // LAST call ends up leftmost. Add dock first so it stays rightmost,
     // then actions in declaration order (each new one goes leftmost).
-    addDockButton(wb, dock);
+    // Wrap dock: the click handler's event arg must not become toContainer.
+    addDockButton(wb, () => dock());
     for (const a of titleActions) {
       wb.addControl({ class: a.className, index: 0, click: a.onClick });
       // WinBox's addControl does not accept title/aria; set them
@@ -810,7 +938,7 @@ export function createDockableWindow(config) {
 
   function close() {
     inst.openedByAnalysis = false;
-    setOpen(openKey, false);
+    persistOpen(false);
     if (wb) {
       programmaticClose = true;
       wb.close();
@@ -823,11 +951,11 @@ export function createDockableWindow(config) {
 
   function toggle(events) {
     if (wb || slot || inlineSlot) { close(); return; }
-    setOpen(openKey, true);
+    persistOpen(true);
     if (!body) body = build(events, { setOff });
     if (isMobileLayout() && getInlineEl?.()) {
       inline();
-    } else if (isDocked(dockedKey) && getDockEl()) {
+    } else if (isDocked(dockedKey) && resolveDockEl()) {
       dock();
     } else {
       openFloat();
@@ -841,7 +969,7 @@ export function createDockableWindow(config) {
 
   function restore(events) {
     if (wb || slot || inlineSlot) return; // already open from a prior call
-    if (body || saved || isOpen(openKey)) toggle(events);
+    if (body || saved || openState()) toggle(events);
   }
 
   // Migrate an open panel between inline (mobile) and dock/float (desktop)
@@ -861,7 +989,7 @@ export function createDockableWindow(config) {
       syncDockVisibility();
     } else if (!wantInline && inlineSlot) {
       uninline();
-      if (isDocked(dockedKey) && getDockEl()) dock();
+      if (isDocked(dockedKey) && resolveDockEl()) dock();
       else openFloat();
     }
   }
@@ -878,14 +1006,15 @@ export function createDockableWindow(config) {
   }
 
   const inst = {
-    toggle, close, teardownSlot, closeForNav, restore, relayout, setTitle,
+    toggle, close, undock, teardownSlot, closeForNav, restore, relayout, setTitle,
     get wb() { return wb; },
     get slot() { return slot; },
     get inlineSlot() { return inlineSlot; },
     get body() { return body; },
     dockedKey,
     dockOrder,
-    usesMainDock: !config.getDockEl,
+    closable,
+    usesMainDock: mainDock,
     // Set true when analysis opened this window (restoreViewAnalysisWindows);
     // the stop path closes only these, leaving user-opened windows alone.
     openedByAnalysis: false,
@@ -915,6 +1044,15 @@ export function setDockContainer(el) {
     updateDockBounds();
   }
   syncDockVisibility();
+}
+
+// Rail dock container under the moves list (positioned by game-view's
+// positionSideRail, so no bounds tracking here). Pass null on unmount --
+// after closeDebugWindows/setDockContainer(null), which tear down any slot
+// still parked in it.
+export function setRailDockContainer(el) {
+  railDockEl = el;
+  if (el) syncEmptyClass(el);
 }
 
 // Register an extra dock container so it gets the same bounds-tracking
@@ -1023,6 +1161,7 @@ const uciLog = createDockableWindow({
   build: buildUciLogBody,
   dockOrder: DOCK_ORDER.UCI_LOG,
   closable: true,
+  railDockable: true,
 });
 
 // -- Search Lines body -------------------------------------------------------
@@ -1055,6 +1194,76 @@ const pvTable = createDockableWindow({
   build: buildPvTableBody,
   dockOrder: DOCK_ORDER.SEARCH_LINES,
   closable: true,
+  railDockable: true,
+});
+
+// -- Engine Eval body --------------------------------------------------------
+
+const EVAL_TITLE = "Engine Eval";
+const EVAL_TOOLTIP = "Evaluation from the engine's point of view";
+const EVAL_GEO_KEY       = STORAGE_KEY.EVALBAR_GEO;
+const EVAL_WIN_STATE_KEY = STORAGE_KEY.EVALBAR_WIN_STATE;
+const EVAL_DOCKED_KEY    = STORAGE_KEY.EVALBAR_DOCKED;
+const EVAL_OPEN_KEY      = STORAGE_KEY.EVALBAR_OPEN;
+
+// Bar click/navigability handlers close over per-mount perspective state,
+// but the canvas (and its listeners) lives as long as the window body --
+// across remounts. Handlers read through this indirection so they never
+// capture a stale mount's closures; play.js swaps them on mount/unmount.
+let evalCallbacks = null;
+export function setEvalBarCallbacks(cb) { evalCallbacks = cb; }
+
+// Live eval-strip widget ({setSamples, clear}) or null while the window is
+// closed. play.js feeds it from board_update's eval_history.
+let evalBarApi = null;
+export function getEvalBarApi() { return evalBarApi; }
+
+function buildEvalBarBody(_events, { setOff }) {
+  const bar = createEvalBar({
+    onBarClick: (ply) => evalCallbacks?.onBarClick(ply),
+    isBarNavigable: (ply) => !!evalCallbacks?.isBarNavigable(ply),
+  });
+  // Base tooltip for empty regions; per-bar hover overrides it on the canvas.
+  bar.el.title = EVAL_TOOLTIP;
+  bar.setVisible(true);
+  // Feeding can flip the strip's empty state, which hides/shows this
+  // window's slot. Re-run dock accounting (dock-empty class, grips,
+  // board-rail shrink) only on an actual flip: feeds arrive per
+  // board_update, and rebuilding grips would kill an in-progress grip drag.
+  const syncIfFlipped = (mutate) => {
+    const wasEmpty = bar.el.classList.contains(EVAL_EMPTY_CLASS);
+    mutate();
+    if (bar.el.classList.contains(EVAL_EMPTY_CLASS) !== wasEmpty) syncDockVisibility();
+  };
+  evalBarApi = {
+    setSamples: (items, engineIsWhite) => syncIfFlipped(() => bar.setSamples(items, engineIsWhite)),
+    clear: () => syncIfFlipped(() => bar.clear()),
+  };
+  setOff(() => { evalBarApi = null; bar.dispose(); });
+  return bar.el;
+}
+
+createDockableWindow({
+  title: EVAL_TITLE,
+  className: "sturddle-wb-evalbar",
+  geoKey: EVAL_GEO_KEY,
+  winStateKey: EVAL_WIN_STATE_KEY,
+  dockedKey: EVAL_DOCKED_KEY,
+  openKey: EVAL_OPEN_KEY,
+  defaultW: () => rightColumnWidth(480),
+  defaultH: 140,
+  defaultY: (h) => {
+    const clockBot = document.querySelector(".clock-row.clock-bottom");
+    const botTop = clockBot ? Math.round(clockBot.getBoundingClientRect().top) : window.innerHeight;
+    return botTop - h - WIN_MARGIN;
+  },
+  build: buildEvalBarBody,
+  dockOrder: DOCK_ORDER.ENGINE_EVAL,
+  // Not closable: nothing in the UI reopens it, so it must stay revivable
+  // -- always open, movable between rail/dock/float.
+  closable: false,
+  defaultDest: DOCK_DEST_RAIL,
+  railDockable: true,
 });
 
 // -- public API --------------------------------------------------------------
