@@ -398,12 +398,15 @@ function setDest(key, val) {
   saveJson(DOCK_DEST_KEY, dests);
 }
 
-// The rail dock holds at most one slot; it's free for `inst` when empty
-// or when the occupant is inst's own slot (re-dock while dragging out).
+// The rail dock holds at most one visible slot; it's free for `inst` when
+// empty or when the occupant is inst's own slot (re-dock while dragging
+// out). A hidden (empty-eval) squatter yields too: dock() evicts it into
+// the main dock -- so it only counts as free when there is one to evict to.
 function railFreeFor(inst) {
   if (!railDockEl) return false;
   const occupant = railDockEl.querySelector(DOCK_SLOT_SEL);
-  return !occupant || occupant === inst.slot;
+  if (!occupant || occupant === inst.slot) return true;
+  return !!dockEl && slotHidden(occupant);
 }
 
 function attachGripDrag(grip, topInst, botInst) {
@@ -792,6 +795,13 @@ export function createDockableWindow(config) {
   function dock(toContainer = null) {
     const container = toContainer ?? resolveDockEl();
     if (!container) return;
+    if (container === railDockEl) {
+      // Only a hidden (empty-eval) squatter can be here -- railFreeFor
+      // gates out visible occupants -- and it yields to the main dock.
+      const occupant = instances.find(i =>
+        i !== inst && i.slot && i.slot.parentElement === railDockEl);
+      if (occupant && dockEl) occupant.redock(dockEl);
+    }
     if (wb) {
       saveGeo(geoKey, wb);
       wb.body.removeChild(body);
@@ -813,14 +823,27 @@ export function createDockableWindow(config) {
     if (container !== railDockEl) applyDockBounds(container);
   }
 
-  function undock() {
+  // Detach the docked slot chrome, keeping the body alive for its next home.
+  function dropSlot() {
     if (!slot) return;
     detachBody(slot, body);
     slot.remove();
     slot = null;
+  }
+
+  function undock() {
+    if (!slot) return;
+    dropSlot();
     setDocked(dockedKey, false);
     syncDockVisibility();
     openFloat();
+  }
+
+  // Relocate a docked slot into another container (rail eviction).
+  function redock(container) {
+    if (!slot) return;
+    dropSlot();
+    dock(container);
   }
 
   function openFloat() {
@@ -917,22 +940,14 @@ export function createDockableWindow(config) {
 
   function teardownSlot() {
     if (!slot && !inlineSlot) return;
-    if (slot) {
-      detachBody(slot, body);
-      slot.remove();
-      slot = null;
-    }
+    dropSlot();
     uninline();
     if (off) { off(); off = null; }
     body = null;
   }
 
   function detachSlotForNav() {
-    if (slot) {
-      detachBody(slot, body);
-      slot.remove();
-      slot = null;
-    }
+    dropSlot();
     uninline();
   }
 
@@ -984,7 +999,7 @@ export function createDockableWindow(config) {
     // rather than orphaning the body with nowhere to land.
     if (wantInline && (wb || slot) && getInlineEl()) {
       if (wb) { saveGeo(geoKey, wb); docking = true; wb.body.removeChild(body); wb.close(); docking = false; }
-      else { detachBody(slot, body); slot.remove(); slot = null; }
+      else dropSlot();
       inline();
       syncDockVisibility();
     } else if (!wantInline && inlineSlot) {
@@ -1006,7 +1021,7 @@ export function createDockableWindow(config) {
   }
 
   const inst = {
-    toggle, close, undock, teardownSlot, closeForNav, restore, relayout, setTitle,
+    toggle, close, undock, redock, teardownSlot, closeForNav, restore, relayout, setTitle,
     get wb() { return wb; },
     get slot() { return slot; },
     get inlineSlot() { return inlineSlot; },
