@@ -49,8 +49,18 @@ export class PerspectiveRouter {
     return this._active;
   }
 
-  async activate(id, { force = false } = {}) {
-    if (!force && id === this._active) return true;
+  // persist: only a deliberate switch (nav click, explicit request) may
+  // rewrite the remembered perspective. Involuntary switches -- e.g. the
+  // disconnect fallback out of a server-backed tab -- must not, or a
+  // transient drop silently becomes the user's new startup tab.
+  async activate(id, { force = false, persist = true } = {}) {
+    if (!force && id === this._active) {
+      // Already here, but a deliberate pick still claims the startup slot:
+      // after an involuntary switch the stored id is the pre-drop tab, and
+      // re-picking the current one must override it.
+      if (persist) saveRaw(ACTIVE_PERSPECTIVE_KEY, id);
+      return true;
+    }
     if (!this._registry.has(id)) throw new Error(`unknown perspective: ${id}`);
 
     if (this._activeController?.canUnmount) {
@@ -86,7 +96,7 @@ export class PerspectiveRouter {
 
     const persp = this._registry.get(id);
     this._active = id;
-    saveRaw(ACTIVE_PERSPECTIVE_KEY, id);
+    if (persist) saveRaw(ACTIVE_PERSPECTIVE_KEY, id);
     this._activeController = (await persp.mount(this._root, this._ctx)) ?? null;
     if (this._activeController?.ready) {
       await this._activeController.ready;

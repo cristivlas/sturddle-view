@@ -180,6 +180,19 @@ router.register(enginesPerspective);
 // unambiguous from the top-level nav. Toggled by play.js dispatching
 // a sturddle:viewing-changed event.
 let inViewMode = false;
+// Tab a dropped socket pushed us off, pending restore on reconnect. Any
+// deliberate pick clears it, so we never yank the user back to a tab they
+// chose to leave while offline.
+let tabLeftOnDisconnect = null;
+
+// The one deliberate-switch path: persists the choice (activate's default)
+// and cancels a pending disconnect-restore.
+async function pickPerspective(id) {
+  tabLeftOnDisconnect = null;
+  await router.activate(id);
+  renderNav();
+}
+
 function renderNav() {
   nav.innerHTML = "";
   for (const p of router.list()) {
@@ -190,10 +203,7 @@ function renderNav() {
       p.id === "play" && inViewMode ? "View"
       : p.id === enginesPerspective.id ? tournamentUxLabel()
       : p.label;
-    btn.addEventListener("click", async () => {
-      await router.activate(p.id);
-      renderNav();
-    });
+    btn.addEventListener("click", () => pickPerspective(p.id));
     if (p.id === router.activeId()) btn.classList.add("active");
     nav.appendChild(btn);
   }
@@ -213,7 +223,7 @@ window.addEventListener(APP_EVT.SETTINGS_CHANGED, async () => {
   if (ux === lastUx) return;
   lastUx = ux;
   if (router.activeId() === enginesPerspective.id) {
-    await router.activate(enginesPerspective.id, { force: true });
+    await router.activate(enginesPerspective.id, { force: true, persist: false });
     renderNav();
   }
 });
@@ -246,7 +256,9 @@ api("GET", "/settings").then(s => {
 document.getElementById("about-btn").addEventListener("click", () => {
   openAboutDialog({ api });
 });
-const reloadPerspective = () => router.activate(router.activeId(), { force: true });
+// Remount of whatever is current, not a tab pick -- must not claim the
+// startup slot, which during a disconnect window still holds the pre-drop tab.
+const reloadPerspective = () => router.activate(router.activeId(), { force: true, persist: false });
 document.getElementById("settings-btn").addEventListener("click", () => {
   openSettingsDialog({ api, getActivePerspective: () => router.activeId(), reloadPerspective });
 });
@@ -259,10 +271,22 @@ window.addEventListener(APP_EVT.OPEN_SETTINGS, (e) => {
   openSettingsDialog({ api, initialTab: tab, getActivePerspective: () => router.activeId(), reloadPerspective });
 });
 
+// A server-backed tab can't survive a dropped socket, so fall back to Play --
+// then undo that once the socket is back. Both moves are involuntary, so
+// neither rewrites the startup tab (persist: false).
 window.addEventListener(APP_EVT.CONNECTION, async (e) => {
-  if (e.detail.connected) return;
-  if (router.activeId() === "engines") {
-    await router.activate("play");
+  if (e.detail.connected) {
+    const id = tabLeftOnDisconnect;
+    // Only restore if we're still parked where the fallback left us.
+    if (!id || router.activeId() !== playPerspective.id) return;
+    tabLeftOnDisconnect = null;
+    await router.activate(id, { persist: false });
+    renderNav();
+    return;
+  }
+  if (router.activeId() === enginesPerspective.id) {
+    tabLeftOnDisconnect = enginesPerspective.id;
+    await router.activate(playPerspective.id, { persist: false });
     renderNav();
   }
 });
@@ -271,10 +295,7 @@ window.addEventListener(APP_EVT.ACTIVATE_PERSPECTIVE, async (e) => {
   const id = e.detail?.id;
   if (!id) return;
   try {
-    if (router.activeId() !== id) {
-      await router.activate(id);
-      renderNav();
-    }
+    if (router.activeId() !== id) await pickPerspective(id);
   } catch (err) {
     console.error(`activate-perspective(${id}) failed`, err);
   }
