@@ -11,7 +11,7 @@
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, loadRaw, saveJson, saveRaw } from "./storage.js";
-import { progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
+import { ICON_ENGINE_ROW, ICON_GAME_ROW, progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
 import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, nextDir, scrollSortedRowIntoView } from "./col-sort.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
@@ -657,7 +657,7 @@ function renderEnginesPane(ctx) {
   const ul = document.createElement("ul");
   ul.className = "wb-sched-list";
   for (const [pid, label] of entries) {
-    const li = liveRow("&#9881;", label);
+    const li = liveRow(ICON_ENGINE_ROW, label);
     li.appendChild(watchBtn(ctx, pid, { proxyId: pid, label, engineName: label }));
     ul.appendChild(li);
   }
@@ -682,7 +682,7 @@ function renderGamesPane(ctx) {
     shown.add(key);
     const wLabel = info.sideA === SIDE.WHITE ? info.engineA : info.engineB;
     const bLabel = info.sideA === SIDE.WHITE ? info.engineB : info.engineA;
-    const li = liveRow("&#9822;", `${wLabel} - ${bLabel}`);
+    const li = liveRow(ICON_GAME_ROW, `${wLabel} - ${bLabel}`);
     const attachKey = info.pairId || key;
     li.appendChild(watchBtn(ctx, attachKey, {
       proxyId: info.proxyA, gameId: info.pairId || null,

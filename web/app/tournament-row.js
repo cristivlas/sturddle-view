@@ -13,6 +13,14 @@ export const MIDDOT = "\u00B7";
 // Empty-state message shared by the standings and H2H surfaces.
 export const NO_GAMES_MSG = "No completed games yet.";
 
+// Live-row glyphs (engine list, games-in-play list), shared by the Arena
+// workspace and Studio. The trailing U+FE0E is variation selector-15, which
+// pins text presentation: without it iOS renders U+2699 from the color-emoji
+// face, which ignores CSS color and shows grey instead of the accent tint.
+// Desktop already picks the text face, so the selector is a no-op there.
+export const ICON_ENGINE_ROW = "&#9881;&#xFE0E;";
+export const ICON_GAME_ROW = "&#9822;&#xFE0E;";
+
 // Total scheduled games for a tournament, or null when the template is
 // underspecified. Gauntlet seeds play every non-seed; round-robin pairs
 // every engine once per (rounds * games_per_round).

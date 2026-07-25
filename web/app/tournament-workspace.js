@@ -40,6 +40,7 @@ import {
 } from "./tournament-live-state.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { renderEventLogList } from "./tournament-eventlog.js";
+import { ICON_ENGINE_ROW, ICON_GAME_ROW } from "./tournament-row.js";
 
 const STORAGE_KEY_PREFIX = STORAGE_KEY.WORKSPACE_PREFIX;
 
@@ -1011,7 +1012,7 @@ function renderSchedule(ctx) {
     const bLabel = info.sideA === SIDE.WHITE ? info.engineB : info.engineA;
     const pairLabel = `${wLabel} - ${bLabel}`;
     li.innerHTML = `
-      <span class="wb-sched-icon">&#9822;</span>
+      <span class="wb-sched-icon">${ICON_GAME_ROW}</span>
       <span class="wb-sched-game" title="${escapeHtml(pairLabel)}">${escapeHtml(pairLabel)}</span>
     `;
     const btn = document.createElement("button");
@@ -1051,7 +1052,7 @@ function renderEngines(ctx) {
     li.className = "wb-sched-live";
     const engineLabel = p.engineName || pid;
     li.innerHTML = `
-      <span class="wb-sched-icon">&#9881;</span>
+      <span class="wb-sched-icon">${ICON_ENGINE_ROW}</span>
       <span class="wb-sched-game" title="${escapeHtml(engineLabel)}">${escapeHtml(engineLabel)}</span>
     `;
     const btn = document.createElement("button");
