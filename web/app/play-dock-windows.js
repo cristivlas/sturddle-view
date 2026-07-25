@@ -162,10 +162,10 @@ window.addEventListener(APP_EVT.LAYOUT_CHANGED, () => {
 // (WinBox doesn't re-enforce left/right on resize). rAF-coalesced.
 window.addEventListener("resize", rafCoalesce(reclampFloats));
 
-// Migrate inline-capable panels across the mobile breakpoint. Each query can
-// fire independently (width vs height), so a single coalesced handler covers
-// both without double-running. relayout() no-ops for instances that aren't
-// open or have no inline host.
+// Migrate panels across the mobile breakpoint: inline-capable ones swap
+// placement, rail-docked ones evacuate the hidden rail. Each query can fire
+// independently (width vs height), so a single coalesced handler covers both
+// without double-running. relayout() no-ops for instances that aren't open.
 function relayoutInlineInstances() {
   for (const inst of instances) {
     if (inst.relayout) inst.relayout();
@@ -403,7 +403,11 @@ function setDest(key, val) {
 // out). A hidden (empty-eval) squatter yields too: dock() evicts it into
 // the main dock -- so it only counts as free when there is one to evict to.
 function railFreeFor(inst) {
-  if (!railDockEl) return false;
+  // Mobile hides the rail (CSS), so nothing may land there. Gated here --
+  // the single chokepoint every rail consumer routes through -- rather than
+  // repeated at each call site, where one omission strands a window in a
+  // display:none container.
+  if (!railDockEl || isMobileLayout()) return false;
   const occupant = railDockEl.querySelector(DOCK_SLOT_SEL);
   if (!occupant || occupant === inst.slot) return true;
   return !!dockEl && slotHidden(occupant);
@@ -768,7 +772,7 @@ export function createDockableWindow(config) {
           moveFloatTo(e);
         },
         onMove: moveFloatTo,
-        onEnd(overDock) { if (overDock && wb) dock(overDock); },
+        onEnd(overDock) { if (overDock && wb) dock(overDock, { persistDest: true }); },
         ghostInst: inst,
       });
     });
@@ -786,13 +790,17 @@ export function createDockableWindow(config) {
       const targets = dropTargets();
       if (!targets.length || isMobileLayout() || wb.min || wb.max) return;
       watchDockDrop(targets, eDown, {
-        onEnd(overDock) { if (overDock && wb && !wb.max) dock(overDock); },
+        onEnd(overDock) { if (overDock && wb && !wb.max) dock(overDock, { persistDest: true }); },
         ghostInst: inst,
       });
     });
   }
 
-  function dock(toContainer = null) {
+  // persistDest: only a deliberate placement (drag-drop, dock button) may
+  // rewrite the remembered destination. Fallback docks -- reopen, uninline,
+  // mobile evacuation -- must land somewhere without erasing where the user
+  // last put this window.
+  function dock(toContainer = null, { persistDest = false } = {}) {
     const container = toContainer ?? resolveDockEl();
     if (!container) return;
     if (container === railDockEl) {
@@ -810,7 +818,7 @@ export function createDockableWindow(config) {
       docking = false;
     }
     setDocked(dockedKey, true);
-    if (railDockable && railDockEl) {
+    if (persistDest && railDockable && railDockEl) {
       setDest(dockedKey, container === railDockEl ? DOCK_DEST_RAIL : DOCK_DEST_MAIN);
     }
     slot = makeDockSlot(currentTitle, body, undock, closable ? userClose : null, titleActions);
@@ -886,7 +894,7 @@ export function createDockableWindow(config) {
     // LAST call ends up leftmost. Add dock first so it stays rightmost,
     // then actions in declaration order (each new one goes leftmost).
     // Wrap dock: the click handler's event arg must not become toContainer.
-    addDockButton(wb, () => dock());
+    addDockButton(wb, () => dock(null, { persistDest: true }));
     for (const a of titleActions) {
       wb.addControl({ class: a.className, index: 0, click: a.onClick });
       // WinBox's addControl does not accept title/aria; set them
@@ -992,7 +1000,32 @@ export function createDockableWindow(config) {
   // listeners; only the placement chrome is rebuilt.
   function relayout() {
     const open = wb || slot || inlineSlot;
-    if (!open || !getInlineEl) return;
+    if (!open) return;
+    // Rail-dockable windows migrate on the breakpoint without an inline host:
+    // into mobile the rail is hidden, so evacuate to the main dock; back on
+    // desktop, return to the rail if that is still the remembered home and it
+    // is free. The saved dest survives the round trip (dock persists it only
+    // on deliberate placement), so this restores the user's own choice.
+    if (railDockable && slot) {
+      const inRail = slot.parentElement === railDockEl;
+      if (inRail && isMobileLayout()) {
+        dropSlot();
+        if (getDockEl()) dock(getDockEl());
+        else openFloat();
+        syncDockVisibility();
+        return;
+      }
+      // resolveDockEl owns "does this window belong in the rail" -- asking it
+      // keeps the answer identical to what a reopen would pick. It already
+      // gates on mobile via railFreeFor, so no separate check here.
+      if (!inRail && resolveDockEl() === railDockEl) {
+        dropSlot();
+        dock(railDockEl);
+        syncDockVisibility();
+        return;
+      }
+    }
+    if (!getInlineEl) return;
     const wantInline = isMobileLayout();
     // Guard the destination host BEFORE tearing down the current placement:
     // if the inline host is gone (e.g. mid-unmount), keep the float/dock

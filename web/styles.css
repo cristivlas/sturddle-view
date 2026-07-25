@@ -1862,9 +1862,6 @@ body .side-popover.popover-floating {
      scrollbar -- no nested second one. */
   .game-view-side { height: auto; }
   .game-view-moves { flex: 0 0 auto; }
-  /* Desktop-only widget: it's fixed-positioned off the board geometry,
-     which the mobile document-flow layout doesn't provide. */
-  .play-rail-dock { display: none; }
   .game-view-moves .move-list {
     flex: 0 0 auto;
     max-height: none;
@@ -1940,14 +1937,20 @@ body .side-popover.popover-floating {
    positioned (left/top/width/height set by positionSideRail) so it occupies
    the gap between the board bottom and the clock bottom without touching
    the moves-list flow. Default home of the Engine Eval window; visibility
-   and drop-hint classes managed by play-dock-windows.js. */
-.play-rail-dock {
-  position: fixed;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  z-index: 8;
+   and drop-hint classes managed by play-dock-windows.js.
+   Desktop-only: it hangs off board geometry the mobile document-flow layout
+   doesn't provide. Gated here rather than hidden in the mobile block -- an
+   unconditional base rule would win on source order at equal specificity. */
+.play-rail-dock { display: none; }
+@media (min-width: 801px) and (min-height: 681px) {
+  .play-rail-dock {
+    position: fixed;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    z-index: 8;
+  }
 }
 .play-rail-dock.dock-empty { visibility: hidden; }
 /* Auto-hide: a docked slot holding an empty eval strip (view mode / no
