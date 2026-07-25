@@ -48,8 +48,13 @@ export const STORAGE_KEY = {
   COMMENTARY_DOCKED: "sturddle:commentary:docked",
   COMMENTARY_OPEN: "sturddle:commentary:open",
 
-  // Play dock + UCI-log + PV-table window state.
+  // Play dock + UCI-log + PV-table + eval-strip window state.
   PLAY_DOCK_GROW: "sturddle:play:dockGrow",
+  PLAY_DOCK_DEST: "sturddle:play:dockDest",
+  EVALBAR_GEO: "sturddle:evalbar:geo",
+  EVALBAR_WIN_STATE: "sturddle:evalbar:winstate",
+  EVALBAR_DOCKED: "sturddle:evalbar:docked",
+  EVALBAR_OPEN: "sturddle:evalbar:open",
   UCILOG_GEO: "sturddle:ucilog:geo",
   UCILOG_WIN_STATE: "sturddle:ucilog:winstate",
   UCILOG_DOCKED: "sturddle:ucilog:docked",

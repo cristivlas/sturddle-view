@@ -329,18 +329,18 @@ function positionSideRail(ctx, geom) {
   const { grid, gapW, railW, leftEmpty, rem, mobile } = geom;
   const sideHost = grid.querySelector(".play-side-host");
   if (!sideHost) return;
-  const evalPanel = sideHost.querySelector(".game-view-eval-panel");
+  const railDock = sideHost.querySelector(".play-rail-dock");
   if (mobile) {
     sideHost.style.removeProperty("height");
     sideHost.style.removeProperty("margin-top");
     sideHost.style.removeProperty("left");
     sideHost.style.removeProperty("top");
     sideHost.style.removeProperty("width");
-    if (evalPanel) {
-      evalPanel.style.removeProperty("left");
-      evalPanel.style.removeProperty("top");
-      evalPanel.style.removeProperty("width");
-      evalPanel.style.removeProperty("height");
+    if (railDock) {
+      railDock.style.removeProperty("left");
+      railDock.style.removeProperty("top");
+      railDock.style.removeProperty("width");
+      railDock.style.removeProperty("height");
     }
     return;
   }
@@ -371,21 +371,21 @@ function positionSideRail(ctx, geom) {
   sideHost.style.width = `${width}px`;
   sideHost.style.height = `${height}px`;
   sideHost.style.removeProperty("margin-top");
-  // Eval panel is purely additive: a fixed band under the moves box (same
-  // x as the rail) filling the gap from the board bottom down to the clock
-  // bottom. It never joins the rail's flex flow, so the moves list keeps
-  // its exact geometry.
-  if (evalPanel) {
+  // The rail dock is purely additive: a fixed band under the moves box
+  // (same x as the rail) filling the gap from the board bottom down to the
+  // clock bottom. It never joins the rail's flex flow, so the moves list
+  // keeps its exact geometry.
+  if (railDock) {
     const boardBottom = Math.floor(boardRect.bottom);
     const clockRow = ctx.clockBottomRow;
     const barBottom = clockRow && clockRow.offsetParent !== null
       ? Math.floor(clockRow.getBoundingClientRect().bottom)
       : boardBottom;
     const barTop = boardBottom + COL_SIBLING_GAP_PX;
-    evalPanel.style.left = `${left}px`;
-    evalPanel.style.top = `${barTop}px`;
-    evalPanel.style.width = `${width}px`;
-    evalPanel.style.height = `${Math.max(0, barBottom - barTop)}px`;
+    railDock.style.left = `${left}px`;
+    railDock.style.top = `${barTop}px`;
+    railDock.style.width = `${width}px`;
+    railDock.style.height = `${Math.max(0, barBottom - barTop)}px`;
   }
 }
 

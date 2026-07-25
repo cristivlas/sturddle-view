@@ -178,6 +178,11 @@ export function createEvalGraph() {
   return { el, add, clear, setVisible: rig.setVisible, dispose: rig.dispose };
 }
 
+// Marks a strip with nothing plotted (view mode / pre-eval play). The play
+// dock hides slots holding an empty strip and counts them out of dock-empty
+// accounting; CSS hides the slot itself.
+export const EVAL_EMPTY_CLASS = "eval-empty";
+
 // Horizontal eval strip for the Play perspective: one vertical bar per
 // engine ply, running left to right, engine-POV centipawns against a
 // horizontal zero midline -- a bar grows up when the engine judged
@@ -191,6 +196,7 @@ export function createEvalBar({ onBarClick = null, isBarNavigable = null } = {})
   let stickToRight = false; // force-scroll to newest on next draw (reveal)
   const rig = createCanvasWidget("game-view-eval-bar", { onReveal: () => { stickToRight = true; } });
   const { el, canvas, ctx } = rig;
+  el.classList.add(EVAL_EMPTY_CLASS);
   // One fill for every bar: the engine's side is constant per game (and
   // shown on the board), so color is spent on contrast, not on side.
   const barFill = getComputedStyle(document.documentElement)
@@ -255,12 +261,14 @@ export function createEvalBar({ onBarClick = null, isBarNavigable = null } = {})
     }
     const grew = next.length > samples.length;
     samples = next;
+    el.classList.toggle(EVAL_EMPTY_CLASS, samples.length === 0);
     if (grew) stickToRight = true;
     if (rig.isVisible()) draw();
   }
 
   function clear() {
     samples = [];
+    el.classList.add(EVAL_EMPTY_CLASS);
     if (rig.isVisible()) draw();
   }
 
