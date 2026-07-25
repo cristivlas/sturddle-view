@@ -46,6 +46,7 @@ function renderMoveList(el, sanList, {
   onMoveClick = null,  // (plyIndex) => void; makes cells clickable (view goto)
   forkInfo = null,     // Map<plyIdx, {childCount, isOwnForkPly}> for fork glyphs
   onForkClick = null,  // (plyIdx) => void; glyph-only click re-shows a banner
+  boardEl = null,      // mobile: scrolled into view instead of the cursor row
 } = {}) {
   el.innerHTML = "";
   const lastIdx = sanList.length - 1;
@@ -119,8 +120,13 @@ function renderMoveList(el, sanList, {
   }
   // Auto-scroll: in play mode (no explicit cursor) keep the latest move
   // visible; in view mode keep the cursor visible as the user scrubs.
+  // Mobile has no inner scroller (the list flows in the page), so scrolling
+  // the cursor into view would drag the board off-screen -- the board is what
+  // the user is scrubbing, so keep that in view instead.
   if (currentIdx == null) {
     el.scrollTop = el.scrollHeight;
+  } else if (isMobileLayout()) {
+    boardEl?.scrollIntoView({ block: "nearest" });
   } else if (highlightedRow) {
     highlightedRow.scrollIntoView({ block: "nearest" });
   }
@@ -611,6 +617,7 @@ function applyBoardUpdate(ctx, evt) {
       onMoveClick: clickHandler,
       forkInfo,
       onForkClick: ctx.onForkClick,
+      boardEl: ctx.boardEl,
     });
   }
   setOpening(ctx, evt.payload.opening);
