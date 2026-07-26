@@ -21,6 +21,7 @@ from sturddle_view.llm.position_check import (
     find_illegal_square_moves,
     find_tool_mentions,
     handled_continuation_spans,
+    is_invariant_bishop_label,
     iter_false_bishop_color_refs,
     iter_false_claim_squares,
     iter_illegal_continuations,
@@ -531,6 +532,32 @@ def test_clause_boundary_breaks_binding():
     assert find_false_bishop_color_refs(
         "4. Bb2 develops, and the light-squared bishop will follow", board
     ) == []
+
+
+# From the wild (2026-07-26): "Bxd6 removes the active light-squared bishop"
+# -- d6 is dark. Clause binding caught it, but the semantic judge wrongly
+# cleared the flag; square-bound labels are now judge-exempt (invariant).
+_WILD_D6_FEN = "r1bq1rk1/1p3ppp/p1nb1n2/3p4/3p4/BPN2N2/P1P1BPPP/R2Q1RK1 w - - 0 11"
+_WILD_D6_TEXT = (
+    "11. Bxd6 removes the active light-squared bishop and forces your "
+    "opponent to respond with 11... Qxd6. This exchange simplifies the "
+    "center and eliminates the pressure on the d4 pawn, leading to an equal "
+    "position where you can continue your development."
+)
+
+
+def test_wild_capture_with_reply_binds_target_color():
+    board = _board(_WILD_D6_FEN)
+    assert find_false_bishop_color_refs(_WILD_D6_TEXT, board) == [
+        "light-squared bishop on d6"
+    ]
+
+
+def test_square_bound_labels_are_invariant():
+    assert is_invariant_bishop_label("light-squared bishop on d6")
+    assert is_invariant_bishop_label("black dark-squared bishop on f5")
+    assert not is_invariant_bishop_label("dark-squared bishop")
+    assert not is_invariant_bishop_label("white light-squared bishop")
 
 
 def test_wild_quiet_bishop_surface_and_fact():

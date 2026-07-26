@@ -58,6 +58,7 @@ from ..llm.position_check import (
     describe_square,
     find_tool_mentions,
     has_position_flags,
+    is_invariant_bishop_label,
     iter_false_bishop_color_refs,
     iter_false_claim_squares,
     handled_continuation_spans,
@@ -676,14 +677,18 @@ class _PositionCheck:
 
     @property
     def board_labels(self) -> list[str]:
-        """Every board-context flag's normalized label (moves, lines, claims,
-        bishops). The judge rules on these; tool mentions are board-independent
-        style violations and are never cleared."""
+        """Every board-context flag's normalized label the judge may rule on
+        (moves, lines, claims, bishops). Never included: tool mentions
+        (board-independent style violations) and square-bound bishop labels
+        (geometric invariants -- see is_invariant_bishop_label)."""
         return (
             self.move_labels
             + self.line_labels
             + [label for _surface, label, _square in self.claim_triples]
-            + self.bishop_labels
+            + [
+                label for label in self.bishop_labels
+                if not is_invariant_bishop_label(label)
+            ]
         )
 
     def without_labels(self, cleared: set[str]) -> _PositionCheck:
