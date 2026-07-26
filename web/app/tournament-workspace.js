@@ -41,6 +41,7 @@ import {
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { renderEventLogList } from "./tournament-eventlog.js";
 import { ICON_ENGINE_ROW, ICON_GAME_ROW } from "./tournament-row.js";
+import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 
 const STORAGE_KEY_PREFIX = STORAGE_KEY.WORKSPACE_PREFIX;
 
@@ -585,17 +586,12 @@ function attachWatch(ctx, btn, attachKey, openOpts) {
   }
   if (result?.wb && !result.alreadyOpen && !result.wb.min && !result.wb.max) requestAnimationFrame(() => reapplyLayout(ctx));
   if (result?.wb && !result.alreadyOpen) wireLayoutHandlers(ctx, result.wb);
-  const isLive = isLiveWindowOpen(attachKey);
-  if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive, slotted: !!claim });
-  btn?.classList.toggle("wb-sched-attach-btn--live", isLive);
+  if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive: isLiveWindowOpen(attachKey), slotted: !!claim });
+  refreshWatchButtons(ctx);
 }
 
 function refreshWatchButtons(ctx) {
-  for (const body of [ctx.scheduleBody, ctx.enginesBody]) {
-    for (const btn of body.querySelectorAll(".wb-sched-attach-btn")) {
-      btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(btn.title));
-    }
-  }
+  refreshWatchControls(ctx.scheduleBody, ctx.enginesBody);
 }
 
 
@@ -1015,18 +1011,13 @@ function renderSchedule(ctx) {
       <span class="wb-sched-icon">${ICON_GAME_ROW}</span>
       <span class="wb-sched-game" title="${escapeHtml(pairLabel)}">${escapeHtml(pairLabel)}</span>
     `;
-    const btn = document.createElement("button");
-    btn.className = "wb-sched-attach-btn";
-    btn.textContent = "watch";
-    btn.title = info.pairId || key;
-    btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(info.pairId || key));
-    btn.addEventListener("click", () => attachWatch(ctx, btn, info.pairId || key, {
+    const attachKey = info.pairId || key;
+    appendWatchControls(li, attachKey, (btn) => attachWatch(ctx, btn, attachKey, {
       proxyId: info.proxyA,
       gameId: info.pairId || null,
       label: `${wLabel} vs ${bLabel}`,
       engineName: wLabel,
     }));
-    li.appendChild(btn);
     list.appendChild(li);
   }
 
@@ -1055,17 +1046,11 @@ function renderEngines(ctx) {
       <span class="wb-sched-icon">${ICON_ENGINE_ROW}</span>
       <span class="wb-sched-game" title="${escapeHtml(engineLabel)}">${escapeHtml(engineLabel)}</span>
     `;
-    const btn = document.createElement("button");
-    btn.className = "wb-sched-attach-btn";
-    btn.textContent = "watch";
-    btn.title = pid;
-    btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
-    btn.addEventListener("click", () => attachWatch(ctx, btn, pid, {
+    appendWatchControls(li, pid, (btn) => attachWatch(ctx, btn, pid, {
       proxyId: pid,
       label: `${engineLabel}`,
       engineName: engineLabel,
     }));
-    li.appendChild(btn);
     list.appendChild(li);
   }
   if (atBottom) scrollToBottom(scroller);
