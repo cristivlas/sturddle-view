@@ -3784,6 +3784,11 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   .studio-tabs wa-tab-panel::part(base) { height: auto; }
   .studio-tabs::part(body) { flex: 0 0 auto; min-height: auto; }
   .studio-pane { height: auto; overflow: visible; }
+  /* Log rows are nowrap and can run long. The pane above is overflow:visible
+     so the page owns vertical scroll, which disables horizontal scrolling too,
+     so give the list its own x scroller. Its height is content-driven, so the
+     overflow-y:auto the spec implies here never adds a second scrollbar. */
+  .studio-pane-log .wb-eventlog-list { overflow-x: auto; }
 }
 .tournament-engines {
   font-size: 0.75rem;
