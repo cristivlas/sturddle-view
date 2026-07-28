@@ -812,9 +812,19 @@ function scrollBoardIntoView(ctx, wb) {
   region.scrollTo({ top: wb.y - STUDIO_BOARD_PAD, behavior: "smooth" });
 }
 
+// A maximized board fills the whole region, so any other board that becomes
+// visible would open underneath it. Drop the maximized one back to the grid.
+function unmaximizeOthers(wb) {
+  for (const other of getLiveWindows()) {
+    if (other !== wb && other.max) other.restore();
+  }
+}
+
 // Maximize (option b): grow the Boards split to the full main column, lock
 // region scroll, and fill it with this board. The bottom tab row collapses.
 function maximizeBoard(ctx, wb) {
+  // Before the split is captured: restoring the other reverts it first.
+  unmaximizeOthers(wb);
   ctx._maxWb = wb;
   if (!ctx._savedSplit) {
     ctx._savedSplit = { boards: ctx.boardsEl.style.flexGrow, bottom: ctx.bottomEl.style.flexGrow };
@@ -897,7 +907,7 @@ function wireBoardHooks(ctx, wb) {
   wb.onrestore = () => {
     if (wb._wasMax) { wb._wasMax = false; remaximize(wb); }
     else if (wb === ctx._maxWb) restoreBoard(ctx, !ctx._restoreViaGrip);
-    else regridBoards(ctx);
+    else { unmaximizeOthers(wb); regridBoards(ctx); }
     repaint();
   };
 }
@@ -918,6 +928,7 @@ function nextSlotRect(ctx) {
 // Shared post-open: wire hooks, re-grid, repaint tray, persist.
 function placeBoard(ctx, res) {
   if (res?.wb && !res.alreadyOpen) wireBoardHooks(ctx, res.wb);
+  if (res?.wb && !res.wb.min) unmaximizeOthers(res.wb);
   regridBoards(ctx);
   renderTray(ctx);
   saveBoards(ctx);
