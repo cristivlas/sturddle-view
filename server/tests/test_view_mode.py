@@ -1132,12 +1132,15 @@ async def test_suspend_snapshot_uses_live_clocks(hve):
     h, _ = hve
     h._engine_to_move = AsyncMock()
     await h.new_game(human_white=True, tc=TimeControl(60, 0))  # White (human) to move
-    h._clock.start_turn()
-    h._clock.turn_started_at = h._clock._now() - 5.0  # 5s already spent
+    # Freeze the clock so the debit is exactly the 5s backdated below,
+    # not 5s plus whatever wall time elapses under suite load.
+    now = h._clock._now()
+    h._clock._now = lambda: now
+    h._clock.turn_started_at = now - 5.0  # 5s already spent
     banked = h._game_state_snapshot()
     live = h._game_state_snapshot(live_clocks=True)
     assert banked.white_time == pytest.approx(60.0)
-    assert live.white_time == pytest.approx(55.0, abs=0.5)
+    assert live.white_time == pytest.approx(55.0)
 
 
 async def test_resume_play_restores_clocks(hve):
@@ -1147,6 +1150,10 @@ async def test_resume_play_restores_clocks(hve):
     await h.new_game(human_white=True, tc=TimeControl(60, 0))
     h._clock.white_time = 42.0
     h._clock.black_time = 17.0
+    # Stop the turn new_game started: the suspend snapshot debits real wall
+    # time from a running turn, which is nondeterministic under suite load.
+    # The debit itself is covered by test_suspend_snapshot_uses_live_clocks.
+    h._clock.stop_turn()
     await _suspend_live_play(h)
     await h.resume_play()
     assert h._clock.white_time == pytest.approx(42.0)
