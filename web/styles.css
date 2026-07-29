@@ -112,6 +112,13 @@ body { -webkit-user-select: none; user-select: none; }
    are not tab stops, so suppress the focus ring that would otherwise outline
    the whole list after a click or Ctrl+A. */
 [data-selectable]:focus, [data-selectable]:focus-visible { outline: none; }
+/* Chrome makes every scroll container keyboard-focusable, so panes and table
+   wraps draw a default ring boxing the whole region (and sticky headers paint
+   over its top edge). These are layout containers, never tab stops -- controls
+   inside keep their own rings. Anything given an explicit tabindex is opted
+   out, so deliberate focus targets are untouched. */
+:is(div, ul, ol, table, pre, section):not([tabindex]):focus,
+:is(div, ul, ol, table, pre, section):not([tabindex]):focus-visible { outline: none; }
 
 /* Thin, macOS-style scrollbars everywhere. Firefox honors scrollbar-width;
    WebKit/Chromium honors the ::-webkit-scrollbar pseudo-elements. The
