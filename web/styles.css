@@ -108,6 +108,15 @@ wa-input, wa-number-field { --wa-color-brand-fill-quiet: var(--bg); }
    Native form controls keep their own selection. */
 body { -webkit-user-select: none; user-select: none; }
 [data-selectable] { -webkit-user-select: text; user-select: text; }
+/* Column headers are controls (sort/resize), not copyable content: no text
+   selection, no iOS long-press callout, no double-tap zoom. Also outranks the
+   wa-dialog [data-selectable] * re-opt-in below. */
+[data-selectable] thead th, thead th {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
 /* Regions are focusable (tabindex=-1) only so Ctrl/Cmd+A can target them; they
    are not tab stops, so suppress the focus ring that would otherwise outline
    the whole list after a click or Ctrl+A. */
@@ -2658,7 +2667,9 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   width: 8px;
   cursor: col-resize;
   user-select: none;
-  touch-action: none;
+  /* pan-y: vertical swipes starting on the grip still scroll the table;
+     horizontal drags (past the JS slop) resize. */
+  touch-action: pan-y;
   z-index: 2;
 }
 .th-grip::after {
@@ -2672,6 +2683,15 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   transition: opacity 0.15s;
 }
 .th-grip:hover::after, .th-grip.dragging::after { opacity: 1; }
+/* Touch devices: fatten the hit area (centered on the boundary; the last
+   column's grip keeps its 4px overhang so tables don't gain horizontal
+   overflow). The grip line still shows only while dragging. */
+@media (pointer: coarse) {
+  .th-grip { right: -14px; width: 28px; }
+  .th-grip::after { left: auto; margin-left: 0; right: 13px; }
+  th:last-child .th-grip { right: -4px; }
+  th:last-child .th-grip::after { right: 3px; }
+}
 .col-drag-line {
   position: absolute;
   width: 2px; margin-left: -1px;
