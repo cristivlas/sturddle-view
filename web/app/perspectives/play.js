@@ -415,22 +415,50 @@ function dispatchAiEventOrdered(ai, aiCtx, evt) {
 // Buffer live AI events while the replay GET is in flight, then drain in seq
 // order with dedupe. Avoids the GET-then-subscribe race: live events that fire
 // between subscribe and replay arrival are held instead of dispatched
-// out-of-order.
-async function rehydrateAiPanel(ai, aiCtx) {
+// out-of-order. `adopt` opens the panel even on an empty replay -- the turn
+// just started elsewhere and streams in live.
+async function rehydrateAiPanel(ai, aiCtx, { adopt = false } = {}) {
+  let replayedThrough = 0;
   try {
     const r = await aiCtx.api("GET", "/game/analysis/replay");
     const events = Array.isArray(r?.events) ? r.events : [];
-    if (events.length > 0) {
+    if (adopt || events.length > 0) {
       openAi();
       resetAi();
       for (const evt of events) dispatchAiEventOrdered(ai, aiCtx, evt);
+      replayedThrough = ai.maxSeq;
     }
   } catch { /* */ } finally {
     ai.rehydrating = false;
     const buffered = ai.liveBuffer;
     ai.liveBuffer = [];
-    for (const evt of buffered) dispatchAiEventOrdered(ai, aiCtx, evt);
+    for (const evt of buffered) {
+      // Already covered by the replay. The dispatcher's own seq dedupe can't
+      // catch a buffered seq=1: it reads as a new turn and resets the mark,
+      // re-playing everything after it.
+      const seq = evt.payload?.seq ?? 0;
+      if (seq > 0 && seq <= replayedThrough) continue;
+      dispatchAiEventOrdered(ai, aiCtx, evt);
+    }
   }
+}
+
+// A streaming ai_* event with the panel closed means another client started
+// analysis. A terminal event, or a stop we are driving ourselves, must not
+// resurrect the panel -- those dispatch normally (a done payload carries the
+// ribbon latch, which is live whether or not the panel is up).
+function shouldAdoptAiSession(state, evt) {
+  return !isAiOpen() && !evt.payload?.done && !state.analysisTransitionInFlight;
+}
+
+// Adopt a session started elsewhere: open the panel and replay what we missed.
+function adoptRemoteAiSession(state, ai, aiCtx, evt) {
+  ai.rehydrating = true;
+  ai.liveBuffer.push(evt);
+  // Our cached model name predates the remote start; re-read so the title
+  // names the model actually running.
+  refreshSettings(state).then(() => setAiTitle(state.aiTitleModel));
+  rehydrateAiPanel(ai, aiCtx, { adopt: true });
 }
 
 const PLAY_PERSPECTIVE_HTML = `
@@ -845,11 +873,15 @@ async function doViewNav(state, endpoint, payload = {}) {
 // AI-finished latch and the x-game lock class stay consistent.
 // Direct `state.analyzing = ...` writes will drift -- always call setAnalyzing.
 function setAnalyzing(state, v) {
+  const was = state.analyzing;
   state.analyzing = !!v;
   // Server flipped out of ANALYSIS -- clear the AI-finished latch
   // so the ribbon can re-enable when the game is paused again.
   if (!state.analyzing) state.aiShared.turnFinished = false;
   document.body.classList.toggle(XGAME_LOCK_CLASS, state.analyzing);
+  // The session is server-owned: whoever ended it, every client drops the
+  // panel -- its replay buffer is gone, so it can't be restored anyway.
+  if (was && !state.analyzing && !state.analysisTransitionInFlight) teardownAiPanel();
 }
 
 // Re-apply the stashed AI recommendation arrow after a board_update wiped
@@ -873,19 +905,21 @@ function reapplyAiRecommendation(state, fen) {
 async function stopAnalysisFromUi(state) {
   if (!state.analyzing) return true;
   snapshotViewAnalysisState();
+  state.analysisTransitionInFlight = true;
   try {
     await state.ctx.api("POST", "/game/analysis/stop", {});
   } catch (e) {
     reportError(state.ctx, MSG.STOP_ANALYSIS_FAILED, e);
     return false;
+  } finally {
+    state.analysisTransitionInFlight = false;
   }
   state.aiShared.turnFinished = false;
   state.aiShared.dismissAnalysisToast?.();
   state.aiShared.dismissAnalysisToast = null;
   // The AI window's lifecycle is tied to the analysis session, so it
   // always closes on stop. PV/UCI close only if analysis opened them.
-  if (isAiOpen()) closeAi();
-  closeAnalysisOpenedWindows();
+  teardownAiPanel();
   return true;
 }
 
@@ -1559,6 +1593,10 @@ function teardownAiPanel() {
 }
 
 async function onAnalyzeImpl(state) {
+  // A second tap before the start round trip lands would start a second
+  // session: the server no-ops the mode change but still supersedes the
+  // in-flight AI turn, dropping its [cancelled] marker into the new panel.
+  if (state.analysisTransitionInFlight) return;
   // Switching from a FINISHED AI session to engine-only: stop the AI session,
   // then start engine analysis -- a plain Stop would tear down and leave
   // nothing running. While the AI run is in progress the ribbon is a plain Stop.
@@ -1570,20 +1608,24 @@ async function onAnalyzeImpl(state) {
     await stopAnalysisFromUi(state);
     return;
   }
+  state.analysisTransitionInFlight = true;
   try {
     await startAnalysisFromUiImpl(state);
   } catch (e) {
     teardownAiPanel();
     reportError(state.ctx, MSG.START_ANALYSIS_FAILED, e, { duration: 0 });
+  } finally {
+    state.analysisTransitionInFlight = false;
   }
 }
 
 // Re-analyze: stop the current turn server-side (if any), then start a fresh
-// one, keeping the AI panel open. reanalyzeInFlight guards against rapid
-// double-clicks producing a spurious second start (server -> ModeConflictError).
+// one, keeping the AI panel open. analysisTransitionInFlight guards against
+// rapid double-clicks producing a spurious second start (server ->
+// ModeConflictError), and keeps the stop's own events from closing the panel.
 async function onReanalyzeImpl(state) {
-  if (state.reanalyzeInFlight) return;
-  state.reanalyzeInFlight = true;
+  if (state.analysisTransitionInFlight) return;
+  state.analysisTransitionInFlight = true;
   try {
     if (state.analyzing) {
       snapshotViewAnalysisState();
@@ -1594,7 +1636,7 @@ async function onReanalyzeImpl(state) {
     teardownAiPanel();
     reportError(state.ctx, MSG.REANALYZE_FAILED, e, { duration: 0 });
   } finally {
-    state.reanalyzeInFlight = false;
+    state.analysisTransitionInFlight = false;
   }
 }
 
@@ -1714,6 +1756,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
   // AI events: buffer until replay completes, then dedupe by seq.
   if (evt.kind?.startsWith(AI_KIND_PREFIX)) {
     if (ai.rehydrating) ai.liveBuffer.push(evt);
+    else if (shouldAdoptAiSession(state, evt)) adoptRemoteAiSession(state, ai, aiCtx, evt);
     else dispatchAiEventOrdered(ai, aiCtx, evt);
     return;
   }
@@ -1854,7 +1897,6 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         if (!state.analyzing) {
           state.aiShared.dismissAnalysisToast?.();
           state.aiShared.dismissAnalysisToast = null;
-          if (state.viewing) { if (isAiOpen()) closeAi(); closeAnalysisOpenedWindows(); }
         } else if (!state.aiShared.dismissAnalysisToast) {
           // Server reports analysis active but no toast exists -- we
           // were re-mounted (e.g. user navigated to another
@@ -1882,7 +1924,6 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       setAnalyzing(state, false);
       state.aiShared.dismissAnalysisToast?.();
       state.aiShared.dismissAnalysisToast = null;
-      if (state.viewing) { if (isAiOpen()) closeAi(); closeAnalysisOpenedWindows(); }
       state.resignAvailable = false;
       setDisabled(state.el.newGameBtn, false);
       state.el.boardHost.classList.add("board-idle");
@@ -1941,7 +1982,9 @@ export const playPerspective = {
       resumeInflight: false,
       enterViewInflight: false,
       viewReachedNonLast: false,
-      reanalyzeInFlight: false,
+      // Set while this client drives an analysis stop/restart round trip: its
+      // own panel sequencing wins over the events that transition emits.
+      analysisTransitionInFlight: false,
       aiEnabled: false,
       aiTitleModel: "",
       noEngine: false,

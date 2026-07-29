@@ -21,10 +21,11 @@ import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS 
 import { newTournamentCta, ribbonHtml, setStartVerb, tournamentActions } from "./tournaments.js";
 import { RESULT, SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
-import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow, replayTournamentGame } from "./tournament-live-game.js";
+import { closeAllLiveGames, getLiveWindows, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow, replayTournamentGame } from "./tournament-live-game.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { makeH2HBody, renderH2H } from "./tournament-h2h.js";
 import { renderEventLogList } from "./tournament-eventlog.js";
+import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 import { renderInfoWall } from "./tournament-info.js";
 import { mqMobile } from "./breakpoints.js";
 
@@ -630,14 +631,8 @@ function liveRow(iconHtml, label) {
   return li;
 }
 
-function watchBtn(ctx, attachKey, openOpts) {
-  const btn = document.createElement("button");
-  btn.className = "wb-sched-attach-btn";
-  btn.textContent = "watch";
-  btn.title = attachKey;
-  btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(attachKey));
-  btn.addEventListener("click", () => studioWatch(ctx, btn, attachKey, openOpts));
-  return btn;
+function addWatchControls(ctx, li, attachKey, openOpts) {
+  appendWatchControls(li, attachKey, () => studioWatch(ctx, openOpts));
 }
 
 function renderEnginesPane(ctx) {
@@ -658,7 +653,7 @@ function renderEnginesPane(ctx) {
   ul.className = "wb-sched-list";
   for (const [pid, label] of entries) {
     const li = liveRow(ICON_ENGINE_ROW, label);
-    li.appendChild(watchBtn(ctx, pid, { proxyId: pid, label, engineName: label }));
+    addWatchControls(ctx, li, pid, { proxyId: pid, label, engineName: label });
     ul.appendChild(li);
   }
   pane.replaceChildren(ul);
@@ -684,10 +679,10 @@ function renderGamesPane(ctx) {
     const bLabel = info.sideA === SIDE.WHITE ? info.engineB : info.engineA;
     const li = liveRow(ICON_GAME_ROW, `${wLabel} - ${bLabel}`);
     const attachKey = info.pairId || key;
-    li.appendChild(watchBtn(ctx, attachKey, {
+    addWatchControls(ctx, li, attachKey, {
       proxyId: info.proxyA, gameId: info.pairId || null,
       label: `${wLabel} vs ${bLabel}`, engineName: wLabel,
-    }));
+    });
     ul.appendChild(li);
   }
   pane.replaceChildren(ul);
@@ -817,9 +812,19 @@ function scrollBoardIntoView(ctx, wb) {
   region.scrollTo({ top: wb.y - STUDIO_BOARD_PAD, behavior: "smooth" });
 }
 
+// A maximized board fills the whole region, so any other board that becomes
+// visible would open underneath it. Drop the maximized one back to the grid.
+function unmaximizeOthers(wb) {
+  for (const other of getLiveWindows()) {
+    if (other !== wb && other.max) other.restore();
+  }
+}
+
 // Maximize (option b): grow the Boards split to the full main column, lock
 // region scroll, and fill it with this board. The bottom tab row collapses.
 function maximizeBoard(ctx, wb) {
+  // Before the split is captured: restoring the other reverts it first.
+  unmaximizeOthers(wb);
   ctx._maxWb = wb;
   if (!ctx._savedSplit) {
     ctx._savedSplit = { boards: ctx.boardsEl.style.flexGrow, bottom: ctx.bottomEl.style.flexGrow };
@@ -881,15 +886,10 @@ function studioSlotRect(ctx, i) {
   };
 }
 
-// Sync every watch button's live state to the open boards. Called when a
-// board closes (X) so the spawning button stops showing as live.
+// Sync every watch control's state to the open boards. Called when a board
+// closes (X) so the spawning row stops showing as live.
 function refreshWatchButtons(ctx) {
-  for (const pane of [ctx.enginesPaneEl, ctx.gamesPaneEl]) {
-    if (!pane) continue;
-    for (const btn of pane.querySelectorAll(".wb-sched-attach-btn")) {
-      btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(btn.title));
-    }
-  }
+  refreshWatchControls(ctx.enginesPaneEl, ctx.gamesPaneEl);
 }
 
 // Min/restore both reflow the grid (reverting the split if this was the
@@ -907,7 +907,7 @@ function wireBoardHooks(ctx, wb) {
   wb.onrestore = () => {
     if (wb._wasMax) { wb._wasMax = false; remaximize(wb); }
     else if (wb === ctx._maxWb) restoreBoard(ctx, !ctx._restoreViaGrip);
-    else regridBoards(ctx);
+    else { unmaximizeOthers(wb); regridBoards(ctx); }
     repaint();
   };
 }
@@ -928,6 +928,7 @@ function nextSlotRect(ctx) {
 // Shared post-open: wire hooks, re-grid, repaint tray, persist.
 function placeBoard(ctx, res) {
   if (res?.wb && !res.alreadyOpen) wireBoardHooks(ctx, res.wb);
+  if (res?.wb && !res.wb.min) unmaximizeOthers(res.wb);
   regridBoards(ctx);
   renderTray(ctx);
   saveBoards(ctx);
@@ -961,10 +962,10 @@ function openFrozenBoard(ctx, b, flash = true) {
   }));
 }
 
-function studioWatch(ctx, btn, attachKey, openOpts) {
+function studioWatch(ctx, openOpts) {
   const res = openBoard(ctx, openOpts, false);
   if (res?.wb) scrollBoardIntoView(ctx, res.wb);
-  btn?.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(attachKey));
+  refreshWatchButtons(ctx);
 }
 
 // ---- Board persistence ---------------------------------------------------

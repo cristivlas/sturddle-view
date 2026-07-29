@@ -638,20 +638,11 @@ _BISHOP_ON_COLOR_RE = re.compile(
     rf"(?P<sqcolor>{_SQUARE_COLOR_ALT})\s+squares?\b",
     re.IGNORECASE,
 )
-# Present/past/gerund forms of "this move takes that bishop" verbs. Closed
-# set, like _MOVE_VERB, so ordinary prose can't bind a SAN to a bishop claim.
-_ELIM_VERB = (
-    r"(?:eliminat(?:es|ed|ing)|captur(?:es|ed|ing)|tak(?:es|ing)|took|"
-    r"remov(?:es|ed|ing)|wins|won|trad(?:es|ed|ing)(?:\s+off)?|exchang(?:es|ed|ing))"
-)
-# Capture-bound form: "Bxg5 eliminates ... light-squared bishop" binds the
-# color claim to the SAN's target square. Case-sensitive for the SAN token;
-# the prose tail is case-insensitive via the scoped (?i:) group.
-_CAPTURE_BISHOP_COLOR_RE = re.compile(
-    rf"\b(?P<san>(?:{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}){_SAN_GLYPHS})\s+"
-    rf"(?i:{_ELIM_VERB}\s+{_COLOR_OPT}(?:\w+\s+){{0,2}}"
-    rf"(?P<sqcolor>{_SQUARE_COLOR_ALT})(?:[-\s](?:squares?|squared))?\s+bishop\b)"
-)
+# Clause boundaries for SAN->bishop-claim binding: punctuation ending the
+# grammatical unit a SAN's verb governs.
+_CLAUSE_SPLIT_RE = re.compile(r"[.,;:!?()]")
+# Destination square at the end of a piece-move SAN (after glyph strip).
+_SAN_DEST_RE = re.compile(r"([a-h][1-8])[+#]?$")
 
 
 def _is_light_square(square: int) -> bool:
@@ -742,21 +733,48 @@ def _iter_bishop_color_refs(text: str):
             yield m.group(0), m.span(), color_word, light, square_name
 
 
-def _iter_capture_bound_refs(text: str, board: chess.Board):
-    """Yield (surface, span, color_word, light, to_square) for each capture SAN
-    whose prose names the taken bishop's square color and which really takes a
-    bishop on `board`. A SAN that does not parse, takes nothing, or takes a
-    non-bishop is not owned here (left to the other recognizers)."""
-    for m in _CAPTURE_BISHOP_COLOR_RE.finditer(text):
-        move = _parse_san_real(board, _strip_annotation_glyphs(m.group("san")))
-        if move is None or not board.is_capture(move):
-            continue
-        victim = board.piece_at(move.to_square)
-        if victim is None or victim.piece_type != chess.BISHOP:
-            continue
-        color_word = (m.group("color") or "").lower()
-        light = _SQUARE_COLOR_WORDS[m.group("sqcolor").lower()]
-        yield m.group(0), m.span(), color_word, light, move.to_square
+def _clause_bound_square(text: str, pos: int, board: chess.Board) -> int | None:
+    """Square a bare color-bishop phrase at `pos` is bound to by the nearest
+    preceding SAN in its clause, or None when unbound. A bishop SAN binds its
+    destination textually -- everything a bishop move touches (mover, victim,
+    attacked pieces) shares the destination's square color, and that geometry
+    holds on any board, so no parse is needed. Any other SAN binds only when
+    it captures a bishop on `board` (the victim's square); a nearest SAN that
+    is neither leaves the phrase unbound."""
+    clause_start = 0
+    for m_split in _CLAUSE_SPLIT_RE.finditer(text, 0, pos):
+        clause_start = m_split.end()
+    last = None
+    for m_san in _SAN_TOKEN_RE.finditer(text, clause_start, pos):
+        last = m_san
+    if last is None:
+        return None
+    token = _strip_annotation_glyphs(last.group("token"))
+    if token.startswith("B"):
+        dest = _SAN_DEST_RE.search(token)
+        return chess.parse_square(dest.group(1)) if dest else None
+    pov_board = _board_for_pov(board, _pov_for(last, board))
+    if pov_board is None:
+        return None
+    move = _parse_san_real(pov_board, token)
+    if move is None or not pov_board.is_capture(move):
+        return None
+    victim = pov_board.piece_at(move.to_square)
+    if victim is None or victim.piece_type != chess.BISHOP:
+        return None
+    return move.to_square
+
+
+# Normalized label of a square-bound bishop-color flag ('light-squared bishop
+# on d6'), as built by _square_bound_flag.
+_SQUARE_BOUND_LABEL_RE = re.compile(r"-squared bishop on [a-h][1-8]$")
+
+
+def is_invariant_bishop_label(label: str) -> bool:
+    """True for a square-bound bishop-color label: the square's color is the
+    same in every position, so no other-context reading can make the claim
+    true -- exempt from LLM false-positive clearing."""
+    return _SQUARE_BOUND_LABEL_RE.search(label) is not None
 
 
 def _square_bound_flag(
@@ -787,24 +805,19 @@ def iter_false_bishop_color_refs(text: str, board: chess.Board):
     Square color is invariant, so this is board-state only -- no reachability.
 
     A square-bound claim checks only that the square's color matches the
-    adjective: an explicit 'on f5' tail, or a capture SAN's target ('Bxg5
-    eliminates ... light-squared bishop' binds to g5). Presence on the square
-    is the piece-claim recognizer's job. An owned capture span suppresses the
-    plain recognizers inside it, so one claim is never struck twice."""
+    adjective. The square comes from an explicit 'on f5' tail, or from the
+    nearest preceding SAN in the claim's clause ('Bxg5 eliminates ...' or
+    'Bb2 develops ...' bind the destination -- see `_clause_bound_square`).
+    Presence on the square is the piece-claim recognizer's job; a bound
+    phrase never reaches the lenient bare check, so one claim is never
+    struck twice."""
     seen: set[str] = set()
-    owned_spans: list[tuple[int, int]] = []
-    for surface, span, color_word, light, to_sq in _iter_capture_bound_refs(text, board):
-        owned_spans.append(span)
-        if _is_light_square(to_sq) == light:
-            continue
-        row = _square_bound_flag(surface, color_word, light, to_sq, seen)
-        if row is not None:
-            yield row
     for surface, span, color_word, light, square_name in _iter_bishop_color_refs(text):
-        if _in_spans(span[0], owned_spans):
-            continue
-        if square_name is not None:
-            square = chess.parse_square(square_name)
+        square = (
+            chess.parse_square(square_name) if square_name is not None
+            else _clause_bound_square(text, span[0], board)
+        )
+        if square is not None:
             if _is_light_square(square) != light:
                 row = _square_bound_flag(surface, color_word, light, square, seen)
                 if row is not None:

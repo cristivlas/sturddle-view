@@ -4529,12 +4529,22 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-sched-list .wb-sched-attach-buttons {
   display: inline-flex; gap: 4px;
 }
-.wb-sched-attach-btn {
+.wb-sched-attach-btn, .wb-sched-unwatch-btn {
   background: var(--nav-btn-bg); color: var(--fg);
   border: 1px solid var(--border-subtle); border-radius: 3px;
   padding: 2px 6px; cursor: pointer; font-size: 0.6875rem;
 }
-.wb-sched-attach-btn:hover { background: var(--nav-btn-bg-hover); border-color: var(--accent); }
+/* Icon-only now: line-height 0 keeps the glyph vertically centred in the
+   same box the "watch" label used to fill. */
+.wb-sched-attach-btn wa-icon, .wb-sched-unwatch-btn wa-icon {
+  display: block; font-size: 0.8125rem; line-height: 0;
+}
+.wb-sched-unwatch-btn { margin-right: 4px; }
+.wb-sched-attach-btn:hover:not(:disabled),
+.wb-sched-unwatch-btn:hover:not(:disabled) { background: var(--nav-btn-bg-hover); border-color: var(--accent); }
+.wb-sched-attach-btn:disabled, .wb-sched-unwatch-btn:disabled {
+  opacity: 0.35; cursor: default;
+}
 .wb-sched-attach-btn--live { border-color: var(--accent); color: var(--accent); }
 .wb-sched-attach-btn--live:hover { background: var(--nav-btn-bg-hover); }
 .wb-sched-pair .wb-sched-icon { color: var(--muted); }

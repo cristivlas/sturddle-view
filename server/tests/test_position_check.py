@@ -21,6 +21,7 @@ from sturddle_view.llm.position_check import (
     find_illegal_square_moves,
     find_tool_mentions,
     handled_continuation_spans,
+    is_invariant_bishop_label,
     iter_false_bishop_color_refs,
     iter_false_claim_squares,
     iter_illegal_continuations,
@@ -441,33 +442,132 @@ def test_capture_bound_correct_color_not_flagged():
     ) == []
 
 
-def test_capture_bound_non_bishop_victim_not_flagged():
-    # Bxd6 takes a pawn: the color+square mismatch check applies only when a
-    # bishop is actually captured (d6 is dark, claim says light).
+def test_bishop_san_binds_even_on_non_bishop_victim():
+    # Bxd6 takes a pawn, but the mover is a bishop: its destination fixes the
+    # square color (d6 is dark), so the "light-squared" claim is still false.
     board = _board(_WILD_G5_FEN)
     assert find_false_bishop_color_refs(
         "Bxd6 eliminates the light-squared bishop", board
-    ) == []
+    ) == ["light-squared bishop on d6"]
 
 
 def test_capture_bound_surface_and_fact():
+    # The strike surface is the claim phrase, not the SAN that binds it.
     board = _board(_WILD_G5_FEN)
     rows = list(iter_false_bishop_color_refs(_WILD_G5_TEXT, board))
     assert len(rows) == 1
     surface, label, fact = rows[0]
-    assert surface == "Bxg5 eliminates your opponent's active light-squared bishop"
+    assert surface == "your opponent's active light-squared bishop"
     assert label == "light-squared bishop on g5"
     assert "g5 is dark-squared" in fact
 
 
-def test_capture_bound_owned_span_suppresses_plain_ref():
-    # No light-squared bishop exists here, so the inner bare ref would flag
-    # too; the owned capture span suppresses it -- one flag, not two.
+def test_bound_phrase_not_double_flagged():
+    # No light-squared bishop exists here, so the bare ref would flag too;
+    # a phrase bound to a SAN never reaches the bare check -- one flag.
     board = _board("6k1/8/8/6b1/5B2/8/8/6K1 w - - 0 1")
     rows = list(iter_false_bishop_color_refs(
         "Bxg5 eliminates the light-squared bishop", board
     ))
     assert [r[1] for r in rows] == ["light-squared bishop on g5"]
+
+
+# Rook takes the g5 bishop: victim binding through a non-bishop SAN.
+_ROOK_TAKES_BISHOP_FEN = "6k1/8/8/6b1/8/8/8/6RK w - - 0 1"
+
+
+def test_non_bishop_san_capturing_bishop_binds_victim_square():
+    board = _board(_ROOK_TAKES_BISHOP_FEN)
+    assert find_false_bishop_color_refs(
+        "Rxg5 wins the light-squared bishop", board
+    ) == ["light-squared bishop on g5"]
+
+
+def test_non_bishop_san_capturing_bishop_correct_color_clears():
+    board = _board(_ROOK_TAKES_BISHOP_FEN)
+    assert find_false_bishop_color_refs(
+        "Rxg5 wins the dark-squared bishop", board
+    ) == []
+
+
+def test_non_bishop_quiet_san_does_not_bind():
+    # Rac1 neither is a bishop move nor takes a bishop -> the phrase stays
+    # with the lenient bare check, which clears (f5 and e2 are light).
+    board = _board(_WILD_G5_FEN)
+    assert find_false_bishop_color_refs(
+        "Rac1 supports the light-squared bishop", board
+    ) == []
+
+
+# From the wild (2026-07-26): "Bb2 develops the light-squared bishop" -- the
+# c1 bishop landing on b2 is dark-squared. A quiet move, so victim-based
+# binding missed it; the mover's destination color catches it. White to move.
+_WILD_B2_FEN = "r1bqkbnr/pp1p1ppp/2n1p3/2p5/4P3/1PN5/P1PP1PPP/R1BQKBNR w KQkq - 1 4"
+_WILD_B2_TEXT = (
+    "4. Bb2 develops the light-squared bishop to a powerful diagonal, "
+    "contrasting with the more aggressive f4 in the Grand Prix Attack by "
+    "maintaining a flexible, maneuvering setup. This move prepares to "
+    "challenge the center while supporting long-term control of the e5-square."
+)
+
+
+def test_wild_quiet_bishop_move_binds_mover_color():
+    board = _board(_WILD_B2_FEN)
+    assert find_false_bishop_color_refs(_WILD_B2_TEXT, board) == [
+        "light-squared bishop on b2"
+    ]
+
+
+def test_quiet_bishop_move_correct_color_clears():
+    board = _board(_WILD_B2_FEN)
+    assert find_false_bishop_color_refs(
+        "4. Bb2 develops the dark-squared bishop", board
+    ) == []
+
+
+def test_clause_boundary_breaks_binding():
+    # The comma ends Bb2's clause, so the claim about the other (f1) bishop
+    # is not bound to b2; the bare check clears it.
+    board = _board(_WILD_B2_FEN)
+    assert find_false_bishop_color_refs(
+        "4. Bb2 develops, and the light-squared bishop will follow", board
+    ) == []
+
+
+# From the wild (2026-07-26): "Bxd6 removes the active light-squared bishop"
+# -- d6 is dark. Clause binding caught it, but the semantic judge wrongly
+# cleared the flag; square-bound labels are now judge-exempt (invariant).
+_WILD_D6_FEN = "r1bq1rk1/1p3ppp/p1nb1n2/3p4/3p4/BPN2N2/P1P1BPPP/R2Q1RK1 w - - 0 11"
+_WILD_D6_TEXT = (
+    "11. Bxd6 removes the active light-squared bishop and forces your "
+    "opponent to respond with 11... Qxd6. This exchange simplifies the "
+    "center and eliminates the pressure on the d4 pawn, leading to an equal "
+    "position where you can continue your development."
+)
+
+
+def test_wild_capture_with_reply_binds_target_color():
+    board = _board(_WILD_D6_FEN)
+    assert find_false_bishop_color_refs(_WILD_D6_TEXT, board) == [
+        "light-squared bishop on d6"
+    ]
+
+
+def test_square_bound_labels_are_invariant():
+    assert is_invariant_bishop_label("light-squared bishop on d6")
+    assert is_invariant_bishop_label("black dark-squared bishop on f5")
+    assert not is_invariant_bishop_label("dark-squared bishop")
+    assert not is_invariant_bishop_label("white light-squared bishop")
+
+
+def test_wild_quiet_bishop_surface_and_fact():
+    board = _board(_WILD_B2_FEN)
+    rows = list(iter_false_bishop_color_refs(_WILD_B2_TEXT, board))
+    assert len(rows) == 1
+    surface, label, fact = rows[0]
+    assert surface == "the light-squared bishop"
+    assert label == "light-squared bishop on b2"
+    assert "b2 is dark-squared" in fact
 
 
 # --- find_illegal_piece_moves ('<piece> to <square>') ---------------------

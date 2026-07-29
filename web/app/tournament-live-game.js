@@ -998,6 +998,16 @@ export function isLiveWindowOpen(proxyId) {
   return liveWindows.has(proxyId);
 }
 
+// Close one watched board. Unforced on purpose: the normal close path runs
+// disposeShared, which unregisters the window and fires LIVEGAME_CLOSED so the
+// watch controls resync.
+export function closeLiveWindow(proxyId) {
+  const wb = liveWindows.get(proxyId);
+  if (!wb) return false;
+  try { wb.close(); } catch { /* */ }
+  return true;
+}
+
 export function closeAllLiveGames() {
   for (const wb of liveWindows.values()) {
     try { wb.close(true); } catch { /* */ }

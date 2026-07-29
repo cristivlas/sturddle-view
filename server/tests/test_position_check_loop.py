@@ -109,6 +109,22 @@ async def test_false_claim_emits_note_and_injects_corrective():
 _BISHOP_FEN = "2n1rk2/p1R2p2/2NRb1p1/1P5p/4P2P/3B1PP1/5K2/2r5 w - - 3 41"
 
 
+def test_board_labels_exclude_invariant_bishop_flags():
+    # A square-bound bishop-color flag is a geometric invariant (d6 is dark
+    # in every position), so the semantic judge must never see -- and thus
+    # never clear -- it. Bare bishop labels stay judgeable.
+    pc = _PositionCheck(
+        chess.Board(), [], [], [],
+        bishop_triples=[
+            ("the light-squared bishop", "light-squared bishop on d6",
+             "d6 is dark-squared"),
+            ("the dark-squared bishop", "dark-squared bishop",
+             "no dark-squared bishop on the board"),
+        ],
+    )
+    assert pc.board_labels == ["dark-squared bishop"]
+
+
 @pytest.mark.asyncio
 async def test_false_bishop_color_emits_note_and_injects_corrective():
     board = chess.Board(_BISHOP_FEN)
