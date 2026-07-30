@@ -765,18 +765,6 @@ def _clause_bound_square(text: str, pos: int, board: chess.Board) -> int | None:
     return move.to_square
 
 
-# Normalized label of a square-bound bishop-color flag ('light-squared bishop
-# on d6'), as built by _square_bound_flag.
-_SQUARE_BOUND_LABEL_RE = re.compile(r"-squared bishop on [a-h][1-8]$")
-
-
-def is_invariant_bishop_label(label: str) -> bool:
-    """True for a square-bound bishop-color label: the square's color is the
-    same in every position, so no other-context reading can make the claim
-    true -- exempt from LLM false-positive clearing."""
-    return _SQUARE_BOUND_LABEL_RE.search(label) is not None
-
-
 def _square_bound_flag(
     surface: str, color_word: str, light: bool, square: int, seen: set[str],
 ):

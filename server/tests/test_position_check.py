@@ -21,7 +21,6 @@ from sturddle_view.llm.position_check import (
     find_illegal_square_moves,
     find_tool_mentions,
     handled_continuation_spans,
-    is_invariant_bishop_label,
     iter_false_bishop_color_refs,
     iter_false_claim_squares,
     iter_illegal_continuations,
@@ -553,11 +552,23 @@ def test_wild_capture_with_reply_binds_target_color():
     ]
 
 
-def test_square_bound_labels_are_invariant():
-    assert is_invariant_bishop_label("light-squared bishop on d6")
-    assert is_invariant_bishop_label("black dark-squared bishop on f5")
-    assert not is_invariant_bishop_label("dark-squared bishop")
-    assert not is_invariant_bishop_label("white light-squared bishop")
+# From the wild (2026-07-29): "exchanges your light-squared bishop for
+# black's active bishop on e5" -- both bishops are dark. The bare flag fired
+# and the judge cleared it; bishop labels are now judge-exempt entirely.
+_WILD_E5_FEN = "4rrk1/6q1/p2p2p1/1p1Rb3/1P1p1BQp/P2P4/6PP/5RK1 w - - 4 31"
+_WILD_E5_TEXT = (
+    "31. Bxe5 removes a key defensive piece to neutralize threats while "
+    "simplifying the position. This move exchanges your light-squared bishop "
+    "for black's active bishop on e5 to alleviate immediate pressure and "
+    "stabilize the board."
+)
+
+
+def test_wild_bare_ref_no_light_bishop_flagged():
+    board = _board(_WILD_E5_FEN)
+    assert find_false_bishop_color_refs(_WILD_E5_TEXT, board) == [
+        "light-squared bishop"
+    ]
 
 
 def test_wild_quiet_bishop_surface_and_fact():
