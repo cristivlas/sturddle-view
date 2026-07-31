@@ -1527,8 +1527,12 @@ function showAnalysisToastImpl(state) {
   label.className = "toast-grow is-active";
   label.textContent = MSG.ANALYSIS_MODE;
   msg.append(label);
-  msg.append(makeToastIconBtn("table-list", MSG.SEARCH_LINES, () => togglePvTableWindow(state.ctx.events)));
-  msg.append(makeToastIconBtn("terminal", MSG.UCI_LOG, () => toggleUciLogWindow(state.ctx.events)));
+  const pvTableBtn = makeToastIconBtn("table-list", MSG.SEARCH_LINES, () => togglePvTableWindow(state.ctx.events));
+  pvTableBtn.classList.add("desktop-only");
+  msg.append(pvTableBtn);
+  const uciLogBtn = makeToastIconBtn("terminal", MSG.UCI_LOG, () => toggleUciLogWindow(state.ctx.events));
+  uciLogBtn.classList.add("desktop-only");
+  msg.append(uciLogBtn);
   const stopBtn = makeToastIconBtn(ANALYZE_ICON_STOP, MSG.STOP_ANALYSIS, () => onAnalyzeImpl(state));
   stopBtn.classList.add("is-active");
   msg.append(stopBtn);
