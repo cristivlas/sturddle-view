@@ -1,3 +1,5 @@
+import { scrollRowIntoView } from "./col-sort.js";
+
 // Last path segment (handles / and \); "" for empty input.
 export function basename(p) {
   if (!p) return "";
@@ -239,6 +241,8 @@ export function wireSpanButton(el, label) {
 // Left/Right step one cell. Omit it for a plain list, where Up/Down step one
 // row and Left/Right are left to the browser. `onEdge(row, i)` fires when a
 // move is blocked at an edge, for callers that need to signal the bump.
+// `scroll(row)` defaults to the sticky-header-aware row scroller; callers that
+// scroll their own way (e.g. WinBox boards) pass their own or a no-op.
 const LIST_NAV_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
 const GRID_NAV_KEYS = new Set([...LIST_NAV_KEYS, "ArrowLeft", "ArrowRight"]);
 
@@ -256,7 +260,9 @@ function nextNavIndex(key, cur, len, step) {
   return target >= 0 && target < len ? target : cur;
 }
 
-export function wireArrowKeyNav(el, { rows, selected, select, cols = null, onEdge = null }) {
+export function wireArrowKeyNav(el, {
+  rows, selected, select, cols = null, onEdge = null, scroll = scrollRowIntoView,
+}) {
   // A list region's focus ring is suppressed, so keyboard focus would land
   // here with nothing to show for it -- highlight the first row instead.
   // :focus-visible keeps a mouse click (e.g. on a sort header) from selecting.
@@ -285,7 +291,7 @@ export function wireArrowKeyNav(el, { rows, selected, select, cols = null, onEdg
     // Scroll before select: a select() that re-renders the list detaches this
     // row, and scrolling a detached node does nothing. The rebuilt row lands
     // at the same index, so the scroll still lines up.
-    all[next].scrollIntoView({ block: "nearest" });
+    scroll(all[next]);
     select(all[next], next);
   });
 }

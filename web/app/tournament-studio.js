@@ -1180,6 +1180,9 @@ function wireBoardKeyboard(ctx) {
     rows: BOARD_SEL,
     selected: BOARD_CURRENT_SEL,
     cols: studioCols,
+    // Boards are absolutely placed; landOnBoard scrolls the region by the
+    // WinBox geometry instead, so the generic row scroller would double up.
+    scroll: () => {},
     select: (board) => {
       setCurrentBoard(ctx, board);
       board.focus({ preventScroll: true });
@@ -1201,6 +1204,10 @@ function wireTrayKeyboard(ctx) {
     rows: CHIP_SEL,
     selected: CHIP_CURRENT_SEL,
     cols: () => tray.querySelectorAll(CHIP_SEL).length,
+    // The tray scrolls horizontally, an axis the default row scroller does not
+    // look at -- and focus() here is preventScroll, so nothing else would bring
+    // an off-screen chip in.
+    scroll: (chip) => chip.scrollIntoView({ block: "nearest", inline: "nearest" }),
     select: (chip) => {
       roveTabStop(tray, CHIP_SEL, chip, [CHIP_CLOSE_SEL]);
       chip.focus({ preventScroll: true });
