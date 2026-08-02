@@ -7,8 +7,10 @@ import { attachColumnResize } from "./col-resize.js";
 import { attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
-import { markSelectable, rafCoalesce, suppressMultiClickSelect } from "./wb-utils.js";
+import { markSelectable, rafCoalesce, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
 
+const FS_ENTRY_SEL = ".fs-entry";
+const FS_SELECTED_SEL = ".fs-entry.selected";
 const FS_COL_DEFAULT_PCTS = [55, 30, 15];
 const FS_MIN_COL_PCT = 8;
 // Sort keys aligned to the three columns, in header order.
@@ -362,11 +364,19 @@ export function pickFile({
       let jumpLastPrefix = "";
       let jumpCycleIdx = -1;
 
+      // Selecting through the row's own click keeps currentSelection and the
+      // Select button's enabled state in one place (the row click handler).
+      wireArrowKeyNav(table, {
+        rows: FS_ENTRY_SEL,
+        selected: FS_SELECTED_SEL,
+        select: (row) => row.click(),
+      });
+
       table.addEventListener("keydown", (ev) => {
         if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
         if (ev.key === "Enter") {
           ev.preventDefault();
-          const target = listing.querySelector(".fs-entry.selected") ?? listing.querySelector(".fs-entry");
+          const target = listing.querySelector(FS_SELECTED_SEL) ?? listing.querySelector(FS_ENTRY_SEL);
           target?.dispatchEvent(new MouseEvent("dblclick"));
           return;
         }
@@ -374,7 +384,7 @@ export function pickFile({
         ev.preventDefault();
         clearTimeout(jumpTimer);
         jumpPrefix += ev.key.toLowerCase();
-        const entries = Array.from(listing.querySelectorAll(".fs-entry"));
+        const entries = Array.from(listing.querySelectorAll(FS_ENTRY_SEL));
         const names = entries.map(r => (r.querySelector(".fs-name")?.textContent || "").toLowerCase());
         const isCycle = jumpPrefix === jumpLastPrefix && jumpPrefix.length === 1;
         let hitIdx = -1;

@@ -13,7 +13,7 @@ import { attachColumnResize } from "./col-resize.js";
 import { attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { loadJson, saveJson } from "./storage.js";
 import { mqNarrowDialog } from "./breakpoints.js";
-import { markSelectable, suppressMultiClickSelect } from "./wb-utils.js";
+import { markSelectable, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
 
 // Format a summary dict {white, black, result, side_to_move, fen} into a
 // display string. `short: true` returns a compact form for tight UI (e.g.
@@ -179,6 +179,8 @@ const OPENINGS_COL_NAME = "name";
 const OPENINGS_COL_MOVES = "moves";
 const SELECTED_CLASS = "selected";
 const SELECTED_ROW_SEL = `tr.${SELECTED_CLASS}`;
+const OPENING_ROW_CLASS = "openings-list-item";
+const OPENING_ROW_SEL = `tr.${OPENING_ROW_CLASS}`;
 
 // Combining diacritical marks block (U+0300-U+036F). Built via RegExp ctor
 // from hex escapes so the source stays ASCII-only.
@@ -371,7 +373,7 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
     }
     for (const row of visible) {
       const tr = document.createElement("tr");
-      tr.className = "openings-list-item";
+      tr.className = OPENING_ROW_CLASS;
 
       const ecoTd = document.createElement("td");
       ecoTd.className = "openings-list-eco";
@@ -403,6 +405,12 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
       list.appendChild(tr);
     }
   }
+
+  wireArrowKeyNav(list, {
+    rows: OPENING_ROW_SEL,
+    selected: SELECTED_ROW_SEL,
+    select: (row) => row.click(),
+  });
 
   list.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && selectedPgn) { ev.preventDefault(); onCommit?.(); }

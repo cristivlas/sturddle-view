@@ -187,6 +187,45 @@ export function markSelectable(el, { rows = null, target = null } = {}) {
   if (target) el._selTarget = target;
 }
 
+// Single-tab-stop list navigation: the container is one Tab stop and Arrow
+// Up/Down + Home/End move the selection between its `rows`. `select(row, i)`
+// owns what selecting means -- the helper only picks the next row and scrolls
+// it into view, so each list keeps its own selection bookkeeping.
+const ARROW_NAV_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
+
+export function wireArrowKeyNav(el, { rows, selected, select }) {
+  // A list region's focus ring is suppressed, so keyboard focus would land
+  // here with nothing to show for it -- highlight the first row instead.
+  // :focus-visible keeps a mouse click (e.g. on a sort header) from selecting.
+  el.addEventListener("focus", () => {
+    if (!el.matches(":focus-visible") || el.querySelector(selected)) return;
+    const first = el.querySelector(rows);
+    if (first) select(first, 0);
+  });
+
+  el.addEventListener("keydown", (ev) => {
+    if (!ARROW_NAV_KEYS.has(ev.key)) return;
+    if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
+    const all = Array.from(el.querySelectorAll(rows));
+    if (all.length === 0) return;
+    // Claim the key even when the move is a no-op at either end, so the
+    // list doesn't scroll out from under a clamped selection.
+    ev.preventDefault();
+    const cur = all.indexOf(el.querySelector(selected));
+    let next;
+    if (ev.key === "Home") next = 0;
+    else if (ev.key === "End") next = all.length - 1;
+    else if (ev.key === "ArrowDown") next = cur < 0 ? 0 : Math.min(cur + 1, all.length - 1);
+    else next = cur < 0 ? all.length - 1 : Math.max(cur - 1, 0);
+    if (next === cur) return;
+    // Scroll before select: a select() that re-renders the list detaches this
+    // row, and scrolling a detached node does nothing. The rebuilt row lands
+    // at the same index, so the scroll still lines up.
+    all[next].scrollIntoView({ block: "nearest" });
+    select(all[next], next);
+  });
+}
+
 // A markSelectable region's rows are `user-select: text`, so a double/triple
 // click on a row that drives an action (select/open/commit) paints a word or
 // paragraph selection first. Attach to the list container to cancel the

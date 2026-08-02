@@ -16,7 +16,7 @@ import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, nextDir, scrollSortedRowI
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { reportError, toast } from "./dialogs.js";
-import { debounce, escapeHtml, markSelectable } from "./wb-utils.js";
+import { debounce, escapeHtml, markSelectable, wireArrowKeyNav } from "./wb-utils.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { newTournamentCta, ribbonHtml, setStartVerb, tournamentActions } from "./tournaments.js";
 import { RESULT, SIDE } from "./chess-consts.js";
@@ -65,6 +65,14 @@ const STUDIO_TOURNEY_MIN_PCT = 10;
 // History table default column widths (#, White, Black, Result, Opening) + resize floor.
 const STUDIO_HISTORY_DEFAULT_PCTS = [5, 20, 20, 15, 40];
 const STUDIO_HISTORY_MIN_PCT = 5;
+
+const TOURNEY_ROW_CLASS = "studio-tourney-row";
+const TOURNEY_ROW_SEL = `tr.${TOURNEY_ROW_CLASS}`;
+const HISTORY_ROW_CLASS = "studio-history-row";
+const HISTORY_ROW_SEL = `tr.${HISTORY_ROW_CLASS}`;
+// The history list roves its tab stop instead of painting a selected class,
+// so the "current" row is simply the one Tab would land on.
+const HISTORY_CURRENT_SEL = `${HISTORY_ROW_SEL}[tabindex="0"]`;
 
 export const TOURNAMENT_UX = Object.freeze({ ARENA: "arena", STUDIO: "studio" });
 
@@ -202,7 +210,7 @@ function setSelected(ctx, id) {
 function studioSelect(ctx, id) {
   if (ctx.selectedId === id) return;
   setSelected(ctx, id);
-  for (const tr of ctx.tourneysPaneEl.querySelectorAll(".studio-tourney-row")) {
+  for (const tr of ctx.tourneysPaneEl.querySelectorAll(TOURNEY_ROW_SEL)) {
     tr.classList.toggle("selected", tr.dataset.id === id);
   }
   syncLive(ctx);
@@ -254,6 +262,15 @@ function buildTourneyTable(ctx) {
     </tr></thead><tbody></tbody>`;
   wrap.appendChild(table);
   pane.replaceChildren(wrap);
+  // One Tab stop for the whole list; arrows move the selection within it.
+  // Clicking a row focuses the table so the arrows continue from there.
+  table.tabIndex = 0;
+  table.addEventListener("click", () => table.focus({ preventScroll: true }));
+  wireArrowKeyNav(table, {
+    rows: TOURNEY_ROW_SEL,
+    selected: `${TOURNEY_ROW_SEL}.selected`,
+    select: (row) => studioSelect(ctx, row.dataset.id),
+  });
   ctx.tourneyTbody = table.querySelector("tbody");
   ctx.tourneyStack = attachLayeredSort({
     table, columns: TOURNEY_SORT_COLS,
@@ -294,7 +311,7 @@ function gamesCell(t, played, total) {
 
 function studioTourneyRow(ctx, t) {
   const tr = document.createElement("tr");
-  tr.className = "studio-tourney-row" + (t.id === ctx.selectedId ? " selected" : "");
+  tr.className = TOURNEY_ROW_CLASS + (t.id === ctx.selectedId ? " selected" : "");
   tr.dataset.id = t.id;
   const total = totalGames(t);
   const played = t.standings?.games ?? 0;
@@ -552,6 +569,17 @@ function buildHistoryTable(ctx) {
     </tr></thead><tbody></tbody>`;
   wrap.appendChild(table);
   pane.replaceChildren(wrap);
+  // Keep the roving stop on whatever the user actually focused (click or
+  // arrow), so the next arrow press continues from there rather than row 0.
+  table.addEventListener("focusin", (ev) => {
+    const row = ev.target.closest?.(HISTORY_ROW_SEL);
+    if (row) setHistoryCurrent(table, row);
+  });
+  wireArrowKeyNav(table, {
+    rows: HISTORY_ROW_SEL,
+    selected: HISTORY_CURRENT_SEL,
+    select: (row) => row.focus(),
+  });
   ctx.historyTbody = table.querySelector("tbody");
   ctx.historyStack = attachLayeredSort({
     table, columns: HISTORY_SORT_COLS,
@@ -570,10 +598,19 @@ function buildHistoryTable(ctx) {
   });
 }
 
-function historyRow(ctx, tid, r) {
+// Move the list's single Tab stop onto `row`.
+function setHistoryCurrent(table, row) {
+  for (const tr of table.querySelectorAll(HISTORY_CURRENT_SEL)) tr.tabIndex = -1;
+  row.tabIndex = 0;
+}
+
+// Roving tabindex: only the current row is a Tab stop, so Tab enters the list
+// once and the arrows walk it. Focus doubles as the selection here -- the
+// row's :focus-visible ring is the highlight, and Enter opens the focused row.
+function historyRow(ctx, tid, r, isCurrent) {
   const tr = document.createElement("tr");
-  tr.className = "studio-history-row";
-  tr.tabIndex = 0;
+  tr.className = HISTORY_ROW_CLASS;
+  tr.tabIndex = isCurrent ? 0 : -1;
   tr.setAttribute("role", "button");
   tr.title = `Review game ${r.num}`;
   tr.innerHTML =
@@ -608,7 +645,7 @@ function renderHistory(ctx) {
     [HK.RESULT]: g.result, [HK.OPENING]: g.opening || "",
   }));
   sortByStack(rows, ctx.historyStack(), HISTORY_SORT_COLS);
-  tb.replaceChildren(...rows.map((r) => historyRow(ctx, tid, r)));
+  tb.replaceChildren(...rows.map((r, i) => historyRow(ctx, tid, r, i === 0)));
 }
 
 function renderLogPane(ctx) {

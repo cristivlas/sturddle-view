@@ -11,7 +11,7 @@
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs.js";
-import { guard, markSelectable, suppressMultiClickSelect } from "./wb-utils.js";
+import { guard, markSelectable, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 import { attachEngineColResize, createWrapSizer } from "./engines-list-layout.js";
 import { attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
@@ -20,6 +20,8 @@ import { saveRaw } from "./storage.js";
 const COL_NAME = "name";
 const COL_ACTIVE = "active";
 const COL_PATH = "path";
+const ENGINE_ROW_CLASS = "engines-list-item";
+const ENGINE_ROW_SEL = `tr.${ENGINE_ROW_CLASS}`;
 const SELECTED_ROW_SEL = "tr.focused";
 
 const COL_PCTS_KEY = STORAGE_KEY.ENGINES_COL_PCTS;
@@ -172,7 +174,7 @@ function renderList(ctx) {
 
   for (const e of visible) {
     const tr = document.createElement("tr");
-    tr.className = "engines-list-item";
+    tr.className = ENGINE_ROW_CLASS;
     tr.dataset.engineId = e.id;
     if (e.id === ctx.selectedDetailId) tr.classList.add("focused");
     if (e.id === ctx.activeId) tr.classList.add("active");
@@ -453,6 +455,11 @@ export function mountEngineList(container, api, opts = {}) {
 
   ctx.detailUseBtn.addEventListener("click", ctx.activateGuarded);
   suppressMultiClickSelect(ctx.list);
+  wireArrowKeyNav(ctx.list, {
+    rows: ENGINE_ROW_SEL,
+    selected: SELECTED_ROW_SEL,
+    select: (row) => row.click(),
+  });
   ctx.list.addEventListener("keydown", (ev) => {
     if (ev.key !== " ") return;
     ev.preventDefault();

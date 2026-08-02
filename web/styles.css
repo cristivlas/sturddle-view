@@ -3726,6 +3726,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border-bottom: 1px solid var(--border-faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* The list is a tab stop, which opts it out of the generic container-ring
+   suppression above. Its selected row is the focus affordance, so drop the
+   ring that would box the whole table (same look as the fs picker's list). */
+.studio-tourney-tbl:focus, .studio-tourney-tbl:focus-visible { outline: none; }
 .studio-tourney-row, .studio-history-row {
   cursor: pointer;
   user-select: none; -webkit-user-select: none;
