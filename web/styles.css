@@ -3630,6 +3630,16 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   cursor: pointer; opacity: 0.9;
 }
 .studio-tray-chip .wb-close:hover { opacity: 1; }
+/* Keyboard-reachable window chrome (tray chips, board title controls). The
+   app-wide outline-color at the top of this file can't reach these: they fall
+   back to the UA ring, whose `outline-style: auto` is browser-drawn and
+   ignores outline-color. Restate it as a solid ring, like .ribbon-btn. */
+.studio-tray-chip:focus-visible,
+.studio-tray-chip .wb-close:focus-visible,
+.winbox.sturddle-wb-studio .wb-control > span:focus-visible {
+  outline: 2px solid var(--wa-color-focus, var(--wa-color-brand-60));
+  outline-offset: -2px;
+}
 .winbox.sturddle-wb-studio.min { display: none; }
 /* Rooted Studio boards position within the scrolling region (not the
    viewport) and skip the slide transition so re-grids land instantly.
