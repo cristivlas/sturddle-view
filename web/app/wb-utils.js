@@ -171,10 +171,17 @@ const SELECTABLE_ATTR = "data-selectable";
 const ROWS_ATTR = "data-rows";
 export const isCtrlA = (ev) => (ev.ctrlKey || ev.metaKey) && (ev.key === "a" || ev.key === "A");
 
+// Custom elements may host a shadow root, and tabindex=-1 on a shadow host
+// drops that host's whole slotted subtree out of sequential focus navigation
+// -- so they never get the marker tabindex. Name test, not `el.shadowRoot`:
+// this can run before the element upgrades.
+const isCustomElement = (el) => el.localName.includes("-");
+
 export function markSelectable(el, { rows = null, target = null } = {}) {
-  // Focusable by click/script (so Ctrl+A's keydown targets the region) but
-  // not a Tab stop; respect an explicit tabindex if the element set one.
-  if (!el.hasAttribute("tabindex")) el.tabIndex = -1;
+  // Focusable by click/script (so Ctrl+A's keydown targets the region) but not
+  // a Tab stop; respect an explicit tabindex if the element set one. Clicks
+  // inside a skipped host still bubble to the region, so Ctrl+A keeps working.
+  if (!el.hasAttribute("tabindex") && !isCustomElement(el)) el.tabIndex = -1;
   el.setAttribute(SELECTABLE_ATTR, "");
   if (rows) el.setAttribute(ROWS_ATTR, rows);
   if (target) el._selTarget = target;
