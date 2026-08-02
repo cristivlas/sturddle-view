@@ -66,6 +66,7 @@ from ..llm.position_check import (
     iter_illegal_pawn_moves,
     iter_illegal_piece_moves,
     iter_illegal_square_moves,
+    iter_stm_moves,
     truncate_at_future_line,
 )
 from ..llm.position_judge import clear_false_positives
@@ -158,14 +159,24 @@ _RECOMMEND_NUDGE_PROMPTS = {
 
 # Sent once when recommend_move is accepted but the model skips the
 # closing conclusion (small models treat the call as the end). One-shot.
+# {san} names the recorded move so the conclusion can't drift to another.
 _POST_RECOMMEND_NUDGE_PREFIX = (
-    "The move is recorded. State the one-to-two sentence conclusion "
-    "now, naming the plan it "
+    "{san} is recorded. State the one-to-two sentence conclusion "
+    "now, naming the plan {san} "
 )
 _POST_RECOMMEND_NUDGE_PROMPTS = {
     "coach": _POST_RECOMMEND_NUDGE_PREFIX + "carries out.",
     "commentator": _POST_RECOMMEND_NUDGE_PREFIX + "reflects.",
 }
+
+# Injected once when the closing prose describes a move other than the one
+# recorded -- the arrow shows the recorded move, so the two disagree on
+# screen. Re-assertion is struck rather than re-prompted.
+_RECOMMEND_MISMATCH_NUDGE = (
+    "The recorded move is {san}, but the conclusion describes {named} "
+    "instead. Restate the conclusion for {san} -- the move you submitted "
+    "is the one the reader sees."
+)
 
 # Injected after MAX_RECOMMEND_FAILURES consecutive failed recommend_move
 # calls: stop guessing one move at a time, rank real candidates in one
@@ -972,6 +983,9 @@ class AIAnalysisCoordinator:
         text_parts: list[str] = []
         recommended_uci: str | None = None
         recommended_depth: int | None = None
+        # SAN of the accepted move -- what the nudges and the mismatch
+        # corrective name, since prose speaks SAN, not uci.
+        recommended_san: str | None = None
         any_tool_called = False
         nudge_sent = False
         # Narrator: re-nudge toward an accepted recommend_move each clean
@@ -993,6 +1007,8 @@ class AIAnalysisCoordinator:
         # closing conclusion); gates the post-recommend nudge.
         prose_after_recommend = False
         post_recommend_nudge_sent = False
+        # One-shot: after the corrective, a re-asserted wrong move is struck.
+        mismatch_nudge_sent = False
         round_cap_hit = True  # flipped to False on natural exit
         text_published = False  # flips on first non-whitespace text chunk
         final_text = ""  # last round's prose only (verifier verdict)
@@ -1117,9 +1133,40 @@ class AIAnalysisCoordinator:
                     log.info("post-recommend nudge (%s): asking for conclusion", mode)
                     post_recommend_nudge_sent = True
                     _inject_nudge(
-                        messages, round_chunks, _POST_RECOMMEND_NUDGE_PROMPTS[mode],
+                        messages,
+                        round_chunks,
+                        _POST_RECOMMEND_NUDGE_PROMPTS[mode].format(
+                            san=recommended_san or "the move",
+                        ),
                     )
                     continue
+                # Prose naming a different move than the one recorded: the
+                # arrow and the text disagree on screen. Re-prompt once, then
+                # strike the offending spans and ship (a stalled model would
+                # otherwise burn the round budget re-asserting).
+                mismatch = self._recommend_mismatch(
+                    round_chunks, recommended_uci, recommended_san,
+                )
+                if mismatch is not None:
+                    surfaces, named = mismatch
+                    if not mismatch_nudge_sent:
+                        log.info(
+                            "recommend-mismatch nudge (%s): prose names %s, recorded %s",
+                            mode, named, recommended_san,
+                        )
+                        mismatch_nudge_sent = True
+                        _inject_nudge(
+                            messages,
+                            round_chunks,
+                            _RECOMMEND_MISMATCH_NUDGE.format(
+                                san=recommended_san, named=named,
+                            ),
+                        )
+                        continue
+                    await self._emit_position_note(
+                        emit=emit, game_id=game_id, round_index=round_index,
+                        surfaces=surfaces,
+                    )
                 round_cap_hit = False
                 await _flush_think(emit, think_timer, game_id, round_index)
                 # Verdict = this final round's prose only, so cross-round
@@ -1240,6 +1287,7 @@ class AIAnalysisCoordinator:
                     consecutive_recommend_failures = 0
                     recommended_uci = tool_output["uci"]
                     recommended_depth = tool_output.get("depth")
+                    recommended_san = tool_output.get("san")
                     # A conclusion alongside the accepting call counts -- no
                     # separate post-move round needed. Prose in a later round
                     # is handled at the natural-exit check.
@@ -1360,6 +1408,34 @@ class AIAnalysisCoordinator:
             tool_mentions,
             list(iter_false_bishop_color_refs(text, board)),
         )
+
+    def _recommend_mismatch(
+        self,
+        chunks: list[ProviderChunk],
+        recommended_uci: str | None,
+        recommended_san: str | None,
+    ) -> tuple[list[str], str] | None:
+        """Detect closing prose that describes a move other than the recorded
+        one -- the bug where the arrow shows Qg3 and the text explains Ne3.
+        Returns (surfaces to strike, first named move) or None when clean.
+
+        Only fires when the recorded move is absent from the prose entirely:
+        naming it alongside a rejected alternative ("Qg3 is stronger than
+        Ne3") is legitimate comparison, not a mismatch."""
+        board = self._board_provider() if self._board_provider else None
+        if board is None or not recommended_uci or not recommended_san:
+            return None
+        text = "".join(c.text for c in chunks if c.kind == "text" and c.text)
+        if not text.strip():
+            return None
+        named: list[tuple[str, str]] = []
+        for surface, bare, move in iter_stm_moves(text, board):
+            if move.uci() == recommended_uci:
+                return None
+            named.append((surface, bare))
+        if not named:
+            return None
+        return [surface for surface, _bare in named], named[0][1]
 
     async def _apply_semantic_check(
         self,

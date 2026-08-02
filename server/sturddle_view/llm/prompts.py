@@ -106,7 +106,9 @@ COACH_ADDENDUM = (
     "submit your move with a single `recommend_move`; if it names a "
     "stronger move, submit that one. "
     + _REPORT_LINE_RULE
-    + "Close with one or two sentences naming the plan the move carries out.\n"
+    + "Close with one or two sentences naming the plan the move you "
+    "submitted carries out. The conclusion must be about that move -- "
+    "name it, and never explain a different one.\n"
 )
 
 
@@ -132,7 +134,8 @@ COMMENTATOR_ADDENDUM = (
     "`recommend_move` -- if it names a stronger move, submit that one. Say "
     "so when a stronger move than the one played existed. Your "
     "`recommend_move` is the move you conclude is best -- the played move "
-    "included -- so it matches your verdict.\n"
+    "included -- so it matches your verdict. Close on that same move: name "
+    "it, and never explain a different one.\n"
 )
 
 

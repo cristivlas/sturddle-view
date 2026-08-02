@@ -242,6 +242,24 @@ def find_illegal_moves(text: str, board: chess.Board) -> list[str]:
     return [label for _surface, label in iter_illegal_moves(text, board)]
 
 
+def iter_stm_moves(text: str, board: chess.Board):
+    """Yield (surface, bare, move) for each SAN token that is a legal move for
+    the side to move. The mirror of iter_illegal_moves: same recognizer and
+    same skip rules ("..."-marked Black moves, other-ply citations, square
+    labels like 'Qd1'), keeping only what parses cleanly from the live POV."""
+    for match in _SAN_TOKEN_RE.finditer(text):
+        bare = _strip_annotation_glyphs(match.group("token"))
+        if _marks_black(match) != (board.turn == chess.BLACK):
+            continue
+        if _cites_other_ply(match, board):
+            continue
+        if _is_san_label(bare, board):
+            continue
+        move = _parse_san_real(board, bare)
+        if move is not None:
+            yield match.group(0), bare, move
+
+
 # A bare pawn push ("e4") reads as a square in prose, so the bare-token
 # recognizer skips it; the word "move" disambiguates it as a move to check.
 # Pawn captures ("dxc4") are unambiguous and already matched there -- pushes
