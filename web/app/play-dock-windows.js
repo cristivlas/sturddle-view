@@ -50,10 +50,13 @@ import {
 const PLAY_GRID_SEL = ".play-grid";
 const DOCK_SLOT_CLASS = "dock-slot";
 const DOCK_GHOST_CLASS = "dock-ghost";
-const DOCK_EMPTY_CLASS = "dock-empty";
-const DOCK_DROP_ELIGIBLE_CLASS = "dock-drop-eligible";
 const DOCK_SLOT_SEL = `.${DOCK_SLOT_CLASS}`;
-const DOCK_GHOST_SEL = `.${DOCK_GHOST_CLASS}`;
+// Dock-state contract shared with game-view, which sizes the rail band from
+// it: exported so a rename here can't silently desync the two modules.
+export const DOCK_EMPTY_CLASS = "dock-empty";
+export const DOCK_DROP_ELIGIBLE_CLASS = "dock-drop-eligible";
+export const DOCK_GRIP_CLASS = "dock-grip";
+export const DOCK_GHOST_SEL = `.${DOCK_GHOST_CLASS}`;
 
 // Vertical stack order for docked windows. Lower values render higher
 // in the column. Centralized so adding a new window doesn't require
@@ -489,7 +492,7 @@ function rebuildDockGrips() {
     const botInst = instances.find(inst => inst.slot === botSlot);
     if (!topInst || !botInst) continue;
     const grip = document.createElement("div");
-    grip.className = "dock-grip";
+    grip.className = DOCK_GRIP_CLASS;
     dockEl.insertBefore(grip, botSlot);
     attachGripDrag(grip, topInst, botInst);
     dockGrips.push(grip);
@@ -540,11 +543,15 @@ function insertInDockOrder(container, el, inst) {
 function showDockGhost(container, inst) {
   if (!container) return;
   let ghost = container.querySelector(DOCK_GHOST_SEL);
-  if (!ghost) {
+  const isNew = !ghost;
+  if (isNew) {
     ghost = document.createElement("div");
     ghost.className = DOCK_GHOST_CLASS;
   }
   insertInDockOrder(container, ghost, inst);
+  // The rail band's geometry (its resize lift) is game-view's; tell it the
+  // band now has an occupant so the preview shows the true landing area.
+  if (isNew && container === railDockEl) emitLayoutChanged();
   // Size existing slots + ghost with the same pass dock() uses, so the
   // preview split equals the post-dock split (the lone-slot flex:1 override
   // no longer applies once the ghost is a second child). The rail dock holds
@@ -559,6 +566,7 @@ function hideDockGhost(container) {
   // Restore real-slot sizing: a now-lone slot must snap back to flex:1,
   // which the ghost's virtual-slot pass had suppressed.
   if (container === dockEl) applyDockGrows();
+  if (container === railDockEl) emitLayoutChanged();
 }
 
 // Track a pointer drag against a set of dock containers. Past
@@ -576,6 +584,9 @@ function watchDockDrop(containers, eDown, { onFirstMove, onMove, onEnd, ghostIns
       if (Math.hypot(e.clientX - x0, e.clientY - y0) < DRAG_DOCK_THRESHOLD_PX) return;
       started = true;
       for (const c of containers) c.classList.add(DOCK_DROP_ELIGIBLE_CLASS);
+      // Same reason as the ghost: the rail band's drop outline must be drawn
+      // at its persisted (lifted) size, which only game-view can apply.
+      if (containers.includes(railDockEl)) emitLayoutChanged();
       if (onFirstMove) onFirstMove(e);
     }
     over = containers.find(c => pointerOverEl(c, e)) ?? null;
@@ -595,6 +606,7 @@ function watchDockDrop(containers, eDown, { onFirstMove, onMove, onEnd, ghostIns
       c.classList.remove(DOCK_DROP_ELIGIBLE_CLASS);
       hideDockGhost(c);
     }
+    if (containers.includes(railDockEl)) emitLayoutChanged();
     if (onEnd) onEnd(drop && started ? over : null);
   };
   const up = () => finish(true);

@@ -3,12 +3,20 @@
 
 import { mountBoard } from "./board.js";
 import { toast } from "./dialogs.js";
-import { isMobileLayout } from "./play-dock-windows.js";
+import {
+  DOCK_DROP_ELIGIBLE_CLASS,
+  DOCK_EMPTY_CLASS,
+  DOCK_GHOST_SEL,
+  DOCK_GRIP_CLASS,
+  isMobileLayout,
+} from "./play-dock-windows.js";
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
 import { SIDE, FEN_STM } from "./chess-consts.js";
 import { fmtClock, fmtCount, fmtMoveNo, fmtScore, markSelectable, rafCoalesce } from "./wb-utils.js";
+import { STORAGE_KEY } from "./storage-keys.js";
+import { loadRaw, saveRaw } from "./storage.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -40,6 +48,12 @@ const DEFAULT_LEFT_RAIL_EMPTY_RATIO = 0.4;
 // Viewport >= this caps the rail at its natural width (raw px on purpose:
 // a rem-derived threshold would slide the rail as font-size grows).
 const RAIL_NATURAL_CAP_VIEWPORT_PX = 1500;
+// Floor for the moves list when the rail-dock grip is dragged up.
+const MIN_MOVES_REM = 6;
+const RAIL_GRIP_SEL_CLASS = "play-rail-grip";
+// Grip thickness; it rides in the board-bottom gap, so it costs neither the
+// moves list nor the docked panel any height.
+const RAIL_GRIP_PX = 5;
 
 function renderMoveList(el, sanList, {
   currentIdx = null,   // highlighted ply, or null = last (play mode)
@@ -329,6 +343,50 @@ function readMainPaddingBottom() {
   return Number.isFinite(v) ? v : DEFAULT_MAIN_PAD_BOTTOM_PX;
 }
 
+function clearFixedGeom(el) {
+  if (!el) return;
+  for (const prop of ["left", "top", "width", "height"]) el.style.removeProperty(prop);
+}
+
+// Rail-dock lift: how far the docked window's top edge is dragged above the
+// board bottom, stealing that height from the moves list. Shared by every
+// GameView instance (only one is on a desktop play grid at a time).
+let railLift = Math.max(0, Number(loadRaw(STORAGE_KEY.PLAY_RAIL_LIFT, 0)) || 0);
+
+// Grip between the moves list and whatever is docked in the rail band. It is
+// the band's fixed-positioned sibling, riding in the board-bottom gap above
+// it -- inside the band it would sit within the panel's border.
+function ensureRailGrip(ctx, railDock) {
+  const existing = railDock.parentElement?.querySelector(`.${RAIL_GRIP_SEL_CLASS}`);
+  if (existing) return existing;
+  const grip = document.createElement("div");
+  grip.className = `${DOCK_GRIP_CLASS} ${RAIL_GRIP_SEL_CLASS}`;
+  railDock.after(grip);
+  grip.addEventListener("pointerdown", (eDown) => {
+    if (eDown.button !== 0) return;
+    eDown.preventDefault();
+    try { grip.setPointerCapture(eDown.pointerId); } catch { /* */ }
+    grip.classList.add("dragging");
+    const lift0 = railLift;
+    const y0 = eDown.clientY;
+    const onMove = (e) => {
+      railLift = Math.max(0, Math.min(lift0 - (e.clientY - y0), ctx.railMaxLift ?? 0));
+      if (ctx.railGeom) positionSideRail(ctx, ctx.railGeom);
+    };
+    const onUp = () => {
+      grip.classList.remove("dragging");
+      grip.removeEventListener("pointermove", onMove);
+      grip.removeEventListener("pointerup", onUp);
+      grip.removeEventListener("pointercancel", onUp);
+      saveRaw(STORAGE_KEY.PLAY_RAIL_LIFT, String(Math.round(railLift)));
+    };
+    grip.addEventListener("pointermove", onMove);
+    grip.addEventListener("pointerup", onUp);
+    grip.addEventListener("pointercancel", onUp);
+  });
+  return grip;
+}
+
 // Position the side rail (moves/engine panel) flush with the board on
 // desktop; clear inline geometry on mobile so the flex layout takes over.
 function positionSideRail(ctx, geom) {
@@ -337,17 +395,10 @@ function positionSideRail(ctx, geom) {
   if (!sideHost) return;
   const railDock = sideHost.querySelector(".play-rail-dock");
   if (mobile) {
-    sideHost.style.removeProperty("height");
+    clearFixedGeom(sideHost);
     sideHost.style.removeProperty("margin-top");
-    sideHost.style.removeProperty("left");
-    sideHost.style.removeProperty("top");
-    sideHost.style.removeProperty("width");
-    if (railDock) {
-      railDock.style.removeProperty("left");
-      railDock.style.removeProperty("top");
-      railDock.style.removeProperty("width");
-      railDock.style.removeProperty("height");
-    }
+    if (railDock) clearFixedGeom(railDock);
+    clearFixedGeom(sideHost.querySelector(`.${RAIL_GRIP_SEL_CLASS}`));
     return;
   }
   const boardRect = ctx.boardEl.getBoundingClientRect();
@@ -372,10 +423,20 @@ function positionSideRail(ctx, geom) {
     width = capRail ? Math.min(railW, avail) : avail;
   }
   const height = Math.max(rem(MIN_AVAIL_REM), Math.floor(boardRect.height));
+  // Lift applies only while something is docked in the rail band; with an
+  // empty band the moves list runs all the way down to the board bottom.
+  ctx.railMaxLift = Math.max(0, height - rem(MIN_MOVES_REM));
+  // A pending drop counts as an occupant, so the drop outline (and the hover
+  // preview) shows the band at its persisted, lifted size, not the bare one.
+  const occupied = !!railDock && (
+    !railDock.classList.contains(DOCK_EMPTY_CLASS)
+    || railDock.classList.contains(DOCK_DROP_ELIGIBLE_CLASS)
+    || !!railDock.querySelector(DOCK_GHOST_SEL));
+  const lift = occupied ? Math.min(railLift, ctx.railMaxLift) : 0;
   sideHost.style.left = `${left}px`;
   sideHost.style.top = `${top}px`;
   sideHost.style.width = `${width}px`;
-  sideHost.style.height = `${height}px`;
+  sideHost.style.height = `${height - lift}px`;
   sideHost.style.removeProperty("margin-top");
   // The rail dock is purely additive: a fixed band under the moves box
   // (same x as the rail) filling the gap from the board bottom down to the
@@ -387,11 +448,18 @@ function positionSideRail(ctx, geom) {
     const barBottom = clockRow && clockRow.offsetParent !== null
       ? Math.floor(clockRow.getBoundingClientRect().bottom)
       : boardBottom;
-    const barTop = boardBottom + COL_SIBLING_GAP_PX;
+    const barTop = boardBottom + COL_SIBLING_GAP_PX - lift;
     railDock.style.left = `${left}px`;
     railDock.style.top = `${barTop}px`;
     railDock.style.width = `${width}px`;
     railDock.style.height = `${Math.max(0, barBottom - barTop)}px`;
+    const grip = ensureRailGrip(ctx, railDock);
+    grip.style.display = occupied ? "" : "none";
+    grip.style.left = `${left}px`;
+    grip.style.top = `${barTop - RAIL_GRIP_PX}px`;
+    grip.style.width = `${width}px`;
+    grip.style.height = `${RAIL_GRIP_PX}px`;
+    ctx.railGeom = geom;
   }
 }
 

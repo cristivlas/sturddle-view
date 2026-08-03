@@ -1969,6 +1969,14 @@ body .side-popover.popover-floating {
   }
 }
 .play-rail-dock.dock-empty { visibility: hidden; }
+/* Resize handle between the moves list and the rail band. Fixed sibling of
+   the band (geometry from positionSideRail) so it rides in the gap under
+   the board instead of inside the docked panel's border. Desktop-only for
+   the same reason as .play-rail-dock. */
+.play-rail-grip { display: none; }
+@media (min-width: 801px) and (min-height: 681px) {
+  .play-rail-grip { display: block; position: fixed; z-index: 8; }
+}
 /* Auto-hide: a docked slot holding an empty eval strip (view mode / no
    evals yet) disappears entirely; play-dock-windows.js stamps the class and
    counts such slots out of dock-empty/grip accounting. */
