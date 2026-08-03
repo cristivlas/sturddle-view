@@ -448,7 +448,9 @@ function positionSideRail(ctx, geom) {
     const barBottom = clockRow && clockRow.offsetParent !== null
       ? Math.floor(clockRow.getBoundingClientRect().bottom)
       : boardBottom;
-    const barTop = boardBottom + COL_SIBLING_GAP_PX - lift;
+    // Band starts one grip-thickness below the board, so the grip fills the
+    // gap between the moves list and the docked panel exactly.
+    const barTop = boardBottom + RAIL_GRIP_PX - lift;
     railDock.style.left = `${left}px`;
     railDock.style.top = `${barTop}px`;
     railDock.style.width = `${width}px`;
