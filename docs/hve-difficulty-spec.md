@@ -25,6 +25,19 @@ Do not weaken the search; weaken the move selection.
 The scoring sweep runs off-clock. The engine clock starts only for a
 cosmetic "thinking" delay after the move is sampled.
 
+## searchmoves fallback
+
+Some engines ignore `searchmoves`. Detect at startup: probe with
+`go searchmoves <mv> movetime T` restricted to a single deliberately
+bad legal move; a compliant engine must return it as bestmove. Any
+other bestmove means unsupported.
+
+Fallback scoring: push each candidate (`position ... moves <mv>`),
+run plain `go movetime T`, negate the reply score. Same ranking,
+using only `position`, `go movetime`, and `score cp`.
+
+Falling back must be logged.
+
 ## Why this works with any engine
 
 `searchmoves`, `movetime`, and `score cp` are core UCI; no reliance
