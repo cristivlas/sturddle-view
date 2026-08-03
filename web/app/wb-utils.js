@@ -1,3 +1,5 @@
+import { scrollRowIntoView } from "./col-sort.js";
+
 // Last path segment (handles / and \); "" for empty input.
 export function basename(p) {
   if (!p) return "";
@@ -171,13 +173,127 @@ const SELECTABLE_ATTR = "data-selectable";
 const ROWS_ATTR = "data-rows";
 export const isCtrlA = (ev) => (ev.ctrlKey || ev.metaKey) && (ev.key === "a" || ev.key === "A");
 
+// Custom elements may host a shadow root, and tabindex=-1 on a shadow host
+// drops that host's whole slotted subtree out of sequential focus navigation
+// -- so they never get the marker tabindex. Name test, not `el.shadowRoot`:
+// this can run before the element upgrades.
+const isCustomElement = (el) => el.localName.includes("-");
+
 export function markSelectable(el, { rows = null, target = null } = {}) {
-  // Focusable by click/script (so Ctrl+A's keydown targets the region) but
-  // not a Tab stop; respect an explicit tabindex if the element set one.
-  if (!el.hasAttribute("tabindex")) el.tabIndex = -1;
+  // Focusable by click/script (so Ctrl+A's keydown targets the region) but not
+  // a Tab stop; respect an explicit tabindex if the element set one. Clicks
+  // inside a skipped host still bubble to the region, so Ctrl+A keeps working.
+  if (!el.hasAttribute("tabindex") && !isCustomElement(el)) el.tabIndex = -1;
   el.setAttribute(SELECTABLE_ATTR, "");
   if (rows) el.setAttribute(ROWS_ATTR, rows);
   if (target) el._selTarget = target;
+}
+
+// Roving tab stop: exactly one of `itemSel` inside `container` is tabbable,
+// and each item's `controlSel` sub-buttons ride along with it. Without this a
+// list of N items with C controls each costs N * (C + 1) Tab presses to cross.
+const TAB_STOP_SEL = '[tabindex="0"]';
+
+export function roveTabStop(container, itemSel, current, controlSel = []) {
+  for (const item of container.querySelectorAll(itemSel)) {
+    const on = item === current;
+    item.tabIndex = on ? 0 : -1;
+    for (const sel of controlSel) {
+      const control = item.querySelector(sel);
+      if (control) control.tabIndex = on ? 0 : -1;
+    }
+  }
+}
+
+// Re-seat the stop after a re-render: keep whichever item already holds it,
+// else hand it to the first. Call whenever the item set changes.
+export function syncRovingTabStop(container, itemSel, controlSel = []) {
+  const items = container.querySelectorAll(itemSel);
+  if (items.length === 0) return;
+  const current = container.querySelector(itemSel + TAB_STOP_SEL) ?? items[0];
+  roveTabStop(container, itemSel, current, controlSel);
+}
+
+// Promote a bare <span>/<div> acting as a button: screen readers see a button,
+// and Enter/Space activate it the way a real one would. Idempotent, so it is
+// safe to re-run over elements a renderer may or may not have replaced.
+const KBD_WIRED_ATTR = "kbd";
+
+export function wireSpanButton(el, label) {
+  if (!el || el.dataset[KBD_WIRED_ATTR]) return;
+  el.dataset[KBD_WIRED_ATTR] = "1";
+  el.setAttribute("role", "button");
+  el.setAttribute("aria-label", label);
+  el.tabIndex = -1;
+  el.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    ev.preventDefault();
+    el.click();
+  });
+}
+
+// Single-tab-stop navigation: the container is one Tab stop and the arrows
+// move the selection between its `rows`. `select(row, i)` owns what selecting
+// means -- the helper only picks the next row and scrolls it into view, so
+// each caller keeps its own selection bookkeeping.
+//
+// `cols()` opts into grid geometry: Up/Down then jump a whole row and
+// Left/Right step one cell. Omit it for a plain list, where Up/Down step one
+// row and Left/Right are left to the browser. `onEdge(row, i)` fires when a
+// move is blocked at an edge, for callers that need to signal the bump.
+// `scroll(row)` defaults to the sticky-header-aware row scroller; callers that
+// scroll their own way (e.g. WinBox boards) pass their own or a no-op.
+const LIST_NAV_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
+const GRID_NAV_KEYS = new Set([...LIST_NAV_KEYS, "ArrowLeft", "ArrowRight"]);
+
+// Index the key moves to, or `cur` to stay put. A row jump landing outside the
+// grid is a no-op: clamping it to the last cell would silently change column.
+function nextNavIndex(key, cur, len, step) {
+  if (key === "Home") return 0;
+  if (key === "End") return len - 1;
+  if (key === "ArrowRight") return cur < 0 ? 0 : Math.min(cur + 1, len - 1);
+  if (key === "ArrowLeft") return cur < 0 ? len - 1 : Math.max(cur - 1, 0);
+  const dir = key === "ArrowDown" ? 1 : -1;
+  if (cur < 0) return dir > 0 ? 0 : len - 1;
+  if (step === 1) return Math.min(Math.max(cur + dir, 0), len - 1);
+  const target = cur + dir * step;
+  return target >= 0 && target < len ? target : cur;
+}
+
+export function wireArrowKeyNav(el, {
+  rows, selected, select, cols = null, onEdge = null, scroll = scrollRowIntoView,
+}) {
+  // A list region's focus ring is suppressed, so keyboard focus would land
+  // here with nothing to show for it -- highlight the first row instead.
+  // :focus-visible keeps a mouse click (e.g. on a sort header) from selecting.
+  el.addEventListener("focus", () => {
+    if (!el.matches(":focus-visible") || el.querySelector(selected)) return;
+    const first = el.querySelector(rows);
+    if (first) select(first, 0);
+  });
+
+  el.addEventListener("keydown", (ev) => {
+    if (!(cols ? GRID_NAV_KEYS : LIST_NAV_KEYS).has(ev.key)) return;
+    if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
+    const all = Array.from(el.querySelectorAll(rows));
+    if (all.length === 0) return;
+    // Claim the key even when the move is a no-op at an edge, so the region
+    // doesn't scroll out from under a selection that stayed put.
+    ev.preventDefault();
+    const cur = all.indexOf(el.querySelector(selected));
+    const next = nextNavIndex(ev.key, cur, all.length, cols ? Math.max(1, cols()) : 1);
+    // Blocked at an edge. Callers with no persistent selection ring use onEdge
+    // to say "still here"; a plain list just stays put.
+    if (next === cur) {
+      if (cur >= 0) onEdge?.(all[cur], cur);
+      return;
+    }
+    // Scroll before select: a select() that re-renders the list detaches this
+    // row, and scrolling a detached node does nothing. The rebuilt row lands
+    // at the same index, so the scroll still lines up.
+    scroll(all[next]);
+    select(all[next], next);
+  });
 }
 
 // A markSelectable region's rows are `user-select: text`, so a double/triple

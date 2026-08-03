@@ -28,7 +28,7 @@ import { mountSprtButton } from "./tournament-sprt-button.js";
 import { formatType, formatResign, formatDraw } from "./tournament-format.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
-import { basename, cooldown, debounce, guard, isCtrlA, markSelectable, ribbonWidthPx, suppressMultiClickSelect } from "./wb-utils.js";
+import { basename, cooldown, debounce, guard, isCtrlA, markSelectable, ribbonWidthPx, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
@@ -1326,19 +1326,10 @@ function wireRibbon(ctx) {
 }
 
 function wireListKeyboard(ctx) {
-  ctx.listEl.addEventListener("keydown", (ev) => {
-    if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp" && ev.key !== "Home" && ev.key !== "End") return;
-    const sorted = sortedTournaments(ctx);
-    if (sorted.length === 0) return;
-    const cur = sorted.findIndex((t) => t.id === ctx.selectedId);
-    let next = cur;
-    if (ev.key === "ArrowDown") next = cur < 0 ? 0 : Math.min(cur + 1, sorted.length - 1);
-    else if (ev.key === "ArrowUp") next = cur < 0 ? sorted.length - 1 : Math.max(cur - 1, 0);
-    else if (ev.key === "Home") next = 0;
-    else if (ev.key === "End") next = sorted.length - 1;
-    if (next === cur) { ev.preventDefault(); return; }
-    ev.preventDefault();
-    navigateTo(ctx, sorted[next].id);
+  wireArrowKeyNav(ctx.listEl, {
+    rows: ".tournament-row",
+    selected: ".tournament-row.selected",
+    select: (row) => navigateTo(ctx, row.dataset.id),
   });
 }
 

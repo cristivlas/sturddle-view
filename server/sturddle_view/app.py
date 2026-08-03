@@ -27,6 +27,7 @@ from .api import settings as settings_api
 from .api import tournaments as tournaments_api
 from .api import ws as ws_api
 from .config import Settings
+from .engine_tmp import sweep_orphans
 from .engines import EngineRegistry, resolve_selected
 from .events import Event, EventBus
 from .llm import CannedProvider, LLMProvider, ToolRegistry
@@ -252,6 +253,14 @@ async def _lifespan(app: FastAPI):
     _install_proactor_accept_resilience()
     _install_uvicorn_ws_shutdown_state_guard()
     _install_engine_sigkill_filter()
+    # Orphaned engine temp dirs (crashed/killed engines from a previous
+    # run) -- safe pre-spawn: no engine can be running yet.
+    try:
+        swept = sweep_orphans()
+        if swept:
+            log.info("engine temp sweep: removed %d orphan dir(s)", swept)
+    except Exception:
+        log.error("engine temp sweep failed", exc_info=True)
     _maybe_restore_game(app)
     # Tournament reconciliation: any 'running' rows on disk are stale.
     # Phase 1 has no Resume -- mark them stopped.

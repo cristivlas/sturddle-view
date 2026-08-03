@@ -22,6 +22,7 @@ from platformdirs import user_config_dir
 
 from . import app_dir_name
 from ._atomic import atomic_write_json
+from .engine_tmp import cleanup_spawn_dir, create_spawn_dir, temp_env
 
 log = logging.getLogger(__name__)
 
@@ -55,16 +56,22 @@ def _probe_timeout_sec() -> float:
         return _DEFAULT_PROBE_TIMEOUT_SEC
 
 
-def _popen_kwargs(env: dict[str, str] | None) -> dict:
+def _popen_kwargs(env: dict[str, str] | None, tmp_dir: Path | None = None) -> dict:
     """Build popen kwargs shared by probe_engine and EngineSupervisor.spawn.
 
     Overlays *env* on the parent process environment (never wipes it);
+    points TMP/TEMP/TMPDIR at *tmp_dir* (user *env* wins on conflict);
     adds CREATE_NO_WINDOW on Windows so the engine subprocess does not
     flash a console window.
     """
     out: dict = {}
+    merged: dict[str, str] = {}
+    if tmp_dir is not None:
+        merged.update(temp_env(tmp_dir))
     if env:
-        out["env"] = {**os.environ, **env}
+        merged.update(env)
+    if merged:
+        out["env"] = {**os.environ, **merged}
     if sys.platform == "win32":
         out["creationflags"] = subprocess.CREATE_NO_WINDOW
     return out
@@ -116,13 +123,21 @@ async def probe_engine(
     Best-effort: on any failure logs and returns (None, {}, error).
     """
     command: str | list[str] = [engine_path, *args] if args else engine_path
-    popen_kwargs = _popen_kwargs(env)
+    # Probe never raises: a filesystem hiccup here must not fail the
+    # endpoint -- degrade to no temp-dir injection instead.
+    try:
+        tmp_dir = create_spawn_dir()
+    except OSError as e:
+        log.warning("could not create engine temp dir for probe: %s", e)
+        tmp_dir = None
+    popen_kwargs = _popen_kwargs(env, tmp_dir)
     timeout = _probe_timeout_sec()
     try:
         transport, engine = await asyncio.wait_for(
             chess.engine.popen_uci(command, **popen_kwargs), timeout=timeout,
         )
     except asyncio.TimeoutError:
+        cleanup_spawn_dir(tmp_dir)
         # Process spawned but never completed the UCI handshake. wait_for
         # has already cancelled the inner task; python-chess kills the
         # subprocess on cancellation. Return a friendly classification
@@ -133,6 +148,7 @@ async def probe_engine(
             "message": "Engine did not respond to UCI handshake (timeout).",
         }
     except Exception as e:
+        cleanup_spawn_dir(tmp_dir)
         err = _classify_probe_exception(e)
         # Classified failures are routine: legacy broken entries get re-probed
         # on every GET /engines, full tracebacks just spam the log. Unknown
@@ -163,6 +179,7 @@ async def probe_engine(
         except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
             pass
         transport.close()
+        cleanup_spawn_dir(tmp_dir)
 
 
 @dataclass

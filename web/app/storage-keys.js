@@ -51,6 +51,7 @@ export const STORAGE_KEY = {
   // Play dock + UCI-log + PV-table + eval-strip window state.
   PLAY_DOCK_GROW: "sturddle:play:dockGrow",
   PLAY_DOCK_DEST: "sturddle:play:dockDest",
+  PLAY_RAIL_LIFT: "sturddle:play:railLift",
   EVALBAR_GEO: "sturddle:evalbar:geo",
   EVALBAR_WIN_STATE: "sturddle:evalbar:winstate",
   EVALBAR_DOCKED: "sturddle:evalbar:docked",

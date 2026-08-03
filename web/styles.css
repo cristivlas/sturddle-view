@@ -1969,6 +1969,14 @@ body .side-popover.popover-floating {
   }
 }
 .play-rail-dock.dock-empty { visibility: hidden; }
+/* Resize handle between the moves list and the rail band. Fixed sibling of
+   the band (geometry from positionSideRail) so it rides in the gap under
+   the board instead of inside the docked panel's border. Desktop-only for
+   the same reason as .play-rail-dock. */
+.play-rail-grip { display: none; }
+@media (min-width: 801px) and (min-height: 681px) {
+  .play-rail-grip { display: block; position: fixed; z-index: 8; }
+}
 /* Auto-hide: a docked slot holding an empty eval strip (view mode / no
    evals yet) disappears entirely; play-dock-windows.js stamps the class and
    counts such slots out of dock-empty/grip accounting. */
@@ -3630,6 +3638,16 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   cursor: pointer; opacity: 0.9;
 }
 .studio-tray-chip .wb-close:hover { opacity: 1; }
+/* Keyboard-reachable window chrome (tray chips, board title controls). The
+   app-wide outline-color at the top of this file can't reach these: they fall
+   back to the UA ring, whose `outline-style: auto` is browser-drawn and
+   ignores outline-color. Restate it as a solid ring, like .ribbon-btn. */
+.studio-tray-chip:focus-visible,
+.studio-tray-chip .wb-close:focus-visible,
+.winbox.sturddle-wb-studio .wb-control > span:focus-visible {
+  outline: 2px solid var(--wa-color-focus, var(--wa-color-brand-60));
+  outline-offset: -2px;
+}
 .winbox.sturddle-wb-studio.min { display: none; }
 /* Rooted Studio boards position within the scrolling region (not the
    viewport) and skip the slide transition so re-grids land instantly.
@@ -3726,6 +3744,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border-bottom: 1px solid var(--border-faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* The list is a tab stop, which opts it out of the generic container-ring
+   suppression above. Its selected row is the focus affordance, so drop the
+   ring that would box the whole table (same look as the fs picker's list). */
+.studio-tourney-tbl:focus, .studio-tourney-tbl:focus-visible { outline: none; }
 .studio-tourney-row, .studio-history-row {
   cursor: pointer;
   user-select: none; -webkit-user-select: none;

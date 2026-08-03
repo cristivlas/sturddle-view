@@ -16,7 +16,7 @@ import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, nextDir, scrollSortedRowI
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { reportError, toast } from "./dialogs.js";
-import { debounce, escapeHtml, markSelectable } from "./wb-utils.js";
+import { debounce, escapeHtml, flashWindow, markSelectable, roveTabStop, syncRovingTabStop, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { newTournamentCta, ribbonHtml, setStartVerb, tournamentActions } from "./tournaments.js";
 import { RESULT, SIDE } from "./chess-consts.js";
@@ -54,6 +54,23 @@ const STUDIO_BOARD_GAP = 1;
 // boards ignore container padding, so the offset is applied in placement).
 const STUDIO_BOARD_PAD = 1;
 const STUDIO_BOARD_CLASS = "sturddle-wb-studio no-move no-resize";
+// Minimized boards live in the tray (display:none), so they are not cells.
+const BOARD_SEL = ".winbox.sturddle-wb-studio:not(.min)";
+// The board grid roves one tab stop, so the "current" board is the one Tab
+// would land on. Its title controls ride along; every other board's sit at -1.
+const BOARD_CURRENT_SEL = `${BOARD_SEL}[tabindex="0"]`;
+// WinBox title controls, in title-bar order. wb-full is hidden (boards open
+// with `no-full`), so it is deliberately absent.
+const BOARD_CONTROLS = [
+  [".wb-min", "Minimize board"],
+  [".wb-max", "Maximize board"],
+  [".wb-close", "Close board"],
+];
+// Minimized boards leave the grid and appear as tray chips, which rove their
+// own tab stop -- one row, so Up/Down fall outside it and only Left/Right move.
+const CHIP_SEL = ".studio-tray-chip";
+const CHIP_CURRENT_SEL = `${CHIP_SEL}[tabindex="0"]`;
+const CHIP_CLOSE_SEL = ".wb-close";
 const BOARD_RESIZE_DEBOUNCE_MS = 120;
 // Default active tab per bottom group (first tab) when none is remembered.
 const STUDIO_TAB_DEFAULT_LEFT = "livegames";
@@ -65,6 +82,14 @@ const STUDIO_TOURNEY_MIN_PCT = 10;
 // History table default column widths (#, White, Black, Result, Opening) + resize floor.
 const STUDIO_HISTORY_DEFAULT_PCTS = [5, 20, 20, 15, 40];
 const STUDIO_HISTORY_MIN_PCT = 5;
+
+const TOURNEY_ROW_CLASS = "studio-tourney-row";
+const TOURNEY_ROW_SEL = `tr.${TOURNEY_ROW_CLASS}`;
+const HISTORY_ROW_CLASS = "studio-history-row";
+const HISTORY_ROW_SEL = `tr.${HISTORY_ROW_CLASS}`;
+// The history list roves its tab stop instead of painting a selected class,
+// so the "current" row is simply the one Tab would land on.
+const HISTORY_CURRENT_SEL = `${HISTORY_ROW_SEL}[tabindex="0"]`;
 
 export const TOURNAMENT_UX = Object.freeze({ ARENA: "arena", STUDIO: "studio" });
 
@@ -202,7 +227,7 @@ function setSelected(ctx, id) {
 function studioSelect(ctx, id) {
   if (ctx.selectedId === id) return;
   setSelected(ctx, id);
-  for (const tr of ctx.tourneysPaneEl.querySelectorAll(".studio-tourney-row")) {
+  for (const tr of ctx.tourneysPaneEl.querySelectorAll(TOURNEY_ROW_SEL)) {
     tr.classList.toggle("selected", tr.dataset.id === id);
   }
   syncLive(ctx);
@@ -254,6 +279,15 @@ function buildTourneyTable(ctx) {
     </tr></thead><tbody></tbody>`;
   wrap.appendChild(table);
   pane.replaceChildren(wrap);
+  // One Tab stop for the whole list; arrows move the selection within it.
+  // Clicking a row focuses the table so the arrows continue from there.
+  table.tabIndex = 0;
+  table.addEventListener("click", () => table.focus({ preventScroll: true }));
+  wireArrowKeyNav(table, {
+    rows: TOURNEY_ROW_SEL,
+    selected: `${TOURNEY_ROW_SEL}.selected`,
+    select: (row) => studioSelect(ctx, row.dataset.id),
+  });
   ctx.tourneyTbody = table.querySelector("tbody");
   ctx.tourneyStack = attachLayeredSort({
     table, columns: TOURNEY_SORT_COLS,
@@ -294,7 +328,7 @@ function gamesCell(t, played, total) {
 
 function studioTourneyRow(ctx, t) {
   const tr = document.createElement("tr");
-  tr.className = "studio-tourney-row" + (t.id === ctx.selectedId ? " selected" : "");
+  tr.className = TOURNEY_ROW_CLASS + (t.id === ctx.selectedId ? " selected" : "");
   tr.dataset.id = t.id;
   const total = totalGames(t);
   const played = t.standings?.games ?? 0;
@@ -552,6 +586,17 @@ function buildHistoryTable(ctx) {
     </tr></thead><tbody></tbody>`;
   wrap.appendChild(table);
   pane.replaceChildren(wrap);
+  // Keep the roving stop on whatever the user actually focused (click or
+  // arrow), so the next arrow press continues from there rather than row 0.
+  table.addEventListener("focusin", (ev) => {
+    const row = ev.target.closest?.(HISTORY_ROW_SEL);
+    if (row) roveTabStop(table, HISTORY_ROW_SEL, row);
+  });
+  wireArrowKeyNav(table, {
+    rows: HISTORY_ROW_SEL,
+    selected: HISTORY_CURRENT_SEL,
+    select: (row) => row.focus(),
+  });
   ctx.historyTbody = table.querySelector("tbody");
   ctx.historyStack = attachLayeredSort({
     table, columns: HISTORY_SORT_COLS,
@@ -570,10 +615,13 @@ function buildHistoryTable(ctx) {
   });
 }
 
-function historyRow(ctx, tid, r) {
+// Roving tabindex: only the current row is a Tab stop, so Tab enters the list
+// once and the arrows walk it. Focus doubles as the selection here -- the
+// row's :focus-visible ring is the highlight, and Enter opens the focused row.
+function historyRow(ctx, tid, r, isCurrent) {
   const tr = document.createElement("tr");
-  tr.className = "studio-history-row";
-  tr.tabIndex = 0;
+  tr.className = HISTORY_ROW_CLASS;
+  tr.tabIndex = isCurrent ? 0 : -1;
   tr.setAttribute("role", "button");
   tr.title = `Review game ${r.num}`;
   tr.innerHTML =
@@ -608,7 +656,7 @@ function renderHistory(ctx) {
     [HK.RESULT]: g.result, [HK.OPENING]: g.opening || "",
   }));
   sortByStack(rows, ctx.historyStack(), HISTORY_SORT_COLS);
-  tb.replaceChildren(...rows.map((r) => historyRow(ctx, tid, r)));
+  tb.replaceChildren(...rows.map((r, i) => historyRow(ctx, tid, r, i === 0)));
 }
 
 function renderLogPane(ctx) {
@@ -728,6 +776,7 @@ function regridBoards(ctx) {
     slot++;
   }
   sizeCanvas(ctx, slot, cw, ch, cols);
+  syncRovingTabStop(ctx.boardsEl, BOARD_SEL, BOARD_CONTROL_SELS);
   // Single source of truth for board presence (laid-out or maximized).
   const hasBoards = anyBoardsShown();
   // The info wall fills the region when no boards are shown; boards hide it
@@ -868,12 +917,18 @@ function renderTray(ctx) {
     if (header) chip.style.setProperty("--chip-bg", getComputedStyle(header).backgroundColor);
     chip.innerHTML = `<span class="studio-tray-chip-title"></span><span class="wb-close"></span>`;
     const [title, closeEl] = chip.children;
-    title.textContent = title.title = wb._watchOpts?.label || "board";
+    const label = wb._watchOpts?.label || "board";
+    title.textContent = title.title = label;
     title.onclick = () => wb.restore();
     closeEl.onclick = () => wb.close();
+    // The chip itself is the tab stop and restores on Enter; its X rides along.
+    chip.onclick = (ev) => { if (ev.target === chip) wb.restore(); };
+    wireSpanButton(chip, `Restore ${label}`);
+    wireSpanButton(closeEl, `Close ${label}`);
     tray.appendChild(chip);
   }
   tray.hidden = mins.length === 0;
+  syncRovingTabStop(tray, CHIP_SEL, [CHIP_CLOSE_SEL]);
 }
 
 function studioSlotRect(ctx, i) {
@@ -894,7 +949,22 @@ function refreshWatchButtons(ctx) {
 
 // Min/restore both reflow the grid (reverting the split if this was the
 // maximized board), repaint the tray, and persist the open-board set.
+// WinBox renders its title controls as bare spans -- no role, no tab stop, no
+// Enter/Space. Promote them so the focused board's buttons are reachable once
+// Tab steps into it.
+function wireBoardControls(wb) {
+  for (const [sel, label] of BOARD_CONTROLS) {
+    wireSpanButton(wb.g?.querySelector(sel), label);
+  }
+}
+
+const BOARD_CONTROL_SELS = BOARD_CONTROLS.map(([sel]) => sel);
+
+const setCurrentBoard = (ctx, board) =>
+  roveTabStop(ctx.boardsEl, BOARD_SEL, board, BOARD_CONTROL_SELS);
+
 function wireBoardHooks(ctx, wb) {
+  wireBoardControls(wb);
   // No tray change on maximize, so persist without the renderTray repaint.
   wb.onmaximize = () => { maximizeBoard(ctx, wb); saveBoards(ctx); };
   const repaint = () => { renderTray(ctx); saveBoards(ctx); };
@@ -1081,6 +1151,70 @@ function wireTabClipboard(ctx) {
   }
 }
 
+// Landing on a board mirrors a Watch click: scroll it into the region, flash
+// it. Both the arrow and the focus path call this -- re-adding the flash class
+// mid-animation is a no-op, and the scroll self-skips when already visible.
+function landOnBoard(ctx, board) {
+  const wb = getLiveWindows().find((w) => w.g === board);
+  if (!wb) return;
+  scrollBoardIntoView(ctx, wb);
+  flashWindow(wb);
+}
+
+// Arrows walk the board grid -- Left/Right by a cell, Up/Down by a row. The
+// boards carry no focus ring, so every landing is announced by the flash.
+function wireBoardKeyboard(ctx) {
+  if (!ctx.boardsEl) return;
+  // Tab lands straight on whichever board holds the roving stop, never going
+  // through select(), so the landing feedback hangs off focus as well.
+  // :focus-visible keeps a mouse click on a board silent.
+  ctx.boardsEl.addEventListener("focusin", (ev) => {
+    const board = ev.target.closest?.(BOARD_SEL);
+    if (!board) return;
+    // Focus reaching a title button counts as visiting that board, so the
+    // stop follows; only landing on the board itself is worth announcing.
+    setCurrentBoard(ctx, board);
+    if (ev.target === board && board.matches(":focus-visible")) landOnBoard(ctx, board);
+  });
+  wireArrowKeyNav(ctx.boardsEl, {
+    rows: BOARD_SEL,
+    selected: BOARD_CURRENT_SEL,
+    cols: studioCols,
+    // Boards are absolutely placed; landOnBoard scrolls the region by the
+    // WinBox geometry instead, so the generic row scroller would double up.
+    scroll: () => {},
+    select: (board) => {
+      setCurrentBoard(ctx, board);
+      board.focus({ preventScroll: true });
+      landOnBoard(ctx, board);
+    },
+    // No wrap at the grid edge -- re-flash the current board so a blocked
+    // move still reads as "still here" rather than as a dead key.
+    onEdge: (board) => landOnBoard(ctx, board),
+  });
+  wireTrayKeyboard(ctx);
+}
+
+// The tray is a single row of chips: cols = chip count, so Up/Down land
+// outside the row and only Left/Right step.
+function wireTrayKeyboard(ctx) {
+  const tray = ctx.boardsTrayEl;
+  if (!tray) return;
+  wireArrowKeyNav(tray, {
+    rows: CHIP_SEL,
+    selected: CHIP_CURRENT_SEL,
+    cols: () => tray.querySelectorAll(CHIP_SEL).length,
+    // The tray scrolls horizontally, an axis the default row scroller does not
+    // look at -- and focus() here is preventScroll, so nothing else would bring
+    // an off-screen chip in.
+    scroll: (chip) => chip.scrollIntoView({ block: "nearest", inline: "nearest" }),
+    select: (chip) => {
+      roveTabStop(tray, CHIP_SEL, chip, [CHIP_CLOSE_SEL]);
+      chip.focus({ preventScroll: true });
+    },
+  });
+}
+
 function wireSplitters(ctx) {
   restoreSplit(STORAGE_KEY.STUDIO_SPLIT_ROW, ctx.boardsEl, ctx.bottomEl);
   restoreSplit(STORAGE_KEY.STUDIO_SPLIT_COL, ctx.bottomLeftEl, ctx.bottomRightEl);
@@ -1160,6 +1294,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   buildTourneyTable(ctx);
   buildHistoryTable(ctx);
   wireSplitters(ctx);
+  wireBoardKeyboard(ctx);
   wireTabPersistence(ctx);
   wireTabClipboard(ctx);
   wireEnginesSort(ctx);

@@ -50,15 +50,12 @@ function scrollParent(el) {
   return null;
 }
 
-// After a sort-triggered re-render, bring the still-selected row back into
-// view -- FULLY visible. scrollIntoView({block:"nearest"}) aligns to the
-// scroller's edges, which leaves the row obscured under a sticky <thead> at
-// the top or under a bottom overlay (search bar) whose height the caller
-// reserved as scroller padding-bottom; treat both as viewport insets.
-export function scrollSortedRowIntoView(root, selector) {
-  const row = root.querySelector(selector);
-  if (!row) return;
-  const scroller = scrollParent(row);
+// Bring `row` into view -- FULLY visible. scrollIntoView({block:"nearest"})
+// aligns to the scroller's edges, which leaves the row obscured under a sticky
+// <thead> at the top or under a bottom overlay (search bar) whose height the
+// caller reserved as scroller padding-bottom; treat both as viewport insets.
+export function scrollRowIntoView(row) {
+  const scroller = row && scrollParent(row);
   if (!scroller) return;
   const rowRect = row.getBoundingClientRect();
   const scRect = scroller.getBoundingClientRect();
@@ -67,6 +64,11 @@ export function scrollSortedRowIntoView(root, selector) {
   const bottom = scRect.bottom - (parseFloat(getComputedStyle(scroller).paddingBottom) || 0);
   if (rowRect.top < top) scroller.scrollTop -= top - rowRect.top;
   else if (rowRect.bottom > bottom) scroller.scrollTop += rowRect.bottom - bottom;
+}
+
+// Same, for the row a sort-triggered re-render left selected.
+export function scrollSortedRowIntoView(root, selector) {
+  scrollRowIntoView(root.querySelector(selector));
 }
 
 // Click cycle per column: none -> first -> other -> none. firstDir lets a

@@ -14,6 +14,7 @@ from typing import Any, Awaitable, Callable
 
 import chess.engine
 
+from ..engine_tmp import cleanup_spawn_dir, create_spawn_dir
 from ..engines import _popen_kwargs
 from ..events import EVT_UCI_LOG, Event, EventBus
 
@@ -73,6 +74,7 @@ class EngineSupervisor:
         self._settings = settings
         self._engine: chess.engine.UciProtocol | None = None
         self._transport: asyncio.SubprocessTransport | None = None
+        self._tmp_dir: Path | None = None
         self._engine_name: str | None = None
         self._options: dict = {}
         self._args: list[str] = []
@@ -139,13 +141,24 @@ class EngineSupervisor:
     # ------------------------------------------------------------------
 
     async def _open_uci(self):
+        """Spawn and return (transport, engine, tmp_dir). The per-spawn
+        temp dir receives the engine's self-extracted files (TMP/TEMP/
+        TMPDIR injection) and is owned by whoever tears the engine down."""
         command: str | list[str] = (
             [self._engine_path, *self._args] if self._args else self._engine_path
         )
+        tmp_dir = create_spawn_dir()
         try:
-            return await self._popen_uci(command, **_popen_kwargs(self._env))
+            transport, engine = await self._popen_uci(
+                command, **_popen_kwargs(self._env, tmp_dir)
+            )
         except FileNotFoundError as e:
+            cleanup_spawn_dir(tmp_dir)
             raise FileNotFoundError(self._engine_path) from e
+        except Exception:
+            cleanup_spawn_dir(tmp_dir)
+            raise
+        return transport, engine, tmp_dir
 
     async def spawn(
         self,
@@ -157,7 +170,11 @@ class EngineSupervisor:
         Override precedence (later wins): per-engine options -> global_defaults
         -> overrides. Unknown / managed options are skipped, not raised.
         """
-        transport, engine = await self._open_uci()
+        transport, engine, tmp_dir = await self._open_uci()
+        # Cancel-teardown discards the engine without quit(); reclaim the
+        # prior spawn's temp dir here so a respawn never leaks it.
+        cleanup_spawn_dir(self._tmp_dir)
+        self._tmp_dir = tmp_dir
         self._transport = transport
         rc_future = getattr(engine, "returncode", None)
         if rc_future is not None:
@@ -204,7 +221,7 @@ class EngineSupervisor:
         calling it leaks the asyncio subprocess transport (Windows GC
         then fires ResourceWarning).
         """
-        transport, engine = await self._open_uci()
+        transport, engine, tmp_dir = await self._open_uci()
         rc_future = getattr(engine, "returncode", None)
         if rc_future is not None:
             rc_future.add_done_callback(lambda f: f.exception())
@@ -246,6 +263,7 @@ class EngineSupervisor:
                 await asyncio.wait(waiters, timeout=_CLOSE_GRACE_SECONDS)
             except Exception:
                 log.error("engine cleanup: transport close raised", exc_info=True)
+            cleanup_spawn_dir(tmp_dir)
 
         return engine, _cleanup
 
@@ -339,6 +357,8 @@ class EngineSupervisor:
             # Bound the wait so a wedged proactor cannot hang shutdown
             # forever; the timeout is a safety net, not the sync primitive.
             await asyncio.wait(waiters, timeout=_CLOSE_GRACE_SECONDS)
+        cleanup_spawn_dir(self._tmp_dir)
+        self._tmp_dir = None
         self._uci_log_tasks.clear()
 
     async def swap(self, path: str) -> None:
