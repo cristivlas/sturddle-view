@@ -835,3 +835,4 @@ def _isolate_user_config(tmp_path, monkeypatch):
     fake_root = tmp_path / "tournaments"
     monkeypatch.setattr(ts_mod, "default_root", lambda: fake_root)
     monkeypatch.setattr(app_mod, "default_root", lambda: fake_root)
+    monkeypatch.setenv("SV_ENGINE_TMP_ROOT", str(tmp_path / "engine-tmp"))
