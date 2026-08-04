@@ -1,8 +1,7 @@
 # AI Analysis & Commentary - Spec
 
 Design spec for AI-driven analysis commentary that augments engine-based
-analysis. Decisions captured from brainstorm; implementation details and
-phase tracking live in `ai-analysis-progress.md`.
+analysis. Decisions captured from brainstorm.
 
 ## Goal
 
@@ -515,8 +514,7 @@ Flat layout (the master toggle is described in §Ribbon buttons above):
 
 ## Testing Principles
 
-Phase-level test strategy lives in `ai-analysis-progress.md`. Top-level
-principles:
+Top-level principles:
 
 - Mock the LLM provider at the abstraction boundary (not HTTP), so
   Anthropic and Ollama paths share tests
