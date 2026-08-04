@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 import chess
-import chess.pgn
 
 from ._runtime import app_root
 from .chess.pgn_walk import replay_line

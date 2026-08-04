@@ -19,17 +19,20 @@ from sturddle_view.config import (
     HVE_DIFFICULTY_MAX,
     HVE_DIFFICULTY_MIN,
     PERSISTED_FIELDS,
+    _DEFAULT_HVE_DEPTH_PENALTY_CP,
     _DEFAULT_HVE_DROP_CAP_STEP_CP,
     _DEFAULT_HVE_TEMPERATURE_STEP_CP,
 )
 from sturddle_view.play.difficulty import (
-    THINK_DELAY_MAX_CLOCK_FRACTION,
+    collect_iteration,
+    effective_drops,
     eval_entry,
+    iteration_candidates,
     level_scale_cp,
     move_weights,
     mover_cp,
+    pick_iteration_move,
     sample_index,
-    think_delay,
 )
 
 CLAMP = 1000.0
@@ -223,19 +226,172 @@ def test_eval_entry_formats():
     assert eval_entry(chess.engine.Mate(-4)) == {"mate": -4}
 
 
-# ----- think_delay -----
+# ----- collect_iteration -----
 
-def test_think_delay_setting_wins_when_clock_is_healthy():
-    assert think_delay(1.0, 60.0) == 1.0
-
-
-def test_think_delay_capped_at_clock_fraction():
-    assert think_delay(1.0, 1.0) == 1.0 * THINK_DELAY_MAX_CLOCK_FRACTION
+def _mv(uci):
+    return chess.Move.from_uci(uci)
 
 
-def test_think_delay_zero_and_negative_remaining():
-    assert think_delay(1.0, 0.0) == 0.0
-    assert think_delay(1.0, -5.0) == 0.0
+def _info(depth=None, uci=None, cp=None, mate=None, pov=chess.WHITE, **extra):
+    info = dict(extra)
+    if depth is not None:
+        info["depth"] = depth
+    if uci is not None:
+        info["pv"] = [_mv(uci)]
+    if cp is not None or mate is not None:
+        score = chess.engine.Mate(mate) if mate is not None else chess.engine.Cp(cp)
+        info["score"] = chess.engine.PovScore(score, pov)
+    return info
+
+
+def test_collect_iteration_appends_white_pov():
+    out = []
+    collect_iteration(_info(depth=5, uci="e2e4", cp=30), out)
+    collect_iteration(_info(depth=6, uci="e7e5", cp=-40, pov=chess.BLACK), out)
+    assert out == [
+        (5, _mv("e2e4"), chess.engine.Cp(30)),
+        (6, _mv("e7e5"), chess.engine.Cp(40)),  # black relative -40 = white +40
+    ]
+
+
+@pytest.mark.parametrize("info", [
+    _info(uci="e2e4", cp=30),                            # no depth
+    _info(depth=5, uci="e2e4"),                          # no score
+    _info(depth=5, cp=30),                               # no pv
+    _info(depth=5, uci="e2e4", cp=30, lowerbound=True),  # aspiration fail-high
+    _info(depth=5, uci="e2e4", cp=30, upperbound=True),  # aspiration fail-low
+    _info(depth=5, uci="e2e4", cp=30, multipv=2),        # MultiPV side line
+])
+def test_collect_iteration_skips_unusable_chunks(info):
+    out = []
+    collect_iteration(info, out)
+    assert out == []
+
+
+def test_collect_iteration_keeps_explicit_multipv_1():
+    out = []
+    collect_iteration(_info(depth=5, uci="e2e4", cp=30, multipv=1), out)
+    assert len(out) == 1
+
+
+# ----- iteration_candidates -----
+
+def test_candidates_dedup_keeps_deepest_per_move():
+    out = []
+    for i in [
+        _info(depth=1, uci="e2e4", cp=40),
+        _info(depth=2, uci="d2d4", cp=10),
+        _info(depth=3, uci="e2e4", cp=25),
+    ]:
+        collect_iteration(i, out)
+    cands = iteration_candidates(out)
+    assert sorted((m.uci(), s.score(), d) for m, s, d in cands) == [
+        ("d2d4", 10, 2), ("e2e4", 25, 3),
+    ]
+
+
+def test_candidates_ordered_by_last_appearance():
+    """An updated move reinserts at the end, so list order tracks each
+    move's latest stream appearance (the anchor tie-break relies on it)."""
+    out = []
+    for i in [
+        _info(depth=3, uci="e2e4", cp=30),
+        _info(depth=5, uci="d2d4", cp=20),
+        _info(depth=8, uci="e2e4", cp=25),
+    ]:
+        collect_iteration(i, out)
+    cands = iteration_candidates(out)
+    assert [m.uci() for m, _s, _d in cands] == ["d2d4", "e2e4"]
+
+
+# ----- effective_drops -----
+
+def test_drops_final_best_is_zero_and_penalty_prices_depth():
+    cands = [
+        (_mv("e2e4"), chess.engine.Cp(30), 8),   # final
+        (_mv("d2d4"), chess.engine.Cp(10), 5),   # 20cp short, 3 shallow
+    ]
+    drops = effective_drops(cands, chess.WHITE, 1000.0, 15.0)
+    assert drops == [0.0, 20.0 + 3 * 15.0]
+
+
+def test_drops_floor_shallow_optimism_at_zero():
+    """A shallow score above the final best is a refuted mirage: its
+    cost is depth penalty only, never a bonus."""
+    cands = [
+        (_mv("e2e4"), chess.engine.Cp(30), 8),
+        (_mv("a2a3"), chess.engine.Cp(90), 2),  # mirage: +60 over final
+    ]
+    drops = effective_drops(cands, chess.WHITE, 1000.0, 15.0)
+    assert drops == [0.0, 6 * 15.0]
+
+
+def test_drops_same_depth_tie_anchors_to_latest_opinion():
+    """Engine flip-flops at the final depth: the stream's LAST entry is
+    the anchor (drop 0), not the first-seen candidate."""
+    out = []
+    for i in [
+        _info(depth=8, uci="a1b1", cp=10),
+        _info(depth=8, uci="a1b2", cp=20),
+    ]:
+        collect_iteration(i, out)
+    drops = effective_drops(iteration_candidates(out), chess.WHITE, 1000.0, 15.0)
+    assert drops == [10.0, 0.0]  # a1b1 trails the a1b2 anchor by 10cp
+
+
+def test_drops_black_mover_pov():
+    cands = [
+        (_mv("e7e5"), chess.engine.Cp(-30), 8),  # white -30 = black +30: final
+        (_mv("d7d5"), chess.engine.Cp(20), 6),   # black -20: 50cp short, 2 shallow
+    ]
+    drops = effective_drops(cands, chess.BLACK, 1000.0, 15.0)
+    assert drops == [0.0, 50.0 + 2 * 15.0]
+
+
+# ----- pick_iteration_move -----
+
+def _pick(iterations, level, rng=None):
+    return pick_iteration_move(
+        iterations,
+        chess.WHITE,
+        temp_cp=_temp(level),
+        drop_cap_cp=_cap(level),
+        clamp_cp=CLAMP,
+        depth_penalty_cp=_DEFAULT_HVE_DEPTH_PENALTY_CP,
+        rng=rng,
+    )
+
+
+def test_pick_empty_stream_returns_none():
+    assert _pick([], 5) is None
+
+
+def test_pick_high_level_excludes_stale_candidates():
+    """Level 9 (cap 50): a candidate 6 depths stale costs 90 in penalty
+    alone -- excluded, final best always played."""
+    iters = [
+        (2, _mv("a2a3"), chess.engine.Cp(40)),
+        (8, _mv("e2e4"), chess.engine.Cp(30)),
+    ]
+    for _ in range(20):
+        assert _pick(iters, 9)[0] == _mv("e2e4")
+
+
+def test_pick_low_level_samples_shallow_candidates():
+    """Level 1 (cap 450, temp 225): the stale candidate is genuinely in
+    play -- both moves appear across seeded draws."""
+    iters = [
+        (2, _mv("a2a3"), chess.engine.Cp(40)),
+        (8, _mv("e2e4"), chess.engine.Cp(30)),
+    ]
+    rng = random.Random(3)
+    seen = {_pick(iters, 1, rng)[0].uci() for _ in range(200)}
+    assert seen == {"a2a3", "e2e4"}
+
+
+def test_pick_returns_candidate_score_and_depth():
+    iters = [(8, _mv("e2e4"), chess.engine.Cp(30))]
+    assert _pick(iters, 5) == (_mv("e2e4"), chess.engine.Cp(30), 8)
 
 
 # ----- config wiring -----

@@ -31,6 +31,7 @@ async def pump_engine_info(
     board: chess.Board,
     pov: chess.Color,
     on_payload: Optional[Callable[[dict], None]] = None,
+    on_info: Optional[Callable[[chess.engine.InfoDict], None]] = None,
     capture_score: Optional[dict] = None,
     cancel_token: Optional[CancelToken] = None,
     first_info_event: Optional[asyncio.Event] = None,
@@ -38,6 +39,8 @@ async def pump_engine_info(
     """Drain `analysis` until completion or cooperative cancel.
 
     For each "interesting" info chunk (carries pv / depth / score):
+    - call `on_info(info)` if provided, with the RAW InfoDict (HVE's
+      difficulty sampling collects per-depth bests this way)
     - serialize to the unified engine_info schema using the caller's POV
     - call `on_payload(payload)` if provided (HVE uses this to cache for
       `/game/sync` replay; the AI tool passes None)
@@ -92,6 +95,8 @@ async def pump_engine_info(
                 if first_info_event is not None and not first_info_event.is_set():
                     first_info_event.set()
             if "pv" in info or "depth" in info or "score" in info:
+                if on_info is not None:
+                    on_info(info)
                 payload = serialize_info(info, board=board, pov=pov)
                 if on_payload is not None:
                     on_payload(payload)

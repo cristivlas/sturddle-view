@@ -47,22 +47,22 @@ _DEFAULT_AI_VERIFICATION_DEPTH = 25
 DEFAULT_TC_INITIAL_SECONDS = 300.0
 DEFAULT_TC_INCREMENT_SECONDS = 0.0
 
-# HvE difficulty bounds. MAX = full strength (normal search, no sweep);
-# below MAX the engine move is softmax-sampled from per-move scores --
-# see docs/hve-difficulty-spec.md. Shared by the settings API
-# (validation), the UI (slider range), and the sweep path.
+# HvE difficulty bounds. MAX = full strength; below MAX the reply is
+# softmax-sampled from the search's per-depth bests -- see
+# docs/hve-difficulty-spec.md. Shared by the settings API (validation),
+# the UI (slider range), and the sampling path.
 HVE_DIFFICULTY_MIN = 1
 HVE_DIFFICULTY_MAX = 10
 
-# Sweep tuning (no-env defaults). Movetime bounds each per-candidate
-# scoring search; the think delay is the cosmetic on-clock pause after
-# sampling; the temperature and drop-cap steps convert (MAX - level) to
-# centipawns (softmax temperature / hard exclusion threshold); the
+# Sampling tuning (no-env defaults). The temperature and drop-cap steps
+# convert (MAX - level) to centipawns (softmax temperature / hard
+# exclusion threshold); the depth penalty prices each depth of
+# shallowness so stale iteration candidates fade at high levels; the
 # clamp folds mates to a finite cp so softmax weights stay sane.
-_DEFAULT_HVE_SWEEP_MOVETIME_SECONDS = 0.1
-_DEFAULT_HVE_THINK_DELAY_SECONDS = 1.0
+# Scoring itself has no knobs: it reads the one normal search.
 _DEFAULT_HVE_TEMPERATURE_STEP_CP = 25.0
 _DEFAULT_HVE_DROP_CAP_STEP_CP = 50.0
+_DEFAULT_HVE_DEPTH_PENALTY_CP = 15.0
 _DEFAULT_HVE_SCORE_CLAMP_CP = 1000.0
 
 # Opening-book line order. Shared by the settings API (validation), the
@@ -210,15 +210,14 @@ class Settings(BaseSettings):
     # rotates the matching-pool anchor. Reset when the book path changes.
     engine_default_book_cursor: int = 0
 
-    # HvE difficulty (MIN..MAX). MAX = full strength; below MAX each
-    # engine move is softmax-sampled from full-strength per-move scores
-    # (docs/hve-difficulty-spec.md). Tuning knobs bind to
-    # SV_HVE_SWEEP_MOVETIME_SECONDS etc. via the SV_ env prefix.
+    # HvE difficulty (MIN..MAX). MAX = full strength; below MAX the
+    # engine reply is softmax-sampled from the search's per-depth best
+    # moves (docs/hve-difficulty-spec.md). Tuning knobs bind to
+    # SV_HVE_TEMPERATURE_STEP_CP etc. via the SV_ env prefix.
     hve_difficulty: int = HVE_DIFFICULTY_MAX
-    hve_sweep_movetime_seconds: float = _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS
-    hve_think_delay_seconds: float = _DEFAULT_HVE_THINK_DELAY_SECONDS
     hve_temperature_step_cp: float = _DEFAULT_HVE_TEMPERATURE_STEP_CP
     hve_drop_cap_step_cp: float = _DEFAULT_HVE_DROP_CAP_STEP_CP
+    hve_depth_penalty_cp: float = _DEFAULT_HVE_DEPTH_PENALTY_CP
     hve_score_clamp_cp: float = _DEFAULT_HVE_SCORE_CLAMP_CP
 
     # AI analysis & commentary. Master toggle gates the engine+AI behavior

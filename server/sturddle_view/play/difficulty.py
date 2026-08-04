@@ -1,8 +1,10 @@
-"""HvE difficulty: full-strength per-move scoring + softmax move sampling.
+"""HvE difficulty: sample the reply from the search's iteration stream.
 
-The engine is never weakened; below max difficulty every legal move is
-scored individually and the reply is sampled with a temperature derived
-from the difficulty level. See docs/hve-difficulty-spec.md.
+The engine is never weakened: one normal full-strength search runs on
+the real clock, and below max difficulty the reply is truncated-softmax
+sampled from the per-depth best moves that search reported. A shallow
+candidate's missed refutation is exactly what a weaker player misses.
+See docs/hve-difficulty-spec.md.
 """
 from __future__ import annotations
 
@@ -11,20 +13,6 @@ import random
 
 import chess
 import chess.engine
-
-# searchmoves compliance probe. Detecting "ignores searchmoves" needs a
-# position where the unrestricted choice is predictable and different
-# from the probe move. Mate-in-1 gives that: every engine, at any depth,
-# plays Ra8# unrestricted. So we send `go searchmoves a1a2`: reply a1a2 =
-# restriction honored; anything else = ignored, push-and-eval fallback.
-# Kg8 + f7/g7/h7 pawns make it a legal back-rank mate; Kg1 + f2/g2/h2
-# mirror it.
-PROBE_FEN = "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1"
-PROBE_MOVE_UCI = "a1a2"
-
-# The cosmetic think delay never eats more than this share of the
-# engine's remaining clock, so the delay itself cannot flag the engine.
-THINK_DELAY_MAX_CLOCK_FRACTION = 0.5
 
 
 def eval_entry(white_score: chess.engine.Score) -> dict:
@@ -83,9 +71,82 @@ def sample_index(
     return (rng or random).choices(range(len(weights)), weights=weights, k=1)[0]
 
 
-def think_delay(setting_seconds: float, remaining_seconds: float) -> float:
-    """Cosmetic on-clock delay, capped so it can never flag the engine."""
-    return min(
-        setting_seconds,
-        max(0.0, remaining_seconds) * THINK_DELAY_MAX_CLOCK_FRACTION,
-    )
+def collect_iteration(info: chess.engine.InfoDict, out: list) -> None:
+    """Pump hook: append (depth, move, white-POV score) for a completed
+    iteration. Skips chunks without depth/score/pv, aspiration
+    fail-high/low bounds, and MultiPV side lines."""
+    if "depth" not in info or "score" not in info:
+        return
+    pv = info.get("pv")
+    if not pv:
+        return
+    if info.get("lowerbound") or info.get("upperbound"):
+        return
+    if info.get("multipv", 1) != 1:
+        return
+    out.append((info["depth"], pv[0], info["score"].pov(chess.WHITE)))
+
+
+def iteration_candidates(
+    iterations: list[tuple[int, chess.Move, chess.engine.Score]],
+) -> list[tuple[chess.Move, chess.engine.Score, int]]:
+    """Dedup the per-depth best stream to distinct moves, keeping each
+    move's deepest (move, score, depth). Every update reinserts, so the
+    list is ordered by each move's LAST appearance in the stream --
+    effective_drops relies on that to break same-depth anchor ties in
+    favor of the engine's latest opinion."""
+    by_move: dict[str, tuple[chess.Move, chess.engine.Score, int]] = {}
+    for depth, mv, score in iterations:
+        key = mv.uci()
+        cur = by_move.get(key)
+        if cur is None or depth >= cur[2]:
+            by_move.pop(key, None)
+            by_move[key] = (mv, score, depth)
+    return list(by_move.values())
+
+
+def effective_drops(
+    candidates: list[tuple[chess.Move, chess.engine.Score, int]],
+    mover: chess.Color,
+    clamp_cp: float,
+    depth_penalty_cp: float,
+) -> list[float]:
+    """Per-candidate cost behind the final (deepest) best, in cp.
+
+    cp shortfall is floored at 0 -- a shallow score above the final best
+    is optimism the deeper search already refuted, never a bonus -- and
+    each depth of shallowness adds depth_penalty_cp, so stale candidates
+    fade unless the level's cap/temperature is generous.
+
+    The anchor is the deepest candidate; same-depth ties go to the later
+    list position, i.e. the stream's latest opinion (candidates arrive
+    ordered by last appearance -- see iteration_candidates)."""
+    final = max(enumerate(candidates), key=lambda ic: (ic[1][2], ic[0]))[1]
+    final_cp = mover_cp(final[1], mover, clamp_cp)
+    drops = []
+    for _mv, score, depth in candidates:
+        shortfall = max(0.0, final_cp - mover_cp(score, mover, clamp_cp))
+        drops.append(shortfall + depth_penalty_cp * (final[2] - depth))
+    return drops
+
+
+def pick_iteration_move(
+    iterations: list[tuple[int, chess.Move, chess.engine.Score]],
+    mover: chess.Color,
+    *,
+    temp_cp: float,
+    drop_cap_cp: float,
+    clamp_cp: float,
+    depth_penalty_cp: float,
+    rng: random.Random | None = None,
+) -> tuple[chess.Move, chess.engine.Score, int] | None:
+    """Sample one (move, white-POV score, depth) from the iteration
+    stream, or None when the stream had no usable iterations. The final
+    best has effective drop 0, so it is always eligible and most
+    likely."""
+    candidates = iteration_candidates(iterations)
+    if not candidates:
+        return None
+    drops = effective_drops(candidates, mover, clamp_cp, depth_penalty_cp)
+    idx = sample_index([-d for d in drops], temp_cp, drop_cap_cp, rng)
+    return candidates[idx]
