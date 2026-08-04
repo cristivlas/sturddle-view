@@ -178,6 +178,9 @@ async def test_request_body_and_headers_set(install_fake_httpx):
     assert client.last_body["system"] == "SYS"
     assert client.last_body["stream"] is True
     assert client.last_body["tools"][0]["name"] == "t"
+    # Token economy: every request opts into top-level auto-caching so
+    # agent rounds re-read the accumulated prefix instead of re-billing it.
+    assert client.last_body["cache_control"] == {"type": "ephemeral"}
     assert client.last_headers["x-api-key"] == "sk-secret"
 
 

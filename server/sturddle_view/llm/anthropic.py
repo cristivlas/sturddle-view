@@ -269,6 +269,12 @@ class AnthropicProvider(LLMProvider):
             "max_tokens": _DEFAULT_MAX_TOKENS,
             "messages": messages,
             "stream": True,
+            # Top-level auto-caching: places one cache breakpoint on the
+            # last cacheable block, so each agent round reads the prior
+            # round's full prefix (tools + system + history) at ~0.1x
+            # instead of re-billing it. Prefixes below the model's
+            # cacheable minimum silently don't cache -- no error.
+            "cache_control": {"type": "ephemeral"},
         }
         if system:
             body["system"] = system

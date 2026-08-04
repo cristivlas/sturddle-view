@@ -58,18 +58,36 @@ function fmtTokensCompact(n) {
   return String(n);
 }
 
+// Anthropic billing ratios relative to the input-token price: cache
+// reads bill at 0.1x, cache writes (5-minute TTL) at 1.25x. Used for
+// the effective-input figure -- ratios, not dollar prices, so they
+// don't drift per model.
+const CACHE_READ_BILL_WEIGHT = 0.1;
+const CACHE_WRITE_BILL_WEIGHT = 1.25;
+
 // Terminal breakdown line, e.g. "tokens: 12,340 in (11,020 cached) - 1,846
-// out". "in" is the full prompt volume (uncached + cache reads + cache
-// writes); the cached share is broken out only when nonzero.
+// out - ~2.6k eff. in". "in" is the full prompt volume (uncached + cache
+// reads + cache writes); "eff. in" is that volume weighted by billing
+// ratios -- what the input side actually cost in input-priced tokens.
+// Both cache figures appear only when caching was active.
 function fmtUsageSummary(u) {
   const cached = u.cache_read_input_tokens || 0;
-  const inTotal = (u.input_tokens || 0) + cached
-    + (u.cache_creation_input_tokens || 0);
+  const written = u.cache_creation_input_tokens || 0;
+  const fresh = u.input_tokens || 0;
+  const inTotal = fresh + cached + written;
   const out = u.output_tokens || 0;
+  const sep = " \u00b7 ";
   const inPart = cached > 0
     ? `${inTotal.toLocaleString()} in (${cached.toLocaleString()} cached)`
     : `${inTotal.toLocaleString()} in`;
-  return `tokens: ${inPart} \u00b7 ${out.toLocaleString()} out`;
+  let line = `tokens: ${inPart}${sep}${out.toLocaleString()} out`;
+  if (cached > 0 || written > 0) {
+    const effective = Math.round(
+      fresh + written * CACHE_WRITE_BILL_WEIGHT + cached * CACHE_READ_BILL_WEIGHT
+    );
+    line += `${sep}~${fmtTokensCompact(effective)} eff. in`;
+  }
+  return line;
 }
 
 function usageTotal(u) {
@@ -448,13 +466,14 @@ export function resetAi() {
 
 // Cumulative turn usage from ai_usage events. Idempotent (overwrites
 // with the latest totals), which is exactly what replay re-dispatch
-// needs. The ticker shows total volume processed (prompt + cache +
-// output); the in/out breakdown lands in the terminal slot on done.
+// needs. The ticker counts output tokens only -- Claude Code semantics
+// (tokens the model generated, not the re-sent prefix); the full
+// input/cache accounting lands in the terminal slot on done.
 export function setAiUsage(usage) {
   if (!inst.body || !usage) return;
-  const total = usageTotal(usage);
+  const out = usage.output_tokens || 0;
   inst.body._statusTokens.textContent =
-    total > 0 ? `${fmtTokensCompact(total)} tokens` : "";
+    out > 0 ? `${fmtTokensCompact(out)} tokens` : "";
 }
 
 // Delta-less thinking event carrying only a server duration, for a round
