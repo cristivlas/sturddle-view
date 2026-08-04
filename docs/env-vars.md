@@ -71,6 +71,20 @@ properties of the fastchess + UCI protocol, not operator tunables.
 Invalid (non-numeric) overrides log a warning and fall back to the
 default.
 
+## HvE difficulty
+
+Tunables for the difficulty sweep (levels 1-9). See
+[hve-difficulty-spec.md](hve-difficulty-spec.md). `hve_difficulty`
+itself is a UI-managed persisted setting, not listed here.
+
+| Var | Default | Effect | Where |
+|---|---|---|---|
+| `SV_HVE_SWEEP_MOVETIME_SECONDS` | `0.1` | Movetime per candidate-scoring search (and the searchmoves probe). | `server/sturddle_view/config.py` |
+| `SV_HVE_THINK_DELAY_SECONDS` | `1.0` | Cosmetic on-clock think delay after sampling; capped at half the engine's remaining time. | `server/sturddle_view/config.py` |
+| `SV_HVE_TEMPERATURE_STEP_CP` | `25.0` | Softmax temperature per level below max: `step * (10 - level)` centipawns. | `server/sturddle_view/config.py` |
+| `SV_HVE_DROP_CAP_STEP_CP` | `50.0` | Hard blunder cap per level below max: moves more than `step * (10 - level)` cp behind the best are never sampled. | `server/sturddle_view/config.py` |
+| `SV_HVE_SCORE_CLAMP_CP` | `1000.0` | Mates fold to ~+/-clamp and cp scores clip to the same range before softmax. | `server/sturddle_view/config.py` |
+
 ## Tournament engine proxy
 
 Set on the proxy subprocess environment, not via the CLI.

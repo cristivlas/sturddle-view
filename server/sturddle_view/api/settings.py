@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from .. import __author__, __copyright__, __version__
 from ..auth import require_token
-from ..config import VALID_BOOK_ORDERS
+from ..config import HVE_DIFFICULTY_MAX, HVE_DIFFICULTY_MIN, VALID_BOOK_ORDERS
 from ..engines import EngineNotFoundError
 
 log = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ _ENGINE_BOOK_PLIES_KEY = "engine_default_book_plies"
 _ENGINE_BOOK_ORDER_KEY = "engine_default_book_order"
 _ENGINE_BOOK_CURSOR_KEY = "engine_default_book_cursor"
 _HVE_USE_OPENING_BOOK_KEY = "hve_use_opening_book"
+_HVE_DIFFICULTY_KEY = "hve_difficulty"
 _AI_ENABLED_KEY = "ai_enabled"
 _AI_PROVIDER_KEY = "ai_provider"
 _AI_MODEL_KEY = "ai_model"
@@ -108,6 +109,7 @@ def _serialize(s) -> dict:
         _ENGINE_BOOK_PLIES_KEY: s.engine_default_book_plies,
         _ENGINE_BOOK_ORDER_KEY: s.engine_default_book_order,
         _HVE_USE_OPENING_BOOK_KEY: s.hve_use_opening_book,
+        _HVE_DIFFICULTY_KEY: s.hve_difficulty,
         _AI_ENABLED_KEY: s.ai_enabled,
         _AI_PROVIDER_KEY: s.ai_provider,
         _AI_MODEL_KEY: s.ai_model,
@@ -194,8 +196,8 @@ def _float_field(key: str, *, min_value: float):
     return apply
 
 
-def _int_field(key: str, *, min_value: int):
-    """Required-int field: reject non-integers and sub-floor values. Used
+def _int_field(key: str, *, min_value: int, max_value: int | None = None):
+    """Required-int field: reject non-integers and out-of-range values. Used
     for caps that always have a value (no clear-to-None semantics)."""
     def apply(payload, s, request):
         try:
@@ -204,6 +206,8 @@ def _int_field(key: str, *, min_value: int):
             raise HTTPException(status_code=400, detail=f"{key} must be an integer") from e
         if v < min_value:
             raise HTTPException(status_code=400, detail=f"{key} must be >= {min_value}")
+        if max_value is not None and v > max_value:
+            raise HTTPException(status_code=400, detail=f"{key} must be <= {max_value}")
         setattr(s, key, v)
     return apply
 
@@ -321,6 +325,9 @@ _APPLIERS = {
     _ENGINE_BOOK_PATH_KEY: _apply_book_path,
     _ENGINE_BOOK_ORDER_KEY: _optional_enum_field(_ENGINE_BOOK_ORDER_KEY, VALID_BOOK_ORDERS),
     _HVE_USE_OPENING_BOOK_KEY: _bool_field(_HVE_USE_OPENING_BOOK_KEY),
+    _HVE_DIFFICULTY_KEY: _int_field(
+        _HVE_DIFFICULTY_KEY, min_value=HVE_DIFFICULTY_MIN, max_value=HVE_DIFFICULTY_MAX,
+    ),
     _AI_ENABLED_KEY: _bool_field(_AI_ENABLED_KEY),
     _AI_PROVIDER_KEY: _enum_field(_AI_PROVIDER_KEY, _VALID_AI_PROVIDERS),
     _AI_MODEL_KEY: _str_field(_AI_MODEL_KEY),

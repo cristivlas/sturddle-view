@@ -2948,6 +2948,9 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
    conceptual group (e.g. a switch after a dropdown). Avoids ad-hoc inline
    margins on .settings-row elements. */
 .settings-row-spaced { margin-top: var(--settings-row-gap); }
+/* Double gap for a standalone row that follows another group with no
+   divider between them (e.g. the difficulty slider). */
+.settings-row-headroom { margin-top: calc(var(--settings-row-gap) * 2); }
 /* Inset standalone rows by the section's inner padding so toggle labels
    align with the left edge of inputs inside a .settings-section card. */
 .settings-row-section-inset { padding-left: var(--settings-section-pad); }
@@ -2962,6 +2965,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   width: 100%;
   --wa-form-control-value-line-height: 1.4;
 }
+.settings-row wa-slider { width: 100%; }
 /* Value + unit pair (e.g. time control). Total width matches the other
    single-control rows (max-width: 360px from .settings-row). */
 .settings-duration {
