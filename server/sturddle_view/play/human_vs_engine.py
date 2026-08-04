@@ -1838,12 +1838,11 @@ class HumanVsEngine:
                 self._analysis = None
         return best.move
 
-    async def _probe_searchmoves(self, engine, game_id: str) -> bool:
+    async def _probe_searchmoves(self, engine) -> bool:
         """True when the engine honors `go searchmoves` (cached per engine
         process). Restricted to a quiet move in a mate-in-1 position, a
-        compliant engine must return the quiet move. A failed probe
-        publishes the difficulty-unavailable toast (once per process) --
-        the caller then degrades to full strength."""
+        compliant engine must return the quiet move. The caller degrades
+        a failed probe to full strength and toasts per game."""
         cached = self._searchmoves_ok
         if cached is not None and cached[0] is engine:
             return cached[1]
@@ -1858,15 +1857,19 @@ class HumanVsEngine:
                 self._supervisor.engine_name or self.engine_path,
                 result.move.uci() if result.move else None,
             )
-            await self._bus.publish(
-                Event(
-                    kind=EVT_SYSTEM,
-                    game_id=game_id,
-                    payload={"error": DIFFICULTY_UNAVAILABLE_ERROR},
-                )
-            )
         self._searchmoves_ok = (engine, ok)
         return ok
+
+    async def _notify_difficulty_unavailable(self, game_id: str) -> None:
+        """Publish the difficulty-unavailable notice. Sent on every
+        degraded engine move; the client dedupes while its toast is up."""
+        await self._bus.publish(
+            Event(
+                kind=EVT_SYSTEM,
+                game_id=game_id,
+                payload={"error": DIFFICULTY_UNAVAILABLE_ERROR},
+            )
+        )
 
     async def _visible_pool(
         self, engine, board: chess.Board, level: int, game_id: str, gen: int,
@@ -1979,11 +1982,13 @@ class HumanVsEngine:
         # Below max difficulty (and with a searchmoves-compliant engine):
         # off-clock sweep + blinding pass build the visible pool; the
         # normal search below is then restricted to it. A failed probe
-        # degrades to full strength (toast published by the probe).
+        # degrades to full strength and notifies on every such move.
         pool: list[chess.Move] | None = None
         if difficulty < HVE_DIFFICULTY_MAX:
             try:
-                if await self._probe_searchmoves(engine, game_id):
+                if not await self._probe_searchmoves(engine):
+                    await self._notify_difficulty_unavailable(game_id)
+                else:
                     # Blank stale info for the silent sweep; the
                     # restricted search repopulates the panel.
                     await self._bus.publish(

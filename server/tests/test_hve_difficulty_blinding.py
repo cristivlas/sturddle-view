@@ -228,8 +228,8 @@ async def test_reprobe_after_engine_respawn(monkeypatch):
 
 
 async def test_degrade_to_full_strength_with_toast(caplog, monkeypatch):
-    """Probe failure: toast once per engine process, no sweep, and the
-    real search runs unrestricted."""
+    """Probe failure: notice published on every degraded move (client
+    dedupes), no sweep, and the real search runs unrestricted."""
     hve, engine = _make(honors=False)
     commits = _capture_commit(hve, monkeypatch)
     events = await hve._bus.subscribe()
@@ -241,7 +241,7 @@ async def test_degrade_to_full_strength_with_toast(caplog, monkeypatch):
         e for e in _drain(events)
         if e.kind == EVT_SYSTEM and e.payload.get("error") == DIFFICULTY_UNAVAILABLE_ERROR
     ]
-    assert len(toasts) == 1
+    assert len(toasts) == 2
     assert engine.sweep_calls == []
     assert engine.search_pools == [None, None]
     assert [c[0].uci() for c in commits] == ["a1b1", "a1b1"]

@@ -745,8 +745,9 @@ export function makeToastDismissBtn(onClick) {
 
 /** A toast that stays until dismissed, with an X button. `content` is a
  *  string or a Node (laid out in the grow slot beside the button). For
- *  errors that must not auto-vanish before the user reads them. */
-export function stickyToast(content, { variant = "neutral", stack } = {}) {
+ *  errors that must not auto-vanish before the user reads them.
+ *  Optional `onDismiss` fires once, on X click or the returned fn. */
+export function stickyToast(content, { variant = "neutral", stack, onDismiss } = {}) {
   let dismiss;
   const grow = document.createElement("span");
   grow.className = "toast-grow";
@@ -755,7 +756,15 @@ export function stickyToast(content, { variant = "neutral", stack } = {}) {
   const node = document.createElement("span");
   node.className = "toast-sort-msg";
   node.append(grow, makeToastDismissBtn(() => dismiss?.()));
-  dismiss = toast(node, { variant, duration: 0, stack });
+  const hide = toast(node, { variant, duration: 0, stack });
+  let notified = false;
+  dismiss = () => {
+    hide();
+    if (!notified) {
+      notified = true;
+      onDismiss?.();
+    }
+  };
   return dismiss;
 }
 

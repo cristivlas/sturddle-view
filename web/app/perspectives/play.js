@@ -65,6 +65,11 @@ let _viewingSummary = null;
 // overrides if anything changed server-side.
 let _cachedBoardUpdate = null;
 
+// Difficulty-unavailable sticky toast currently showing. Module scope:
+// the toast outlives a perspective remount, so a per-mount flag would
+// let the next degraded move stack a duplicate.
+let _difficultyToastUp = false;
+
 // X-game toast don't-nag flags, persisted across perspective mounts.
 // Keyed by game_id. Reset only on hard reload (fresh page load).
 const _xgameDismissed = new Map();
@@ -2432,7 +2437,14 @@ export const playPerspective = {
           : MSG.ANALYSIS_ENGINE_FAILED;
         toast(text, { variant: "danger" });
       } else if (err === "difficulty_unavailable") {
-        toast(MSG.DIFFICULTY_UNAVAILABLE, { variant: "warning" });
+        // Server notifies on every degraded move; one toast at a time.
+        if (!_difficultyToastUp) {
+          _difficultyToastUp = true;
+          stickyToast(MSG.DIFFICULTY_UNAVAILABLE, {
+            variant: "warning",
+            onDismiss: () => { _difficultyToastUp = false; },
+          });
+        }
       }
     });
 

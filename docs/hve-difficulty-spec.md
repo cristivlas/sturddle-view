@@ -83,8 +83,9 @@ honored; anything else = ignored. Mate-in-1 makes the unrestricted
 choice predictable at any depth.
 
 On failure the feature degrades loudly: the game plays at full
-strength, the failure is logged, and a toast tells the user
-difficulty is unavailable for this engine (once per engine process).
+strength, the failure is logged, and the server publishes a
+difficulty-unavailable notice on every degraded move; the client
+shows it as a sticky toast (manual dismiss), one at a time.
 
 ## Opening book
 
