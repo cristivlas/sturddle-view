@@ -2465,6 +2465,9 @@ wa-dialog:has(.engine-settings-tabs)::part(footer) {
   border-top: 1px solid rgba(255, 255, 255, 0.12);
   padding-top: 12px;
 }
+wa-dialog:has(.engine-settings-tabs)::part(body) {
+  padding-block-end: 0;
+}
 .engine-launch-form,
 .engine-opt-form {
   /* Fill the panel's full inner width so input/scrollbar right edges
