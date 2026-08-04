@@ -14,6 +14,10 @@ from types import SimpleNamespace
 import chess
 import chess.engine
 
+from sturddle_view.config import (
+    _DEFAULT_HVE_SWEEP_BUDGET_SECONDS,
+    _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS,
+)
 from sturddle_view.events import (
     EVT_ENGINE_SEARCH_START,
     EVT_SYSTEM,
@@ -75,6 +79,7 @@ class BlindableEngine:
         self.honors = honors_searchmoves
         self.play_calls = 0
         self.sweep_calls: list[str] = []
+        self.sweep_limits: list[float] = []
         self.search_pools: list[list[str] | None] = []
         self.on_sweep = None  # hook fired per analyse() call
 
@@ -90,6 +95,7 @@ class BlindableEngine:
         assert root_moves is not None and len(root_moves) == 1
         mv = root_moves[0]
         self.sweep_calls.append(mv.uci())
+        self.sweep_limits.append(limit.time)
         if self.on_sweep is not None:
             self.on_sweep()
         score = chess.engine.PovScore(
@@ -182,6 +188,20 @@ async def test_full_pool_restricts_to_all_admitted(monkeypatch):
     await hve._think_and_play()
     assert engine.search_pools == [[m.uci() for m in chess.Board(FOUR_MOVE_FEN).legal_moves]]
     assert commits[0][0].uci() == "a1b1"  # best visible = true best
+
+
+async def test_sweep_time_spreads_budget_over_moves(monkeypatch):
+    """Per-candidate movetime is max(floor, budget / legal moves):
+    four legal moves make the budget share beat the floor."""
+    hve, engine = _make()
+    _fix_pool(monkeypatch, [0])
+    _capture_commit(hve, monkeypatch)
+    await hve._think_and_play()
+    expected = max(
+        _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS,
+        _DEFAULT_HVE_SWEEP_BUDGET_SECONDS / 4,
+    )
+    assert engine.sweep_limits == [expected] * 4
 
 
 # ----- probe: caching, degrade -----

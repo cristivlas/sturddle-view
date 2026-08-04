@@ -20,7 +20,9 @@ Level 10: business as usual, one unhindered search.
 Below max, per engine move:
 
 1. Off-clock shallow sweep: score every legal move with
-   `go searchmoves <mv>` at a short fixed movetime (default 100ms).
+   `go searchmoves <mv>`, per-candidate movetime
+   `max(floor, budget / N)` (defaults 70ms and 1s): the budget
+   spreads over big move lists, the floor keeps each score sane.
    These scores only gate visibility -- they never choose the played
    move, so their shallowness cannot produce a dud move directly.
 2. Pool admission, two gates per move:
@@ -96,7 +98,8 @@ shortening book plies, not weakening the book.
 
 | Knob | Default | Role |
 |---|---|---|
-| `SV_HVE_SWEEP_MOVETIME_SECONDS` | 0.1 | shallow sweep movetime per move |
+| `SV_HVE_SWEEP_MOVETIME_SECONDS` | 0.07 | sweep movetime floor per candidate |
+| `SV_HVE_SWEEP_BUDGET_SECONDS` | 1.0 | sweep budget spread over the legal moves |
 | `SV_HVE_REMOVAL_STEP` | 0.10 | qmax per level below max |
 | `SV_HVE_SCORE_CLAMP_CP` | 1000 | mate folding / cp clipping before ranging |
 | `SV_HVE_WINPROB_SCALE_CP` | 180 | logistic scale for cp -> win prob |
@@ -110,6 +113,8 @@ a visible notice.
 
 ## Cost
 
-N x 100ms off-clock per engine move (~2-4s), plus one normal think.
+Per-candidate `max(70ms, 1s/N)` off-clock per engine move (~1s in
+small positions, ~2.5s for a 35-move middlegame), plus one normal
+think.
 The played move is always a full-depth choice; expected strength is
 set by what the engine is allowed to see, not how well it thinks.

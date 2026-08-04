@@ -54,11 +54,13 @@ DEFAULT_TC_INCREMENT_SECONDS = 0.0
 HVE_DIFFICULTY_MIN = 1
 HVE_DIFFICULTY_MAX = 10
 
-# Blinding tuning (no-env defaults). The sweep movetime bounds each
-# shallow candidate-ranking search; the removal step converts
+# Blinding tuning (no-env defaults). Per-candidate sweep time is
+# max(floor, budget / legal moves): the budget spreads over big move
+# lists, the floor keeps each score sane; the removal step converts
 # (MAX - level) to the peak blinding probability; the clamp folds
 # mates to a finite cp so the auto-ranged spread stays sane.
-_DEFAULT_HVE_SWEEP_MOVETIME_SECONDS = 0.1
+_DEFAULT_HVE_SWEEP_MOVETIME_SECONDS = 0.07
+_DEFAULT_HVE_SWEEP_BUDGET_SECONDS = 1.0
 _DEFAULT_HVE_REMOVAL_STEP = 0.10
 _DEFAULT_HVE_SCORE_CLAMP_CP = 1000.0
 
@@ -220,6 +222,7 @@ class Settings(BaseSettings):
     # Tuning knobs bind to SV_HVE_REMOVAL_STEP etc. via the SV_ prefix.
     hve_difficulty: int = HVE_DIFFICULTY_MAX
     hve_sweep_movetime_seconds: float = _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS
+    hve_sweep_budget_seconds: float = _DEFAULT_HVE_SWEEP_BUDGET_SECONDS
     hve_removal_step: float = _DEFAULT_HVE_REMOVAL_STEP
     hve_score_clamp_cp: float = _DEFAULT_HVE_SCORE_CLAMP_CP
     hve_winprob_scale_cp: float = _DEFAULT_HVE_WINPROB_SCALE_CP

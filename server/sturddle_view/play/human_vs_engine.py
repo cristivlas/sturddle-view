@@ -25,6 +25,7 @@ from ..config import (
     HVE_DIFFICULTY_MAX,
     _DEFAULT_HVE_REMOVAL_STEP,
     _DEFAULT_HVE_SCORE_CLAMP_CP,
+    _DEFAULT_HVE_SWEEP_BUDGET_SECONDS,
     _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS,
     _DEFAULT_HVE_WINPROB_DROP_CAP,
     _DEFAULT_HVE_WINPROB_SCALE_CP,
@@ -1874,17 +1875,20 @@ class HumanVsEngine:
         Scores every legal move at the sweep movetime, then builds the
         auto-ranged, level-blinded pool the real search may see.
         Returns None when the game/generation changed mid-sweep."""
-        limit = chess.engine.Limit(
-            time=getattr(
-                self._settings, "hve_sweep_movetime_seconds",
-                _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS,
-            ),
-        )
         clamp = getattr(self._settings, "hve_score_clamp_cp", _DEFAULT_HVE_SCORE_CLAMP_CP)
         # Sweep on a copy: the live board must not have stale state sent
         # mid-sweep while takeback/new-game can run concurrently.
         root = board.copy()
         moves = list(root.legal_moves)
+        floor_s = getattr(
+            self._settings, "hve_sweep_movetime_seconds",
+            _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS,
+        )
+        budget_s = getattr(
+            self._settings, "hve_sweep_budget_seconds",
+            _DEFAULT_HVE_SWEEP_BUDGET_SECONDS,
+        )
+        limit = chess.engine.Limit(time=max(floor_s, budget_s / len(moves)))
         scores: list[float] = []
         for mv in moves:
             if self._game_id != game_id or self._think_gen != gen:
