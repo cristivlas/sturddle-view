@@ -95,7 +95,7 @@ async def new_game(payload: dict, request: Request) -> dict:
         initial_seconds=float(payload.get("initial_seconds", s.tc_initial_seconds)),
         increment_seconds=float(payload.get("increment_seconds", s.tc_increment_seconds)),
     )
-    player_name = (payload.get("player_name") or "").strip() or None
+    player_name = s.player_name.strip() or None
     await _cancel_ai_analysis(request)
     seed_fen, book = await _resolve_book(s)
     try:
@@ -641,7 +641,7 @@ async def view_play_from_here(payload: dict, request: Request) -> dict:
         increment_seconds=float(payload.get("increment_seconds", s.tc_increment_seconds)),
     )
     inherit_clocks = bool(payload.get("inherit_pgn_clocks", s.inherit_pgn_clocks))
-    player_name = (payload.get("player_name") or "").strip() or None
+    player_name = s.player_name.strip() or None
     await _cancel_ai_analysis(request)
     try:
         game_id = await hve.play_from_here(

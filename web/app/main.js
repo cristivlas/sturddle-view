@@ -2,7 +2,7 @@ import { connect } from "./ws.js";
 import { PerspectiveRouter } from "./perspectives.js";
 import { playPerspective } from "./perspectives/play.js";
 import { enginesPerspective } from "./perspectives/engines.js";
-import { openSettingsDialog } from "./settings-dialog.js";
+import { openSettingsDialog, migrateLegacyPlayerName } from "./settings-dialog.js";
 import { openAboutDialog } from "./about-dialog.js";
 import { openRibbonWindow, closeRibbonWindow, mountRibbonElement, isRibbonFloating, nudgeRibbonToViewport, RIBBON_SIDE_KEY } from "./ribbon-window.js";
 import { loadRaw, saveRaw } from "./storage.js";
@@ -251,6 +251,7 @@ api("GET", "/settings").then(s => {
     const copy = s.copyright ? ` -- (c) ${s.copyright}` : "";
     footer.textContent = `SturddleView${ver}${copy}`;
   }
+  migrateLegacyPlayerName(api, s);
 }).catch(() => {});
 
 document.getElementById("about-btn").addEventListener("click", () => {

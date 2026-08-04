@@ -41,7 +41,6 @@ import {
 } from "../play-ai-window.js";
 import { terminationLabel } from "../format-termination.js";
 import { editAnnotation } from "../annotation-dialog.js";
-import { getConfiguredPlayerName } from "../settings-dialog.js";
 
 // Tool name the AI uses to inspect hypothetical positions; the live
 // board mirrors `input.fen` while a call with this name is in flight.
@@ -1331,7 +1330,6 @@ async function onNewGameImpl(state) {
     if (!ok) return;
   }
   try {
-    const playerName = getConfiguredPlayerName();
     // Reset the board BEFORE the POST, then drop the game_id so old-game
     // events stop applying. An instant engine first move (e.g. an opening
     // book move, no search delay) can publish its board_update before the
@@ -1341,9 +1339,8 @@ async function onNewGameImpl(state) {
     // including that early book move -- land on a clean board and persist.
     state.view.reset();
     state.view.setGameId(null);
-    state.view.setPlayerName(playerName);
     closeAi();
-    const r = await state.ctx.api("POST", "/game/new", { player_name: playerName });
+    const r = await state.ctx.api("POST", "/game/new", {});
     state.view.setGameId(r.game_id);
     state.view.setHumanWhite(!!r.human_white);
     state.resignAvailable = true;
@@ -1443,10 +1440,8 @@ async function onPlayFromHereImpl(state) {
   // game_id filter — that drop loses the human_white/name swap.
   state.view.setGameId(null);
   try {
-    const playerName = getConfiguredPlayerName();
-    state.view.setPlayerName(playerName);
     closeAi();
-    const r = await state.ctx.api("POST", "/game/view/play-from-here", { player_name: playerName });
+    const r = await state.ctx.api("POST", "/game/view/play-from-here", {});
     state.view.setGameId(r.game_id);
     // Snapshot TC for drift detection (mirrors onNewGame).
     try {

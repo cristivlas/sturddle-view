@@ -34,6 +34,7 @@ _PGN_DIR_KEY = "pgn_dir"
 _TC_INITIAL_KEY = "tc_initial_seconds"
 _TC_INCREMENT_KEY = "tc_increment_seconds"
 _HUMAN_SIDE_KEY = "human_side"
+_PLAYER_NAME_KEY = "player_name"
 _ALLOW_TAKEBACK_KEY = "allow_takeback"
 _AUTO_CLAIM_DRAWS_KEY = "auto_claim_draws"
 _INHERIT_PGN_CLOCKS_KEY = "inherit_pgn_clocks"
@@ -66,6 +67,8 @@ _AI_VERIFICATION_DEPTH_KEY = "ai_verification_depth"
 _ANALYSIS_ENGINE_KEY = "analysis_engine_id"
 # 100ms floor -- UCI wire is integer ms, and anything shorter is unplayable.
 _TC_INITIAL_MIN = 0.1
+# Mirrors the Settings dialog input's maxlength.
+_PLAYER_NAME_MAX_LEN = 32
 # Round caps must leave room for at least one full round.
 _AI_ROUNDS_MIN = 1
 # Depth caps must be at least one ply.
@@ -94,6 +97,7 @@ def _serialize(s) -> dict:
         _TC_INITIAL_KEY: s.tc_initial_seconds,
         _TC_INCREMENT_KEY: s.tc_increment_seconds,
         _HUMAN_SIDE_KEY: s.human_side,
+        _PLAYER_NAME_KEY: s.player_name,
         _ALLOW_TAKEBACK_KEY: s.allow_takeback,
         _AUTO_CLAIM_DRAWS_KEY: s.auto_claim_draws,
         _INHERIT_PGN_CLOCKS_KEY: s.inherit_pgn_clocks,
@@ -248,6 +252,12 @@ def _str_field(key: str):
     return apply
 
 
+def _apply_player_name(payload, s, request):
+    # Trim + cap to the UI input's maxlength; blank clears to "unset"
+    # (game start falls back to the stock default).
+    s.player_name = str(payload[_PLAYER_NAME_KEY] or "").strip()[:_PLAYER_NAME_MAX_LEN]
+
+
 def _apply_pgn_dir(payload, s, request):
     raw = payload[_PGN_DIR_KEY]
     if not raw:
@@ -310,6 +320,7 @@ _APPLIERS = {
     _TC_INITIAL_KEY: _float_field(_TC_INITIAL_KEY, min_value=_TC_INITIAL_MIN),
     _TC_INCREMENT_KEY: _float_field(_TC_INCREMENT_KEY, min_value=0),
     _HUMAN_SIDE_KEY: _enum_field(_HUMAN_SIDE_KEY, _VALID_SIDES),
+    _PLAYER_NAME_KEY: _apply_player_name,
     _ALLOW_TAKEBACK_KEY: _bool_field(_ALLOW_TAKEBACK_KEY),
     _AUTO_CLAIM_DRAWS_KEY: _bool_field(_AUTO_CLAIM_DRAWS_KEY),
     _INHERIT_PGN_CLOCKS_KEY: _bool_field(_INHERIT_PGN_CLOCKS_KEY),

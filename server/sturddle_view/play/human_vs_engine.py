@@ -184,6 +184,16 @@ def _bundle_prop(name: str) -> property:
     )
 
 
+def _fit_seed(seed: list | None, n_plies: int) -> list | None:
+    """Truncate/pad a per-ply seed list to n_plies entries; None input or
+    an all-None result collapses to None (caller applies its default)."""
+    if seed is None:
+        return None
+    fitted = list(seed[:n_plies])
+    fitted.extend([None] * (n_plies - len(fitted)))
+    return fitted if any(x is not None for x in fitted) else None
+
+
 class HumanVsEngine:
     """Single-game driver. Holds one active game at a time."""
 
@@ -556,7 +566,7 @@ class HumanVsEngine:
         self,
         human_white: bool,
         tc: TimeControl,
-        player_name: str = DEFAULT_PLAYER_NAME,
+        player_name: str | None = None,
         start_fen: str | None = None,
         start_moves_uci: list[str] | None = None,
         seed_clock_history: list[tuple[float | None, float | None]] | None = None,
@@ -564,6 +574,7 @@ class HumanVsEngine:
         seed_final_black_time: float | None = None,
         seed_comments: list[str | None] | None = None,
         seed_root_comment: str | None = None,
+        seed_eval_history: list[dict | None] | None = None,
         book: BookRef | None = None,
     ) -> str:
         """Start a fresh game.
@@ -578,6 +589,9 @@ class HumanVsEngine:
         comment storage when forking from a view game (play_from_here),
         so imported annotations survive into the eventual PGN export and
         recents save.
+
+        `seed_eval_history` seeds per-ply evals the same way, so the eval
+        graph keeps the forked prefix instead of restarting empty.
 
         `book` arms the PGN opening book for this game (startpos games
         only; the lookup gate also checks start_fen).
@@ -616,13 +630,11 @@ class HumanVsEngine:
                 final_b=seed_final_black_time,
             )
             clock.start_turn()
-            # Seed play-side comments from a forking caller (play_from_here).
-            # Truncate/pad to move_stack length so take-back can shrink alongside.
-            play_comments = None
-            if seed_comments is not None:
-                seeded = list(seed_comments[:n_plies])
-                seeded.extend([None] * (n_plies - len(seeded)))
-                play_comments = seeded if any(c is not None for c in seeded) else None
+            # Seed play-side comments/evals from a forking caller
+            # (play_from_here). Truncate/pad to move_stack length so
+            # take-back can shrink alongside.
+            play_comments = _fit_seed(seed_comments, n_plies)
+            seeded_evals = _fit_seed(seed_eval_history, n_plies)
             next_game = GameBundle(
                 mode=Mode.PLAY,
                 board=board,
@@ -632,7 +644,7 @@ class HumanVsEngine:
                 human_white=human_white,
                 player_name=player_name or DEFAULT_PLAYER_NAME,
                 clock=clock,
-                eval_history=[None] * n_plies,
+                eval_history=seeded_evals or [None] * n_plies,
                 play_comments=play_comments,
                 play_root_comment=seed_root_comment or None,
             )
@@ -1402,10 +1414,16 @@ class HumanVsEngine:
                 elif cursor < len(self._view_clock_history):
                     nw, nb = self._view_clock_history[cursor]
                     seed_final_w, seed_final_b = nw, nb
-            # Snapshot the view-mode commentary slice to seed the play game.
+            # Snapshot the view-mode commentary + eval slices to seed the
+            # play game.
             seed_comments = (
                 list(self._view_comments[:cursor])
                 if self._view_comments is not None
+                else None
+            )
+            seed_evals = (
+                list(self._view_eval_history[:cursor])
+                if self._view_eval_history is not None
                 else None
             )
             seed_root_comment = self._view_root_comment
@@ -1438,6 +1456,7 @@ class HumanVsEngine:
             seed_final_black_time=seed_final_b,
             seed_comments=seed_comments,
             seed_root_comment=seed_root_comment,
+            seed_eval_history=seed_evals,
         )
         # Re-stash the fork link after new_game cleared it. Only when
         # parent_id is known AND fork_ply >= 1 (ply 0 fork == plain new

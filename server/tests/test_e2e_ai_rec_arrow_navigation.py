@@ -123,7 +123,7 @@ async def test_view_mode_arrow_survives_navigation(server, make_page):
 @pytest.mark.asyncio
 async def test_play_mode_arrow_survives_navigation(server, make_page):
     base = server
-    r = httpx.post(f"{base}/game/new", json={"player_name": "P"})
+    r = httpx.post(f"{base}/game/new", json={})
     r.raise_for_status()
     gid = r.json().get("game_id")
     httpx.post(f"{base}/game/pause").raise_for_status()

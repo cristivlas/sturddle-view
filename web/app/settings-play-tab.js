@@ -5,7 +5,6 @@
 import { inlineSvgIcon } from "./dialogs.js";
 import { CHESS_CLOCK_SVG_INNER, CHESS_CLOCK_VIEW_BOX } from "./icons.js";
 import { makeDivider, makeSection } from "./settings-ui-helpers.js";
-import { loadRaw, saveRaw } from "./storage.js";
 import { SIDE } from "./chess-consts.js";
 
 // Mirrors HVE_DIFFICULTY_MIN/MAX on the server (config.py). MAX = full
@@ -17,7 +16,7 @@ const difficultyLabel = (v) =>
 
 export function buildPlayTab({
   initial, putSettings, putSettingsDebounced, makeDurationRow, pathRow,
-  playerNameDefault, playerNameKey, playerNameMaxLen,
+  playerNameDefault, playerNameMaxLen,
 }) {
   const playTab = document.createElement("wa-tab");
   playTab.panel = "play";
@@ -76,10 +75,10 @@ export function buildPlayTab({
   playerNameInput.size = "small";
   playerNameInput.placeholder = playerNameDefault;
   playerNameInput.maxlength = playerNameMaxLen;
-  playerNameInput.value = loadRaw(playerNameKey, "");
+  playerNameInput.value = initial.player_name ?? "";
   playerNameInput.addEventListener("change", () => {
     const v = playerNameInput.value.trim().slice(0, playerNameMaxLen);
-    saveRaw(playerNameKey, v || null);
+    putSettings({ player_name: v });
   });
   const playerNameRow = document.createElement("div");
   playerNameRow.className = "settings-row";

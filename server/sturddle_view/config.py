@@ -92,6 +92,7 @@ PERSISTED_FIELDS = (
     "tc_initial_seconds",
     "tc_increment_seconds",
     "human_side",
+    "player_name",
     "allow_takeback",
     "auto_claim_draws",
     "inherit_pgn_clocks",
@@ -157,6 +158,9 @@ class Settings(BaseSettings):
     tc_initial_seconds: float = DEFAULT_TC_INITIAL_SECONDS
     tc_increment_seconds: float = DEFAULT_TC_INCREMENT_SECONDS
     human_side: str = "white"
+    # HVE human display name, shared by all clients. Empty = unset; game
+    # start falls back to game_store.DEFAULT_PLAYER_NAME.
+    player_name: str = ""
     allow_takeback: bool = True
     auto_claim_draws: bool = True
     # Play From Here: when True, new game inherits live clock values from
