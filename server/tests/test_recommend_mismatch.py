@@ -81,12 +81,12 @@ def test_stm_moves_skips_other_ply_citations():
     assert bares == []
 
 
-def _coord(provider, registry=None):
+def _coord(provider, registry=None, board_provider=None):
     bus = EventBus()
     coord = AIAnalysisCoordinator(
         bus, provider,
         registry=registry or ToolRegistry(),
-        board_provider=_board,
+        board_provider=board_provider or _board,
     )
     return coord, bus
 
@@ -119,6 +119,118 @@ def test_mismatch_allows_comparison_with_a_rejected_alternative():
         kind="text", text="Qg3 is stronger than Ne3, which drops the e-pawn.",
     )]
     assert coord._recommend_mismatch(chunks, _uci("Qg3"), "Qg3") is None
+
+
+# Second reported bug: recorded Nbd2 (the arrow), closing prose explained
+# "8. c5" -- a pawn push, which the SAN recognizer deliberately skips when
+# bare. The move-number marker makes it unambiguous, so it must be seen.
+_PUSH_FEN = "rnb1k2r/pp1p1ppp/3qpn2/8/1pPP4/5NP1/PP2PPBP/RN1QK2R w KQkq - 2 8"
+_PUSH_PROSE = (
+    "8. c5 provides a direct challenge to the queen on d6, forcing the "
+    "black pieces to navigate an uncomfortable retreat while restricting "
+    "central counterplay."
+)
+
+
+def _push_board() -> chess.Board:
+    return chess.Board(_PUSH_FEN)
+
+
+def test_stm_moves_sees_numbered_pawn_push():
+    found = [(bare, m.uci()) for _s, bare, m in iter_stm_moves(_PUSH_PROSE, _push_board())]
+    assert found == [("c5", "c4c5")]
+
+
+def test_stm_moves_skips_bare_pawn_push_and_square_names():
+    # No marker: "c5" could be the square, and "on d6" names one -- the
+    # ambiguity that keeps bare pushes excluded from the recognizer.
+    found = [bare for _s, bare, _m in iter_stm_moves(
+        "c5 clamps the queenside; the queen on d6 is short of squares.",
+        _push_board(),
+    )]
+    assert found == []
+
+
+def test_mismatch_flags_numbered_pawn_push_prose():
+    coord, _bus = _coord(provider=None, board_provider=_push_board)
+    chunks = [ProviderChunk(kind="text", text=_PUSH_PROSE)]
+    result = coord._recommend_mismatch(chunks, "b1d2", "Nbd2")
+    assert result is not None
+    surfaces, named = result
+    assert named == "c5"
+    assert surfaces == ["8. c5"]
+
+
+def test_mismatch_clean_when_push_prose_names_recorded_move():
+    coord, _bus = _coord(provider=None, board_provider=_push_board)
+    chunks = [ProviderChunk(
+        kind="text", text="Nbd2 develops the knight; 8. c5 was the alternative.",
+    )]
+    assert coord._recommend_mismatch(chunks, "b1d2", "Nbd2") is None
+
+
+# Third reported bug, same position and arrow (Nbd2): the model drifted
+# into raw UCI ("8.c4c5"), which no SAN recognizer sees. A glued square
+# pair is unambiguous, so UCI counts with or without a move number.
+_UCI_PROSE = (
+    "8.c4c5 develops the initiative by forcing the black queen to retreat "
+    "while creating a new target. This central expansion disrupts your "
+    "opponent's coordination and limits the mobility of the queen on d6."
+)
+
+
+def test_stm_moves_sees_numbered_uci_token():
+    found = [(bare, m.uci()) for _s, bare, m in iter_stm_moves(_UCI_PROSE, _push_board())]
+    assert found == [("c4c5", "c4c5")]
+
+
+def test_stm_moves_sees_bare_uci_token():
+    found = [(bare, m.uci()) for _s, bare, m in iter_stm_moves(
+        "The push c4c5 gains space.", _push_board(),
+    )]
+    assert found == [("c4c5", "c4c5")]
+
+
+def test_stm_moves_skips_uci_not_legal_for_stm():
+    # "a7a5" is UCI-shaped but moves Black's pawn on a White turn -- the
+    # STM-legality filter drops it.
+    found = [bare for _s, bare, _m in iter_stm_moves(
+        "Black can counter with a7a5 later.", _push_board(),
+    )]
+    assert found == []
+
+
+def test_mismatch_flags_uci_prose():
+    coord, _bus = _coord(provider=None, board_provider=_push_board)
+    chunks = [ProviderChunk(kind="text", text=_UCI_PROSE)]
+    result = coord._recommend_mismatch(chunks, "b1d2", "Nbd2")
+    assert result is not None
+    surfaces, named = result
+    assert named == "c4c5"
+    assert surfaces == ["8.c4c5"]
+
+
+def test_mismatch_clean_when_uci_prose_names_recorded_move():
+    # The recorded move written in UCI still counts as naming it.
+    coord, _bus = _coord(provider=None, board_provider=_push_board)
+    chunks = [ProviderChunk(
+        kind="text", text="b1d2 develops the knight; c4c5 was the alternative.",
+    )]
+    assert coord._recommend_mismatch(chunks, "b1d2", "Nbd2") is None
+
+
+# Black to move: unmarked prose moves validate from the side to move, so a
+# plain "Nf6" (no "..." marker) on a Black turn must be seen -- the guard
+# skips only explicitly Black-marked tokens on a White turn.
+_BLACK_FEN = "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1"
+
+
+def test_stm_moves_sees_unmarked_black_move_on_black_turn():
+    board = chess.Board(_BLACK_FEN)
+    found = [(bare, m.uci()) for _s, bare, m in iter_stm_moves(
+        "Nf6 keeps things solid.", board,
+    )]
+    assert found == [("Nf6", "g8f6")]
 
 
 def test_mismatch_clean_on_prose_naming_no_move_at_all():
