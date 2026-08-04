@@ -771,9 +771,10 @@ export function stickyToast(content, { variant = "neutral", stack, onDismiss } =
 // Matches a leading sentence: up to the first ./!/? that is followed by
 // whitespace or end-of-string, so URLs (dots mid-token) stay intact.
 const FIRST_SENTENCE_RE = /.+?[.!?]+(?=\s|$)/;
-const DETAILS_ICON = "circle-info";
+export const DETAILS_ICON = "circle-info";
 const DETAILS_ARIA = "Error details";
-const VERBOSE_ERROR_WIDTH = "min(560px, 92vw)";
+// Standard width for details modals opened from a toast.
+export const DETAILS_DIALOG_WIDTH = "min(560px, 92vw)";
 
 /** Collapse whitespace and take the first sentence as a glanceable summary.
  *  Returns { summary, full, truncated }; `truncated` is true only when the
@@ -835,7 +836,7 @@ export function showVerboseErrorDetails(full) {
   return alert({
     message: linkifyText(full),
     messageClass: "error-detail-text",
-    width: VERBOSE_ERROR_WIDTH,
+    width: DETAILS_DIALOG_WIDTH,
   });
 }
 

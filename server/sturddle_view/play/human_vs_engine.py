@@ -1842,7 +1842,7 @@ class HumanVsEngine:
         """True when the engine honors `go searchmoves` (cached per engine
         process). Restricted to a quiet move in a mate-in-1 position, a
         compliant engine must return the quiet move. The caller degrades
-        a failed probe to full strength and toasts per game."""
+        a failed probe to full strength and notifies per move."""
         cached = self._searchmoves_ok
         if cached is not None and cached[0] is engine:
             return cached[1]
@@ -1862,12 +1862,17 @@ class HumanVsEngine:
 
     async def _notify_difficulty_unavailable(self, game_id: str) -> None:
         """Publish the difficulty-unavailable notice. Sent on every
-        degraded engine move; the client dedupes while its toast is up."""
+        degraded engine move; the client dedupes while its toast is up.
+        Carries the engine's UCI id name so the details popup can call
+        the engine out (empty when the engine never reported one)."""
         await self._bus.publish(
             Event(
                 kind=EVT_SYSTEM,
                 game_id=game_id,
-                payload={"error": DIFFICULTY_UNAVAILABLE_ERROR},
+                payload={
+                    "error": DIFFICULTY_UNAVAILABLE_ERROR,
+                    "engine": self._supervisor.engine_name or "",
+                },
             )
         )
 

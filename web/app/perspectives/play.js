@@ -7,7 +7,7 @@ import { APP_EVT } from "../app-events.js";
 import { KIND, AI_KIND_PREFIX } from "../game-events.js";
 import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
-import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, reportVerboseError, stickyToast, toast } from "../dialogs.js";
+import { alert as showAlert, buildToastWithActions, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportError, reportVerboseError, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, getEvalBarApi, setUciLogEngine, isMobileLayout } from "../play-dock-windows.js";
 import {
@@ -187,8 +187,17 @@ const MSG = {
   REANALYZE_FAILED: "Re-analyze failed",
   ENGINE_CRASHED: "Engine crashed unexpectedly.",
   ANALYSIS_ENGINE_FAILED: "Analysis engine failed to start.",
-  DIFFICULTY_UNAVAILABLE:
-    "This engine ignores searchmoves; difficulty is unavailable, playing at full strength.",
+  DIFFICULTY_UNAVAILABLE: "Difficulty unavailable; playing at full strength.",
+  // Details popup: mechanism sentence, then "<engine name> <rest>".
+  DIFFICULTY_UNAVAILABLE_DETAILS_MECHANISM:
+    "Difficulty works by restricting which root moves the engine may " +
+    "search (UCI 'go searchmoves').",
+  DIFFICULTY_UNAVAILABLE_DETAILS_REST:
+    "ignores that restriction, so reduced difficulty cannot be " +
+    "enforced and games play at full strength. To play at reduced " +
+    "difficulty, choose an engine that honors searchmoves.",
+  DIFFICULTY_GENERIC_ENGINE: "This engine",
+  DIFFICULTY_DETAILS_ARIA: "Difficulty details",
   // Confirm dialogs.
   CONFIRM_NEW_GAME: "Cancel the game in progress and start a new one?",
   CONFIRM_RESIGN: "Resign the current game?",
@@ -2440,7 +2449,23 @@ export const playPerspective = {
         // Server notifies on every degraded move; one toast at a time.
         if (!_difficultyToastUp) {
           _difficultyToastUp = true;
-          stickyToast(MSG.DIFFICULTY_UNAVAILABLE, {
+          const engineName = evt.payload?.engine || MSG.DIFFICULTY_GENERIC_ENGINE;
+          const details =
+            `${MSG.DIFFICULTY_UNAVAILABLE_DETAILS_MECHANISM} ` +
+            `${engineName} ${MSG.DIFFICULTY_UNAVAILABLE_DETAILS_REST}`;
+          let dismiss;
+          const body = buildToastWithActions(MSG.DIFFICULTY_UNAVAILABLE, [{
+            icon: DETAILS_ICON,
+            ariaLabel: MSG.DIFFICULTY_DETAILS_ARIA,
+            onClick: async () => {
+              await showAlert({
+                message: details,
+                width: DETAILS_DIALOG_WIDTH,
+              });
+              dismiss?.();
+            },
+          }]);
+          dismiss = stickyToast(body, {
             variant: "warning",
             onDismiss: () => { _difficultyToastUp = false; },
           });
