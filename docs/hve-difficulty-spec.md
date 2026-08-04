@@ -37,10 +37,18 @@ Below max, per engine move:
    logistic, `wp = 1 / (1 + exp(-cp / scale))` (scale ~180cp, an
    empirical engine fit), and a move passes only if
    `wp(best) - wp(move) <= drop cap` (default 0.15). Near equality
-   that is ~110cp, so no level hangs a piece from a healthy position;
-   the sigmoid flattens away from zero, so the same cap self-loosens
-   when already behind and a losing side keeps a wide pool -- low
-   levels stay weak instead of rubber-banding to strength. The clamp
+   that is ~110cp, below a clean piece hang (~200cp net), so no level
+   hangs a piece from a healthy position; the sigmoid flattens away
+   from zero, so the same cap self-loosens when already behind and a
+   losing side keeps a wide pool -- low levels stay weak instead of
+   rubber-banding to strength.
+
+   Why not a fixed cp cap: the same cp gap means different things at
+   different scores -- 150cp is a game-changing blunder at equality
+   but noise at -400. A fixed cap tight enough to stop hangs when
+   healthy strangles the pool once behind (weak levels suddenly
+   defend perfectly); a win-prob drop measures actual damage at any
+   score, so one constant does both jobs. The clamp
    only folds mates and huge evals to a finite cp -- the worst legal
    move still sets the auto-range denominator.
 3. Blinding pass, one Bernoulli roll per pool move: removal odds
