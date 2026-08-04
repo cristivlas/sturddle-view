@@ -180,6 +180,68 @@ async def test_restore_from_old_save_falls_back_to_nones(tmp_path):
     assert h._eval_history == [None, None]
 
 
+async def test_play_from_here_seeds_eval_prefix(hve):
+    """Forking mid-game keeps the view game's evals for the seeded plies."""
+    evals: list[dict | None] = [{"cp": 10}, {"cp": -5}, {"cp": 30}, {"cp": -20}]
+    await hve.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5", "g1f3", "b8c6"],
+        clock_history=None,
+        eval_history=evals,
+    ))
+    await hve.view_last()
+    await hve.view_back()  # cursor at ply 3 (after Nf3)
+    assert hve._view_cursor == 3
+    await hve.play_from_here(tc=TimeControl(60.0, 0.0))
+    assert hve._eval_history == evals[:3]
+
+
+async def test_play_from_here_without_view_evals_seeds_nones(hve):
+    """A view game with no evals forks into an all-None eval history."""
+    await hve.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=None,
+    ))
+    await hve.view_last()
+    await hve.play_from_here(tc=TimeControl(60.0, 0.0))
+    assert hve._eval_history == [None, None]
+
+
+async def test_forked_eval_history_persists_across_restore(tmp_path):
+    """The seeded prefix survives the autosave/restore round-trip."""
+    from sturddle_view.play.game_store import GameStore
+
+    bus = EventBus()
+    store = GameStore(tmp_path / "current_game.json")
+    h = HumanVsEngine(engine_path="/nonexistent", bus=bus, store=store)
+
+    async def fake_ensure_engine():
+        h._engine = _StubEngine()
+        return h._engine
+
+    h._ensure_engine = fake_ensure_engine
+    h._engine_to_move = AsyncMock()
+
+    evals: list[dict | None] = [{"cp": 12, "depth": 9}, None, {"cp": -7, "depth": 11}]
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5", "g1f3"],
+        clock_history=None,
+        eval_history=evals,
+    ))
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60.0, 0.0))
+
+    saved = store.load()
+    assert saved is not None
+    assert saved.eval_history == evals
+
+    fresh = HumanVsEngine(engine_path="/nonexistent", bus=bus, store=store)
+    fresh.restore_from(saved)
+    assert fresh._eval_history == evals
+
+
 async def test_pgn_text_play_mode_never_emits_clk(hve):
     """Play-mode export always uses cutechess tokens, even when no engine
     has moved (human ply -> time-only token, still no %clk)."""
