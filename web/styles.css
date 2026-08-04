@@ -305,6 +305,22 @@ wa-select::part(listbox) {
 .winbox.sturddle-wb-ai .wb-body,
 .dock-slot-body:has(> .play-ai-body) { overflow: hidden; padding: 0; }
 .play-ai-status-text { line-height: 1; }
+/* Cumulative token ticker beside the status text; muted so it reads as
+   telemetry, not as part of the status message. Empty until the
+   provider reports usage. */
+.play-ai-status-tokens {
+  line-height: 1;
+  margin-left: auto;
+  font-size: 0.85em;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+/* Terminal token breakdown line under the final prose. */
+.play-ai-usage {
+  font-size: 0.85em;
+  opacity: 0.7;
+  padding: 4px 0;
+}
 
 /* Inline failure / guardrail markers in the AI panel. Error is loud
    (red border, bolded header); round-cap is a softer informational

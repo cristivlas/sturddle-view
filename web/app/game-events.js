@@ -17,6 +17,7 @@ export const KIND = {
   AI_TOOL_CALL_COMPLETE: "ai_tool_call_complete",
   AI_RECOMMENDATION:     "ai_recommendation",
   AI_POSITION_NOTE:      "ai_position_note",
+  AI_USAGE:              "ai_usage",
 };
 
 // AI-stream kinds share this prefix; play.js buffers them during replay.

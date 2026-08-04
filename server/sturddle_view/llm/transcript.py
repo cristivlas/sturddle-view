@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -215,10 +216,13 @@ def _json(obj: Any) -> str:
 
 
 def _chunk_repr(chunk: ProviderChunk) -> str:
-    return _json({
+    body = {
         "kind": chunk.kind,
         "text": chunk.text,
         "tool_use_id": chunk.tool_use_id,
         "tool_name": chunk.tool_name,
         "tool_input": chunk.tool_input,
-    })
+    }
+    if chunk.usage is not None:
+        body["usage"] = asdict(chunk.usage)
+    return _json(body)

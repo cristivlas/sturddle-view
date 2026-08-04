@@ -32,6 +32,7 @@ import {
   setAiToolCallResult,
   noteAiPosition,
   markAiDone,
+  setAiUsage,
   setAiStatus,
   setAiTitle,
   setOnUserCloseAi,
@@ -326,6 +327,7 @@ function dispatchAiEvent(aiCtx, evt) {
           verifierRoundCap: !!p.verifier_round_cap,
           noResponse: !!p.no_response,
           noRecommendation: !!p.no_recommendation,
+          usage: p.usage || null,
         });
         if (p.error) {
           // Provider errors can be many lines with URLs; the toast shows the
@@ -398,6 +400,10 @@ function dispatchAiEvent(aiCtx, evt) {
     case KIND.AI_POSITION_NOTE: {
       const p = evt.payload || {};
       noteAiPosition({ round: p.round ?? 0, surfaces: p.surfaces || [] });
+      return true;
+    }
+    case KIND.AI_USAGE: {
+      setAiUsage(evt.payload || null);
       return true;
     }
     case KIND.AI_RECOMMENDATION: {

@@ -241,6 +241,80 @@ async def test_no_api_key_raises_before_request(install_fake_httpx):
 
 
 @pytest.mark.asyncio
+async def test_usage_chunk_yields_before_held_tool_use(install_fake_httpx):
+    # Usage arrives in message_start (input + cache) and message_delta
+    # (final output), both after/around the tool_use block on the wire.
+    # The provider must reorder: one usage chunk first, then the held
+    # tool_use -- the coordinator stops consuming at the first tool_use.
+    install_fake_httpx(lines=[
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":120,"output_tokens":1,"cache_read_input_tokens":30,"cache_creation_input_tokens":10}}}',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tu_1","name":"analyze"}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}',
+        'data: {"type":"content_block_stop","index":0}',
+        'data: {"type":"message_delta","usage":{"output_tokens":57}}',
+        'data: {"type":"message_stop"}',
+    ])
+    provider = AnthropicProvider(api_key="sk-test", model="m")
+    chunks = []
+    async for c in provider.stream(system="", messages=[{"role": "user", "content": "x"}]):
+        chunks.append(c)
+
+    assert [c.kind for c in chunks] == ["usage", "tool_use"]
+    usage = chunks[0].usage
+    assert usage.input_tokens == 120
+    # message_delta's cumulative count overwrites message_start's initial 1.
+    assert usage.output_tokens == 57
+    assert usage.cache_read_input_tokens == 30
+    assert usage.cache_creation_input_tokens == 10
+    assert chunks[1].tool_use_id == "tu_1"
+
+
+@pytest.mark.asyncio
+async def test_usage_chunk_after_text_on_clean_round(install_fake_httpx):
+    install_fake_httpx(lines=[
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":50,"output_tokens":2}}}',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Done."}}',
+        'data: {"type":"content_block_stop","index":0}',
+        'data: {"type":"message_delta","usage":{"output_tokens":9}}',
+        'data: {"type":"message_stop"}',
+    ])
+    provider = AnthropicProvider(api_key="sk-test", model="m")
+    chunks = []
+    async for c in provider.stream(system="", messages=[{"role": "user", "content": "x"}]):
+        chunks.append(c)
+
+    assert [c.kind for c in chunks] == ["text", "usage"]
+    assert chunks[1].usage.input_tokens == 50
+    assert chunks[1].usage.output_tokens == 9
+    # Fields the wire never sent stay at the dataclass default.
+    assert chunks[1].usage.cache_read_input_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_usage_and_tool_use_flushed_without_message_stop(install_fake_httpx):
+    # A stream that closes without message_stop (connection drop after the
+    # last data line) must still surface the held tool_use and usage via
+    # the defensive post-loop flush -- same order contract.
+    install_fake_httpx(lines=[
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":80,"output_tokens":1}}}',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tu_9","name":"analyze"}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}',
+        'data: {"type":"content_block_stop","index":0}',
+        'data: {"type":"message_delta","usage":{"output_tokens":13}}',
+    ])
+    provider = AnthropicProvider(api_key="sk-test", model="m")
+    chunks = []
+    async for c in provider.stream(system="", messages=[{"role": "user", "content": "x"}]):
+        chunks.append(c)
+
+    assert [c.kind for c in chunks] == ["usage", "tool_use"]
+    assert chunks[0].usage.input_tokens == 80
+    assert chunks[0].usage.output_tokens == 13
+    assert chunks[1].tool_use_id == "tu_9"
+
+
+@pytest.mark.asyncio
 async def test_mid_stream_error_event_raises(install_fake_httpx):
     install_fake_httpx(lines=[
         'data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}',

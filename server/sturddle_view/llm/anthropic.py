@@ -10,9 +10,13 @@ SSE shape we care about:
 - `content_block_delta` -- delta payload:
     * `text_delta` for text/thinking,
     * `input_json_delta.partial_json` for tool_use args (streamed JSON).
-- `content_block_stop` -- closes the block. Tool_use is emitted now
-  (after we have the full input JSON).
-- `message_delta` / `message_stop` -- terminal; we just stop reading.
+- `content_block_stop` -- closes the block. Tool_use chunks are built
+  now (after we have the full input JSON) but held until `message_stop`.
+- `message_start` / `message_delta` -- carry the `usage` accounting
+  (input + cache fields up front, final output_tokens in the delta).
+- `message_stop` -- terminal; we yield one `usage` chunk, then any held
+  tool_use chunks. The order matters: the coordinator stops consuming
+  at the first tool_use, so usage must precede it.
 
 Errors mid-stream arrive as `event: error` with a JSON envelope. HTTP
 errors before the stream opens come back as a non-200 status.
@@ -27,7 +31,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from ._errors import extract_error_message
-from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
+from .base import LLMProvider, Message, ProviderChunk, ProviderUsage, ToolWireSpec
 from .transcript import Transcript
 
 
@@ -56,6 +60,26 @@ THINKING_NONE = "none"           # model takes no thinking config -- omit
 # caching is safe. Seeded by list_models(), extended by stream();
 # fallback guesses are never cached.
 _thinking_mode_cache: dict[str, str] = {}
+
+# Usage fields copied off the wire; names match ProviderUsage fields.
+_USAGE_KEYS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+)
+
+
+def _merge_usage(dst: dict[str, int], src: Any) -> None:
+    """Fold a wire `usage` dict into `dst`, keeping only known int
+    fields. message_start carries input + cache counts; message_delta
+    re-states output_tokens cumulatively, so later merges win."""
+    if not isinstance(src, dict):
+        return
+    for key in _USAGE_KEYS:
+        val = src.get(key)
+        if isinstance(val, int):
+            dst[key] = val
 
 
 def _thinking_mode_from_capabilities(model_obj: dict) -> str | None:
@@ -276,9 +300,14 @@ class AnthropicProvider(LLMProvider):
 
         # Index -> open block state. For text/thinking we just remember
         # the kind so deltas route correctly; for tool_use we keep a full
-        # accumulator and emit at content_block_stop.
+        # accumulator, build the chunk at content_block_stop, and hold it
+        # in `pending_tools` until message_stop -- the usage chunk must go
+        # first (the coordinator stops consuming at the first tool_use).
         open_text_kinds: dict[int, str] = {}
         open_tools: dict[int, _ToolUseAccumulator] = {}
+        pending_tools: list[ProviderChunk] = []
+        usage_fields: dict[str, int] = {}
+        flushed = False
 
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(
@@ -345,11 +374,34 @@ class AnthropicProvider(LLMProvider):
                         idx = evt.get("index", 0)
                         acc = open_tools.pop(idx, None)
                         if acc is not None:
-                            yield acc.to_chunk()
+                            pending_tools.append(acc.to_chunk())
                         open_text_kinds.pop(idx, None)
+                    elif etype == "message_start":
+                        _merge_usage(
+                            usage_fields, (evt.get("message") or {}).get("usage")
+                        )
+                    elif etype == "message_delta":
+                        _merge_usage(usage_fields, evt.get("usage"))
+                    elif etype == "message_stop":
+                        if usage_fields:
+                            yield ProviderChunk(
+                                kind="usage",
+                                usage=ProviderUsage(**usage_fields),
+                            )
+                        for chunk in pending_tools:
+                            yield chunk
+                        flushed = True
                     elif etype == "error":
                         err = evt.get("error") or {}
                         msg = err.get("message") or json.dumps(err)
                         raise RuntimeError(f"anthropic stream error: {msg}")
-                    # message_start / message_delta / message_stop / ping
-                    # carry no chunk-relevant data for us.
+                    # ping carries no chunk-relevant data for us.
+                # Defensive: a stream that closed without message_stop still
+                # surfaces whatever was held back.
+                if not flushed:
+                    if usage_fields:
+                        yield ProviderChunk(
+                            kind="usage", usage=ProviderUsage(**usage_fields)
+                        )
+                    for chunk in pending_tools:
+                        yield chunk

@@ -18,7 +18,21 @@ if TYPE_CHECKING:
     from .transcript import Transcript
 
 
-ChunkKind = Literal["text", "thinking", "tool_use"]
+ChunkKind = Literal["text", "thinking", "tool_use", "usage"]
+
+
+@dataclass(slots=True, frozen=True)
+class ProviderUsage:
+    """Token accounting for one provider round.
+
+    Field names mirror Anthropic's usage block (the canonical wire
+    shape). Providers without cache accounting leave the cache fields
+    at 0. `input_tokens` is the uncached remainder only -- total prompt
+    size is input + cache_read + cache_creation."""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -31,6 +45,11 @@ class ProviderChunk:
     appends a tool_result message to the next round's input -- tool_results
     flow over the wire as `messages`, not as `ProviderChunk`s, so there is
     no `tool_result` chunk kind on the read side.
+
+    Usage: `kind="usage"` with `usage` set; emitted at most once per
+    round, at stream end, carrying the round's token accounting. Ordered
+    before any deferred tool_use chunk so a coordinator that stops
+    consuming at tool_use still sees it.
 
     `tool_signature` is opaque provider-side state attached to a tool_use
     that must be echoed back verbatim on the next round (Gemini's encrypted
@@ -48,6 +67,7 @@ class ProviderChunk:
     tool_input: dict[str, Any] = field(default_factory=dict)
     tool_signature: str = ""
     tool_input_error: str | None = None
+    usage: ProviderUsage | None = None
 
 
 Message = dict[str, Any]

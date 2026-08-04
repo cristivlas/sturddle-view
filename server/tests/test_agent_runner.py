@@ -16,9 +16,10 @@ import asyncio
 
 import pytest
 
-from sturddle_view.events import EventBus
+from sturddle_view.events import EVT_AI_USAGE, EventBus
 from sturddle_view.llm import (
     ProviderChunk,
+    ProviderUsage,
     ScriptedProvider,
     ToolRegistry,
     ToolSpec,
@@ -139,6 +140,89 @@ async def test_tool_use_dispatches_and_feeds_result_into_next_round():
     deltas = [e.payload["delta"] for e in events if "delta" in e.payload]
     assert deltas == ["Thinking. ", "It's +0.42."]
     assert _payload_subset(events[-1].payload, {"done": True})
+
+
+@pytest.mark.asyncio
+async def test_usage_accumulates_across_rounds_onto_done_event():
+    # Each round's usage chunk publishes cumulative turn totals as an
+    # ai_usage event; the terminal done event carries the final totals.
+    async def fake_tool(payload, *, cancel_token):
+        return {"ok": True}
+
+    provider = ScriptedProvider(rounds=[
+        [
+            ProviderChunk(kind="text", text="Checking. "),
+            ProviderChunk(
+                kind="usage",
+                usage=ProviderUsage(
+                    input_tokens=100,
+                    output_tokens=10,
+                    cache_read_input_tokens=40,
+                    cache_creation_input_tokens=5,
+                ),
+            ),
+            ProviderChunk(
+                kind="tool_use", tool_use_id="tu_1",
+                tool_name="analyze", tool_input={},
+            ),
+        ],
+        [
+            ProviderChunk(kind="text", text="Done."),
+            ProviderChunk(
+                kind="usage",
+                usage=ProviderUsage(input_tokens=200, output_tokens=20),
+            ),
+        ],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=_make_registry({"analyze": fake_tool})
+    )
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    usage_events = [e for e in events if e.kind == EVT_AI_USAGE]
+    assert len(usage_events) == 2
+    assert _payload_subset(usage_events[0].payload, {
+        "input_tokens": 100,
+        "output_tokens": 10,
+        "cache_read_input_tokens": 40,
+        "cache_creation_input_tokens": 5,
+    })
+    # Second event is cumulative, not per-round.
+    assert _payload_subset(usage_events[1].payload, {
+        "input_tokens": 300,
+        "output_tokens": 30,
+        "cache_read_input_tokens": 40,
+        "cache_creation_input_tokens": 5,
+    })
+    assert events[-1].payload["usage"] == {
+        "input_tokens": 300,
+        "output_tokens": 30,
+        "cache_read_input_tokens": 40,
+        "cache_creation_input_tokens": 5,
+    }
+
+
+@pytest.mark.asyncio
+async def test_no_usage_reported_means_no_usage_events_or_done_field():
+    # Providers without token accounting (Ollama/Gemini today) must not
+    # produce ai_usage events or a usage field on done -- the client
+    # renders nothing for them.
+    provider = ScriptedProvider(rounds=[[
+        ProviderChunk(kind="text", text="Hello."),
+    ]])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=ToolRegistry())
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    assert not [e for e in events if e.kind == EVT_AI_USAGE]
+    assert "usage" not in events[-1].payload
 
 
 @pytest.mark.asyncio

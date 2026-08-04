@@ -47,6 +47,36 @@ const STATUS_TEXT = {
 // Sticky open/closed pref for the Thinking disclosure block.
 const THINKING_OPEN_KEY = STORAGE_KEY.AI_THINKING_OPEN;
 
+// Compact token count for the status ticker (Claude Code style):
+// 982, 14.2k, 1.3M.
+const TOKENS_PER_K = 1000;
+const TOKENS_PER_M = 1000000;
+
+function fmtTokensCompact(n) {
+  if (n >= TOKENS_PER_M) return `${(n / TOKENS_PER_M).toFixed(1)}M`;
+  if (n >= TOKENS_PER_K) return `${(n / TOKENS_PER_K).toFixed(1)}k`;
+  return String(n);
+}
+
+// Terminal breakdown line, e.g. "tokens: 12,340 in (11,020 cached) - 1,846
+// out". "in" is the full prompt volume (uncached + cache reads + cache
+// writes); the cached share is broken out only when nonzero.
+function fmtUsageSummary(u) {
+  const cached = u.cache_read_input_tokens || 0;
+  const inTotal = (u.input_tokens || 0) + cached
+    + (u.cache_creation_input_tokens || 0);
+  const out = u.output_tokens || 0;
+  const inPart = cached > 0
+    ? `${inTotal.toLocaleString()} in (${cached.toLocaleString()} cached)`
+    : `${inTotal.toLocaleString()} in`;
+  return `tokens: ${inPart} \u00b7 ${out.toLocaleString()} out`;
+}
+
+function usageTotal(u) {
+  return (u.input_tokens || 0) + (u.output_tokens || 0)
+    + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+}
+
 // Label shown on the Thinking disclosure summary while a round's
 // thinking stream is still arriving. Swapped to "Thought for Ns" once
 // any non-thinking chunk lands (prose delta or tool call), since that's
@@ -90,7 +120,11 @@ function buildBody() {
   spinner.className = "spinner-accent";
   const statusText = document.createElement("span");
   statusText.className = "play-ai-status-text";
-  status.append(spinner, statusText);
+  // Token ticker: cumulative turn usage, updated per provider round
+  // (Claude Code style). Empty until the provider reports usage.
+  const statusTokens = document.createElement("span");
+  statusTokens.className = "play-ai-status-tokens";
+  status.append(spinner, statusText, statusTokens);
 
   // Scroll wrapper. Holds rounds + terminal; the status header above
   // it stays put because only this wrapper scrolls.
@@ -130,6 +164,7 @@ function buildBody() {
 
   root._status = status;
   root._statusText = statusText;
+  root._statusTokens = statusTokens;
   root._scroll = scroll;
   root._rounds = rounds;
   root._terminal = terminal;
@@ -404,10 +439,22 @@ export function resetAi() {
   if (!inst.body) return;
   inst.body._rounds.textContent = "";
   inst.body._terminal.textContent = "";
+  inst.body._statusTokens.textContent = "";
   inst.body._roundPanels.clear();
   inst.body._toolCallNodes.clear();
   inst.body._currentRound = null;
   setAiStatus("waiting");
+}
+
+// Cumulative turn usage from ai_usage events. Idempotent (overwrites
+// with the latest totals), which is exactly what replay re-dispatch
+// needs. The ticker shows total volume processed (prompt + cache +
+// output); the in/out breakdown lands in the terminal slot on done.
+export function setAiUsage(usage) {
+  if (!inst.body || !usage) return;
+  const total = usageTotal(usage);
+  inst.body._statusTokens.textContent =
+    total > 0 ? `${fmtTokensCompact(total)} tokens` : "";
 }
 
 // Delta-less thinking event carrying only a server duration, for a round
@@ -482,7 +529,7 @@ export function appendAiToolCall({
     toggle.className = "play-ai-tool-toggle";
     // One glyph, rotated via CSS when open -- guarantees the open/closed
     // caret are identical size (the unicode triangles aren't).
-    toggle.textContent = "▶";
+    toggle.textContent = "\u25b6";
     head.append(toggle);
     const details = document.createElement("div");
     details.className = TOOL_DETAILS_BODY_CLASS;
@@ -855,6 +902,7 @@ export function markAiDone({
   verifierRoundCap = false,
   noResponse = false,
   noRecommendation = false,
+  usage = null,
 } = {}) {
   // Terminal: switch the header text + drop the spinner. Markers (error >
   // roundCap > noResponse > noRecommendation > cancelled if any apply)
@@ -863,6 +911,9 @@ export function markAiDone({
     !error && !roundCap && !noResponse && !noRecommendation && !cancelled;
   setAiStatus(naturalCompletion ? "done" : "idle");
   if (!inst.body) return;
+  // Refresh the ticker from the done totals: a replay that delivers only
+  // the terminal event (no ai_usage stream) still restores the count.
+  if (usage) setAiUsage(usage);
   const slot = inst.body._terminal;
   withStickyBottom(() => {
     // Trim trailing whitespace on every round's prose and thinking so a
@@ -885,6 +936,14 @@ export function markAiDone({
       // border would land on text tucked inside the collapsed disclosure.
       const folded = last && last.para.parentNode === last.revision?.body;
       if (last && !folded) last.para.classList.add("play-ai-prose-final");
+    }
+    // Token breakdown first (before the marker blocks' early returns) so
+    // it renders on every terminal path that keeps the panel alive.
+    if (usage && usageTotal(usage) > 0) {
+      const line = document.createElement("div");
+      line.className = "play-ai-usage";
+      line.textContent = fmtUsageSummary(usage);
+      slot.append(line);
     }
     if (error) {
       const block = document.createElement("div");

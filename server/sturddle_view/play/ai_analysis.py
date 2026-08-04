@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Awaitable, Callable
 
 import chess
@@ -36,6 +36,7 @@ from ..events import (
     EVT_AI_TOOL_CALL,
     EVT_AI_TOOL_CALL_COMPLETE,
     EVT_AI_TOOL_CALL_FAILED,
+    EVT_AI_USAGE,
     Event,
     EventBus,
 )
@@ -45,6 +46,7 @@ from ..llm import (
     OPENING_PHASE_GUIDANCE,
     PromptMode,
     ProviderChunk,
+    ProviderUsage,
     TOOL_SIGNATURE_KEY,
     ToolRegistry,
     ToolSpec,
@@ -112,6 +114,11 @@ MAX_RECOMMEND_FAILURES = env_int(
 )
 
 _VERIFIER_MODE: PromptMode = "verifier"
+
+# Field names summed into the per-turn usage totals (and mirrored as the
+# ai_usage payload keys). Derived from ProviderUsage so a new field there
+# flows through without a manual edit here.
+_USAGE_TOTAL_KEYS = tuple(f.name for f in fields(ProviderUsage))
 
 
 # Max length of error_detail copied into the done event. Keeps the
@@ -777,6 +784,10 @@ class AIAnalysisCoordinator:
         # turn. Reset on run() start, cleared on analysis stop. Lets a
         # client reconnecting mid-analysis rehydrate the panel.
         self._replay_buffer: list[dict] = []
+        # Per-turn token totals (narrator + verifier sub-runs combined).
+        # None until the provider reports usage -- providers without
+        # accounting leave it None, so the done event omits `usage`.
+        self._turn_usage: dict[str, int] | None = None
         # Monotonic per-turn sequence stamped on each emitted event;
         # the client uses it to dedupe replay vs live events.
         self._seq = 0
@@ -831,6 +842,7 @@ class AIAnalysisCoordinator:
             self._verifier_round_cap_hit = False
             self._seq = 0
             self._replay_buffer = []
+            self._turn_usage = None
             # New turn -> the live position has moved; stale searches must
             # not satisfy this turn's requests.
             if self._search_cache is not None:
@@ -938,6 +950,11 @@ class AIAnalysisCoordinator:
                                 "recommendation verification failed for %s: %s: %s",
                                 recommended_uci, type(exc).__name__, exc,
                             )
+                    # Final totals ride the done event too, so a client that
+                    # missed the per-round ai_usage stream (or replays only
+                    # the terminal event) still renders the turn's cost.
+                    if self._turn_usage is not None:
+                        done_payload["usage"] = dict(self._turn_usage)
                     await transcript.turn_end(done_payload)
                     await self._emit(
                         Event(
@@ -1056,10 +1073,14 @@ class AIAnalysisCoordinator:
                             payload={"delta": chunk.text, "round": round_index},
                         )
                     )
+                elif chunk.kind == "usage" and chunk.usage is not None:
+                    await self._add_usage(chunk.usage)
                 elif chunk.kind == "tool_use":
                     # In sequential mode (v1), a tool_use ends the round;
                     # downstream chunks after it would belong to the next
                     # round per Anthropic semantics. Capture and break.
+                    # (Providers order the round's usage chunk before any
+                    # tool_use, so it isn't lost to this break.)
                     pending_tool = chunk
                     break
             round_had_text = any(
@@ -1617,6 +1638,26 @@ class AIAnalysisCoordinator:
                 raise
             finally:
                 await transcript.turn_end(done_payload)
+
+    async def _add_usage(self, usage: ProviderUsage) -> None:
+        """Fold one round's usage into the turn totals and publish the
+        cumulative ai_usage event. Called from narrator and verifier
+        loops alike -- delegate fan-out is real cost, so it counts toward
+        the same turn. Emits via `_emit` directly (not the loop's sink):
+        the event is turn-scoped, and the verifier's filtering sink
+        would drop it."""
+        totals = self._turn_usage
+        if totals is None:
+            totals = self._turn_usage = {key: 0 for key in _USAGE_TOTAL_KEYS}
+        for key in _USAGE_TOTAL_KEYS:
+            totals[key] += getattr(usage, key)
+        await self._emit(
+            Event(
+                kind=EVT_AI_USAGE,
+                game_id=self._turn_game_id,
+                payload=dict(totals),
+            )
+        )
 
     async def _verifier_emit(self, event: Event) -> None:
         """Emit sink for verifier sub-runs. Forwards engine-search tool
