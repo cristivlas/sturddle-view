@@ -961,6 +961,8 @@ class AIAnalysisCoordinator:
                     # the terminal event) still renders the turn's cost.
                     if self._turn_usage is not None:
                         done_payload["usage"] = dict(self._turn_usage)
+                        if active.provider_name:
+                            done_payload["provider"] = active.provider_name
                     await transcript.turn_end(done_payload)
                     await self._emit(
                         Event(
@@ -1661,13 +1663,23 @@ class AIAnalysisCoordinator:
             totals = self._turn_usage = {key: 0 for key in _USAGE_TOTAL_KEYS}
         for key in _USAGE_TOTAL_KEYS:
             totals[key] += getattr(usage, key)
+        payload = dict(totals)
+        # Carried so the client can apply provider-specific billing
+        # weights (eff-in). Empty for test doubles -> key omitted.
+        name = self._provider_wire_name()
+        if name:
+            payload["provider"] = name
         await self._emit(
             Event(
                 kind=EVT_AI_USAGE,
                 game_id=self._turn_game_id,
-                payload=dict(totals),
+                payload=payload,
             )
         )
+
+    def _provider_wire_name(self) -> str:
+        provider = self._active_provider
+        return provider.provider_name if provider is not None else ""
 
     async def _verifier_emit(self, event: Event) -> None:
         """Emit sink for verifier sub-runs. Forwards engine-search tool

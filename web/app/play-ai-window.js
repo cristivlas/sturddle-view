@@ -58,19 +58,23 @@ function fmtTokensCompact(n) {
   return String(n);
 }
 
-// Anthropic billing ratios relative to the input-token price: cache
-// reads bill at 0.1x, cache writes (5-minute TTL) at 1.25x. Used for
+// Per-provider billing ratios relative to the input-token price, for
 // the effective-input figure -- ratios, not dollar prices, so they
-// don't drift per model.
-const CACHE_READ_BILL_WEIGHT = 0.1;
-const CACHE_WRITE_BILL_WEIGHT = 1.25;
+// don't drift per model. Anthropic: cache reads 0.1x, writes (5-minute
+// TTL) 1.25x. Gemini: implicit-cache reads ~0.25x, writes free.
+// Providers not listed (or unknown) show raw counts without eff-in.
+const EFF_IN_WEIGHTS = {
+  anthropic: { read: 0.1, write: 1.25 },
+  gemini: { read: 0.25, write: 0 },
+};
 
 // Terminal breakdown line, e.g. "tokens: 12,340 in (11,020 cached) - 1,846
 // out - ~2.6k eff. in". "in" is the full prompt volume (uncached + cache
-// reads + cache writes); "eff. in" is that volume weighted by billing
-// ratios -- what the input side actually cost in input-priced tokens.
-// Both cache figures appear only when caching was active.
-function fmtUsageSummary(u) {
+// reads + cache writes); "eff. in" is that volume weighted by the
+// provider's billing ratios -- what the input side actually cost in
+// input-priced tokens. Cache + eff-in figures appear only when caching
+// was active AND the provider's ratios are known.
+function fmtUsageSummary(u, provider) {
   const cached = u.cache_read_input_tokens || 0;
   const written = u.cache_creation_input_tokens || 0;
   const fresh = u.input_tokens || 0;
@@ -81,9 +85,10 @@ function fmtUsageSummary(u) {
     ? `${inTotal.toLocaleString()} in (${cached.toLocaleString()} cached)`
     : `${inTotal.toLocaleString()} in`;
   let line = `tokens: ${inPart}${sep}${out.toLocaleString()} out`;
-  if (cached > 0 || written > 0) {
+  const weights = EFF_IN_WEIGHTS[provider];
+  if (weights && (cached > 0 || written > 0)) {
     const effective = Math.round(
-      fresh + written * CACHE_WRITE_BILL_WEIGHT + cached * CACHE_READ_BILL_WEIGHT
+      fresh + written * weights.write + cached * weights.read
     );
     line += `${sep}~${fmtTokensCompact(effective)} eff. in`;
   }
@@ -922,6 +927,7 @@ export function markAiDone({
   noResponse = false,
   noRecommendation = false,
   usage = null,
+  provider = null,
 } = {}) {
   // Terminal: switch the header text + drop the spinner. Markers (error >
   // roundCap > noResponse > noRecommendation > cancelled if any apply)
@@ -961,7 +967,7 @@ export function markAiDone({
     if (usage && usageTotal(usage) > 0) {
       const line = document.createElement("div");
       line.className = "play-ai-usage";
-      line.textContent = fmtUsageSummary(usage);
+      line.textContent = fmtUsageSummary(usage, provider);
       slot.append(line);
     }
     if (error) {

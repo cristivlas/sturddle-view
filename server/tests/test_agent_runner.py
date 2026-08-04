@@ -204,6 +204,33 @@ async def test_usage_accumulates_across_rounds_onto_done_event():
         "cache_read_input_tokens": 40,
         "cache_creation_input_tokens": 5,
     }
+    # ScriptedProvider declares no provider_name -> key omitted.
+    assert "provider" not in usage_events[0].payload
+    assert "provider" not in events[-1].payload
+
+
+@pytest.mark.asyncio
+async def test_usage_events_carry_provider_name_when_set():
+    # Real providers declare provider_name; the client keys its billing
+    # weights (eff-in) off it. Doubles default to "" -> key omitted
+    # (covered by the accumulation test's payloads above).
+    class _Named(ScriptedProvider):
+        provider_name = "scripted"
+
+    provider = _Named(rounds=[[
+        ProviderChunk(kind="text", text="Hi."),
+        ProviderChunk(kind="usage", usage=ProviderUsage(input_tokens=10, output_tokens=2)),
+    ]])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=ToolRegistry())
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    usage_events = [e for e in events if e.kind == EVT_AI_USAGE]
+    assert usage_events and usage_events[0].payload["provider"] == "scripted"
+    assert events[-1].payload["provider"] == "scripted"
 
 
 @pytest.mark.asyncio

@@ -328,6 +328,7 @@ function dispatchAiEvent(aiCtx, evt) {
           noResponse: !!p.no_response,
           noRecommendation: !!p.no_recommendation,
           usage: p.usage || null,
+          provider: p.provider || null,
         });
         if (p.error) {
           // Provider errors can be many lines with URLs; the toast shows the

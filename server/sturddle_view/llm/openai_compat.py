@@ -25,7 +25,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from ._errors import extract_error_message
-from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
+from .base import LLMProvider, Message, ProviderChunk, ProviderUsage, ToolWireSpec
 from .harmony_strip import flush_harmony_carry, strip_harmony_text
 from .transcript import Transcript
 
@@ -220,6 +220,10 @@ async def stream_openai_compat(
     # the start, arguments stream as a concatenated string. Indexed by
     # `index` field in the OpenAI delta protocol.
     tool_call_buf: dict[int, dict] = {}
+    # Usage off the final chunk (servers send it when the request opts in
+    # via stream_options.include_usage; some send it regardless). Last
+    # non-empty payload wins.
+    usage_raw: dict | None = None
     # Harmony marker carry-buffers. See harmony_strip.py -- some models
     # leak `<|...|>` tokens into both visible content AND the reasoning
     # channel; each needs its own carry because deltas interleave.
@@ -261,6 +265,10 @@ async def stream_openai_compat(
                     raise RuntimeError(
                         f"{error_label}: malformed SSE payload: {payload!r} ({exc})"
                     ) from exc
+                # Read usage BEFORE the choices guard: the usage-bearing
+                # final chunk has an empty choices array.
+                if isinstance(evt.get("usage"), dict):
+                    usage_raw = evt["usage"]
                 choices = evt.get("choices") or []
                 if not choices:
                     continue
@@ -311,11 +319,40 @@ async def stream_openai_compat(
     if reason_tail:
         yield ProviderChunk(kind="thinking", text=reason_tail)
 
+    # Usage before tool_use -- same ordering contract as the Anthropic
+    # provider: the coordinator stops consuming at the first tool_use, so
+    # the usage chunk must precede it.
+    usage = _usage_from_openai(usage_raw)
+    if usage is not None:
+        yield ProviderChunk(kind="usage", usage=usage)
+
     # Emit accumulated tool_calls (if any) AFTER text streaming completes
     # -- matches Anthropic's "text first, tool_use last" ordering that the
     # coordinator's round_chunks reassembly expects.
     for idx in sorted(tool_call_buf.keys()):
         yield openai_tool_call_to_provider_chunk(tool_call_buf[idx])
+
+
+def _usage_from_openai(usage_raw: dict | None) -> ProviderUsage | None:
+    """OpenAI usage payload -> ProviderUsage, or None when absent.
+
+    OpenAI's `prompt_tokens` is the TOTAL prompt (cached included);
+    ProviderUsage.input_tokens is the uncached remainder, so the cached
+    share is subtracted out. There is no cache-write concept on this
+    surface (Gemini's implicit caching writes for free) -- creation
+    stays 0."""
+    if not usage_raw:
+        return None
+    def _int(v: Any) -> int:
+        return v if isinstance(v, int) else 0
+    prompt = _int(usage_raw.get("prompt_tokens"))
+    details = usage_raw.get("prompt_tokens_details")
+    cached = _int(details.get("cached_tokens")) if isinstance(details, dict) else 0
+    return ProviderUsage(
+        input_tokens=max(prompt - cached, 0),
+        output_tokens=_int(usage_raw.get("completion_tokens")),
+        cache_read_input_tokens=cached,
+    )
 
 
 def ordered_param_names(input_schema: dict) -> list[str]:

@@ -151,6 +151,8 @@ class _ToolUseAccumulator:
 
 
 class AnthropicProvider(LLMProvider):
+    provider_name = "anthropic"
+
     def __init__(
         self,
         api_key: str,

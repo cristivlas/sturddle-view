@@ -64,6 +64,8 @@ _REASONING_EFFORT_ON = "low"
 
 
 class GeminiProvider(LLMProvider):
+    provider_name = "gemini"
+
     def __init__(
         self,
         api_key: str,
@@ -156,6 +158,10 @@ class GeminiProvider(LLMProvider):
             "model": self._model,
             "messages": wire_messages,
             "stream": True,
+            # Ask for the usage-bearing final chunk (token accounting for
+            # the UI; also reveals Gemini's implicit-cache hits via
+            # prompt_tokens_details.cached_tokens).
+            "stream_options": {"include_usage": True},
         }
         if tools:
             body["tools"] = tools_anthropic_to_openai(tools)

@@ -135,6 +135,8 @@ def ollama_native_tool_call_to_provider_chunk(
 
 
 class OllamaProvider(LLMProvider):
+    provider_name = "ollama"
+
     def __init__(
         self,
         base_url: str,

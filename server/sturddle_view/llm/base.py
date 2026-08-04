@@ -84,6 +84,12 @@ ToolWireSpec = dict[str, Any]
 
 
 class LLMProvider(ABC):
+    # Stable wire identity ("anthropic", "gemini", "ollama") carried on
+    # usage events so the client can apply provider-specific billing
+    # weights. Empty on providers without one (test doubles) -- the
+    # client then shows raw counts only.
+    provider_name: str = ""
+
     async def _tx_request(
         self,
         transcript: "Transcript | None",
