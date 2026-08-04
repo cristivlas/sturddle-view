@@ -26,6 +26,8 @@ from ..config import (
     _DEFAULT_HVE_REMOVAL_STEP,
     _DEFAULT_HVE_SCORE_CLAMP_CP,
     _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS,
+    _DEFAULT_HVE_WINPROB_DROP_CAP,
+    _DEFAULT_HVE_WINPROB_SCALE_CP,
 )
 
 if TYPE_CHECKING:
@@ -1899,9 +1901,17 @@ class HumanVsEngine:
                 continue
             scores.append(mover_cp(score.pov(chess.WHITE), root.turn, clamp))
         step = getattr(self._settings, "hve_removal_step", _DEFAULT_HVE_REMOVAL_STEP)
+        wp_scale = getattr(
+            self._settings, "hve_winprob_scale_cp", _DEFAULT_HVE_WINPROB_SCALE_CP,
+        )
+        wp_drop = getattr(
+            self._settings, "hve_winprob_drop_cap", _DEFAULT_HVE_WINPROB_DROP_CAP,
+        )
         pool = [
             moves[i]
-            for i in candidate_pool(scores, level, HVE_DIFFICULTY_MAX, step)
+            for i in candidate_pool(
+                scores, level, HVE_DIFFICULTY_MAX, step, wp_scale, wp_drop,
+            )
         ]
         log.info(
             "difficulty %d: pool %s of %d legal moves",

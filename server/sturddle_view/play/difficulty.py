@@ -8,6 +8,7 @@ See docs/hve-difficulty-spec.md.
 """
 from __future__ import annotations
 
+import math
 import random
 
 import chess
@@ -54,6 +55,11 @@ def normalized_gaps(scores_cp: list[float]) -> list[float]:
     return [(best - s) / spread for s in scores_cp]
 
 
+def win_prob(cp: float, scale_cp: float) -> float:
+    """Logistic cp -> win probability; scale_cp sets the sigmoid slope."""
+    return 1.0 / (1.0 + math.exp(-cp / scale_cp))
+
+
 def removal_odds(gap: float, width: float, qmax: float) -> float:
     """Blinding probability for one admitted move: linear decay from
     qmax at the best move to 0 at the admission edge."""
@@ -65,14 +71,19 @@ def candidate_pool(
     level: int,
     level_max: int,
     removal_step: float,
+    winprob_scale_cp: float,
+    winprob_drop_cap: float,
     rng: random.Random | None = None,
 ) -> list[int]:
     """Indices of the moves the engine is allowed to see.
 
-    Admission is auto-ranged: normalized gap <= (level_max - level) /
-    level_max. Each admitted move is then removed with removal_odds();
-    lower levels remove better moves more aggressively. Never empty:
-    if every admitted move is blinded, the best one is retained."""
+    Admission is auto-ranged -- normalized gap <= (level_max - level) /
+    level_max -- and win-prob capped at every level: the move's win-prob
+    drop vs the best must stay under winprob_drop_cap, so no level hangs
+    a piece from a healthy position while a losing side keeps a wide
+    pool. Each admitted move is then removed with removal_odds(); lower
+    levels remove better moves more aggressively. Never empty: if every
+    admitted move is blinded, the best one is retained."""
     # level_max never blinds (callers gate on level < max); width 0
     # would divide removal_odds by zero.
     assert level < level_max, "blinding is undefined at max level"
@@ -80,7 +91,12 @@ def candidate_pool(
     gaps = normalized_gaps(scores_cp)
     width = (level_max - level) / level_max
     qmax = removal_step * (level_max - level)
-    admitted = [i for i, g in enumerate(gaps) if g <= width]
+    best_wp = win_prob(max(scores_cp), winprob_scale_cp)
+    admitted = [
+        i for i, g in enumerate(gaps)
+        if g <= width
+        and best_wp - win_prob(scores_cp[i], winprob_scale_cp) <= winprob_drop_cap
+    ]
     survivors = [
         i for i in admitted
         if r.random() >= removal_odds(gaps[i], width, qmax)

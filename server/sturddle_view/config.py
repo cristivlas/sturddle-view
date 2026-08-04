@@ -62,6 +62,13 @@ _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS = 0.1
 _DEFAULT_HVE_REMOVAL_STEP = 0.10
 _DEFAULT_HVE_SCORE_CLAMP_CP = 1000.0
 
+# Win-prob admission cap (all levels). Sweep cp maps to win probability
+# via a logistic with this scale (empirical engine fit); a move is
+# admitted only if its win-prob drop vs the best stays under the cap --
+# tight near equality (~110cp), auto-loosens when already behind.
+_DEFAULT_HVE_WINPROB_SCALE_CP = 180.0
+_DEFAULT_HVE_WINPROB_DROP_CAP = 0.15
+
 # Opening-book line order. Shared by the settings API (validation), the
 # HVE seed path, and opening_lines (selection). None = fastchess default
 # (sequential).
@@ -215,6 +222,8 @@ class Settings(BaseSettings):
     hve_sweep_movetime_seconds: float = _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS
     hve_removal_step: float = _DEFAULT_HVE_REMOVAL_STEP
     hve_score_clamp_cp: float = _DEFAULT_HVE_SCORE_CLAMP_CP
+    hve_winprob_scale_cp: float = _DEFAULT_HVE_WINPROB_SCALE_CP
+    hve_winprob_drop_cap: float = _DEFAULT_HVE_WINPROB_DROP_CAP
 
     # AI analysis & commentary. Master toggle gates the engine+AI behavior
     # off the existing Analyze ribbon buttons; provider/model/base_url are

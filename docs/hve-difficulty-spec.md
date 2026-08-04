@@ -23,22 +23,24 @@ Below max, per engine move:
    `go searchmoves <mv>` at a short fixed movetime (default 100ms).
    These scores only gate visibility -- they never choose the played
    move, so their shallowness cannot produce a dud move directly.
-2. Pool admission, auto-ranged -- no cp constants: rank the moves and
-   normalize each gap by the position's own score spread,
-   `g = (best - score) / (best - worst)`, so g is 0 for the best move
-   and 1 for the worst. Moves with `g <= (10 - level) / 10` enter the
-   pool: level 9 admits only the top tenth of the range, level 1
-   nearly all of it.
+2. Pool admission, two gates per move:
 
-   Auto-ranging makes difficulty position-RELATIVE, and that is the
-   design's defining property: there is no absolute blunder-magnitude
-   guarantee. In a sharp position (a hangable piece stretches the
-   spread) a level's width admits proportionally deeper mistakes, and
-   since blinding rolls are independent, mid-levels can occasionally
-   hang a piece there when every better move gets removed; in a quiet
-   position the same level plays close to full strength. The clamp
+   Auto-range: normalize each gap by the position's own score spread,
+   `g = (best - score) / (best - worst)`, so g is 0 for the best move
+   and 1 for the worst. Moves with `g <= (10 - level) / 10` pass:
+   level 9 admits only the top tenth of the range, level 1 nearly all
+   of it.
+
+   Win-prob cap, all levels: sweep cp maps to win probability via a
+   logistic, `wp = 1 / (1 + exp(-cp / scale))` (scale ~180cp, an
+   empirical engine fit), and a move passes only if
+   `wp(best) - wp(move) <= drop cap` (default 0.15). Near equality
+   that is ~110cp, so no level hangs a piece from a healthy position;
+   the sigmoid flattens away from zero, so the same cap self-loosens
+   when already behind and a losing side keeps a wide pool -- low
+   levels stay weak instead of rubber-banding to strength. The clamp
    only folds mates and huge evals to a finite cp -- the worst legal
-   move still sets the denominator.
+   move still sets the auto-range denominator.
 3. Blinding pass, one Bernoulli roll per pool move: removal odds
    decay linearly across the admitted band,
    `q = qmax * (1 - g / width)` with `width = (10 - level) / 10` and
@@ -97,6 +99,8 @@ shortening book plies, not weakening the book.
 | `SV_HVE_SWEEP_MOVETIME_SECONDS` | 0.1 | shallow sweep movetime per move |
 | `SV_HVE_REMOVAL_STEP` | 0.10 | qmax per level below max |
 | `SV_HVE_SCORE_CLAMP_CP` | 1000 | mate folding / cp clipping before ranging |
+| `SV_HVE_WINPROB_SCALE_CP` | 180 | logistic scale for cp -> win prob |
+| `SV_HVE_WINPROB_DROP_CAP` | 0.15 | max win-prob drop vs best for admission |
 
 ## Why this works with any engine
 
