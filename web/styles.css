@@ -2408,7 +2408,7 @@ wa-dialog .engine-settings-tabs {
   /* Narrow / portrait viewports get a much larger share of the screen
      because the dialog is the *only* surface in view; on desktop the
      dialog is one of many things competing for vertical space. */
-  --engine-settings-panel-h: 42vh;
+  --engine-settings-panel-h: 46vh;
   height: var(--engine-settings-panel-h);
 }
 @media (max-width: 480px) {
@@ -2460,6 +2460,10 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
     width: 100%;
     box-sizing: border-box;
   }
+}
+wa-dialog:has(.engine-settings-tabs)::part(footer) {
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  padding-top: 12px;
 }
 .engine-launch-form,
 .engine-opt-form {
@@ -3917,9 +3921,15 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   50%      { box-shadow: 0 0 0 5px rgba(var(--accent-rgb), 0); }
 }
 
+wa-dialog.tournament-info-dialog::part(header) {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+wa-dialog.tournament-info-dialog::part(body) {
+  padding-block-start: 10px;
+}
 .tournament-info {
-  border-top: 1px solid var(--accent);
-  padding-top: 10px;
+  padding-top: 0;
+  padding-bottom: 6px;
 }
 .tournament-info-grid {
   display: grid;
