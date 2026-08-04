@@ -73,17 +73,17 @@ default.
 
 ## HvE difficulty
 
-Sampling tunables for difficulty levels 1-9. See
+Blinding tunables for difficulty levels 1-9. See
 [hve-difficulty-spec.md](hve-difficulty-spec.md). `hve_difficulty`
-itself is a UI-managed persisted setting, not listed here; scoring has
-no knobs (the reply is sampled from the one normal search).
+itself is a UI-managed persisted setting, not listed here; pool
+admission auto-ranges off the position's own score spread (no cp
+constants).
 
 | Var | Default | Effect | Where |
 |---|---|---|---|
-| `SV_HVE_TEMPERATURE_STEP_CP` | `25.0` | Softmax temperature per level below max: `step * (10 - level)` centipawns. | `server/sturddle_view/config.py` |
-| `SV_HVE_DROP_CAP_STEP_CP` | `50.0` | Hard cost cap per level below max: candidates costing more than `step * (10 - level)` cp behind the final best are never sampled. | `server/sturddle_view/config.py` |
-| `SV_HVE_DEPTH_PENALTY_CP` | `15.0` | Cost per depth of shallowness added to an iteration candidate, so stale candidates fade at high levels. | `server/sturddle_view/config.py` |
-| `SV_HVE_SCORE_CLAMP_CP` | `1000.0` | Mates fold to ~+/-clamp and cp scores clip to the same range before softmax. | `server/sturddle_view/config.py` |
+| `SV_HVE_SWEEP_MOVETIME_SECONDS` | `0.1` | Movetime per shallow candidate-ranking search (off-clock). | `server/sturddle_view/config.py` |
+| `SV_HVE_REMOVAL_STEP` | `0.10` | Peak blinding probability per level below max: `qmax = step * (10 - level)`. | `server/sturddle_view/config.py` |
+| `SV_HVE_SCORE_CLAMP_CP` | `1000.0` | Mates fold to ~+/-clamp and cp scores clip to the same range before auto-ranging. | `server/sturddle_view/config.py` |
 
 ## Tournament engine proxy
 

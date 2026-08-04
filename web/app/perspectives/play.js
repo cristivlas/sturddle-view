@@ -182,6 +182,8 @@ const MSG = {
   REANALYZE_FAILED: "Re-analyze failed",
   ENGINE_CRASHED: "Engine crashed unexpectedly.",
   ANALYSIS_ENGINE_FAILED: "Analysis engine failed to start.",
+  DIFFICULTY_UNAVAILABLE:
+    "This engine ignores searchmoves; difficulty is unavailable, playing at full strength.",
   // Confirm dialogs.
   CONFIRM_NEW_GAME: "Cancel the game in progress and start a new one?",
   CONFIRM_RESIGN: "Resign the current game?",
@@ -2429,6 +2431,8 @@ export const playPerspective = {
           ? `${MSG.ANALYSIS_ENGINE_FAILED} ${detail}`
           : MSG.ANALYSIS_ENGINE_FAILED;
         toast(text, { variant: "danger" });
+      } else if (err === "difficulty_unavailable") {
+        toast(MSG.DIFFICULTY_UNAVAILABLE, { variant: "warning" });
       }
     });
 

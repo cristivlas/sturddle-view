@@ -23,10 +23,9 @@ from ..config import (
     DEFAULT_TC_INCREMENT_SECONDS,
     DEFAULT_TC_INITIAL_SECONDS,
     HVE_DIFFICULTY_MAX,
-    _DEFAULT_HVE_DEPTH_PENALTY_CP,
-    _DEFAULT_HVE_DROP_CAP_STEP_CP,
+    _DEFAULT_HVE_REMOVAL_STEP,
     _DEFAULT_HVE_SCORE_CLAMP_CP,
-    _DEFAULT_HVE_TEMPERATURE_STEP_CP,
+    _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS,
 )
 
 if TYPE_CHECKING:
@@ -48,10 +47,13 @@ from ..events import (
 )
 from .chess_clock import ChessClock, TimeControl
 from .difficulty import (
-    collect_iteration,
-    eval_entry,
-    level_scale_cp,
-    pick_iteration_move,
+    DIFFICULTY_UNAVAILABLE_ERROR,
+    PROBE_DEPTH,
+    PROBE_FEN,
+    PROBE_MOVETIME_SECONDS,
+    PROBE_MOVE_UCI,
+    candidate_pool,
+    mover_cp,
 )
 from .engine_analysis import (
     EVAL_POV_HUMAN,
@@ -267,6 +269,10 @@ class HumanVsEngine:
         # restore_from, so a rehydrated mid-game is out of book.
         self._book: BookRef | None = None
         self._out_of_book = False
+        # Difficulty searchmoves probe result, cached per engine
+        # process: (engine instance, honors searchmoves). A respawn is a
+        # new instance, so identity comparison re-probes automatically.
+        self._searchmoves_ok: tuple[object, bool] | None = None
         self._lock = asyncio.Lock()
 
     # Coherent-game fields delegate to the self._game bundle, so call sites
@@ -1769,7 +1775,6 @@ class HumanVsEngine:
         board: chess.Board,
         cache_payload: bool = False,
         capture_score: dict | None = None,
-        on_info=None,
     ) -> tuple[chess.engine.InfoDict, bool]:
         """Drain analysis info events, serialize + publish, optionally cache.
 
@@ -1787,7 +1792,6 @@ class HumanVsEngine:
             board=board,
             pov=self._eval_pov(board.turn),
             on_payload=_cache if cache_payload else None,
-            on_info=on_info,
             capture_score=capture_score,
         )  # cancel handled via asyncio task cancellation, not cancel_token
 
@@ -1814,61 +1818,96 @@ class HumanVsEngine:
         board: chess.Board,
         limit: chess.engine.Limit,
         game_id: str,
+        root_moves: list[chess.Move] | None = None,
         capture_score: dict | None = None,
-        on_info=None,
     ) -> chess.Move | None:
-        """One engine search with live info pumped to the bus. Returns
-        the bestmove (None when the search was stopped before one)."""
-        with await engine.analysis(board, limit=limit) as analysis:
+        """One engine search with live info pumped to the bus, optionally
+        restricted to `root_moves` (the difficulty pool). Returns the
+        bestmove (None when the search was stopped before one)."""
+        with await engine.analysis(board, limit=limit, root_moves=root_moves) as analysis:
             self._analysis = analysis
             try:
                 await self._pump_engine_info(
-                    analysis, game_id, board,
-                    capture_score=capture_score, on_info=on_info,
+                    analysis, game_id, board, capture_score=capture_score,
                 )
                 best = await analysis.wait()
             finally:
                 self._analysis = None
         return best.move
 
-    def _pick_difficulty_move(
-        self, iterations: list, board: chess.Board, level: int,
-    ) -> tuple[chess.Move, dict] | None:
-        """Sample the reply from the finished search's per-depth bests
-        (docs/hve-difficulty-spec.md). Returns (move, eval-history
-        entry), or None to play the search's own bestmove (empty pool,
-        or a sampled PV move that is not legal here)."""
-        picked = pick_iteration_move(
-            iterations,
-            board.turn,
-            temp_cp=level_scale_cp(level, HVE_DIFFICULTY_MAX, getattr(
-                self._settings, "hve_temperature_step_cp",
-                _DEFAULT_HVE_TEMPERATURE_STEP_CP,
-            )),
-            drop_cap_cp=level_scale_cp(level, HVE_DIFFICULTY_MAX, getattr(
-                self._settings, "hve_drop_cap_step_cp",
-                _DEFAULT_HVE_DROP_CAP_STEP_CP,
-            )),
-            clamp_cp=getattr(
-                self._settings, "hve_score_clamp_cp", _DEFAULT_HVE_SCORE_CLAMP_CP,
-            ),
-            depth_penalty_cp=getattr(
-                self._settings, "hve_depth_penalty_cp", _DEFAULT_HVE_DEPTH_PENALTY_CP,
+    async def _probe_searchmoves(self, engine, game_id: str) -> bool:
+        """True when the engine honors `go searchmoves` (cached per engine
+        process). Restricted to a quiet move in a mate-in-1 position, a
+        compliant engine must return the quiet move. A failed probe
+        publishes the difficulty-unavailable toast (once per process) --
+        the caller then degrades to full strength."""
+        cached = self._searchmoves_ok
+        if cached is not None and cached[0] is engine:
+            return cached[1]
+        probe_move = chess.Move.from_uci(PROBE_MOVE_UCI)
+        limit = chess.engine.Limit(depth=PROBE_DEPTH, time=PROBE_MOVETIME_SECONDS)
+        result = await engine.play(chess.Board(PROBE_FEN), limit, root_moves=[probe_move])
+        ok = result.move == probe_move
+        if not ok:
+            log.warning(
+                "engine %s ignores searchmoves (probe returned %s); "
+                "difficulty unavailable, playing at full strength",
+                self._supervisor.engine_name or self.engine_path,
+                result.move.uci() if result.move else None,
+            )
+            await self._bus.publish(
+                Event(
+                    kind=EVT_SYSTEM,
+                    game_id=game_id,
+                    payload={"error": DIFFICULTY_UNAVAILABLE_ERROR},
+                )
+            )
+        self._searchmoves_ok = (engine, ok)
+        return ok
+
+    async def _visible_pool(
+        self, engine, board: chess.Board, level: int, game_id: str, gen: int,
+    ) -> list[chess.Move] | None:
+        """Shallow off-clock sweep + blinding pass (spec steps 1-3).
+        Scores every legal move at the sweep movetime, then builds the
+        auto-ranged, level-blinded pool the real search may see.
+        Returns None when the game/generation changed mid-sweep."""
+        limit = chess.engine.Limit(
+            time=getattr(
+                self._settings, "hve_sweep_movetime_seconds",
+                _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS,
             ),
         )
-        if picked is None:
-            return None
-        mv, white_score, depth = picked
-        if mv not in board.legal_moves:
-            log.warning("sampled pv move %s not legal here; playing bestmove", mv.uci())
-            return None
-        entry = eval_entry(white_score)
-        entry["depth"] = depth
+        clamp = getattr(self._settings, "hve_score_clamp_cp", _DEFAULT_HVE_SCORE_CLAMP_CP)
+        # Sweep on a copy: the live board must not have stale state sent
+        # mid-sweep while takeback/new-game can run concurrently.
+        root = board.copy()
+        moves = list(root.legal_moves)
+        scores: list[float] = []
+        for mv in moves:
+            if self._game_id != game_id or self._think_gen != gen:
+                return None
+            # Keep the sweep off-clock as it runs: without this the
+            # engine clock visibly counts down (and can even flag)
+            # during the sweep.
+            self._clock.start_turn()
+            info = await engine.analyse(root, limit, root_moves=[mv])
+            score = info.get("score")
+            if score is None:
+                log.warning("sweep: no score for %s; treating as 0cp", mv.uci())
+                scores.append(0.0)
+                continue
+            scores.append(mover_cp(score.pov(chess.WHITE), root.turn, clamp))
+        step = getattr(self._settings, "hve_removal_step", _DEFAULT_HVE_REMOVAL_STEP)
+        pool = [
+            moves[i]
+            for i in candidate_pool(scores, level, HVE_DIFFICULTY_MAX, step)
+        ]
         log.info(
-            "difficulty %d: sampled %s (depth %d) from %d iteration infos",
-            level, mv.uci(), depth, len(iterations),
+            "difficulty %d: pool %s of %d legal moves",
+            level, [m.uci() for m in pool], len(moves),
         )
-        return mv, entry
+        return pool
 
     async def _handle_engine_termination(self, engine, game_id: str, gen: int) -> None:
         """Drop the dead engine reference and surface the crash unless it
@@ -1923,9 +1962,33 @@ class HumanVsEngine:
                 log.error("could not start engine for search", exc_info=True)
                 return
         difficulty = getattr(self._settings, "hve_difficulty", HVE_DIFFICULTY_MAX)
-        # Below max difficulty, collect the search's per-depth bests so
-        # the reply can be sampled from them after the search finishes.
-        iterations: list | None = [] if difficulty < HVE_DIFFICULTY_MAX else None
+        # Below max difficulty (and with a searchmoves-compliant engine):
+        # off-clock sweep + blinding pass build the visible pool; the
+        # normal search below is then restricted to it. A failed probe
+        # degrades to full strength (toast published by the probe).
+        pool: list[chess.Move] | None = None
+        if difficulty < HVE_DIFFICULTY_MAX:
+            try:
+                if await self._probe_searchmoves(engine, game_id):
+                    # Blank stale info for the silent sweep; the
+                    # restricted search repopulates the panel.
+                    await self._bus.publish(
+                        Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={})
+                    )
+                    pool = await self._visible_pool(engine, board, difficulty, game_id, gen)
+                    if pool is None:
+                        return  # cancelled mid-sweep
+                    # Sweep was off-clock; the restricted search runs
+                    # on-clock from a fresh turn stopwatch.
+                    async with self._lock:
+                        if self._board is None or self._game_id != game_id or self._think_gen != gen:
+                            return
+                        self._clock.start_turn()
+            except chess.engine.EngineTerminatedError:
+                await self._handle_engine_termination(engine, game_id, gen)
+                return
+            except (asyncio.CancelledError, RuntimeError, BrokenPipeError):
+                return
         # Use the live remaining time, not the snapshot at turn start.
         white_clock = self._remaining(chess.WHITE)
         black_clock = self._remaining(chess.BLACK)
@@ -1946,11 +2009,8 @@ class HumanVsEngine:
         try:
             best = await self._search_round(
                 engine, board, limit, game_id,
+                root_moves=pool,
                 capture_score=captured,
-                on_info=(
-                    (lambda info: collect_iteration(info, iterations))
-                    if iterations is not None else None
-                ),
             )
             if best is None:
                 return
@@ -1959,10 +2019,6 @@ class HumanVsEngine:
             return
         except (asyncio.CancelledError, RuntimeError, BrokenPipeError):
             return
-        if iterations:
-            picked = self._pick_difficulty_move(iterations, board, difficulty)
-            if picked is not None:
-                best, captured = picked
         await self._commit_engine_move(best, captured, game_id, gen)
 
     async def _commit_engine_move(

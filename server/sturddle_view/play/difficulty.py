@@ -1,152 +1,90 @@
-"""HvE difficulty: sample the reply from the search's iteration stream.
+"""HvE difficulty: blind the engine's candidate vision, not its brain.
 
-The engine is never weakened: one normal full-strength search runs on
-the real clock, and below max difficulty the reply is truncated-softmax
-sampled from the per-depth best moves that search reported. A shallow
-candidate's missed refutation is exactly what a weaker player misses.
+Below max difficulty a shallow off-clock sweep ranks all legal moves;
+auto-ranged admission plus a per-move Bernoulli "blinding" roll builds
+the visible pool; the engine then runs one normal on-clock search
+restricted to the pool and plays its best visible move at full depth.
 See docs/hve-difficulty-spec.md.
 """
 from __future__ import annotations
 
-import math
 import random
 
 import chess
 import chess.engine
 
+# searchmoves compliance probe. Detecting "ignores searchmoves" needs a
+# position where the unrestricted choice is predictable and different
+# from the probe move. Mate-in-1 gives that: every engine, at any depth,
+# plays Ra8# unrestricted. So we send `go searchmoves a1a2`: reply a1a2
+# = restriction honored; anything else = ignored. Kg8 + f7/g7/h7 pawns
+# make it a legal back-rank mate; Kg1 + f2/g2/h2 mirror it.
+PROBE_FEN = "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1"
+PROBE_MOVE_UCI = "a1a2"
 
-def eval_entry(white_score: chess.engine.Score) -> dict:
-    """Eval-history entry ({"cp"|"mate"}, white POV) matching the format
-    pump_engine_info captures for full-strength moves."""
-    if white_score.is_mate():
-        return {"mate": white_score.mate()}
-    return {"cp": white_score.score()}
+# Probe search bounds: depth 1 suffices to separate the mate from the
+# quiet move; the movetime is only a safety net for engines that ignore
+# depth limits.
+PROBE_DEPTH = 1
+PROBE_MOVETIME_SECONDS = 1.0
+
+# EVT_SYSTEM payload code published (once per engine process) when the
+# probe fails and difficulty degrades to full strength. The play
+# perspective maps it to a toast.
+DIFFICULTY_UNAVAILABLE_ERROR = "difficulty_unavailable"
 
 
 def mover_cp(white_score: chess.engine.Score, mover: chess.Color, clamp: float) -> float:
     """Mover-POV centipawns with mates folded to ~+/-clamp and cp clipped
-    to the same range, so a huge eval cannot dominate a found mate."""
+    to the same range, so a mate-against outlier cannot stretch the
+    auto-ranged score spread."""
     sc = white_score if mover == chess.WHITE else -white_score
     raw = sc.score(mate_score=int(clamp))
     return float(max(-clamp, min(clamp, raw)))
 
 
-def level_scale_cp(level: int, level_max: int, step_cp: float) -> float:
-    """Common shape for the per-level knobs (softmax temperature, drop
-    cap): step * levels-below-max. Zero at level_max, growing linearly
-    as the level drops."""
-    return step_cp * (level_max - level)
+def normalized_gaps(scores_cp: list[float]) -> list[float]:
+    """Per-move gap behind the best, normalized by the position's own
+    score spread: 0 for the best move, 1 for the worst. A spread of zero
+    (all moves equal) yields all-zero gaps."""
+    best, worst = max(scores_cp), min(scores_cp)
+    spread = best - worst
+    if spread <= 0:
+        return [0.0] * len(scores_cp)
+    return [(best - s) / spread for s in scores_cp]
 
 
-def move_weights(
-    scores_cp: list[float], temp_cp: float, drop_cap_cp: float,
-) -> list[float]:
-    """Normalized sampling probabilities over mover-POV scores.
-
-    Truncated softmax: moves more than drop_cap_cp behind the best get
-    exactly 0 (the hard blunder-magnitude guarantee); the rest weigh
-    exp(drop/temp). temp<=0 degenerates to argmax (uniform over ties).
-    Weights are shifted by the best score so exp() cannot overflow."""
-    best = max(scores_cp)
-    if temp_cp <= 0:
-        w = [1.0 if s == best else 0.0 for s in scores_cp]
-    else:
-        w = [
-            math.exp((s - best) / temp_cp) if best - s <= drop_cap_cp else 0.0
-            for s in scores_cp
-        ]
-    total = sum(w)
-    return [x / total for x in w]
+def removal_odds(gap: float, width: float, qmax: float) -> float:
+    """Blinding probability for one admitted move: linear decay from
+    qmax at the best move to 0 at the admission edge."""
+    return qmax * (1.0 - gap / width)
 
 
-def sample_index(
+def candidate_pool(
     scores_cp: list[float],
-    temp_cp: float,
-    drop_cap_cp: float,
+    level: int,
+    level_max: int,
+    removal_step: float,
     rng: random.Random | None = None,
-) -> int:
-    """Sample an index from move_weights; the best move always has the
-    largest probability and over-cap moves are never returned."""
-    weights = move_weights(scores_cp, temp_cp, drop_cap_cp)
-    return (rng or random).choices(range(len(weights)), weights=weights, k=1)[0]
+) -> list[int]:
+    """Indices of the moves the engine is allowed to see.
 
-
-def collect_iteration(info: chess.engine.InfoDict, out: list) -> None:
-    """Pump hook: append (depth, move, white-POV score) for a completed
-    iteration. Skips chunks without depth/score/pv, aspiration
-    fail-high/low bounds, and MultiPV side lines."""
-    if "depth" not in info or "score" not in info:
-        return
-    pv = info.get("pv")
-    if not pv:
-        return
-    if info.get("lowerbound") or info.get("upperbound"):
-        return
-    if info.get("multipv", 1) != 1:
-        return
-    out.append((info["depth"], pv[0], info["score"].pov(chess.WHITE)))
-
-
-def iteration_candidates(
-    iterations: list[tuple[int, chess.Move, chess.engine.Score]],
-) -> list[tuple[chess.Move, chess.engine.Score, int]]:
-    """Dedup the per-depth best stream to distinct moves, keeping each
-    move's deepest (move, score, depth). Every update reinserts, so the
-    list is ordered by each move's LAST appearance in the stream --
-    effective_drops relies on that to break same-depth anchor ties in
-    favor of the engine's latest opinion."""
-    by_move: dict[str, tuple[chess.Move, chess.engine.Score, int]] = {}
-    for depth, mv, score in iterations:
-        key = mv.uci()
-        cur = by_move.get(key)
-        if cur is None or depth >= cur[2]:
-            by_move.pop(key, None)
-            by_move[key] = (mv, score, depth)
-    return list(by_move.values())
-
-
-def effective_drops(
-    candidates: list[tuple[chess.Move, chess.engine.Score, int]],
-    mover: chess.Color,
-    clamp_cp: float,
-    depth_penalty_cp: float,
-) -> list[float]:
-    """Per-candidate cost behind the final (deepest) best, in cp.
-
-    cp shortfall is floored at 0 -- a shallow score above the final best
-    is optimism the deeper search already refuted, never a bonus -- and
-    each depth of shallowness adds depth_penalty_cp, so stale candidates
-    fade unless the level's cap/temperature is generous.
-
-    The anchor is the deepest candidate; same-depth ties go to the later
-    list position, i.e. the stream's latest opinion (candidates arrive
-    ordered by last appearance -- see iteration_candidates)."""
-    final = max(enumerate(candidates), key=lambda ic: (ic[1][2], ic[0]))[1]
-    final_cp = mover_cp(final[1], mover, clamp_cp)
-    drops = []
-    for _mv, score, depth in candidates:
-        shortfall = max(0.0, final_cp - mover_cp(score, mover, clamp_cp))
-        drops.append(shortfall + depth_penalty_cp * (final[2] - depth))
-    return drops
-
-
-def pick_iteration_move(
-    iterations: list[tuple[int, chess.Move, chess.engine.Score]],
-    mover: chess.Color,
-    *,
-    temp_cp: float,
-    drop_cap_cp: float,
-    clamp_cp: float,
-    depth_penalty_cp: float,
-    rng: random.Random | None = None,
-) -> tuple[chess.Move, chess.engine.Score, int] | None:
-    """Sample one (move, white-POV score, depth) from the iteration
-    stream, or None when the stream had no usable iterations. The final
-    best has effective drop 0, so it is always eligible and most
-    likely."""
-    candidates = iteration_candidates(iterations)
-    if not candidates:
-        return None
-    drops = effective_drops(candidates, mover, clamp_cp, depth_penalty_cp)
-    idx = sample_index([-d for d in drops], temp_cp, drop_cap_cp, rng)
-    return candidates[idx]
+    Admission is auto-ranged: normalized gap <= (level_max - level) /
+    level_max. Each admitted move is then removed with removal_odds();
+    lower levels remove better moves more aggressively. Never empty:
+    if every admitted move is blinded, the best one is retained."""
+    # level_max never blinds (callers gate on level < max); width 0
+    # would divide removal_odds by zero.
+    assert level < level_max, "blinding is undefined at max level"
+    r = rng or random
+    gaps = normalized_gaps(scores_cp)
+    width = (level_max - level) / level_max
+    qmax = removal_step * (level_max - level)
+    admitted = [i for i, g in enumerate(gaps) if g <= width]
+    survivors = [
+        i for i in admitted
+        if r.random() >= removal_odds(gaps[i], width, qmax)
+    ]
+    if not survivors:
+        survivors = [min(admitted, key=lambda i: gaps[i])]
+    return survivors

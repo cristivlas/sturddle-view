@@ -5,68 +5,107 @@
 Adjustable difficulty in Human-vs-Engine play with any standard UCI
 engine -- no engine changes, no non-standard options.
 
+## Model
+
+Weaken the engine's candidate vision, not its calculation. A weaker
+human doesn't calculate badly so much as fail to CONSIDER the best
+moves; whatever they do play, they play with intent. Accordingly:
+below max difficulty the engine is blinded to some of its best
+options, then calculates normally among what it still sees.
+
 ## Approach
 
-Do not weaken the search; weaken the move selection.
+Level 10: business as usual, one unhindered search.
 
-1. One normal full-strength search runs on the real clock, the engine
-   managing its own time -- byte-identical to max difficulty. No extra
-   searches, no `searchmoves`, no probes, no scoring knobs.
-2. The search's info stream already reports the best move per completed
-   depth iteration. Collect those (move, score, depth) triples
-   (skipping aspiration fail-high/low bounds and MultiPV side lines),
-   dedup to distinct moves keeping each move's deepest entry.
-3. Each candidate's cost behind the final best:
-   `max(0, final_cp - cp) + depth_penalty * (final_depth - depth)`.
-   The cp shortfall is floored at 0 (shallow optimism the deeper search
-   refuted is a mirage, never a bonus); the depth penalty prices each
-   depth of shallowness so stale candidates fade at high levels.
-4. Sample by truncated softmax over those costs:
-   P(m) ~ exp(-cost / temp), cost above the drop cap = excluded.
-   - temp = `temp_step * (10 - level)`; temp -> 0 is argmax.
-   - cap = `cap_step * (10 - level)`: level 9 tolerates ~50cp of
-     cost, level 5 ~250, level 1 ~450.
-   - The final best always has cost 0: always eligible, always the
-     most likely move.
+Below max, per engine move:
 
-A shallow candidate's missed refutation is exactly what a weaker
-player misses: low levels play the engine's "early impressions",
-weaker but never absurd -- every candidate was the engine's best at
-some depth, so blatant one-move blunders never happen at any level.
-That is deliberate: weakening by search depth is how humans actually
-differ in strength; artificial howlers feel fake. The floor is
-therefore "shallow but sane", not beginner-random.
+1. Off-clock shallow sweep: score every legal move with
+   `go searchmoves <mv>` at a short fixed movetime (default 100ms).
+   These scores only gate visibility -- they never choose the played
+   move, so their shallowness cannot produce a dud move directly.
+2. Pool admission, auto-ranged -- no cp constants: rank the moves and
+   normalize each gap by the position's own score spread,
+   `g = (best - score) / (best - worst)`, so g is 0 for the best move
+   and 1 for the worst. Moves with `g <= (10 - level) / 10` enter the
+   pool: level 9 admits only the top tenth of the range, level 1
+   nearly all of it.
 
-## Search Lines panel, arrow, clock
+   Auto-ranging makes difficulty position-RELATIVE, and that is the
+   design's defining property: there is no absolute blunder-magnitude
+   guarantee. In a sharp position (a hangable piece stretches the
+   spread) a level's width admits proportionally deeper mistakes, and
+   since blinding rolls are independent, mid-levels can occasionally
+   hang a piece there when every better move gets removed; in a quiet
+   position the same level plays close to full strength. The clamp
+   only folds mates and huge evals to a finite cp -- the worst legal
+   move still sets the denominator.
+3. Blinding pass, one Bernoulli roll per pool move: removal odds
+   decay linearly across the admitted band,
+   `q = qmax * (1 - g / width)` with `width = (10 - level) / 10` and
+   `qmax = removal_step * (10 - level)`. Lower level: better moves
+   more likely removed, and removal reaches deeper into the ranking.
+   If every move is removed, the best survivor is retained -- the
+   pool is never empty.
+4. The real move: `go searchmoves <pool>` with the normal clock
+   fields, on-clock, the engine's own time management. The engine
+   plays its best VISIBLE move at full depth.
 
-All untouched: the search is the normal one, streamed and charged
-exactly as at max difficulty. The sampled move's score (at its depth)
-lands in eval history. Level 10 and analysis mode are unchanged.
+## Clock handling
+
+The shallow sweep runs before the engine's clock starts (off-clock),
+consistent with it being our bookkeeping, not engine thinking. The
+restricted search is honest: real clock fields, real time consumed,
+commit debits real elapsed and credits the increment. The human clock
+is untouched; level 10 is fully unchanged.
+
+## Search Lines panel
+
+The restricted search is a real search streamed through the normal
+info pump: Search Lines, the board arrow, and eval history all come
+from it, exactly as at full strength. The shallow sweep publishes
+nothing (the panel clears at search start as usual).
+
+## searchmoves detection
+
+Both the sweep and the restricted search need `go searchmoves`.
+Detect lazily -- once per engine process, on its first
+difficulty-limited move (self-healing across respawns): probe
+restricted to a single deliberately bad legal move in a mate-in-1
+position; a compliant engine must return it as bestmove.
+
+Probe position: `6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1` (back-rank
+mate Ra8#), probing `go searchmoves a1a2`: reply a1a2 = restriction
+honored; anything else = ignored. Mate-in-1 makes the unrestricted
+choice predictable at any depth.
+
+On failure the feature degrades loudly: the game plays at full
+strength, the failure is logged, and a toast tells the user
+difficulty is unavailable for this engine (once per engine process).
 
 ## Opening book
 
 Book moves play at full strength at every level. Book lines are
-prepared knowledge, not over-the-board skill -- humans at every level
-play memorized theory accurately and only start erring once out of
-book. The player already controls exposure via book depth/off.
-Caveat: at low levels a deep book can make the opening feel
-disproportionately sharp; the remedy is shortening book plies, not
-weakening the book.
+prepared knowledge, not over-the-board skill; the player already
+controls exposure via book depth/off. At low levels a deep book can
+make the opening feel disproportionately sharp; the remedy is
+shortening book plies, not weakening the book.
+
+## Knobs (SV_ env)
+
+| Knob | Default | Role |
+|---|---|---|
+| `SV_HVE_SWEEP_MOVETIME_SECONDS` | 0.1 | shallow sweep movetime per move |
+| `SV_HVE_REMOVAL_STEP` | 0.10 | qmax per level below max |
+| `SV_HVE_SCORE_CLAMP_CP` | 1000 | mate folding / cp clipping before ranging |
 
 ## Why this works with any engine
 
-Per-depth `info` lines with `depth`, `score`, and `pv` are the one
-thing every UCI engine emits. No `MultiPV`, no `searchmoves`, no
-`go nodes/depth/movetime`, no strength-limiting options.
-
-## Known limits
-
-- The candidate pool only has variety where the search changed its
-  mind across depths; in forced/obvious positions every level plays
-  the same (human-realistic).
-- A shallow candidate carries its at-depth score, so the drop cap
-  bounds estimated cost, not exact full-strength cost.
+`searchmoves`, `movetime`, clock-based `go`, and `score cp` are core
+UCI. Engines that ignore `searchmoves` degrade to full strength with
+a visible notice.
 
 ## Cost
 
-Zero: the one search that was running anyway.
+N x 100ms off-clock per engine move (~2-4s), plus one normal think.
+The played move is always a full-depth choice; expected strength is
+set by what the engine is allowed to see, not how well it thinks.
