@@ -248,12 +248,17 @@ class OllamaProvider(LLMProvider):
         transcript: Transcript | None = None,
         round_index: int = 0,
         thinking: bool | None = None,
+        force_tool_call: bool = False,
     ) -> AsyncIterator[ProviderChunk]:
         # Branch by thinking support. /v1/chat/completions (OpenAI-compat)
         # is the default; /api/chat (Ollama native) is required when the
         # caller asked for `think=true` since the compat layer ignores it.
         # `thinking=False` forces the compat path (verifier sub-runs) so no
         # <think> reasoning is generated or leaks into the verdict.
+        # `force_tool_call` only reaches the compat path -- /api/chat has no
+        # tool_choice, and the verifier (the only forcing caller) always
+        # runs thinking-off, i.e. compat. Best-effort either way: local
+        # models may ignore it, and the coordinator's nudge backstops.
         if thinking is not False and self._thinking_enabled:
             inner = self._stream_native(
                 system, messages, tools,
@@ -263,6 +268,7 @@ class OllamaProvider(LLMProvider):
             inner = self._stream_openai_compat(
                 system, messages, tools,
                 transcript=transcript, round_index=round_index,
+                force_tool_call=force_tool_call,
             )
         # Some local models stream tool calls as prose -- recover them
         # transparently. XML shape handled unconditionally; call-syntax
@@ -282,6 +288,7 @@ class OllamaProvider(LLMProvider):
         *,
         transcript: Transcript | None,
         round_index: int,
+        force_tool_call: bool = False,
     ) -> AsyncIterator[ProviderChunk]:
         # Assemble OpenAI-shaped request. System prompt is a separate
         # first message in OpenAI's API; coordinator passes it as a
@@ -299,6 +306,10 @@ class OllamaProvider(LLMProvider):
         }
         if tools:
             body["tools"] = tools_anthropic_to_openai(tools)
+            if force_tool_call:
+                # OpenAI-compat spelling of "must call a tool this round"
+                # (verifier first rounds). See LLMProvider.stream().
+                body["tool_choice"] = "required"
 
         return stream_openai_compat(
             self,

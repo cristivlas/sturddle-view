@@ -75,11 +75,13 @@ class _RecordingScriptedProvider(LLMProvider):
         transcript=None,
         round_index: int = 0,
         thinking: bool | None = None,
+        force_tool_call: bool = False,
     ):
         self.calls.append({
             "system": system,
             "messages": [dict(m) for m in messages],
             "thinking": thinking,
+            "force_tool_call": force_tool_call,
         })
         if self._i >= len(self._rounds):
             raise RuntimeError("provider exhausted: more stream() calls than rounds")
@@ -200,6 +202,39 @@ async def test_verifier_inherits_turn_position_context():
     # The canonical SAN is prefixed so the verifier knows the move under
     # attack even when the narrator's question doesn't name it.
     assert "Move under test: e4." in user0
+
+
+@pytest.mark.asyncio
+async def test_verifier_first_round_forces_tool_call_narrator_never():
+    # The verifier's round 0 must carry force_tool_call so a tool-free
+    # verdict is structurally impossible where tool_choice is honored.
+    # Later verifier rounds go back to auto (the model must be able to
+    # conclude), and narrator rounds never force.
+    provider = _RecordingScriptedProvider(rounds=[
+        [_delegate_chunk("d1", "Is e4 sound?")],            # narrator round 0
+        [ProviderChunk(                                     # verifier round 0: tool
+            kind="tool_use", tool_use_id="v1",
+            tool_name="piece_at", tool_input={"square": "e2"},
+        )],
+        [ProviderChunk(kind="text", text="e4 is sound.")],  # verifier round 1: verdict
+        [ProviderChunk(kind="text", text="Done.")],         # narrator round 1
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider)
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    await _drain_until_done(queue)
+
+    # Calls in order: narrator r0, verifier r0, verifier r1, narrator r1.
+    # Verifier rounds are the ones with thinking forced off.
+    flags = [(c["thinking"], c["force_tool_call"]) for c in provider.calls]
+    assert flags == [
+        (None, False),   # narrator round 0
+        (False, True),   # verifier round 0: forced
+        (False, False),  # verifier round 1: back to auto
+        (None, False),   # narrator round 1
+    ]
 
 
 @pytest.mark.asyncio

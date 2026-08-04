@@ -53,6 +53,7 @@ class ScriptedProvider(LLMProvider):
         transcript: Transcript | None = None,
         round_index: int = 0,
         thinking: bool | None = None,
+        force_tool_call: bool = False,
     ) -> AsyncIterator[ProviderChunk]:
         self._stream_calls += 1
         # Deep-copy messages so a later mutation by the runner can't

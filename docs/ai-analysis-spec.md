@@ -103,9 +103,11 @@ its pick with `delegate(move, question)`; each call spawns a verifier
 sub-run (`AIAnalysisCoordinator._run_verifier`, verifier prompt +
 registry, no `delegate` -- one level deep). The verifier is an
 adversary: it assumes the move is flawed and hunts the refutation with
-the engine, must call a tool before concluding (a no-tool verdict draws
-one nudge), and returns a one/two sentence holds/refuted conclusion that
-lands as the delegate tool_result. The canonical SAN is prefixed to the
+the engine, must call a tool before concluding (structurally forced on
+its first round via `tool_choice` where the provider honors it --
+Anthropic `any`, OpenAI-compat `required`; a no-tool verdict draws one
+nudge as the fallback), and returns a one/two sentence holds/refuted
+conclusion that lands as the delegate tool_result. The canonical SAN is prefixed to the
 delegated question ("Move under test: ...") so the verifier knows the
 move under attack regardless of the narrator's phrasing. The narrator
 synthesizes and calls `recommend_move`.

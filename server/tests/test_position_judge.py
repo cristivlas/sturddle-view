@@ -150,7 +150,8 @@ class _NarratorThenJudge(LLMProvider):
         self.calls = 0
 
     async def stream(self, system, messages, tools=None, *, transcript=None,
-                     round_index=0, thinking=None) -> AsyncIterator[ProviderChunk]:
+                     round_index=0, thinking=None,
+                     force_tool_call=False) -> AsyncIterator[ProviderChunk]:
         reply = self._replies[self.calls] if self.calls < len(self._replies) else ""
         self.calls += 1
         yield ProviderChunk(kind="text", text=reply)

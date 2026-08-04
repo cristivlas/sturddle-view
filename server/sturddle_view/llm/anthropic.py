@@ -260,6 +260,7 @@ class AnthropicProvider(LLMProvider):
         transcript: Transcript | None = None,
         round_index: int = 0,
         thinking: bool | None = None,
+        force_tool_call: bool = False,
     ) -> AsyncIterator[ProviderChunk]:
         if not self._api_key:
             raise RuntimeError("anthropic: API key not configured")
@@ -280,6 +281,16 @@ class AnthropicProvider(LLMProvider):
             body["system"] = system
         if tools:
             body["tools"] = tools
+            if force_tool_call:
+                # Verifier first rounds: a tool call is structurally
+                # required, so the no-tool-verdict nudge round never runs.
+                # Sequential: one call per round (coordinator loop is v1
+                # sequential). Caller guarantees thinking is off -- the
+                # API rejects forced tool choice with thinking enabled.
+                body["tool_choice"] = {
+                    "type": "any",
+                    "disable_parallel_tool_use": True,
+                }
         # `thinking=False` forces it off for this call (verifier sub-runs).
         if thinking is not False and self._thinking_enabled:
             param = self._thinking_param(await self._resolve_thinking_mode())

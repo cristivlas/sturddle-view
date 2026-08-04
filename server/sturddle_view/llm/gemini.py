@@ -142,6 +142,7 @@ class GeminiProvider(LLMProvider):
         transcript: Transcript | None = None,
         round_index: int = 0,
         thinking: bool | None = None,
+        force_tool_call: bool = False,
     ) -> AsyncIterator[ProviderChunk]:
         if not self._api_key:
             raise RuntimeError("gemini: API key not configured")
@@ -158,6 +159,10 @@ class GeminiProvider(LLMProvider):
         }
         if tools:
             body["tools"] = tools_anthropic_to_openai(tools)
+            if force_tool_call:
+                # OpenAI-compat spelling of "must call a tool this round"
+                # (verifier first rounds). See LLMProvider.stream().
+                body["tool_choice"] = "required"
         # `thinking=False` forces it off for this call (verifier sub-runs);
         # otherwise honor the provider default.
         if thinking is not False and self._thinking_enabled:

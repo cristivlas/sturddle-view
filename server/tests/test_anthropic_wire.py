@@ -181,7 +181,41 @@ async def test_request_body_and_headers_set(install_fake_httpx):
     # Token economy: every request opts into top-level auto-caching so
     # agent rounds re-read the accumulated prefix instead of re-billing it.
     assert client.last_body["cache_control"] == {"type": "ephemeral"}
+    # tool_choice is only sent when a caller forces a tool call.
+    assert "tool_choice" not in client.last_body
     assert client.last_headers["x-api-key"] == "sk-secret"
+
+
+@pytest.mark.asyncio
+async def test_force_tool_call_sets_tool_choice_any(install_fake_httpx):
+    install_fake_httpx(lines=['data: {"type":"message_stop"}'])
+    provider = AnthropicProvider(api_key="sk-test", model="m")
+    async for _ in provider.stream(
+        system="",
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "t", "description": "d", "input_schema": {}}],
+        force_tool_call=True,
+    ):
+        pass
+    client = install_fake_httpx.holder["client"]
+    assert client.last_body["tool_choice"] == {
+        "type": "any",
+        "disable_parallel_tool_use": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_force_tool_call_without_tools_is_a_noop(install_fake_httpx):
+    install_fake_httpx(lines=['data: {"type":"message_stop"}'])
+    provider = AnthropicProvider(api_key="sk-test", model="m")
+    async for _ in provider.stream(
+        system="",
+        messages=[{"role": "user", "content": "x"}],
+        force_tool_call=True,
+    ):
+        pass
+    client = install_fake_httpx.holder["client"]
+    assert "tool_choice" not in client.last_body
 
 
 @pytest.mark.asyncio

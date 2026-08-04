@@ -211,6 +211,18 @@ async def test_stream_posts_to_compat_endpoint_with_bearer(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_force_tool_call_sets_tool_choice_required(monkeypatch):
+    cls = _install_stream(monkeypatch)
+    p = GeminiProvider(api_key="k", model="m")
+    tools = [{"name": "t", "description": "d", "input_schema": {"type": "object"}}]
+    await _drain(p, tools=tools, force_tool_call=True)
+    assert cls.last_body["tool_choice"] == "required"
+    # And absent when not forcing (default remains the provider's auto).
+    await _drain(p, tools=tools)
+    assert "tool_choice" not in cls.last_body
+
+
+@pytest.mark.asyncio
 async def test_stream_without_key_raises(monkeypatch):
     p = GeminiProvider(api_key="", model="m")
     with pytest.raises(RuntimeError, match="API key"):

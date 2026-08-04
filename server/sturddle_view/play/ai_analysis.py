@@ -628,6 +628,12 @@ class _LoopConfig:
     # Per-call thinking override passed to provider.stream(). None = use
     # the provider's setting (narrator); False = force off (verifier).
     thinking_override: bool | None = None
+    # Require a tool call on round 0 (verifier: a tool-free verdict is
+    # structurally impossible where the provider honors tool_choice, so
+    # the no-tool nudge round never runs). Nudge stays as the fallback
+    # for providers/models that ignore it. Requires thinking off --
+    # Anthropic rejects forced tool choice combined with thinking.
+    force_first_round_tool: bool = False
 
 
 @dataclass(slots=True)
@@ -1046,6 +1052,9 @@ class AIAnalysisCoordinator:
                 transcript=config.transcript,
                 round_index=round_index,
                 thinking=config.thinking_override,
+                force_tool_call=(
+                    config.force_first_round_tool and round_index == 0
+                ),
             )
             # Strip paired markdown (**, __, `) so the panel renders clean
             # prose rather than raw emphasis markers.
@@ -1615,6 +1624,7 @@ class AIAnalysisCoordinator:
                 # Engine does the reasoning; model thinking only adds
                 # latency (x fan-out) and risks Ollama <think> in verdicts.
                 thinking_override=False,
+                force_first_round_tool=True,
             )
             # done_payload feeds the transcript turn_end only -- a verifier
             # sub-run emits no user-facing done event (it's internal).
