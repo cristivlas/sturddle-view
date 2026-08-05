@@ -20,7 +20,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from ._errors import extract_error_message
-from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
+from .base import LLMProvider, Message, ProviderChunk, ProviderUsage, ToolWireSpec
 from .harmony_strip import flush_harmony_carry, strip_harmony_text
 from .inline_recovery import recover_inline_tool_calls
 from .openai_compat import (
@@ -114,6 +114,22 @@ def messages_anthropic_to_ollama_native(messages: list[Message]) -> list[dict]:
             continue
         out.append({"role": role, "content": content})
     return out
+
+
+def _usage_from_native(evt: dict) -> ProviderUsage | None:
+    """Map an /api/chat NDJSON line's token counts to ProviderUsage.
+
+    prompt_eval_count / eval_count ride the final (done:true) line; None
+    when the line carries neither. No cache accounting on this surface
+    (local KV-cache reuse is free anyway)."""
+    prompt = evt.get("prompt_eval_count")
+    completion = evt.get("eval_count")
+    if not isinstance(prompt, int) and not isinstance(completion, int):
+        return None
+    return ProviderUsage(
+        input_tokens=prompt if isinstance(prompt, int) else 0,
+        output_tokens=completion if isinstance(completion, int) else 0,
+    )
 
 
 def ollama_native_tool_call_to_provider_chunk(
@@ -305,6 +321,10 @@ class OllamaProvider(LLMProvider):
             "model": self._model,
             "messages": wire_messages,
             "stream": True,
+            # Ask for the usage-bearing final chunk (OpenAI semantics).
+            # Ollama versions predating stream_options ignore unknown
+            # request fields, so this degrades to no usage chunk.
+            "stream_options": {"include_usage": True},
         }
         if tools:
             body["tools"] = tools_anthropic_to_openai(tools)
@@ -354,6 +374,9 @@ class OllamaProvider(LLMProvider):
 
         url = f"{self._base_url}/api/chat"
         emitted_tool_calls: list[dict] = []
+        # /api/chat always reports token counts on its final (done:true)
+        # line -- prompt_eval_count / eval_count. Last seen wins.
+        usage: ProviderUsage | None = None
         # Same harmony carry as in the OpenAI-compat path; some local
         # models (gemma4) leak `<|...|>` markers through native chat
         # on both content AND thinking channels.
@@ -397,6 +420,9 @@ class OllamaProvider(LLMProvider):
                     tcs = msg.get("tool_calls") or []
                     for tc in tcs:
                         emitted_tool_calls.append(tc)
+                    mapped = _usage_from_native(evt)
+                    if mapped is not None:
+                        usage = mapped
 
         tail = flush_harmony_carry(text_carry)
         if tail:
@@ -404,6 +430,11 @@ class OllamaProvider(LLMProvider):
         think_tail = flush_harmony_carry(think_carry)
         if think_tail:
             yield ProviderChunk(kind="thinking", text=think_tail)
+
+        # Usage before tool_use -- same ordering contract as the other
+        # providers: the coordinator stops consuming at the first tool_use.
+        if usage is not None:
+            yield ProviderChunk(kind="usage", usage=usage)
 
         # /api/chat tool_calls carry no id. Mint a synthetic id per call
         # so the coordinator's tool_use_id pipeline keeps working; Ollama

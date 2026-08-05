@@ -124,6 +124,47 @@ async def test_request_body_captured_to_transcript(install_fake_httpx, tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_compat_body_opts_into_usage_reporting(install_fake_httpx):
+    install_fake_httpx(lines=["data: [DONE]"])
+    provider = OllamaProvider(base_url="http://fake", model="m")
+    async for _ in provider.stream(
+        system="", messages=[{"role": "user", "content": "x"}],
+    ):
+        pass
+    client = install_fake_httpx.holder["client"]
+    assert client.last_body["stream_options"] == {"include_usage": True}
+
+
+@pytest.mark.asyncio
+async def test_native_usage_chunk_from_eval_counts(install_fake_httpx):
+    # thinking_enabled routes to /api/chat (NDJSON). The done:true line
+    # always carries prompt_eval_count / eval_count; they map onto a
+    # usage chunk ordered before the held tool_use, matching the other
+    # providers' contract. No cache fields on this surface.
+    install_fake_httpx(lines=[
+        '{"message":{"content":"checking"}}',
+        '{"message":{"tool_calls":[{"function":{"name":"analyze","arguments":{}}}]}}',
+        '{"done":true,"message":{},"prompt_eval_count":321,"eval_count":45}',
+    ])
+    provider = OllamaProvider(
+        base_url="http://fake", model="m", thinking_enabled=True,
+    )
+    chunks = []
+    async for c in provider.stream(
+        system="", messages=[{"role": "user", "content": "x"}],
+    ):
+        chunks.append(c)
+
+    kinds = [c.kind for c in chunks]
+    assert kinds == ["text", "usage", "tool_use"]
+    usage = chunks[1].usage
+    assert usage.input_tokens == 321
+    assert usage.output_tokens == 45
+    assert usage.cache_read_input_tokens == 0
+    assert usage.cache_creation_input_tokens == 0
+
+
+@pytest.mark.asyncio
 async def test_every_wire_line_captured(install_fake_httpx, tmp_path):
     lines = [
         'data: {"choices":[{"delta":{"content":"A"}}]}',
