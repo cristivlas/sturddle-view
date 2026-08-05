@@ -98,7 +98,11 @@ def messages_anthropic_to_openai(messages: list[Message]) -> list[dict]:
                         "type": "function",
                         "function": {
                             "name": block.get("name", ""),
-                            "arguments": json.dumps(block.get("input", {})),
+                            # ensure_ascii=False: keep accented text
+                            # verbatim so the model can't parrot escapes.
+                            "arguments": json.dumps(
+                                block.get("input", {}), ensure_ascii=False
+                            ),
                         },
                     }
                     # Echo back an opaque tool signature (Gemini requires

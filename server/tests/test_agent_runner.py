@@ -143,6 +143,39 @@ async def test_tool_use_dispatches_and_feeds_result_into_next_round():
 
 
 @pytest.mark.asyncio
+async def test_tool_result_keeps_non_ascii_verbatim():
+    # ensure_ascii=True would serialize accented opening names as
+    # \uXXXX escapes inside the tool_result text, and the model then
+    # parrots the escaped spelling into its prose. The wire must carry
+    # the characters verbatim.
+    name = "Gr\u00fcnfeld Variation"
+
+    async def openings(_payload, *, cancel_token):
+        return {"family": name}
+
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="tu_1",
+            tool_name="related_openings", tool_input={},
+        )],
+        [ProviderChunk(kind="text", text="ok")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=_make_registry({"related_openings": openings})
+    )
+
+    await coord.run(game_id="g")
+    await _drain_until_done(queue)
+
+    tr = provider.last_call["messages"][-1]["content"][0]
+    assert tr["type"] == "tool_result"
+    assert name in tr["content"]
+    assert "\\u00fc" not in tr["content"]
+
+
+@pytest.mark.asyncio
 async def test_usage_accumulates_across_rounds_onto_done_event():
     # Each round's usage chunk publishes cumulative turn totals as an
     # ai_usage event; the terminal done event carries the final totals.
@@ -594,7 +627,7 @@ async def test_error_detail_truncated_to_cap():
 
 
 # ---------- Tool cards (lazy per-tool guidance) ------------------------
-# See docs/ai-analysis-spec.md §Skills layer. A tool's card is appended as a
+# See docs/ai-analysis-spec.md section Skills layer. A tool's card is appended as a
 # text content block inside the tool_result user message, on the first
 # call to that tool per turn. Subsequent calls to the same tool reuse
 # the message-list prefix (card already in context); no re-injection.

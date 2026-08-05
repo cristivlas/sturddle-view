@@ -579,7 +579,9 @@ def _tool_result_message(
     given tool per turn (see docs/ai-analysis-spec.md §Skills layer).
     """
     if not isinstance(result, str):
-        result = json.dumps(result)
+        # ensure_ascii=False: escaped non-ASCII (accented opening names)
+        # gets parroted into the model's prose verbatim.
+        result = json.dumps(result, ensure_ascii=False)
     content: list[dict] = [
         {"type": "tool_result", "tool_use_id": tool_use_id, "content": result}
     ]
