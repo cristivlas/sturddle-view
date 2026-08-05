@@ -402,6 +402,7 @@ const inst = createDockableWindow({
     return buildBody();
   },
   dockOrder: DOCK_ORDER.AI_ANALYSIS,
+  railDockable: true,
   getInlineEl: () => inlineEl,
   closable: true,
   onUserClose: () => {
