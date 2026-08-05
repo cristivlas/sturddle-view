@@ -799,7 +799,7 @@ header {
   background: var(--panel);
   border-bottom: 2px solid var(--accent-line);
 }
-header h1 { margin: 0; font-size: 1rem; color: #b8b8b8; font-weight: 500; }
+header h1 { margin: 0; font-size: 0.9375rem; color: #b8b8b8; font-weight: 500; }
 .brand {
   display: inline-flex; align-items: baseline;
   letter-spacing: 0.01em;
