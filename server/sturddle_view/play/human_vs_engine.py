@@ -698,10 +698,12 @@ class HumanVsEngine:
                 self._maybe_save_pgn(result="*", termination="unterminated")
         if ended:
             await self._cancel_tick()
+            # Flush BEFORE announcing: clients react to game_result by
+            # loading the finished game from recents (auto view mode).
+            await self._flush_recents_save()
             await self._bus.publish(
                 Event(kind=EVT_GAME_RESULT, game_id=end_game_id, payload=end_payload)
             )
-            await self._flush_recents_save()
         else:
             await self._engine_to_move()
 
@@ -874,17 +876,20 @@ class HumanVsEngine:
             result = loser_result(self._human_white)
             self._maybe_save_pgn(result=result, termination="resignation")
             self._stash_recents_payload(result=result, termination="resignation")
-            await self._bus.publish(
-                Event(
-                    kind=EVT_GAME_RESULT,
-                    game_id=self._game_id,
-                    payload={"result": "resign", "by": "human"},
-                )
-            )
+            end_game_id = self._game_id
             self._game_id = None
             self._board = None
             self._clear_store()
+        # Flush BEFORE announcing: clients react to game_result by
+        # loading the finished game from recents (auto view mode).
         await self._flush_recents_save()
+        await self._bus.publish(
+            Event(
+                kind=EVT_GAME_RESULT,
+                game_id=end_game_id,
+                payload={"result": "resign", "by": "human"},
+            )
+        )
 
     async def pause(self) -> None:
         """Pause the clock. Only valid on the human's turn.
@@ -1750,6 +1755,9 @@ class HumanVsEngine:
             result = loser_result(loser == SIDE_WHITE)
             self._maybe_save_pgn(result=result, termination="time_forfeit")
             self._stash_recents_payload(result=result, termination="time_forfeit")
+        # Flush BEFORE announcing: clients react to game_result by
+        # loading the finished game from recents (auto view mode).
+        await self._flush_recents_save()
         await self._bus.publish(
             Event(
                 kind=EVT_GAME_RESULT,
@@ -1757,7 +1765,6 @@ class HumanVsEngine:
                 payload={"result": "timeout", "loser": loser},
             )
         )
-        await self._flush_recents_save()
         async with self._lock:
             # Only clear if the same game is still active. A racing
             # new_game / enter_view_mode between the two critical sections
@@ -2075,10 +2082,12 @@ class HumanVsEngine:
                 self._maybe_save_pgn(result="*", termination="unterminated")
         if ended:
             await self._cancel_tick()
+            # Flush BEFORE announcing: clients react to game_result by
+            # loading the finished game from recents (auto view mode).
+            await self._flush_recents_save()
             await self._bus.publish(
                 Event(kind=EVT_GAME_RESULT, game_id=end_game_id, payload=end_payload)
             )
-            await self._flush_recents_save()
 
     async def _fail_analysis_start(self, game_id: str, detail: str) -> None:
         """Analysis engine failed to start: leave ANALYZING so the client

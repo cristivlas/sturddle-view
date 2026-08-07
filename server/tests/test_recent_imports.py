@@ -201,8 +201,8 @@ def test_resave_keeps_original_game_id(store):
     [row] = store.list()
     assert row["hash"] == h
     assert row["game_id"] == "gid-A"
-    # Orphaned id has no reverse-index entry.
-    assert store.hash_for_id("gid-B") is None
+    # The colliding id stays resolvable as an alias of the same row.
+    assert store.hash_for_id("gid-B") == h
 
 
 def test_get_by_id_returns_same_as_get(store):
@@ -310,11 +310,11 @@ def test_save_collision_assertion_crashes(store):
         _run(store.save(fmt="pgn", text="1. d4 *", summary="s", game_id="gid-X"))
 
 
-def test_save_hash_collision_warns_and_keeps_original(store, caplog):
+def test_save_hash_collision_logs_dedup_and_keeps_original(store, caplog):
     _run(store.save(fmt="pgn", text="1. e4 *", summary="s", game_id="gid-A"))
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("INFO"):
         _run(store.save(fmt="pgn", text="1. e4 *", summary="s", game_id="gid-B"))
-    assert any("hash collision" in r.message for r in caplog.records)
+    assert any("content dedup" in r.message for r in caplog.records)
     [row] = store.list()
     assert row["game_id"] == "gid-A"
 
@@ -437,9 +437,8 @@ def test_replace_at_persists_to_disk(store, tmp_path):
 
 
 def test_replace_at_new_hash_collides_with_unrelated_game(store):
-    """new_hash already present and bound to a different game_id (a 2^-256
-    event). Old row evicted, but we cannot rebind game_id; the stored id
-    wins, our binding is dropped."""
+    """new_hash already present and bound to a different game_id. Old row
+    evicted; the stored id keeps the primary and ours binds as an alias."""
     # Pre-existing row at H_target bound to gid-other.
     h_target = _run(store.save(fmt="pgn", text="1. d4 *", summary="other", game_id="gid-other"))
     # Our game at H_ours.
@@ -452,10 +451,10 @@ def test_replace_at_new_hash_collides_with_unrelated_game(store):
     assert result == h_target
     # Our old row gone.
     assert store.get(h_ours) is None
-    # H_target row keeps gid-other; gid-ours is now unmapped.
+    # H_target row keeps gid-other; gid-ours resolves there as an alias.
     row, _ = store.get(h_target)
     assert row["game_id"] == "gid-other"
-    assert store.hash_for_id("gid-ours") is None
+    assert store.hash_for_id("gid-ours") == h_target
 
 
 # ---- x-game navigation: fork-link tests ----
@@ -678,3 +677,122 @@ def test_replace_at_rejects_zero_fork_ply(store):
             text="1. d4 *", summary={}, game_id="g",
             parent_game_id="gid-parent", fork_ply=0,
         ))
+
+
+# ---- hash-collision alias binding (identical-content fork dedup) ----
+# A play-from-here fork that ends with content identical to an existing
+# row (same ply, same outcome) must stay reachable by its own game_id:
+# the id binds as an alias to the deduped row instead of vanishing.
+
+
+def test_colliding_save_binds_alias_id(store):
+    h1 = _save_parent(store, gid="gid-a")
+    h2 = _run(store.save(
+        fmt="pgn", text="1. e4 e5 *", summary={"white": "P"}, game_id="gid-b",
+    ))
+    assert h1 == h2
+    assert len(store.list()) == 1
+    # Primary id untouched; alias resolves to the same row.
+    assert store.get_by_id("gid-a")[0]["game_id"] == "gid-a"
+    assert store.get_by_id("gid-b")[0]["game_id"] == "gid-a"
+    assert store.hash_for_id("gid-b") == h1
+
+
+def test_alias_survives_reload(store, tmp_path):
+    _save_parent(store, gid="gid-a")
+    _run(store.save(
+        fmt="pgn", text="1. e4 e5 *", summary={"white": "P"}, game_id="gid-b",
+    ))
+    reloaded = RecentImports.load(root=tmp_path / "imports", cap=5)
+    assert reloaded.get_by_id("gid-b") is not None
+    assert reloaded.get_by_id("gid-b")[0]["game_id"] == "gid-a"
+
+
+def test_remove_purges_alias_bindings(store):
+    h = _save_parent(store, gid="gid-a")
+    _run(store.save(
+        fmt="pgn", text="1. e4 e5 *", summary={"white": "P"}, game_id="gid-b",
+    ))
+    result = _run(store.remove(h))
+    assert result.status is RemoveStatus.DELETED
+    assert store.get_by_id("gid-a") is None
+    assert store.get_by_id("gid-b") is None
+
+
+def test_eviction_purges_alias_bindings(store):
+    _run(store.save(fmt="pgn", text="1. a3 *", summary={}, game_id="gid-a"))
+    _run(store.save(fmt="pgn", text="1. a3 *", summary={}, game_id="gid-b"))
+    # cap=5: five newer distinct rows push the aliased row out.
+    fillers = ["1. h3 *", "1. h4 *", "1. a4 *", "1. b3 *", "1. b4 *"]
+    for i, text in enumerate(fillers):
+        _run(store.save(fmt="pgn", text=text, summary={},
+                        game_id=f"gid-filler-{i}"))
+    assert store.get_by_id("gid-a") is None
+    assert store.get_by_id("gid-b") is None
+
+
+def test_colliding_fork_save_does_not_duplicate_parent_ref(store):
+    _save_parent(store)
+    _save_child(store, "gid-parent", 4, gid="gid-c1", text="1. c4 *")
+    _run(store.save(
+        fmt="pgn", text="1. c4 *", summary={"white": "C"}, game_id="gid-c2",
+        parent_game_id="gid-parent", fork_ply=4,
+    ))
+    parent_row = store.get_by_id("gid-parent")[0]
+    assert parent_row["refs"] == [{"game_id": "gid-c1", "fork_ply": 4}]
+    # Both fork ids resolve to the deduped child row with its link intact.
+    for gid in ("gid-c1", "gid-c2"):
+        row = store.get_by_id(gid)[0]
+        assert row["parent_game_id"] == "gid-parent"
+        assert row["fork_ply"] == 4
+
+
+def test_resave_preserves_summary_fields_missing_from_incoming(store):
+    _run(store.save(
+        fmt="pgn", text="1. e4 e5 *",
+        summary={"white": "H", "result": "0-1", "source": "play"},
+        game_id="gid-a",
+    ))
+    # Re-open via import: incoming summary lacks `source`.
+    _run(store.save(
+        fmt="pgn", text="1. e4 e5 *",
+        summary={"white": "H", "result": "0-1"},
+    ))
+    [row] = store.list()
+    assert row["summary"]["source"] == "play"
+    assert row["summary"]["white"] == "H"
+
+
+def test_replace_at_collision_binds_alias(store):
+    _run(store.save(fmt="pgn", text="1. e4 e5 *", summary={}, game_id="gid-a"))
+    old_h = _run(store.save(fmt="pgn", text="1. d4 *", summary={}, game_id="gid-b"))
+    # gid-b's content converges onto gid-a's row.
+    _run(store.replace_at(
+        old_hash=old_h, fmt="pgn", text="1. e4 e5 *", summary={},
+        game_id="gid-b",
+    ))
+    assert len(store.list()) == 1
+    assert store.get_by_id("gid-a")[0]["game_id"] == "gid-a"
+    assert store.get_by_id("gid-b")[0]["game_id"] == "gid-a"
+
+
+def test_replace_at_from_alias_detaches_without_evicting_shared_row(store):
+    """A live game alias-bound mid-game (export-in-progress collided with
+    another row) must still reach recents at game end: replace_at detaches
+    only the alias and lands the final content as its own row."""
+    h_shared = _run(store.save(fmt="pgn", text="1. e4 *", summary="other", game_id="gid-a"))
+    _run(store.save(fmt="pgn", text="1. e4 *", summary="mine", game_id="gid-b"))
+    assert store.hash_for_id("gid-b") == h_shared
+    h_new = _run(store.replace_at(
+        old_hash=h_shared, fmt="pgn", text="1. e4 e5 2. Nf3 *",
+        summary="final", game_id="gid-b",
+    ))
+    assert h_new != h_shared
+    # Shared row untouched, still owned by gid-a.
+    row, _ = store.get(h_shared)
+    assert row["game_id"] == "gid-a"
+    assert store.hash_for_id("gid-a") == h_shared
+    # Our finished game has its own row under its own id.
+    assert store.hash_for_id("gid-b") == h_new
+    assert store.get_by_id("gid-b")[0]["game_id"] == "gid-b"
+    assert len(store.list()) == 2

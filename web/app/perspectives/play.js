@@ -818,7 +818,7 @@ async function openXgameTarget(state, gameId, opts = {}) {
     && state.viewingGameId === gameId
     && (landAtPly === null || state.viewCursor === landAtPly)
   ) {
-    return;
+    return true;
   }
   try {
     const target = await state.api(
@@ -842,8 +842,10 @@ async function openXgameTarget(state, gameId, opts = {}) {
     closeAi();
     const r = await state.api("POST", "/game/import", importPayload);
     if (r?.game_id) state.view.setGameId(r.game_id);
+    return true;
   } catch (e) {
     reportError(state.ctx, MSG.OPEN_GAME_FAILED, e);
+    return false;
   }
 }
 
@@ -1728,6 +1730,16 @@ function _onServerEditingStop(state) {
   refreshButtons(state);
 }
 
+// A finished game flips into view mode on its recents copy (the live game is
+// finalized before game_result fires; the server flushes recents first),
+// landing on the final position. Zero-move games never reach recents -- skip.
+async function _enterViewOnGameOver(state, gameId) {
+  if (state.viewing || state.editing || !gameId || !state.movesPlayed) return;
+  state.autoViewFromGameOver = true;
+  const ok = await openXgameTarget(state, gameId, { landAtPly: state.movesPlayed });
+  if (!ok) state.autoViewFromGameOver = false;
+}
+
 async function _enterEditFromCurrentMode(state) {
   // Server requires view mode before edit. From play mode, flip into
   // view via /game/view/start (no recents write); /game/import would
@@ -1820,8 +1832,14 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       // the same event but would be too late.
       if (typeof evt.payload.analyzing === "boolean") setAnalyzing(state, evt.payload.analyzing);
       if (state.viewing) {
+        // Auto-entry from game over: set just before the /game/import round
+        // trip that produced this event; consumed on arrival.
+        const autoEntry = !wasViewing && state.autoViewFromGameOver;
+        state.autoViewFromGameOver = false;
         if (!wasViewing || state.viewingGameId !== prevGameId) {
-          state.viewGameOverAlertShown = false;
+          // The play-mode dialog already announced the result; start the
+          // view session with the game-over toast spent.
+          state.viewGameOverAlertShown = autoEntry;
           state.dismissGameOverToast?.();
           state.dismissGameOverToast = null;
           // Game switched: clear stale x-game state + close live toasts BEFORE
@@ -1877,6 +1895,10 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         if (!wasViewing) {
           if (typeof v.resume_human_white === "boolean") {
             state.humanWhite = v.resume_human_white;
+            state.view.setHumanWhite(state.humanWhite);
+          } else if (autoEntry) {
+            // Keep the POV the game was just played from -- the game-over
+            // flip into view must not flip the board.
             state.view.setHumanWhite(state.humanWhite);
           } else {
             state.view.setHumanWhite(!state.viewFlipped);
@@ -1957,6 +1979,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         message: formatGameOver(evt.payload, state.humanWhite),
         messageClass: "game-over-message",
       });
+      _enterViewOnGameOver(state, evt.game_id);
       break;
     case KIND.CLOCK_TICK:
       if (typeof evt.payload.paused === "boolean" && evt.payload.paused !== state.paused) {
@@ -1992,6 +2015,7 @@ export const playPerspective = {
       gameTcInitial: null,
       gameTcIncrement: null,
       viewGameOverAlertShown: false,
+      autoViewFromGameOver: false,
       dismissGameOverToast: null,
       // Edit-mode staged annotation: null=no change, ""=clear, "text"=set at
       // entry ply. Reset on each edit entry and on /edit/cancel.

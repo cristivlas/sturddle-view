@@ -51,6 +51,7 @@ DEFAULT_CAP = 50
 
 # Row + ref field keys (no inline string literals at call sites).
 ROW_GAME_ID = "game_id"
+ROW_ALIAS_IDS = "alias_ids"
 ROW_REFS = "refs"
 ROW_PARENT_GAME_ID = "parent_game_id"
 ROW_FORK_PLY = "fork_ply"
@@ -97,6 +98,15 @@ def _hash_text(text: str) -> str:
 
 def _ext_for(fmt: str) -> str:
     return "fen" if fmt == "fen" else "pgn"
+
+
+def _merged_summary(incoming, existing):
+    """Re-save summary: incoming wins per key, but keep existing keys the
+    incoming dict lacks (e.g. ``source: "play"`` survives a re-open via
+    import). Non-dict summaries replace outright."""
+    if isinstance(incoming, dict) and isinstance(existing, dict):
+        return {**existing, **incoming}
+    return incoming
 
 
 # Getter contract: returns the active HVE session's current game_id or
@@ -270,30 +280,33 @@ class RecentImports:
         async with self._lock:
             existing = self._index.get(h)
             if existing is not None:
-                # First save wins. Keep original game_id; warn if the
-                # caller passed a different one (hash collision across
-                # game_ids -- normal play should not trigger this).
+                # First save wins the primary id. A different incoming id
+                # (identical-content fork, e.g. play-from-here replayed to
+                # the same PGN) binds as an alias so it stays reachable.
                 stored_id = existing.get(ROW_GAME_ID)
                 if (
                     game_id is not None
                     and stored_id is not None
                     and game_id != stored_id
                 ):
-                    log.warning(
-                        "recent-imports hash collision: hash=%s "
-                        "stored_game_id=%s incoming_game_id=%s; "
-                        "keeping stored id",
-                        h, stored_id, game_id,
-                    )
+                    self._bind_alias_locked(game_id, h, existing)
                 # Bump ts + refresh summary on re-save (existing behavior).
                 # Both "game_id" and "refs" keys are guaranteed present
                 # by load()'s setdefault backfill, so no key-existence
                 # check is needed here.
-                existing[ROW_SUMMARY] = summary
+                existing[ROW_SUMMARY] = _merged_summary(summary, existing.get(ROW_SUMMARY))
                 existing[ROW_TS] = int(time.time() * 1000)
                 # Backfill game_id if missing (legacy row from pre-Phase-1).
                 if stored_id is None and game_id is not None:
                     self._bind_id_locked(game_id, h, existing)
+                # Deduped fork: adopt the link if the row has none; a row
+                # already carrying the same (parent, ply) needs no new ref.
+                if parent_game_id is not None and ROW_PARENT_GAME_ID not in existing:
+                    existing[ROW_PARENT_GAME_ID] = parent_game_id
+                    existing[ROW_FORK_PLY] = fork_ply
+                    self._append_parent_ref_locked(
+                        parent_game_id, existing.get(ROW_GAME_ID) or game_id, fork_ply,
+                    )
                 self._persist_locked()
                 return h
 
@@ -415,20 +428,31 @@ class RecentImports:
                 preserved_parent_id = parent_game_id
                 preserved_fork_ply = fork_ply
 
+            # Aliases on the outgoing row follow the game record to its
+            # new content (their ids must stay resolvable).
+            migrated_aliases: list[str] = []
             if old_hash is not None and old_hash != new_hash:
                 old_row = self._index.get(old_hash)
                 if old_row is not None:
                     bound_id = old_row.get(ROW_GAME_ID)
                     if bound_id is not None and bound_id != game_id:
-                        raise AssertionError(
-                            f"replace_at refusing to evict hash={old_hash} "
-                            f"bound to a different game_id={bound_id} "
-                            f"(caller passed game_id={game_id})"
-                        )
-                    self._index.pop(old_hash, None)
-                    if bound_id is not None:
-                        self._by_id.pop(bound_id, None)
-                    self._delete_blob(old_row.get(ROW_FILE))
+                        aliases = old_row.get(ROW_ALIAS_IDS) or []
+                        if game_id not in aliases:
+                            raise AssertionError(
+                                f"replace_at refusing to evict hash={old_hash} "
+                                f"bound to a different game_id={bound_id} "
+                                f"(caller passed game_id={game_id})"
+                            )
+                        # Our id was alias-bound to a shared row (identical
+                        # in-progress content). Detach only the alias; the
+                        # row belongs to another game and must survive.
+                        aliases.remove(game_id)
+                        self._by_id.pop(game_id, None)
+                    else:
+                        self._index.pop(old_hash, None)
+                        self._unbind_row_ids_locked(old_row)
+                        migrated_aliases = list(old_row.get(ROW_ALIAS_IDS) or [])
+                        self._delete_blob(old_row.get(ROW_FILE))
 
             existing = self._index.get(new_hash)
             if existing is not None:
@@ -437,16 +461,14 @@ class RecentImports:
                 # summary/ts and rebind game_id when free.
                 stored_id = existing.get(ROW_GAME_ID)
                 if stored_id is not None and stored_id != game_id:
-                    log.warning(
-                        "recent-imports hash collision in replace_at: "
-                        "hash=%s stored_game_id=%s incoming_game_id=%s; "
-                        "keeping stored id",
-                        new_hash, stored_id, game_id,
-                    )
-                else:
-                    if stored_id is None:
-                        self._bind_id_locked(game_id, new_hash, existing)
-                existing[ROW_SUMMARY] = summary
+                    # Content converged onto another game's row: keep the
+                    # stored primary, bind ours as an alias.
+                    self._bind_alias_locked(game_id, new_hash, existing)
+                elif stored_id is None:
+                    self._bind_id_locked(game_id, new_hash, existing)
+                for alias in migrated_aliases:
+                    self._bind_alias_locked(alias, new_hash, existing)
+                existing[ROW_SUMMARY] = _merged_summary(summary, existing.get(ROW_SUMMARY))
                 existing[ROW_TS] = int(time.time() * 1000)
                 # Preserve fork-link on the surviving row when it wasn't
                 # already set (old_hash == new_hash leaves it intact).
@@ -484,6 +506,8 @@ class RecentImports:
                 row[ROW_FORK_PLY] = preserved_fork_ply
             self._index[new_hash] = row
             self._bind_id_locked(game_id, new_hash, row)
+            for alias in migrated_aliases:
+                self._bind_alias_locked(alias, new_hash, row)
             if parent_ref_to_append is not None:
                 self._append_parent_ref_locked(
                     parent_ref_to_append[0], game_id,
@@ -500,6 +524,30 @@ class RecentImports:
         self._assert_id_free_or_self(game_id, h)
         row["game_id"] = game_id
         self._by_id[game_id] = h
+
+    def _bind_alias_locked(self, game_id: str, h: str, row: dict) -> None:
+        """Bind ``game_id`` as an ALIAS of ``row`` (hash=``h``): reverse
+        index + persisted alias list, primary game_id untouched. Used
+        when identical content arrives under a new id (fork dedup).
+        Must hold the lock."""
+        self._assert_id_free_or_self(game_id, h)
+        aliases = row.setdefault(ROW_ALIAS_IDS, [])
+        if game_id not in aliases:
+            aliases.append(game_id)
+            log.info(
+                "recent-imports content dedup: id=%s aliased to row of id=%s",
+                game_id, row.get(ROW_GAME_ID),
+            )
+        self._by_id[game_id] = h
+
+    def _unbind_row_ids_locked(self, row: dict) -> None:
+        """Drop the row's primary id and all aliases from the reverse
+        index. Must hold the lock."""
+        gid = row.get(ROW_GAME_ID)
+        if gid is not None:
+            self._by_id.pop(gid, None)
+        for alias in row.get(ROW_ALIAS_IDS) or []:
+            self._by_id.pop(alias, None)
 
     async def touch(self, h: str) -> None:
         """Bump ``ts`` for ``h`` so frequently revisited entries don't fall
@@ -550,8 +598,7 @@ class RecentImports:
                 self._detach_from_parent_locked(parent_id, child_gid)
 
             self._index.pop(h, None)
-            if child_gid is not None:
-                self._by_id.pop(child_gid, None)
+            self._unbind_row_ids_locked(row)
             self._delete_blob(row.get(ROW_FILE))
             self._persist_locked()
             if parent_id is not None:
@@ -756,9 +803,7 @@ class RecentImports:
             if active_gid is not None and row.get(ROW_GAME_ID) == active_gid:
                 continue
             self._index.pop(h, None)
-            gid = row.get(ROW_GAME_ID)
-            if gid is not None:
-                self._by_id.pop(gid, None)
+            self._unbind_row_ids_locked(row)
             self._delete_blob(row.get(ROW_FILE))
             dropped += 1
         if dropped < drop_target:
@@ -784,20 +829,21 @@ class RecentImports:
         Called from :meth:`load`."""
         by_id: dict[str, str] = {}
         for h, row in self._index.items():
-            gid = row.get(ROW_GAME_ID)
-            if gid is None:
-                continue
-            if gid in by_id:
-                # Two rows on disk claim the same game_id. Programming
-                # bug per the uniqueness contract; surface and drop the
-                # later one's mapping so the index stays usable.
-                log.error(
-                    "duplicate game_id %s on load: hash=%s also claims it; "
-                    "keeping first mapping (hash=%s)",
-                    gid, h, by_id[gid],
-                )
-                continue
-            by_id[gid] = h
+            ids = [row.get(ROW_GAME_ID), *(row.get(ROW_ALIAS_IDS) or [])]
+            for gid in ids:
+                if gid is None:
+                    continue
+                if gid in by_id:
+                    # Two rows on disk claim the same game_id. Programming
+                    # bug per the uniqueness contract; surface and drop the
+                    # later one's mapping so the index stays usable.
+                    log.error(
+                        "duplicate game_id %s on load: hash=%s also claims it; "
+                        "keeping first mapping (hash=%s)",
+                        gid, h, by_id[gid],
+                    )
+                    continue
+                by_id[gid] = h
         self._by_id = by_id
 
     def _persist_locked(self) -> None:
