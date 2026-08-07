@@ -3747,6 +3747,38 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tabs wa-tab-panel { height: 100%; --padding: 0; }
 .studio-tabs wa-tab-panel::part(base) { height: 100%; box-sizing: border-box; }
 .studio-pane { height: 100%; overflow: auto; }
+/* Selection-change loading state for the selDetail-fed panes (Standings,
+   Head-to-Head, Games): dim the outgoing tourney's rows and spin, so stale
+   numbers are never readable as current.
+
+   The overlay lives on the pane's NON-SCROLLING wrapper, not on
+   .studio-pane itself. Inside the scroller neither sticky nor absolute
+   works: absolute is positioned against the scrollable area (scrolls away
+   with content), and sticky only clamps a box that is already in flow-view
+   -- as ::after (last child) it starts below the fold on long lists, and it
+   renders off-screen entirely after a tab is hidden and re-shown. The
+   wrapper doesn't scroll, so absolute centering is stable in every case. */
+/* Fills the tab panel so the pane keeps its 100% height and the overlay's
+   50%/50% centering resolves against the visible area. */
+.studio-pane-loading-host { position: relative; height: 100%; min-height: 0; }
+.studio-pane--loading { opacity: 0.4; pointer-events: none; }
+.studio-pane-loading-host.is-loading::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: -0.75rem 0 0 -0.75rem;
+  border: 2px solid rgba(var(--accent-rgb), 0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: studio-pane-spin 0.7s linear infinite;
+}
+@keyframes studio-pane-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .studio-pane-loading-host.is-loading::after { animation-duration: 2.4s; }
+}
 /* A little headroom above the live-list panes (Engines/Games) and the event
    log -- on the panel (outside the scroll pane) so it stays put as content
    scrolls/tails. */
@@ -3875,6 +3907,11 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   .studio-tabs wa-tab-panel::part(base) { height: auto; }
   .studio-tabs::part(body) { flex: 0 0 auto; min-height: auto; }
   .studio-pane { height: auto; overflow: visible; }
+  /* The page owns vertical scroll here, so the loading host is content-height
+     and its 50% would land mid-content -- below the fold on a long list.
+     Fixed centering pins the spinner to the viewport instead. */
+  .studio-pane-loading-host { height: auto; }
+  .studio-pane-loading-host.is-loading::after { position: fixed; }
   /* Log rows are nowrap and can run long. The pane above is overflow:visible
      so the page owns vertical scroll, which disables horizontal scrolling too,
      so give the list its own x scroller. Its height is content-driven, so the

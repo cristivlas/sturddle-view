@@ -40,6 +40,12 @@ const REVIEW_FAIL_MSG = "Review failed";
 const LIST_RELOAD_DEBOUNCE_MS = 150;
 // Coalesce standings re-fetches while the selected tourney is running.
 const STANDINGS_REFRESH_DEBOUNCE_MS = 400;
+// Grace before a selection-change fetch dims its panes: below this the fetch
+// usually lands first and dimming would only flash.
+const SEL_PENDING_DIM_DELAY_MS = 150;
+// Dims a selDetail-fed pane; the spinner overlay is armed on its wrapper.
+const PANE_LOADING_CLASS = "studio-pane--loading";
+const PANE_LOADING_HOST_ACTIVE_CLASS = "is-loading";
 // Safety cap on the perspective reveal gate: reveal anyway if the list/boards
 // haven't signalled ready by now (a stuck fetch must not hide the UI forever).
 const READY_TIMEOUT_MS = 4000;
@@ -141,9 +147,9 @@ const STUDIO_HTML = `
               <wa-tab panel="history">Games</wa-tab>
               <wa-tab panel="log">Event Log</wa-tab>
               <wa-tab-panel name="tourneys"><div class="studio-pane studio-pane-tourneys"></div></wa-tab-panel>
-              <wa-tab-panel name="standings"><div class="studio-pane studio-pane-standings"></div></wa-tab-panel>
-              <wa-tab-panel name="h2h"><div class="studio-pane studio-pane-h2h"></div></wa-tab-panel>
-              <wa-tab-panel name="history"><div class="studio-pane studio-pane-history"></div></wa-tab-panel>
+              <wa-tab-panel name="standings"><div class="studio-pane-loading-host"><div class="studio-pane studio-pane-standings"></div></div></wa-tab-panel>
+              <wa-tab-panel name="h2h"><div class="studio-pane-loading-host"><div class="studio-pane studio-pane-h2h"></div></div></wa-tab-panel>
+              <wa-tab-panel name="history"><div class="studio-pane-loading-host"><div class="studio-pane studio-pane-history"></div></div></wa-tab-panel>
               <wa-tab-panel name="log"><div class="studio-pane studio-pane-log"></div></wa-tab-panel>
             </wa-tab-group>
           </div>
@@ -445,10 +451,16 @@ function loadSelected(ctx, force = false) {
   ctx.selLoadedId = ctx.selectedId;
   const tid = ctx.selectedId;
   const gen = ++ctx.selGen;
-  if (!tid) { ctx.selDetail = null; ctx.selEvents = []; renderStandingsPane(ctx); renderLogPane(ctx); return; }
+  if (!tid) {
+    setSelPending(ctx, false);
+    ctx.selDetail = null; ctx.selEvents = [];
+    renderStandingsPane(ctx); renderLogPane(ctx);
+    return;
+  }
+  setSelPending(ctx, true);
   ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${tid}`)
-    .then((d) => { if (gen === ctx.selGen) { ctx.selDetail = d; renderStandingsPane(ctx); paintWall(ctx); } })
-    .catch(() => {});
+    .then((d) => { if (gen === ctx.selGen) { ctx.selDetail = d; setSelPending(ctx, false); renderStandingsPane(ctx); paintWall(ctx); } })
+    .catch(() => { if (gen === ctx.selGen) { setSelPending(ctx, false); renderStandingsPane(ctx); } });
   ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${tid}/events`)
     .then((r) => { if (gen === ctx.selGen) { ctx.selEvents = buildLog(r.events); renderLogPane(ctx); } })
     .catch(() => {});
@@ -468,6 +480,9 @@ function startLive(ctx, tid) {
   ctx.liveUnsub = ctx.events.on((evt) => livePushEvent(ctx, evt));
   const gen = ++ctx.liveGen;
   ctx.selGen++; // supersede any pending snapshot load
+  // Selecting the running tourney is a selection change too: its panes hold
+  // the previously-selected tourney's rows until the detail GET lands.
+  setSelPending(ctx, true);
   // Resolves once this start's boards are restored and fully drawn; the
   // initial perspective reveal (ready) awaits it so no empty slots flash.
   ctx.boardsRestored = Promise.all([
@@ -478,6 +493,7 @@ function startLive(ctx, tid) {
     seedFromDetail(ctx.live, detail);
     for (const e of (ev.events || [])) if (e.kind?.startsWith(EVT_PREFIX)) addLogEntry(ctx.live, e);
     ctx.selDetail = detail;
+    setSelPending(ctx, false);
     renderLivePanes(ctx);
     renderStandingsPane(ctx);
     renderLogPane(ctx);
@@ -486,7 +502,12 @@ function startLive(ctx, tid) {
     // default; re-check liveness after the await.
     await ctx.boardStyleReady;
     if (gen === ctx.liveGen && ctx.live) await restoreBoards(ctx);
-  }).catch((e) => reportError({ log: ctx.log }, LOAD_FAIL_MSG, e));
+  }).catch((e) => {
+    // Undim on failure regardless of generation: a superseded start already
+    // had its pending re-armed by the newer one (setSelPending is idempotent).
+    if (gen === ctx.liveGen) { setSelPending(ctx, false); renderStandingsPane(ctx); }
+    reportError({ log: ctx.log }, LOAD_FAIL_MSG, e);
+  });
 }
 
 function stopLive(ctx) {
@@ -533,6 +554,39 @@ function livePushEvent(ctx, evt) {
   if (ctx._panesPending) return;
   ctx._panesPending = true;
   requestAnimationFrame(() => { ctx._panesPending = false; renderLivePanes(ctx); renderLogPane(ctx); });
+}
+
+// Panes fed by selDetail: dimmed together while a selection-change fetch is
+// in flight, so switching tourneys never presents another one's numbers as
+// current on whichever tab the user opens next.
+function selDetailPanes(ctx) {
+  return [ctx.standingsPaneEl, ctx.h2hPaneEl, ctx.historyPaneEl];
+}
+
+// Arm/disarm the loading dim. The delay is a display cadence we own (avoids a
+// flash on the common fast fetch), not a wait on anyone else's state.
+function setSelPending(ctx, pending) {
+  clearTimeout(ctx.selPendingTimer);
+  ctx.selPendingTimer = null;
+  ctx.selPending = pending;
+  if (!pending) {
+    applySelPendingClass(ctx, false);
+    return;
+  }
+  ctx.selPendingTimer = setTimeout(() => {
+    ctx.selPendingTimer = null;
+    if (ctx.selPending) applySelPendingClass(ctx, true);
+  }, SEL_PENDING_DIM_DELAY_MS);
+}
+
+// Dim goes on the scrolling pane, the spinner on its non-scrolling wrapper
+// (see the .studio-pane-loading-host rules for why the overlay can't live
+// inside the scroller).
+function applySelPendingClass(ctx, on) {
+  for (const el of selDetailPanes(ctx)) {
+    el?.classList.toggle(PANE_LOADING_CLASS, on);
+    el?.parentElement?.classList.toggle(PANE_LOADING_HOST_ACTIVE_CLASS, on);
+  }
 }
 
 function renderStandingsPane(ctx) {
@@ -1270,6 +1324,11 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     boardsRestored: null,
     // Standings/Event Log bound to the selected tourney (any).
     selDetail: null, selEvents: [], selGen: 0, selLoadedId: null,
+    // Selection-change fetch in flight: dims the selDetail-fed panes after a
+    // short delay. Background refreshes of a live tourney never set this --
+    // valid rows are on screen and blinking them every few seconds is worse
+    // than a stale number for 400ms.
+    selPending: false, selPendingTimer: null,
     // Board style for live boards (fetched once, like the workspace).
     boardStyleCached: null, boardStyleReady: null,
     // Ribbon verbs (shared with Arena) + tournament settings for New/Edit.
@@ -1347,6 +1406,9 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
 
 function unmountStudio(ctx) {
   ctx.offEvents?.();
+  // Kill the pending-dim timer before the panes go away, so a late fire
+  // can't touch detached nodes.
+  setSelPending(ctx, false);
   // Remove the board-closed listener before stopLive's closeAllLiveGames so
   // teardown doesn't re-save (and wipe) the board set.
   window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onBoardClosed);
