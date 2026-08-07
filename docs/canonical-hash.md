@@ -80,12 +80,8 @@ key; canonicalization just makes more content collide as "same".
 
 ## Status
 
-- [x] PGN canonicalizer + unit tests
-      (`server/sturddle_view/play/canonical_hash.py`,
-      `server/tests/test_canonical_hash.py`)
-- [x] FEN canonicalizer + unit tests (same files)
-- [x] Wire into `recent_imports.save` and
-      `api/game._hash_import_text` (both call sites converge on
-      `canonical_hash`)
-- [ ] Wipe store before deploy (existing hashes are stale)
-- [x] Full suite green (1013 passed, 33 skipped)
+Implemented (`server/sturddle_view/play/canonical_hash.py`,
+`server/tests/test_canonical_hash.py`); both hashing call sites
+(`recent_imports.save`, `api/game._hash_import_text`) converge on
+`canonical_hash`. Pre-existing stores hashed under the old raw-bytes
+scheme need a one-time wipe.

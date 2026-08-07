@@ -20,7 +20,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from ._errors import extract_error_message
-from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
+from .base import LLMProvider, Message, ProviderChunk, ProviderUsage, ToolWireSpec
 from .harmony_strip import flush_harmony_carry, strip_harmony_text
 from .inline_recovery import recover_inline_tool_calls
 from .openai_compat import (
@@ -116,6 +116,22 @@ def messages_anthropic_to_ollama_native(messages: list[Message]) -> list[dict]:
     return out
 
 
+def _usage_from_native(evt: dict) -> ProviderUsage | None:
+    """Map an /api/chat NDJSON line's token counts to ProviderUsage.
+
+    prompt_eval_count / eval_count ride the final (done:true) line; None
+    when the line carries neither. No cache accounting on this surface
+    (local KV-cache reuse is free anyway)."""
+    prompt = evt.get("prompt_eval_count")
+    completion = evt.get("eval_count")
+    if not isinstance(prompt, int) and not isinstance(completion, int):
+        return None
+    return ProviderUsage(
+        input_tokens=prompt if isinstance(prompt, int) else 0,
+        output_tokens=completion if isinstance(completion, int) else 0,
+    )
+
+
 def ollama_native_tool_call_to_provider_chunk(
     tool_call: dict, synthetic_id: str,
 ) -> ProviderChunk:
@@ -135,6 +151,8 @@ def ollama_native_tool_call_to_provider_chunk(
 
 
 class OllamaProvider(LLMProvider):
+    provider_name = "ollama"
+
     def __init__(
         self,
         base_url: str,
@@ -248,12 +266,17 @@ class OllamaProvider(LLMProvider):
         transcript: Transcript | None = None,
         round_index: int = 0,
         thinking: bool | None = None,
+        force_tool_call: bool = False,
     ) -> AsyncIterator[ProviderChunk]:
         # Branch by thinking support. /v1/chat/completions (OpenAI-compat)
         # is the default; /api/chat (Ollama native) is required when the
         # caller asked for `think=true` since the compat layer ignores it.
         # `thinking=False` forces the compat path (verifier sub-runs) so no
         # <think> reasoning is generated or leaks into the verdict.
+        # `force_tool_call` only reaches the compat path -- /api/chat has no
+        # tool_choice, and the verifier (the only forcing caller) always
+        # runs thinking-off, i.e. compat. Best-effort either way: local
+        # models may ignore it, and the coordinator's nudge backstops.
         if thinking is not False and self._thinking_enabled:
             inner = self._stream_native(
                 system, messages, tools,
@@ -263,6 +286,7 @@ class OllamaProvider(LLMProvider):
             inner = self._stream_openai_compat(
                 system, messages, tools,
                 transcript=transcript, round_index=round_index,
+                force_tool_call=force_tool_call,
             )
         # Some local models stream tool calls as prose -- recover them
         # transparently. XML shape handled unconditionally; call-syntax
@@ -282,6 +306,7 @@ class OllamaProvider(LLMProvider):
         *,
         transcript: Transcript | None,
         round_index: int,
+        force_tool_call: bool = False,
     ) -> AsyncIterator[ProviderChunk]:
         # Assemble OpenAI-shaped request. System prompt is a separate
         # first message in OpenAI's API; coordinator passes it as a
@@ -296,9 +321,17 @@ class OllamaProvider(LLMProvider):
             "model": self._model,
             "messages": wire_messages,
             "stream": True,
+            # Ask for the usage-bearing final chunk (OpenAI semantics).
+            # Ollama versions predating stream_options ignore unknown
+            # request fields, so this degrades to no usage chunk.
+            "stream_options": {"include_usage": True},
         }
         if tools:
             body["tools"] = tools_anthropic_to_openai(tools)
+            if force_tool_call:
+                # OpenAI-compat spelling of "must call a tool this round"
+                # (verifier first rounds). See LLMProvider.stream().
+                body["tool_choice"] = "required"
 
         return stream_openai_compat(
             self,
@@ -341,6 +374,9 @@ class OllamaProvider(LLMProvider):
 
         url = f"{self._base_url}/api/chat"
         emitted_tool_calls: list[dict] = []
+        # /api/chat always reports token counts on its final (done:true)
+        # line -- prompt_eval_count / eval_count. Last seen wins.
+        usage: ProviderUsage | None = None
         # Same harmony carry as in the OpenAI-compat path; some local
         # models (gemma4) leak `<|...|>` markers through native chat
         # on both content AND thinking channels.
@@ -384,6 +420,9 @@ class OllamaProvider(LLMProvider):
                     tcs = msg.get("tool_calls") or []
                     for tc in tcs:
                         emitted_tool_calls.append(tc)
+                    mapped = _usage_from_native(evt)
+                    if mapped is not None:
+                        usage = mapped
 
         tail = flush_harmony_carry(text_carry)
         if tail:
@@ -391,6 +430,11 @@ class OllamaProvider(LLMProvider):
         think_tail = flush_harmony_carry(think_carry)
         if think_tail:
             yield ProviderChunk(kind="thinking", text=think_tail)
+
+        # Usage before tool_use -- same ordering contract as the other
+        # providers: the coordinator stops consuming at the first tool_use.
+        if usage is not None:
+            yield ProviderChunk(kind="usage", usage=usage)
 
         # /api/chat tool_calls carry no id. Mint a synthetic id per call
         # so the coordinator's tool_use_id pipeline keeps working; Ollama

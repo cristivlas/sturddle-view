@@ -71,6 +71,23 @@ properties of the fastchess + UCI protocol, not operator tunables.
 Invalid (non-numeric) overrides log a warning and fall back to the
 default.
 
+## HvE difficulty
+
+Blinding tunables for difficulty levels 1-9. See
+[hve-difficulty-spec.md](hve-difficulty-spec.md). `hve_difficulty`
+itself is a UI-managed persisted setting, not listed here; pool
+admission auto-ranges off the position's own score spread (no cp
+constants).
+
+| Var | Default | Effect | Where |
+|---|---|---|---|
+| `SV_HVE_SWEEP_MOVETIME_SECONDS` | `0.07` | Floor on per-candidate sweep movetime (off-clock); actual = `max(floor, budget / legal moves)`. | `server/sturddle_view/config.py` |
+| `SV_HVE_SWEEP_BUDGET_SECONDS` | `1.0` | Sweep time budget spread over the legal moves. | `server/sturddle_view/config.py` |
+| `SV_HVE_REMOVAL_STEP` | `0.10` | Peak blinding probability per level below max: `qmax = step * (10 - level)`. | `server/sturddle_view/config.py` |
+| `SV_HVE_SCORE_CLAMP_CP` | `1000.0` | Mates fold to ~+/-clamp and cp scores clip to the same range before auto-ranging. | `server/sturddle_view/config.py` |
+| `SV_HVE_WINPROB_SCALE_CP` | `180.0` | Logistic scale mapping sweep cp to win probability for pool admission. | `server/sturddle_view/config.py` |
+| `SV_HVE_WINPROB_DROP_CAP` | `0.15` | Max win-prob drop vs the best move a pool candidate may have (all levels). | `server/sturddle_view/config.py` |
+
 ## Tournament engine proxy
 
 Set on the proxy subprocess environment, not via the CLI.

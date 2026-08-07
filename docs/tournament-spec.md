@@ -4,8 +4,7 @@ Status: shipped (Phase 1).
 
 This document specifies the tournament-management subsystem of SturddleView.
 It supersedes the brief tournament references in `docs/spec.md` and is the
-source of truth for implementation. UI/UX details (specifically the workspace
-window layout) are deferred and will be appended in a follow-up section.
+source of truth for implementation.
 
 ---
 
@@ -351,9 +350,9 @@ Spec'd but **not** in the v0 form (added in their own slices later):
 - **Games per round** (>2 does not improve statistics; we currently
   rely on fastchess's default of 2).
 - **SPRT parameters** (`elo0`, `elo1`, `alpha`, `beta`, `model`) --
-  deferred to **Phase 2**. The server-side computation is implemented
-  (`pgn_stats.compute_sprt`) and the API consumes a `template.sprt`
-  sub-object if present, but the UI does not currently expose it.
+  shipped: global defaults in Settings > SPRT, a template-form SPRT
+  toggle, and a workspace status line. See
+  [sprt-ux-spec.md](sprt-ux-spec.md).
 
 ### Override semantics
 
@@ -480,13 +479,14 @@ absent in the latter case.
 ### Window inventory
 
 - **Standings** (1 window). Table: engine, games played, W/L/D, score%,
-  Elo +/- 95% margin. Elo and margin are emitted only for head-to-head
-  (N=2) tournaments; with N>=3 the score% column is "vs field" (mixed
-  strengths) and the Elo column shows "--" until a multi-engine rating
-  estimator lands (see Future work). If SPRT is configured, a row at
-  the top showing LLR, bounds, and decision status (H0 / H1 /
-  inconclusive). Source: PGN parsed by `pgn_stats`, refreshed as games
-  complete.
+  Elo +/- 95% margin, plus the ordo-style joint-fit rating
+  (`elo_ordo`) which covers N>=3 tournaments; anchored absolute
+  ratings when reference engines carry a registry rating (see
+  [pgn-elo-ordo.md](pgn-elo-ordo.md) and
+  [engine-ratings-spec.md](engine-ratings-spec.md)). If SPRT is
+  configured, a status line showing LLR, bounds, and decision status
+  (H0 / H1 / continue). Source: PGN parsed by `pgn_stats`, refreshed
+  as games complete.
 - **Schedule** (1 window). List of completed games (PGN-derived) plus
   any in-progress games the server is tracking (proxy-derived once the
   pipeline is wired). Clicking a row attaches a Live game window --
@@ -753,13 +753,11 @@ not in Phase 1; revisit after the basic workspace is in use.
 
 ### Layout persistence
 
-A single user-level preferred workspace layout, persisted at
-`platformdirs.user_config_dir("sturddle-view") / "workspace-layout.json"`.
-Reopening any tournament restores this layout; rearranging in any
-workspace updates it.
-
-Per-tournament-instance layouts are explicitly not in Phase 1; revisit
-if needed once the single-layout model is in use.
+Per-tournament: window positions/sizes/open state and the active
+layout mode persist in localStorage under `sturddle:workspace:<id>`,
+cleared when the tournament is deleted. Business rules (save points,
+`_closed` semantics, restore-vs-default logic) and the test-scenario
+matrix live in [tournament-workspace.md](tournament-workspace.md).
 
 ### Default layout (first open, no saved preference)
 
@@ -913,21 +911,11 @@ Future work:
   tournament-creation time, store in the frozen template, warn (do
   not block) on Start if a binary's current hash differs. Prevents
   silent mixing of two engine versions into one Elo number.
-- **Multi-engine ratings (N>=3)**: replace the current "no Elo for
-  N>=3" placeholder with a proper rating estimator (Bradley-Terry /
-  Ordo-style iterative MLE) that yields per-engine ratings *and*
-  per-engine 95% margins from the pairwise W/L/D matrix. Until then
-  the Standings table renders "--" in the Elo column for N>=3.
 
 ---
 
 ## Open items
 
-- **UI/UX**: workspace window inventory and default layout (live
-  standings, per-game live boards, SPRT progress, event log). Pending
-  follow-up discussion.
-- **Implementation plan**: server modules' public APIs, REST/WS event
-  shapes, phased landing order. To be drafted after UI/UX is settled.
 - **Engine renames don't propagate to live HVE display**: editing an
   engine's display name in the Roster does not update the Play
   perspective's side-panel label until the next page load. Tournaments

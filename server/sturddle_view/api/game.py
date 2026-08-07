@@ -18,7 +18,7 @@ from ..play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
 from ..config import BOOK_ORDER_RANDOM, BOOK_ORDER_SEQUENTIAL
 from ..play.import_position import PositionImportError, parse_fen, parse_pgn
 from ..play.opening_lines import BookRef, is_epd_book, select_epd_seed
-from ..recent_imports import RemoveStatus
+from ..recent_imports import ROW_ALIAS_IDS, ROW_GAME_ID, ROW_REFS, RemoveStatus
 
 log = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ async def new_game(payload: dict, request: Request) -> dict:
         initial_seconds=float(payload.get("initial_seconds", s.tc_initial_seconds)),
         increment_seconds=float(payload.get("increment_seconds", s.tc_increment_seconds)),
     )
-    player_name = (payload.get("player_name") or "").strip() or None
+    player_name = s.player_name.strip() or None
     await _cancel_ai_analysis(request)
     seed_fen, book = await _resolve_book(s)
     try:
@@ -464,14 +464,34 @@ async def get_recent_import(h: str, request: Request) -> dict:
 
 
 @router.delete("/recent-imports/{h}")
-async def delete_recent_import(h: str, request: Request) -> dict:
+async def delete_recent_import(h: str, request: Request, force: bool = False) -> dict:
     """Remove a single entry from the recent-imports store.
 
     Returns 409 with a ``children`` list if the row has live forked
     children (refs non-empty); the row is pinned in that case and not
-    deleted.
+    deleted. Returns 409 ``{"error": "in_view"}`` when the row is the
+    currently-viewed game and ``force`` is not set; with ``force=1`` the
+    row is deleted and the view session is closed (idle board). The
+    children pin is not overridable by force.
     """
-    result = await request.app.state.recent_imports.remove(h)
+    store = request.app.state.recent_imports
+    hve = request.app.state.hve
+    in_view = False
+    blocked_by_refs = False
+    got = store.get(h)
+    if got is not None:
+        row, _ = got
+        blocked_by_refs = bool(row.get(ROW_REFS))
+        if hve is not None:
+            row_ids = {row.get(ROW_GAME_ID), *(row.get(ROW_ALIAS_IDS) or [])}
+            viewed = hve.viewing_game_id
+            in_view = viewed is not None and viewed in row_ids
+    # The children pin is not overridable, so it must win over the
+    # confirmable in_view gate -- no point confirming a delete that
+    # remove() will refuse anyway. remove() stays authoritative for it.
+    if in_view and not force and not blocked_by_refs:
+        raise HTTPException(status_code=409, detail={"error": "in_view"})
+    result = await store.remove(h)
     if result.status is RemoveStatus.NOT_FOUND:
         raise HTTPException(status_code=404, detail="not found")
     if result.status is RemoveStatus.BLOCKED_BY_REFS:
@@ -482,6 +502,8 @@ async def delete_recent_import(h: str, request: Request) -> dict:
                 "children": result.children,
             },
         )
+    if in_view:
+        await hve.close_view()
     return {"ok": True}
 
 
@@ -641,7 +663,7 @@ async def view_play_from_here(payload: dict, request: Request) -> dict:
         increment_seconds=float(payload.get("increment_seconds", s.tc_increment_seconds)),
     )
     inherit_clocks = bool(payload.get("inherit_pgn_clocks", s.inherit_pgn_clocks))
-    player_name = (payload.get("player_name") or "").strip() or None
+    player_name = s.player_name.strip() or None
     await _cancel_ai_analysis(request)
     try:
         game_id = await hve.play_from_here(

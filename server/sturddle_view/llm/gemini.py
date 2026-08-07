@@ -64,6 +64,8 @@ _REASONING_EFFORT_ON = "low"
 
 
 class GeminiProvider(LLMProvider):
+    provider_name = "gemini"
+
     def __init__(
         self,
         api_key: str,
@@ -142,6 +144,7 @@ class GeminiProvider(LLMProvider):
         transcript: Transcript | None = None,
         round_index: int = 0,
         thinking: bool | None = None,
+        force_tool_call: bool = False,
     ) -> AsyncIterator[ProviderChunk]:
         if not self._api_key:
             raise RuntimeError("gemini: API key not configured")
@@ -155,9 +158,17 @@ class GeminiProvider(LLMProvider):
             "model": self._model,
             "messages": wire_messages,
             "stream": True,
+            # Ask for the usage-bearing final chunk (token accounting for
+            # the UI; also reveals Gemini's implicit-cache hits via
+            # prompt_tokens_details.cached_tokens).
+            "stream_options": {"include_usage": True},
         }
         if tools:
             body["tools"] = tools_anthropic_to_openai(tools)
+            if force_tool_call:
+                # OpenAI-compat spelling of "must call a tool this round"
+                # (verifier first rounds). See LLMProvider.stream().
+                body["tool_choice"] = "required"
         # `thinking=False` forces it off for this call (verifier sub-runs);
         # otherwise honor the provider default.
         if thinking is not False and self._thinking_enabled:

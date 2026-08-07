@@ -166,10 +166,15 @@ class _CapturingStreamClient:
 
 class _StreamResponse:
     status_code = 200
+    # Default script; tests override via _install_stream(lines=...).
+    lines: list[str] = [
+        'data: {"choices":[{"delta":{"content":"hi"}}]}',
+        "data: [DONE]",
+    ]
 
     async def aiter_lines(self) -> AsyncIterator[str]:
-        yield 'data: {"choices":[{"delta":{"content":"hi"}}]}'
-        yield "data: [DONE]"
+        for line in type(self).lines:
+            yield line
 
 
 class _StreamCM:
@@ -180,10 +185,14 @@ class _StreamCM:
         return
 
 
-def _install_stream(monkeypatch) -> type[_CapturingStreamClient]:
+def _install_stream(monkeypatch, lines: list[str] | None = None) -> type[_CapturingStreamClient]:
     _CapturingStreamClient.last_body = None
     _CapturingStreamClient.last_url = None
     _CapturingStreamClient.last_headers = None
+    _StreamResponse.lines = lines if lines is not None else [
+        'data: {"choices":[{"delta":{"content":"hi"}}]}',
+        "data: [DONE]",
+    ]
 
     class _ShimHttpx:
         AsyncClient = lambda *a, **kw: _CapturingStreamClient()  # noqa: E731
@@ -208,6 +217,59 @@ async def test_stream_posts_to_compat_endpoint_with_bearer(monkeypatch):
     assert cls.last_body["stream"] is True
     # System prompt is folded into a leading system message.
     assert cls.last_body["messages"][0] == {"role": "system", "content": "SYS"}
+
+
+@pytest.mark.asyncio
+async def test_stream_opts_into_usage_reporting(monkeypatch):
+    cls = _install_stream(monkeypatch)
+    p = GeminiProvider(api_key="k", model="m")
+    await _drain(p)
+    assert cls.last_body["stream_options"] == {"include_usage": True}
+
+
+@pytest.mark.asyncio
+async def test_usage_chunk_from_final_chunk_maps_cached_tokens(monkeypatch):
+    # The usage-bearing final chunk has an empty choices array; OpenAI's
+    # prompt_tokens is the TOTAL prompt, so the cached share is subtracted
+    # into ProviderUsage.input_tokens (uncached remainder). Ordered before
+    # the held tool_use, same contract as the Anthropic provider.
+    _install_stream(monkeypatch, lines=[
+        'data: {"choices":[{"delta":{"content":"hi"}}]}',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc1",'
+        '"function":{"name":"analyze","arguments":"{}"}}]}}]}',
+        'data: {"choices":[],"usage":{"prompt_tokens":1200,"completion_tokens":80,'
+        '"prompt_tokens_details":{"cached_tokens":900}}}',
+        "data: [DONE]",
+    ])
+    p = GeminiProvider(api_key="k", model="m")
+    chunks = await _drain(p)
+    kinds = [c.kind for c in chunks]
+    assert kinds == ["text", "usage", "tool_use"]
+    usage = chunks[1].usage
+    assert usage.input_tokens == 300           # 1200 total - 900 cached
+    assert usage.cache_read_input_tokens == 900
+    assert usage.cache_creation_input_tokens == 0
+    assert usage.output_tokens == 80
+
+
+@pytest.mark.asyncio
+async def test_no_usage_in_stream_emits_no_usage_chunk(monkeypatch):
+    _install_stream(monkeypatch)
+    p = GeminiProvider(api_key="k", model="m")
+    chunks = await _drain(p)
+    assert [c.kind for c in chunks] == ["text"]
+
+
+@pytest.mark.asyncio
+async def test_force_tool_call_sets_tool_choice_required(monkeypatch):
+    cls = _install_stream(monkeypatch)
+    p = GeminiProvider(api_key="k", model="m")
+    tools = [{"name": "t", "description": "d", "input_schema": {"type": "object"}}]
+    await _drain(p, tools=tools, force_tool_call=True)
+    assert cls.last_body["tool_choice"] == "required"
+    # And absent when not forcing (default remains the provider's auto).
+    await _drain(p, tools=tools)
+    assert "tool_choice" not in cls.last_body
 
 
 @pytest.mark.asyncio

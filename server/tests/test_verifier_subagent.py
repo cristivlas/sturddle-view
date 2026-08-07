@@ -25,10 +25,11 @@ import asyncio
 import chess
 import pytest
 
-from sturddle_view.events import EventBus
+from sturddle_view.events import EVT_AI_USAGE, EventBus
 from sturddle_view.llm import (
     Message,
     ProviderChunk,
+    ProviderUsage,
     TOOL_SIGNATURE_KEY,
     ToolRegistry,
     ToolSpec,
@@ -74,11 +75,13 @@ class _RecordingScriptedProvider(LLMProvider):
         transcript=None,
         round_index: int = 0,
         thinking: bool | None = None,
+        force_tool_call: bool = False,
     ):
         self.calls.append({
             "system": system,
             "messages": [dict(m) for m in messages],
             "thinking": thinking,
+            "force_tool_call": force_tool_call,
         })
         if self._i >= len(self._rounds):
             raise RuntimeError("provider exhausted: more stream() calls than rounds")
@@ -199,6 +202,96 @@ async def test_verifier_inherits_turn_position_context():
     # The canonical SAN is prefixed so the verifier knows the move under
     # attack even when the narrator's question doesn't name it.
     assert "Move under test: e4." in user0
+
+
+@pytest.mark.asyncio
+async def test_verifier_first_round_forces_tool_call_narrator_never():
+    # The verifier's round 0 must carry force_tool_call so a tool-free
+    # verdict is structurally impossible where tool_choice is honored.
+    # Later verifier rounds go back to auto (the model must be able to
+    # conclude), and narrator rounds never force.
+    provider = _RecordingScriptedProvider(rounds=[
+        [_delegate_chunk("d1", "Is e4 sound?")],            # narrator round 0
+        [ProviderChunk(                                     # verifier round 0: tool
+            kind="tool_use", tool_use_id="v1",
+            tool_name="piece_at", tool_input={"square": "e2"},
+        )],
+        [ProviderChunk(kind="text", text="e4 is sound.")],  # verifier round 1: verdict
+        [ProviderChunk(kind="text", text="Done.")],         # narrator round 1
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider)
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    await _drain_until_done(queue)
+
+    # Calls in order: narrator r0, verifier r0, verifier r1, narrator r1.
+    # Verifier rounds are the ones with thinking forced off.
+    flags = [(c["thinking"], c["force_tool_call"]) for c in provider.calls]
+    assert flags == [
+        (None, False),   # narrator round 0
+        (False, True),   # verifier round 0: forced
+        (False, False),  # verifier round 1: back to auto
+        (None, False),   # narrator round 1
+    ]
+
+
+@pytest.mark.asyncio
+async def test_verifier_usage_rolls_into_narrator_turn_totals():
+    # Delegate fan-out is real cost: usage reported during verifier
+    # sub-run rounds must accumulate into the same turn totals as the
+    # narrator's own rounds -- published as cumulative ai_usage events
+    # (not filtered by the verifier's silent emit sink) and carried on
+    # the terminal done payload.
+    provider = _RecordingScriptedProvider(rounds=[
+        [                                                   # narrator round 0
+            ProviderChunk(kind="usage", usage=ProviderUsage(
+                input_tokens=100, output_tokens=10,
+            )),
+            _delegate_chunk("d1", "Is e4 sound?"),
+        ],
+        [                                                   # verifier round 0: tool
+            ProviderChunk(kind="usage", usage=ProviderUsage(
+                input_tokens=50, output_tokens=5,
+            )),
+            ProviderChunk(
+                kind="tool_use", tool_use_id="v1",
+                tool_name="piece_at", tool_input={"square": "e2"},
+            ),
+        ],
+        [                                                   # verifier round 1: verdict
+            ProviderChunk(kind="text", text="e4 is sound."),
+            ProviderChunk(kind="usage", usage=ProviderUsage(
+                input_tokens=25, output_tokens=2,
+            )),
+        ],
+        [                                                   # narrator round 1
+            ProviderChunk(kind="text", text="Done."),
+            ProviderChunk(kind="usage", usage=ProviderUsage(
+                input_tokens=200, output_tokens=20,
+            )),
+        ],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider)
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    usage_events = [e for e in events if e.kind == EVT_AI_USAGE]
+    assert len(usage_events) == 4
+    # Cumulative across narrator AND verifier rounds, in emission order.
+    assert [e.payload["input_tokens"] for e in usage_events] == [100, 150, 175, 375]
+    assert [e.payload["output_tokens"] for e in usage_events] == [10, 15, 17, 37]
+    done = events[-1]
+    assert done.payload["usage"] == {
+        "input_tokens": 375,
+        "output_tokens": 37,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
 
 
 @pytest.mark.asyncio

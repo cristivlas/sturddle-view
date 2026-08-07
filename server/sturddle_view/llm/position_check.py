@@ -242,22 +242,57 @@ def find_illegal_moves(text: str, board: chess.Board) -> list[str]:
     return [label for _surface, label in iter_illegal_moves(text, board)]
 
 
+# Pawn pushes carrying a move marker (number or "..."): "8. c5", "...e5".
+# Bare pushes stay excluded (square-name ambiguity, see _SAN_TOKEN_RE), but
+# the marker settles it -- nobody writes "the knight on 8. c5". Same group
+# names as _SAN_TOKEN_RE so the shared match guards apply unchanged.
+_MARKED_PAWN_PUSH_RE = re.compile(
+    rf"(?:(?P<num>\d+)(?P<dots>\.{{1,3}})\s*|(?P<prefix>\.\.\.))"
+    rf"(?P<token>{_SAN_PAWN_PUSH}{_SAN_GLYPHS})\b"
+)
+
+# Raw UCI in prose ("c4c5", "8.b1d2"): a glued square pair is unambiguous,
+# so no marker is required (marker optional for the ply-citation guard).
+# Models are told to write SAN but drift into UCI; the check must still see
+# the move. Same group names as _SAN_TOKEN_RE for the shared guards.
+_UCI_TOKEN_RE = re.compile(
+    rf"(?:(?P<num>\d+)(?P<dots>\.{{1,3}})\s*|(?P<prefix>\.\.\.))?\b"
+    rf"(?P<token>[a-h][1-8][a-h][1-8][qrbn]?)\b"
+)
+
+
+def _parse_stm_token(bare: str, board: chess.Board) -> chess.Move | None:
+    """A prose move token as a legal STM move: UCI first (square-pair shape
+    can't be SAN), then SAN with the label/phantom-capture guards."""
+    try:
+        move = chess.Move.from_uci(bare)
+        return move if move in board.legal_moves else None
+    except chess.InvalidMoveError:
+        pass
+    if _is_san_label(bare, board):
+        return None
+    return _parse_san_real(board, bare)
+
+
 def iter_stm_moves(text: str, board: chess.Board):
-    """Yield (surface, bare, move) for each SAN token that is a legal move for
-    the side to move. The mirror of iter_illegal_moves: same recognizer and
-    same skip rules ("..."-marked Black moves, other-ply citations, square
-    labels like 'Qd1'), keeping only what parses cleanly from the live POV."""
-    for match in _SAN_TOKEN_RE.finditer(text):
-        bare = _strip_annotation_glyphs(match.group("token"))
-        if _marks_black(match) != (board.turn == chess.BLACK):
-            continue
-        if _cites_other_ply(match, board):
-            continue
-        if _is_san_label(bare, board):
-            continue
-        move = _parse_san_real(board, bare)
-        if move is not None:
-            yield match.group(0), bare, move
+    """Yield (surface, bare, move) for each move token that is legal for the
+    side to move. The mirror of iter_illegal_moves: same skip rules
+    ("..."-marked Black moves, other-ply citations, square labels like
+    'Qd1'), keeping only what parses cleanly from the live POV. Marked pawn
+    pushes ("8. c5") and raw UCI ("c4c5") count; bare SAN pushes stay
+    square-name-ambiguous."""
+    for regex in (_SAN_TOKEN_RE, _MARKED_PAWN_PUSH_RE, _UCI_TOKEN_RE):
+        for match in regex.finditer(text):
+            bare = _strip_annotation_glyphs(match.group("token"))
+            # Unmarked tokens validate from the side to move (as _pov_for);
+            # only an explicit Black marker on a White turn is another side's.
+            if _marks_black(match) and board.turn == chess.WHITE:
+                continue
+            if _cites_other_ply(match, board):
+                continue
+            move = _parse_stm_token(bare, board)
+            if move is not None:
+                yield match.group(0), bare, move
 
 
 # A bare pawn push ("e4") reads as a square in prose, so the bare-token

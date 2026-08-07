@@ -31,7 +31,8 @@ export const STORAGE_KEY = {
   RIBBON_GEO: "sturddle:ribbon:geo",
   RIBBON_ORIENT: "sturddle:ribbon:orient",
 
-  // Player name.
+  // Legacy player name (pre-0.5.2): now a server setting; kept only so
+  // the one-time boot migration can read + clear it.
   PLAYER_NAME: "sturddle:player_name",
 
   // AI window state.

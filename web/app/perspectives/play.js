@@ -7,7 +7,7 @@ import { APP_EVT } from "../app-events.js";
 import { KIND, AI_KIND_PREFIX } from "../game-events.js";
 import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
-import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, reportVerboseError, stickyToast, toast } from "../dialogs.js";
+import { alert as showAlert, buildToastWithActions, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportError, reportVerboseError, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, getEvalBarApi, setUciLogEngine, isMobileLayout } from "../play-dock-windows.js";
 import {
@@ -32,6 +32,7 @@ import {
   setAiToolCallResult,
   noteAiPosition,
   markAiDone,
+  setAiUsage,
   setAiStatus,
   setAiTitle,
   setOnUserCloseAi,
@@ -41,7 +42,6 @@ import {
 } from "../play-ai-window.js";
 import { terminationLabel } from "../format-termination.js";
 import { editAnnotation } from "../annotation-dialog.js";
-import { getConfiguredPlayerName } from "../settings-dialog.js";
 
 // Tool name the AI uses to inspect hypothetical positions; the live
 // board mirrors `input.fen` while a call with this name is in flight.
@@ -65,6 +65,43 @@ let _viewingSummary = null;
 // view.ready before /sync round-trips. The /sync response then
 // overrides if anything changed server-side.
 let _cachedBoardUpdate = null;
+
+// Difficulty-unavailable sticky toast currently showing. Module scope:
+// the toast outlives a perspective remount, so a per-mount flag would
+// let the next degraded move stack a duplicate.
+let _difficultyToastUp = false;
+
+// Details popup body for the difficulty-unavailable toast: prose with
+// the UCI terms as code chips and "choose an engine" deep-linking to
+// Settings > Engines (resolving the popup first -- one modal at a time).
+function buildDifficultyDetails(engineName, resolve) {
+  const code = (term) => {
+    const el = document.createElement("code");
+    el.textContent = term;
+    return el;
+  };
+  const link = document.createElement("a");
+  link.href = "#";
+  link.textContent = MSG.DIFFICULTY_DETAILS_LINK;
+  link.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    resolve();
+    openSettings(SETTINGS_TAB_ENGINES);
+  });
+  const frag = document.createDocumentFragment();
+  frag.append(
+    MSG.DIFFICULTY_DETAILS_MECHANISM_PRE,
+    code(MSG.DIFFICULTY_DETAILS_TERM_FULL),
+    MSG.DIFFICULTY_DETAILS_MECHANISM_POST,
+    `${engineName} `,
+    MSG.DIFFICULTY_DETAILS_REST,
+    link,
+    MSG.DIFFICULTY_DETAILS_REST_HONORS,
+    code(MSG.DIFFICULTY_DETAILS_TERM),
+    ".",
+  );
+  return frag;
+}
 
 // X-game toast don't-nag flags, persisted across perspective mounts.
 // Keyed by game_id. Reset only on hard reload (fresh page load).
@@ -183,6 +220,24 @@ const MSG = {
   REANALYZE_FAILED: "Re-analyze failed",
   ENGINE_CRASHED: "Engine crashed unexpectedly.",
   ANALYSIS_ENGINE_FAILED: "Analysis engine failed to start.",
+  DIFFICULTY_UNAVAILABLE: "Difficulty unavailable; playing at full strength.",
+  // Details popup fragments, assembled by buildDifficultyDetails():
+  // mechanism (UCI term as a code chip), "<engine name> <rest>", then a
+  // "choose an engine" deep link to Settings > Engines.
+  DIFFICULTY_DETAILS_MECHANISM_PRE:
+    "Difficulty works by restricting which root moves the engine may " +
+    "search (UCI ",
+  DIFFICULTY_DETAILS_TERM_FULL: "go searchmoves",
+  DIFFICULTY_DETAILS_MECHANISM_POST: "). ",
+  DIFFICULTY_DETAILS_REST:
+    "ignores that restriction, so reduced difficulty cannot be " +
+    "enforced and games play at full strength. To play at reduced " +
+    "difficulty, ",
+  DIFFICULTY_DETAILS_LINK: "choose an engine",
+  DIFFICULTY_DETAILS_REST_HONORS: " that honors ",
+  DIFFICULTY_DETAILS_TERM: "searchmoves",
+  DIFFICULTY_GENERIC_ENGINE: "This engine",
+  DIFFICULTY_DETAILS_ARIA: "Difficulty details",
   // Confirm dialogs.
   CONFIRM_NEW_GAME: "Cancel the game in progress and start a new one?",
   CONFIRM_RESIGN: "Resign the current game?",
@@ -311,6 +366,8 @@ function dispatchAiEvent(aiCtx, evt) {
           verifierRoundCap: !!p.verifier_round_cap,
           noResponse: !!p.no_response,
           noRecommendation: !!p.no_recommendation,
+          usage: p.usage || null,
+          provider: p.provider || null,
         });
         if (p.error) {
           // Provider errors can be many lines with URLs; the toast shows the
@@ -383,6 +440,10 @@ function dispatchAiEvent(aiCtx, evt) {
     case KIND.AI_POSITION_NOTE: {
       const p = evt.payload || {};
       noteAiPosition({ round: p.round ?? 0, surfaces: p.surfaces || [] });
+      return true;
+    }
+    case KIND.AI_USAGE: {
+      setAiUsage(evt.payload || null);
       return true;
     }
     case KIND.AI_RECOMMENDATION: {
@@ -796,7 +857,7 @@ async function openXgameTarget(state, gameId, opts = {}) {
     && state.viewingGameId === gameId
     && (landAtPly === null || state.viewCursor === landAtPly)
   ) {
-    return;
+    return true;
   }
   try {
     const target = await state.api(
@@ -820,8 +881,10 @@ async function openXgameTarget(state, gameId, opts = {}) {
     closeAi();
     const r = await state.api("POST", "/game/import", importPayload);
     if (r?.game_id) state.view.setGameId(r.game_id);
+    return true;
   } catch (e) {
     reportError(state.ctx, MSG.OPEN_GAME_FAILED, e);
+    return false;
   }
 }
 
@@ -1331,7 +1394,6 @@ async function onNewGameImpl(state) {
     if (!ok) return;
   }
   try {
-    const playerName = getConfiguredPlayerName();
     // Reset the board BEFORE the POST, then drop the game_id so old-game
     // events stop applying. An instant engine first move (e.g. an opening
     // book move, no search delay) can publish its board_update before the
@@ -1341,9 +1403,8 @@ async function onNewGameImpl(state) {
     // including that early book move -- land on a clean board and persist.
     state.view.reset();
     state.view.setGameId(null);
-    state.view.setPlayerName(playerName);
     closeAi();
-    const r = await state.ctx.api("POST", "/game/new", { player_name: playerName });
+    const r = await state.ctx.api("POST", "/game/new", {});
     state.view.setGameId(r.game_id);
     state.view.setHumanWhite(!!r.human_white);
     state.resignAvailable = true;
@@ -1443,10 +1504,8 @@ async function onPlayFromHereImpl(state) {
   // game_id filter — that drop loses the human_white/name swap.
   state.view.setGameId(null);
   try {
-    const playerName = getConfiguredPlayerName();
-    state.view.setPlayerName(playerName);
     closeAi();
-    const r = await state.ctx.api("POST", "/game/view/play-from-here", { player_name: playerName });
+    const r = await state.ctx.api("POST", "/game/view/play-from-here", {});
     state.view.setGameId(r.game_id);
     // Snapshot TC for drift detection (mirrors onNewGame).
     try {
@@ -1710,6 +1769,55 @@ function _onServerEditingStop(state) {
   refreshButtons(state);
 }
 
+// The viewed game's recents row was force-deleted: the server tore the view
+// session down to no-game (close_view) with no board left to publish, so this
+// client flips itself to the idle board locally.
+function enterIdleAfterViewDelete(state) {
+  state.viewing = false;
+  state.viewingGameId = null;
+  state.view.setGameId(null);
+  // Full visual reset: startpos board, empty move list, no arrows --
+  // nothing of the deleted game may linger.
+  state.view.clearArrows();
+  state.view.reset();
+  state.movesPlayed = 0;
+  _viewingHash = null;
+  _viewingSummary = null;
+  state.lastViewComment = null;
+  state.commentNavPrev = null;
+  state.commentNavNext = null;
+  state.viewGameOverAlertShown = false;
+  state.dismissGameOverToast?.();
+  state.dismissGameOverToast = null;
+  setAnalyzing(state, false);
+  closeAi();
+  pushNavToUi(state);
+  syncCommentsVisibility(state);
+  restoreDebugWindows(state.ctx.events);
+  resetXgame(state);
+  refreshXgameToasts(state);
+  state.resignAvailable = false;
+  state.gameOver = false;
+  _playInProgress = false;
+  state.el.boardHost.classList.add("board-idle");
+  setDisabled(state.el.newGameBtn, false);
+  showFinishedBadge(state, "");
+  refreshButtons(state);
+  window.dispatchEvent(new CustomEvent(APP_EVT.VIEWING_CHANGED, {
+    detail: { viewing: false },
+  }));
+}
+
+// A finished game flips into view mode on its recents copy (the live game is
+// finalized before game_result fires; the server flushes recents first),
+// landing on the final position. Zero-move games never reach recents -- skip.
+async function _enterViewOnGameOver(state, gameId) {
+  if (state.viewing || state.editing || !gameId || !state.movesPlayed) return;
+  state.autoViewFromGameOver = true;
+  const ok = await openXgameTarget(state, gameId, { landAtPly: state.movesPlayed });
+  if (!ok) state.autoViewFromGameOver = false;
+}
+
 async function _enterEditFromCurrentMode(state) {
   // Server requires view mode before edit. From play mode, flip into
   // view via /game/view/start (no recents write); /game/import would
@@ -1802,8 +1910,14 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       // the same event but would be too late.
       if (typeof evt.payload.analyzing === "boolean") setAnalyzing(state, evt.payload.analyzing);
       if (state.viewing) {
+        // Auto-entry from game over: set just before the /game/import round
+        // trip that produced this event; consumed on arrival.
+        const autoEntry = !wasViewing && state.autoViewFromGameOver;
+        state.autoViewFromGameOver = false;
         if (!wasViewing || state.viewingGameId !== prevGameId) {
-          state.viewGameOverAlertShown = false;
+          // The play-mode dialog already announced the result; start the
+          // view session with the game-over toast spent.
+          state.viewGameOverAlertShown = autoEntry;
           state.dismissGameOverToast?.();
           state.dismissGameOverToast = null;
           // Game switched: clear stale x-game state + close live toasts BEFORE
@@ -1859,6 +1973,10 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         if (!wasViewing) {
           if (typeof v.resume_human_white === "boolean") {
             state.humanWhite = v.resume_human_white;
+            state.view.setHumanWhite(state.humanWhite);
+          } else if (autoEntry) {
+            // Keep the POV the game was just played from -- the game-over
+            // flip into view must not flip the board.
             state.view.setHumanWhite(state.humanWhite);
           } else {
             state.view.setHumanWhite(!state.viewFlipped);
@@ -1939,6 +2057,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         message: formatGameOver(evt.payload, state.humanWhite),
         messageClass: "game-over-message",
       });
+      _enterViewOnGameOver(state, evt.game_id);
       break;
     case KIND.CLOCK_TICK:
       if (typeof evt.payload.paused === "boolean" && evt.payload.paused !== state.paused) {
@@ -1974,6 +2093,7 @@ export const playPerspective = {
       gameTcInitial: null,
       gameTcIncrement: null,
       viewGameOverAlertShown: false,
+      autoViewFromGameOver: false,
       dismissGameOverToast: null,
       // Edit-mode staged annotation: null=no change, ""=clear, "text"=set at
       // entry ply. Reset on each edit entry and on /edit/cancel.
@@ -2105,7 +2225,7 @@ export const playPerspective = {
         setNoEngine(false);
       }
     }
-    noEngineBannerBtn.addEventListener("click", () => openSettings("engines"));
+    noEngineBannerBtn.addEventListener("click", () => openSettings(SETTINGS_TAB_ENGINES));
     const onEnginesChanged = (e) => {
       setNoEngine(!e.detail?.activeId);
     };
@@ -2275,7 +2395,13 @@ export const playPerspective = {
     // import dialog) mutated the recents store. Re-fetch x-game info
     // for the currently-viewed game so the fork glyph + banner reflect
     // the new state (B3: glyph stale after a child was deleted).
-    const onRecentsChanged = () => {
+    const onRecentsChanged = (ev) => {
+      // The currently-viewed game was force-deleted -> idle board.
+      if (ev.detail?.deletedGameId && state.viewing && !state.editing
+          && ev.detail.deletedGameId === state.viewingGameId) {
+        enterIdleAfterViewDelete(state);
+        return;
+      }
       if (state.viewing && state.viewingGameId) fetchXgameInfo(state, state.viewingGameId);
     };
     window.addEventListener(APP_EVT.RECENTS_CHANGED, onRecentsChanged);
@@ -2434,6 +2560,28 @@ export const playPerspective = {
           ? `${MSG.ANALYSIS_ENGINE_FAILED} ${detail}`
           : MSG.ANALYSIS_ENGINE_FAILED;
         toast(text, { variant: "danger" });
+      } else if (err === "difficulty_unavailable") {
+        // Server notifies on every degraded move; one toast at a time.
+        if (!_difficultyToastUp) {
+          _difficultyToastUp = true;
+          const engineName = evt.payload?.engine || MSG.DIFFICULTY_GENERIC_ENGINE;
+          let dismiss;
+          const body = buildToastWithActions(MSG.DIFFICULTY_UNAVAILABLE, [{
+            icon: DETAILS_ICON,
+            ariaLabel: MSG.DIFFICULTY_DETAILS_ARIA,
+            onClick: async () => {
+              await showAlert({
+                message: (resolve) => buildDifficultyDetails(engineName, resolve),
+                width: DETAILS_DIALOG_WIDTH,
+              });
+              dismiss?.();
+            },
+          }]);
+          dismiss = stickyToast(body, {
+            variant: "warning",
+            onDismiss: () => { _difficultyToastUp = false; },
+          });
+        }
       }
     });
 

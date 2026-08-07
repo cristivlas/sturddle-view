@@ -305,6 +305,22 @@ wa-select::part(listbox) {
 .winbox.sturddle-wb-ai .wb-body,
 .dock-slot-body:has(> .play-ai-body) { overflow: hidden; padding: 0; }
 .play-ai-status-text { line-height: 1; }
+/* Cumulative token ticker beside the status text; muted so it reads as
+   telemetry, not as part of the status message. Empty until the
+   provider reports usage. */
+.play-ai-status-tokens {
+  line-height: 1;
+  margin-left: auto;
+  font-size: 0.85em;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+/* Terminal token breakdown line under the final prose. */
+.play-ai-usage {
+  font-size: 0.85em;
+  opacity: 0.7;
+  padding: 4px 0;
+}
 
 /* Inline failure / guardrail markers in the AI panel. Error is loud
    (red border, bolded header); round-cap is a softer informational
@@ -333,8 +349,23 @@ wa-select::part(listbox) {
   user-select: text;
   word-break: break-word;
 }
-.confirm-message.error-detail-text a {
+.confirm-message a {
   color: var(--accent);
+}
+/* Inline protocol/UCI terms in dialog prose (e.g. the difficulty
+   details popup): code font in the app's accent-chip idiom (same
+   family as .status-badge--paused / .engines-list-active-badge) so
+   terms read as syntax, not as ordinary words or typos. Canonical
+   style for term highlighting in any dialog/message prose. */
+.confirm-message code {
+  font-family: var(--wa-font-family-code);
+  font-size: 0.9em;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  border-radius: 4px;
+  padding: 0 4px;
+  white-space: nowrap;
 }
 .play-ai-roundcap {
   display: flex;
@@ -783,7 +814,7 @@ header {
   background: var(--panel);
   border-bottom: 2px solid var(--accent-line);
 }
-header h1 { margin: 0; font-size: 1rem; color: #b8b8b8; font-weight: 500; }
+header h1 { margin: 0; font-size: 0.9375rem; color: #b8b8b8; font-weight: 500; }
 .brand {
   display: inline-flex; align-items: baseline;
   letter-spacing: 0.01em;
@@ -2408,7 +2439,7 @@ wa-dialog .engine-settings-tabs {
   /* Narrow / portrait viewports get a much larger share of the screen
      because the dialog is the *only* surface in view; on desktop the
      dialog is one of many things competing for vertical space. */
-  --engine-settings-panel-h: 42vh;
+  --engine-settings-panel-h: 46vh;
   height: var(--engine-settings-panel-h);
 }
 @media (max-width: 480px) {
@@ -2460,6 +2491,13 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
     width: 100%;
     box-sizing: border-box;
   }
+}
+wa-dialog:has(.engine-settings-tabs)::part(footer) {
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  padding-top: 12px;
+}
+wa-dialog:has(.engine-settings-tabs)::part(body) {
+  padding-block-end: 0;
 }
 .engine-launch-form,
 .engine-opt-form {
@@ -2948,6 +2986,9 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
    conceptual group (e.g. a switch after a dropdown). Avoids ad-hoc inline
    margins on .settings-row elements. */
 .settings-row-spaced { margin-top: var(--settings-row-gap); }
+/* Double gap for a standalone row that follows another group with no
+   divider between them (e.g. the difficulty slider). */
+.settings-row-headroom { margin-top: calc(var(--settings-row-gap) * 2); }
 /* Inset standalone rows by the section's inner padding so toggle labels
    align with the left edge of inputs inside a .settings-section card. */
 .settings-row-section-inset { padding-left: var(--settings-section-pad); }
@@ -2962,6 +3003,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   width: 100%;
   --wa-form-control-value-line-height: 1.4;
 }
+.settings-row wa-slider { width: 100%; }
 /* Value + unit pair (e.g. time control). Total width matches the other
    single-control rows (max-width: 360px from .settings-row). */
 .settings-duration {
@@ -3913,9 +3955,15 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   50%      { box-shadow: 0 0 0 5px rgba(var(--accent-rgb), 0); }
 }
 
+wa-dialog.tournament-info-dialog::part(header) {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+wa-dialog.tournament-info-dialog::part(body) {
+  padding-block-start: 10px;
+}
 .tournament-info {
-  border-top: 1px solid var(--accent);
-  padding-top: 10px;
+  padding-top: 0;
+  padding-bottom: 6px;
 }
 .tournament-info-grid {
   display: grid;

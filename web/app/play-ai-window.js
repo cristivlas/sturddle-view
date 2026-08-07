@@ -47,6 +47,59 @@ const STATUS_TEXT = {
 // Sticky open/closed pref for the Thinking disclosure block.
 const THINKING_OPEN_KEY = STORAGE_KEY.AI_THINKING_OPEN;
 
+// Compact token count for the status ticker (Claude Code style):
+// 982, 14.2k, 1.3M.
+const TOKENS_PER_K = 1000;
+const TOKENS_PER_M = 1000000;
+
+function fmtTokensCompact(n) {
+  if (n >= TOKENS_PER_M) return `${(n / TOKENS_PER_M).toFixed(1)}M`;
+  if (n >= TOKENS_PER_K) return `${(n / TOKENS_PER_K).toFixed(1)}k`;
+  return String(n);
+}
+
+// Per-provider billing ratios relative to the input-token price, for
+// the effective-input figure -- ratios, not dollar prices, so they
+// don't drift per model. Anthropic: cache reads 0.1x, writes (5-minute
+// TTL) 1.25x. Gemini: implicit-cache reads ~0.25x, writes free.
+// Providers not listed (or unknown) show raw counts without eff-in.
+const EFF_IN_WEIGHTS = {
+  anthropic: { read: 0.1, write: 1.25 },
+  gemini: { read: 0.25, write: 0 },
+};
+
+// Terminal breakdown line, e.g. "tokens: 12,340 in (11,020 cached) - 1,846
+// out - ~2.6k eff. in". "in" is the full prompt volume (uncached + cache
+// reads + cache writes); "eff. in" is that volume weighted by the
+// provider's billing ratios -- what the input side actually cost in
+// input-priced tokens. Cache + eff-in figures appear only when caching
+// was active AND the provider's ratios are known.
+function fmtUsageSummary(u, provider) {
+  const cached = u.cache_read_input_tokens || 0;
+  const written = u.cache_creation_input_tokens || 0;
+  const fresh = u.input_tokens || 0;
+  const inTotal = fresh + cached + written;
+  const out = u.output_tokens || 0;
+  const sep = " \u00b7 ";
+  const inPart = cached > 0
+    ? `${inTotal.toLocaleString()} in (${cached.toLocaleString()} cached)`
+    : `${inTotal.toLocaleString()} in`;
+  let line = `tokens: ${inPart}${sep}${out.toLocaleString()} out`;
+  const weights = EFF_IN_WEIGHTS[provider];
+  if (weights && (cached > 0 || written > 0)) {
+    const effective = Math.round(
+      fresh + written * weights.write + cached * weights.read
+    );
+    line += `${sep}~${fmtTokensCompact(effective)} eff. in`;
+  }
+  return line;
+}
+
+function usageTotal(u) {
+  return (u.input_tokens || 0) + (u.output_tokens || 0)
+    + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+}
+
 // Label shown on the Thinking disclosure summary while a round's
 // thinking stream is still arriving. Swapped to "Thought for Ns" once
 // any non-thinking chunk lands (prose delta or tool call), since that's
@@ -90,7 +143,11 @@ function buildBody() {
   spinner.className = "spinner-accent";
   const statusText = document.createElement("span");
   statusText.className = "play-ai-status-text";
-  status.append(spinner, statusText);
+  // Token ticker: cumulative turn usage, updated per provider round
+  // (Claude Code style). Empty until the provider reports usage.
+  const statusTokens = document.createElement("span");
+  statusTokens.className = "play-ai-status-tokens";
+  status.append(spinner, statusText, statusTokens);
 
   // Scroll wrapper. Holds rounds + terminal; the status header above
   // it stays put because only this wrapper scrolls.
@@ -130,6 +187,7 @@ function buildBody() {
 
   root._status = status;
   root._statusText = statusText;
+  root._statusTokens = statusTokens;
   root._scroll = scroll;
   root._rounds = rounds;
   root._terminal = terminal;
@@ -344,6 +402,7 @@ const inst = createDockableWindow({
     return buildBody();
   },
   dockOrder: DOCK_ORDER.AI_ANALYSIS,
+  railDockable: true,
   getInlineEl: () => inlineEl,
   closable: true,
   onUserClose: () => {
@@ -404,10 +463,23 @@ export function resetAi() {
   if (!inst.body) return;
   inst.body._rounds.textContent = "";
   inst.body._terminal.textContent = "";
+  inst.body._statusTokens.textContent = "";
   inst.body._roundPanels.clear();
   inst.body._toolCallNodes.clear();
   inst.body._currentRound = null;
   setAiStatus("waiting");
+}
+
+// Cumulative turn usage from ai_usage events. Idempotent (overwrites
+// with the latest totals), which is exactly what replay re-dispatch
+// needs. The ticker counts output tokens only -- Claude Code semantics
+// (tokens the model generated, not the re-sent prefix); the full
+// input/cache accounting lands in the terminal slot on done.
+export function setAiUsage(usage) {
+  if (!inst.body || !usage) return;
+  const out = usage.output_tokens || 0;
+  inst.body._statusTokens.textContent =
+    out > 0 ? `${fmtTokensCompact(out)} tokens` : "";
 }
 
 // Delta-less thinking event carrying only a server duration, for a round
@@ -482,7 +554,7 @@ export function appendAiToolCall({
     toggle.className = "play-ai-tool-toggle";
     // One glyph, rotated via CSS when open -- guarantees the open/closed
     // caret are identical size (the unicode triangles aren't).
-    toggle.textContent = "▶";
+    toggle.textContent = "\u25b6";
     head.append(toggle);
     const details = document.createElement("div");
     details.className = TOOL_DETAILS_BODY_CLASS;
@@ -855,6 +927,8 @@ export function markAiDone({
   verifierRoundCap = false,
   noResponse = false,
   noRecommendation = false,
+  usage = null,
+  provider = null,
 } = {}) {
   // Terminal: switch the header text + drop the spinner. Markers (error >
   // roundCap > noResponse > noRecommendation > cancelled if any apply)
@@ -863,6 +937,9 @@ export function markAiDone({
     !error && !roundCap && !noResponse && !noRecommendation && !cancelled;
   setAiStatus(naturalCompletion ? "done" : "idle");
   if (!inst.body) return;
+  // Refresh the ticker from the done totals: a replay that delivers only
+  // the terminal event (no ai_usage stream) still restores the count.
+  if (usage) setAiUsage(usage);
   const slot = inst.body._terminal;
   withStickyBottom(() => {
     // Trim trailing whitespace on every round's prose and thinking so a
@@ -885,6 +962,14 @@ export function markAiDone({
       // border would land on text tucked inside the collapsed disclosure.
       const folded = last && last.para.parentNode === last.revision?.body;
       if (last && !folded) last.para.classList.add("play-ai-prose-final");
+    }
+    // Token breakdown first (before the marker blocks' early returns) so
+    // it renders on every terminal path that keeps the panel alive.
+    if (usage && usageTotal(usage) > 0) {
+      const line = document.createElement("div");
+      line.className = "play-ai-usage";
+      line.textContent = fmtUsageSummary(usage, provider);
+      slot.append(line);
     }
     if (error) {
       const block = document.createElement("div");

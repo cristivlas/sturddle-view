@@ -5,12 +5,18 @@
 import { inlineSvgIcon } from "./dialogs.js";
 import { CHESS_CLOCK_SVG_INNER, CHESS_CLOCK_VIEW_BOX } from "./icons.js";
 import { makeDivider, makeSection } from "./settings-ui-helpers.js";
-import { loadRaw, saveRaw } from "./storage.js";
 import { SIDE } from "./chess-consts.js";
+
+// Mirrors HVE_DIFFICULTY_MIN/MAX on the server (config.py). MAX = full
+// strength; below it engine moves are softmax-sampled server-side.
+const DIFFICULTY_MIN = 1;
+const DIFFICULTY_MAX = 10;
+const difficultyLabel = (v) =>
+  v >= DIFFICULTY_MAX ? "Difficulty: max" : `Difficulty: ${v}`;
 
 export function buildPlayTab({
   initial, putSettings, putSettingsDebounced, makeDurationRow, pathRow,
-  playerNameDefault, playerNameKey, playerNameMaxLen,
+  playerNameDefault, playerNameMaxLen,
 }) {
   const playTab = document.createElement("wa-tab");
   playTab.panel = "play";
@@ -69,10 +75,10 @@ export function buildPlayTab({
   playerNameInput.size = "small";
   playerNameInput.placeholder = playerNameDefault;
   playerNameInput.maxlength = playerNameMaxLen;
-  playerNameInput.value = loadRaw(playerNameKey, "");
+  playerNameInput.value = initial.player_name ?? "";
   playerNameInput.addEventListener("change", () => {
     const v = playerNameInput.value.trim().slice(0, playerNameMaxLen);
-    saveRaw(playerNameKey, v || null);
+    putSettings({ player_name: v });
   });
   const playerNameRow = document.createElement("div");
   playerNameRow.className = "settings-row";
@@ -84,6 +90,26 @@ export function buildPlayTab({
   const sideNameRow = document.createElement("div");
   sideNameRow.className = "settings-pair-row";
   sideNameRow.append(humanSideRow, playerNameRow);
+
+  const difficulty = document.createElement("wa-slider");
+  difficulty.size = "small";
+  difficulty.min = DIFFICULTY_MIN;
+  difficulty.max = DIFFICULTY_MAX;
+  difficulty.step = 1;
+  difficulty.value = initial.hve_difficulty ?? DIFFICULTY_MAX;
+  difficulty.setAttribute("with-markers", "");
+  difficulty.setAttribute("with-tooltip", "");
+  const difficultyLabelEl = document.createElement("label");
+  difficultyLabelEl.textContent = difficultyLabel(difficulty.value);
+  difficulty.addEventListener("input", () => {
+    difficultyLabelEl.textContent = difficultyLabel(Number(difficulty.value));
+  });
+  difficulty.addEventListener("change", () => {
+    putSettings({ hve_difficulty: Number(difficulty.value) });
+  });
+  const difficultyRow = document.createElement("div");
+  difficultyRow.className = "settings-row settings-row-headroom";
+  difficultyRow.append(difficultyLabelEl, difficulty);
 
   const inheritClocks = document.createElement("wa-switch");
   inheritClocks.size = "small";
@@ -140,6 +166,7 @@ export function buildPlayTab({
     togglesRow,
     makeDivider(),
     sideNameRow,
+    difficultyRow,
   );
   playPanel.append(playCol);
 

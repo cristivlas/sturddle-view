@@ -16,9 +16,10 @@ import asyncio
 
 import pytest
 
-from sturddle_view.events import EventBus
+from sturddle_view.events import EVT_AI_USAGE, EventBus
 from sturddle_view.llm import (
     ProviderChunk,
+    ProviderUsage,
     ScriptedProvider,
     ToolRegistry,
     ToolSpec,
@@ -139,6 +140,149 @@ async def test_tool_use_dispatches_and_feeds_result_into_next_round():
     deltas = [e.payload["delta"] for e in events if "delta" in e.payload]
     assert deltas == ["Thinking. ", "It's +0.42."]
     assert _payload_subset(events[-1].payload, {"done": True})
+
+
+@pytest.mark.asyncio
+async def test_tool_result_keeps_non_ascii_verbatim():
+    # ensure_ascii=True would serialize accented opening names as
+    # \uXXXX escapes inside the tool_result text, and the model then
+    # parrots the escaped spelling into its prose. The wire must carry
+    # the characters verbatim.
+    name = "Gr\u00fcnfeld Variation"
+
+    async def openings(_payload, *, cancel_token):
+        return {"family": name}
+
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="tu_1",
+            tool_name="related_openings", tool_input={},
+        )],
+        [ProviderChunk(kind="text", text="ok")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=_make_registry({"related_openings": openings})
+    )
+
+    await coord.run(game_id="g")
+    await _drain_until_done(queue)
+
+    tr = provider.last_call["messages"][-1]["content"][0]
+    assert tr["type"] == "tool_result"
+    assert name in tr["content"]
+    assert "\\u00fc" not in tr["content"]
+
+
+@pytest.mark.asyncio
+async def test_usage_accumulates_across_rounds_onto_done_event():
+    # Each round's usage chunk publishes cumulative turn totals as an
+    # ai_usage event; the terminal done event carries the final totals.
+    async def fake_tool(payload, *, cancel_token):
+        return {"ok": True}
+
+    provider = ScriptedProvider(rounds=[
+        [
+            ProviderChunk(kind="text", text="Checking. "),
+            ProviderChunk(
+                kind="usage",
+                usage=ProviderUsage(
+                    input_tokens=100,
+                    output_tokens=10,
+                    cache_read_input_tokens=40,
+                    cache_creation_input_tokens=5,
+                ),
+            ),
+            ProviderChunk(
+                kind="tool_use", tool_use_id="tu_1",
+                tool_name="analyze", tool_input={},
+            ),
+        ],
+        [
+            ProviderChunk(kind="text", text="Done."),
+            ProviderChunk(
+                kind="usage",
+                usage=ProviderUsage(input_tokens=200, output_tokens=20),
+            ),
+        ],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=_make_registry({"analyze": fake_tool})
+    )
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    usage_events = [e for e in events if e.kind == EVT_AI_USAGE]
+    assert len(usage_events) == 2
+    assert _payload_subset(usage_events[0].payload, {
+        "input_tokens": 100,
+        "output_tokens": 10,
+        "cache_read_input_tokens": 40,
+        "cache_creation_input_tokens": 5,
+    })
+    # Second event is cumulative, not per-round.
+    assert _payload_subset(usage_events[1].payload, {
+        "input_tokens": 300,
+        "output_tokens": 30,
+        "cache_read_input_tokens": 40,
+        "cache_creation_input_tokens": 5,
+    })
+    assert events[-1].payload["usage"] == {
+        "input_tokens": 300,
+        "output_tokens": 30,
+        "cache_read_input_tokens": 40,
+        "cache_creation_input_tokens": 5,
+    }
+    # ScriptedProvider declares no provider_name -> key omitted.
+    assert "provider" not in usage_events[0].payload
+    assert "provider" not in events[-1].payload
+
+
+@pytest.mark.asyncio
+async def test_usage_events_carry_provider_name_when_set():
+    # Real providers declare provider_name; the client keys its billing
+    # weights (eff-in) off it. Doubles default to "" -> key omitted
+    # (covered by the accumulation test's payloads above).
+    class _Named(ScriptedProvider):
+        provider_name = "scripted"
+
+    provider = _Named(rounds=[[
+        ProviderChunk(kind="text", text="Hi."),
+        ProviderChunk(kind="usage", usage=ProviderUsage(input_tokens=10, output_tokens=2)),
+    ]])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=ToolRegistry())
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    usage_events = [e for e in events if e.kind == EVT_AI_USAGE]
+    assert usage_events and usage_events[0].payload["provider"] == "scripted"
+    assert events[-1].payload["provider"] == "scripted"
+
+
+@pytest.mark.asyncio
+async def test_no_usage_reported_means_no_usage_events_or_done_field():
+    # Providers without token accounting (Ollama/Gemini today) must not
+    # produce ai_usage events or a usage field on done -- the client
+    # renders nothing for them.
+    provider = ScriptedProvider(rounds=[[
+        ProviderChunk(kind="text", text="Hello."),
+    ]])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=ToolRegistry())
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    assert not [e for e in events if e.kind == EVT_AI_USAGE]
+    assert "usage" not in events[-1].payload
 
 
 @pytest.mark.asyncio
@@ -358,7 +502,7 @@ async def test_provider_error_publishes_done_with_error_kind_and_detail():
     user has to dig through the transcript file to learn what went
     wrong (e.g. "model does not support tools")."""
     class _BoomProvider(ScriptedProvider):
-        async def stream(self, system, messages, tools=None, *, transcript=None, round_index=0, thinking=None):
+        async def stream(self, system, messages, tools=None, *, transcript=None, round_index=0, thinking=None, force_tool_call=False):
             raise RuntimeError("ollama API error 400: model does not support tools")
             yield  # pragma: no cover - marks this as an async generator
 
@@ -466,7 +610,7 @@ async def test_error_detail_truncated_to_cap():
     long_msg = "x" * (ERROR_DETAIL_MAX_LEN * 3)
 
     class _BigBoom(ScriptedProvider):
-        async def stream(self, system, messages, tools=None, *, transcript=None, round_index=0, thinking=None):
+        async def stream(self, system, messages, tools=None, *, transcript=None, round_index=0, thinking=None, force_tool_call=False):
             raise RuntimeError(long_msg)
             yield  # pragma: no cover
 
@@ -483,7 +627,7 @@ async def test_error_detail_truncated_to_cap():
 
 
 # ---------- Tool cards (lazy per-tool guidance) ------------------------
-# See docs/ai-analysis-spec.md §Skills layer. A tool's card is appended as a
+# See docs/ai-analysis-spec.md section Skills layer. A tool's card is appended as a
 # text content block inside the tool_result user message, on the first
 # call to that tool per turn. Subsequent calls to the same tool reuse
 # the message-list prefix (card already in context); no re-injection.

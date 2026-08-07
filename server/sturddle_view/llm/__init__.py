@@ -7,7 +7,7 @@ HTTP.
 """
 from __future__ import annotations
 
-from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
+from .base import LLMProvider, Message, ProviderChunk, ProviderUsage, ToolWireSpec
 from .canned import CannedProvider
 from .markdown_strip import strip_markdown_stream
 from .openai_compat import TOOL_SIGNATURE_KEY
@@ -30,6 +30,7 @@ __all__ = [
     "LLMProvider",
     "Message",
     "ProviderChunk",
+    "ProviderUsage",
     "PromptMode",
     "OPENING_PHASE_GUIDANCE",
     "TOOL_SIGNATURE_KEY",

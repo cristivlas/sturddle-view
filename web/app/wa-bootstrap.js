@@ -21,6 +21,7 @@ import "../vendor/webawesome/components/radio/radio.js";
 import "../vendor/webawesome/components/radio-group/radio-group.js";
 import "../vendor/webawesome/components/switch/switch.js";
 import "../vendor/webawesome/components/select/select.js";
+import "../vendor/webawesome/components/slider/slider.js";
 import "../vendor/webawesome/components/option/option.js";
 import "../vendor/webawesome/components/tab-group/tab-group.js";
 import "../vendor/webawesome/components/tab/tab.js";

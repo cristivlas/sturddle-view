@@ -47,6 +47,30 @@ _DEFAULT_AI_VERIFICATION_DEPTH = 25
 DEFAULT_TC_INITIAL_SECONDS = 300.0
 DEFAULT_TC_INCREMENT_SECONDS = 0.0
 
+# HvE difficulty bounds. MAX = full strength; below MAX the engine is
+# blinded to part of its candidate pool -- see
+# docs/hve-difficulty-spec.md. Shared by the settings API (validation),
+# the UI (slider range), and the blinding path.
+HVE_DIFFICULTY_MIN = 1
+HVE_DIFFICULTY_MAX = 10
+
+# Blinding tuning (no-env defaults). Per-candidate sweep time is
+# max(floor, budget / legal moves): the budget spreads over big move
+# lists, the floor keeps each score sane; the removal step converts
+# (MAX - level) to the peak blinding probability; the clamp folds
+# mates to a finite cp so the auto-ranged spread stays sane.
+_DEFAULT_HVE_SWEEP_MOVETIME_SECONDS = 0.07
+_DEFAULT_HVE_SWEEP_BUDGET_SECONDS = 1.0
+_DEFAULT_HVE_REMOVAL_STEP = 0.10
+_DEFAULT_HVE_SCORE_CLAMP_CP = 1000.0
+
+# Win-prob admission cap (all levels). Sweep cp maps to win probability
+# via a logistic with this scale (empirical engine fit); a move is
+# admitted only if its win-prob drop vs the best stays under the cap --
+# tight near equality (~110cp), auto-loosens when already behind.
+_DEFAULT_HVE_WINPROB_SCALE_CP = 180.0
+_DEFAULT_HVE_WINPROB_DROP_CAP = 0.15
+
 # Opening-book line order. Shared by the settings API (validation), the
 # HVE seed path, and opening_lines (selection). None = fastchess default
 # (sequential).
@@ -74,6 +98,7 @@ PERSISTED_FIELDS = (
     "tc_initial_seconds",
     "tc_increment_seconds",
     "human_side",
+    "player_name",
     "allow_takeback",
     "auto_claim_draws",
     "inherit_pgn_clocks",
@@ -94,6 +119,7 @@ PERSISTED_FIELDS = (
     "engine_default_book_order",
     "engine_default_book_cursor",
     "hve_use_opening_book",
+    "hve_difficulty",
     "ai_enabled",
     "ai_provider",
     "ai_models",
@@ -138,6 +164,9 @@ class Settings(BaseSettings):
     tc_initial_seconds: float = DEFAULT_TC_INITIAL_SECONDS
     tc_increment_seconds: float = DEFAULT_TC_INCREMENT_SECONDS
     human_side: str = "white"
+    # HVE human display name, shared by all clients. Empty = unset; game
+    # start falls back to game_store.DEFAULT_PLAYER_NAME.
+    player_name: str = ""
     allow_takeback: bool = True
     auto_claim_draws: bool = True
     # Play From Here: when True, new game inherits live clock values from
@@ -186,6 +215,18 @@ class Settings(BaseSettings):
     # (order != random). EPD: walks positions (modulo line count); PGN:
     # rotates the matching-pool anchor. Reset when the book path changes.
     engine_default_book_cursor: int = 0
+
+    # HvE difficulty (MIN..MAX). MAX = full strength; below MAX the
+    # engine is blinded to part of its candidate pool and plays its
+    # best visible move at full depth (docs/hve-difficulty-spec.md).
+    # Tuning knobs bind to SV_HVE_REMOVAL_STEP etc. via the SV_ prefix.
+    hve_difficulty: int = HVE_DIFFICULTY_MAX
+    hve_sweep_movetime_seconds: float = _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS
+    hve_sweep_budget_seconds: float = _DEFAULT_HVE_SWEEP_BUDGET_SECONDS
+    hve_removal_step: float = _DEFAULT_HVE_REMOVAL_STEP
+    hve_score_clamp_cp: float = _DEFAULT_HVE_SCORE_CLAMP_CP
+    hve_winprob_scale_cp: float = _DEFAULT_HVE_WINPROB_SCALE_CP
+    hve_winprob_drop_cap: float = _DEFAULT_HVE_WINPROB_DROP_CAP
 
     # AI analysis & commentary. Master toggle gates the engine+AI behavior
     # off the existing Analyze ribbon buttons; provider/model/base_url are

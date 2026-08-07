@@ -179,3 +179,33 @@ def test_ai_round_caps_below_floor_rejected(client, key):
 @pytest.mark.parametrize("key", ["ai_max_tool_rounds", "ai_verifier_max_rounds"])
 def test_ai_round_caps_non_integer_rejected(client, key):
     assert client.put("/settings", json={key: "lots"}).status_code == 400
+
+
+# ---- HvE difficulty ----
+
+
+def test_hve_difficulty_round_trips(client):
+    r = client.put("/settings", json={"hve_difficulty": 5})
+    assert r.status_code == 200
+    assert r.json()["hve_difficulty"] == 5
+    assert client.get("/settings").json()["hve_difficulty"] == 5
+
+
+def test_hve_difficulty_defaults_to_full_strength(client):
+    assert client.get("/settings").json()["hve_difficulty"] == 10
+
+
+@pytest.mark.parametrize("value", [1, 10])
+def test_hve_difficulty_bounds_accepted(client, value):
+    r = client.put("/settings", json={"hve_difficulty": value})
+    assert r.status_code == 200
+    assert r.json()["hve_difficulty"] == value
+
+
+@pytest.mark.parametrize("value", [0, -1, 11, 100])
+def test_hve_difficulty_out_of_range_rejected(client, value):
+    assert client.put("/settings", json={"hve_difficulty": value}).status_code == 400
+
+
+def test_hve_difficulty_non_integer_rejected(client):
+    assert client.put("/settings", json={"hve_difficulty": "hard"}).status_code == 400

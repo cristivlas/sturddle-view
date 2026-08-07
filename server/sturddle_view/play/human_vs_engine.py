@@ -19,7 +19,17 @@ import chess
 import chess.engine
 
 from .._atomic import atomic_write_text
-from ..config import DEFAULT_TC_INCREMENT_SECONDS, DEFAULT_TC_INITIAL_SECONDS
+from ..config import (
+    DEFAULT_TC_INCREMENT_SECONDS,
+    DEFAULT_TC_INITIAL_SECONDS,
+    HVE_DIFFICULTY_MAX,
+    _DEFAULT_HVE_REMOVAL_STEP,
+    _DEFAULT_HVE_SCORE_CLAMP_CP,
+    _DEFAULT_HVE_SWEEP_BUDGET_SECONDS,
+    _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS,
+    _DEFAULT_HVE_WINPROB_DROP_CAP,
+    _DEFAULT_HVE_WINPROB_SCALE_CP,
+)
 
 if TYPE_CHECKING:
     from ..recent_imports import RecentImports
@@ -39,6 +49,15 @@ from ..events import (
     EventBus,
 )
 from .chess_clock import ChessClock, TimeControl
+from .difficulty import (
+    DIFFICULTY_UNAVAILABLE_ERROR,
+    PROBE_DEPTH,
+    PROBE_FEN,
+    PROBE_MOVETIME_SECONDS,
+    PROBE_MOVE_UCI,
+    candidate_pool,
+    mover_cp,
+)
 from .engine_analysis import (
     EVAL_POV_HUMAN,
     EVAL_POV_WHITE,
@@ -165,6 +184,16 @@ def _bundle_prop(name: str) -> property:
     )
 
 
+def _fit_seed(seed: list | None, n_plies: int) -> list | None:
+    """Truncate/pad a per-ply seed list to n_plies entries; None input or
+    an all-None result collapses to None (caller applies its default)."""
+    if seed is None:
+        return None
+    fitted = list(seed[:n_plies])
+    fitted.extend([None] * (n_plies - len(fitted)))
+    return fitted if any(x is not None for x in fitted) else None
+
+
 class HumanVsEngine:
     """Single-game driver. Holds one active game at a time."""
 
@@ -243,6 +272,10 @@ class HumanVsEngine:
         # restore_from, so a rehydrated mid-game is out of book.
         self._book: BookRef | None = None
         self._out_of_book = False
+        # Difficulty searchmoves probe result, cached per engine
+        # process: (engine instance, honors searchmoves). A respawn is a
+        # new instance, so identity comparison re-probes automatically.
+        self._searchmoves_ok: tuple[object, bool] | None = None
         self._lock = asyncio.Lock()
 
     # Coherent-game fields delegate to the self._game bundle, so call sites
@@ -322,6 +355,17 @@ class HumanVsEngine:
     @property
     def game_id(self) -> str | None:
         return self._game_id
+
+    @property
+    def viewing_game_id(self) -> str | None:
+        """The view session's game_id, or None when not viewing.
+        EDITING is excluded: mid-edit the user is authoring a new
+        position, not viewing the row -- deleting it must not tear the
+        edit session down (commit re-saves fresh). Lock-free read,
+        same contract as ``game_id``."""
+        if self._editing:
+            return None
+        return self._game_id if self._viewing else None
 
     @property
     def is_paused(self) -> bool:
@@ -533,7 +577,7 @@ class HumanVsEngine:
         self,
         human_white: bool,
         tc: TimeControl,
-        player_name: str = DEFAULT_PLAYER_NAME,
+        player_name: str | None = None,
         start_fen: str | None = None,
         start_moves_uci: list[str] | None = None,
         seed_clock_history: list[tuple[float | None, float | None]] | None = None,
@@ -541,6 +585,7 @@ class HumanVsEngine:
         seed_final_black_time: float | None = None,
         seed_comments: list[str | None] | None = None,
         seed_root_comment: str | None = None,
+        seed_eval_history: list[dict | None] | None = None,
         book: BookRef | None = None,
     ) -> str:
         """Start a fresh game.
@@ -555,6 +600,9 @@ class HumanVsEngine:
         comment storage when forking from a view game (play_from_here),
         so imported annotations survive into the eventual PGN export and
         recents save.
+
+        `seed_eval_history` seeds per-ply evals the same way, so the eval
+        graph keeps the forked prefix instead of restarting empty.
 
         `book` arms the PGN opening book for this game (startpos games
         only; the lookup gate also checks start_fen).
@@ -593,13 +641,11 @@ class HumanVsEngine:
                 final_b=seed_final_black_time,
             )
             clock.start_turn()
-            # Seed play-side comments from a forking caller (play_from_here).
-            # Truncate/pad to move_stack length so take-back can shrink alongside.
-            play_comments = None
-            if seed_comments is not None:
-                seeded = list(seed_comments[:n_plies])
-                seeded.extend([None] * (n_plies - len(seeded)))
-                play_comments = seeded if any(c is not None for c in seeded) else None
+            # Seed play-side comments/evals from a forking caller
+            # (play_from_here). Truncate/pad to move_stack length so
+            # take-back can shrink alongside.
+            play_comments = _fit_seed(seed_comments, n_plies)
+            seeded_evals = _fit_seed(seed_eval_history, n_plies)
             next_game = GameBundle(
                 mode=Mode.PLAY,
                 board=board,
@@ -609,7 +655,7 @@ class HumanVsEngine:
                 human_white=human_white,
                 player_name=player_name or DEFAULT_PLAYER_NAME,
                 clock=clock,
-                eval_history=[None] * n_plies,
+                eval_history=seeded_evals or [None] * n_plies,
                 play_comments=play_comments,
                 play_root_comment=seed_root_comment or None,
             )
@@ -663,10 +709,12 @@ class HumanVsEngine:
                 self._maybe_save_pgn(result="*", termination="unterminated")
         if ended:
             await self._cancel_tick()
+            # Flush BEFORE announcing: clients react to game_result by
+            # loading the finished game from recents (auto view mode).
+            await self._flush_recents_save()
             await self._bus.publish(
                 Event(kind=EVT_GAME_RESULT, game_id=end_game_id, payload=end_payload)
             )
-            await self._flush_recents_save()
         else:
             await self._engine_to_move()
 
@@ -839,17 +887,20 @@ class HumanVsEngine:
             result = loser_result(self._human_white)
             self._maybe_save_pgn(result=result, termination="resignation")
             self._stash_recents_payload(result=result, termination="resignation")
-            await self._bus.publish(
-                Event(
-                    kind=EVT_GAME_RESULT,
-                    game_id=self._game_id,
-                    payload={"result": "resign", "by": "human"},
-                )
-            )
+            end_game_id = self._game_id
             self._game_id = None
             self._board = None
             self._clear_store()
+        # Flush BEFORE announcing: clients react to game_result by
+        # loading the finished game from recents (auto view mode).
         await self._flush_recents_save()
+        await self._bus.publish(
+            Event(
+                kind=EVT_GAME_RESULT,
+                game_id=end_game_id,
+                payload={"result": "resign", "by": "human"},
+            )
+        )
 
     async def pause(self) -> None:
         """Pause the clock. Only valid on the human's turn.
@@ -1379,10 +1430,16 @@ class HumanVsEngine:
                 elif cursor < len(self._view_clock_history):
                     nw, nb = self._view_clock_history[cursor]
                     seed_final_w, seed_final_b = nw, nb
-            # Snapshot the view-mode commentary slice to seed the play game.
+            # Snapshot the view-mode commentary + eval slices to seed the
+            # play game.
             seed_comments = (
                 list(self._view_comments[:cursor])
                 if self._view_comments is not None
+                else None
+            )
+            seed_evals = (
+                list(self._view_eval_history[:cursor])
+                if self._view_eval_history is not None
                 else None
             )
             seed_root_comment = self._view_root_comment
@@ -1415,6 +1472,7 @@ class HumanVsEngine:
             seed_final_black_time=seed_final_b,
             seed_comments=seed_comments,
             seed_root_comment=seed_root_comment,
+            seed_eval_history=seed_evals,
         )
         # Re-stash the fork link after new_game cleared it. Only when
         # parent_id is known AND fork_ply >= 1 (ply 0 fork == plain new
@@ -1422,6 +1480,24 @@ class HumanVsEngine:
         if parent_game_id is not None and fork_ply >= 1:
             self._fork_link = (parent_game_id, fork_ply)
         return new_id
+
+    async def close_view(self) -> None:
+        """Tear the view session down to the idle/no-game state (fresh
+        GameBundle). Used when the viewed game's recents row is force-
+        deleted: the view has nothing to show anymore. No-op outside view.
+
+        Suspend-origin sessions (scrub-back /view/start) never reach this
+        path -- their game_id is minted fresh and has no recents row -- so
+        dropping ``_suspended_play`` here cannot lose a live game."""
+        async with self._lock:
+            if not self._viewing:
+                return
+            await self._cancel_analysis()
+            await self._cancel_think()
+            await self._cancel_tick()
+            self._game = GameBundle()
+            self._fork_link = None
+            self._suspended_play = None
 
     async def resume_play(self) -> str:
         """Exit view mode back into the SAME play game suspended by
@@ -1708,6 +1784,9 @@ class HumanVsEngine:
             result = loser_result(loser == SIDE_WHITE)
             self._maybe_save_pgn(result=result, termination="time_forfeit")
             self._stash_recents_payload(result=result, termination="time_forfeit")
+        # Flush BEFORE announcing: clients react to game_result by
+        # loading the finished game from recents (auto view mode).
+        await self._flush_recents_save()
         await self._bus.publish(
             Event(
                 kind=EVT_GAME_RESULT,
@@ -1715,7 +1794,6 @@ class HumanVsEngine:
                 payload={"result": "timeout", "loser": loser},
             )
         )
-        await self._flush_recents_save()
         async with self._lock:
             # Only clear if the same game is still active. A racing
             # new_game / enter_view_mode between the two critical sections
@@ -1736,16 +1814,17 @@ class HumanVsEngine:
         board: chess.Board,
         cache_payload: bool = False,
         capture_score: dict | None = None,
-    ) -> None:
+    ) -> tuple[chess.engine.InfoDict, bool]:
         """Drain analysis info events, serialize + publish, optionally cache.
 
         Thin wrapper that pins HVE-specific behavior (eval POV honoring
         `play_eval_pov`, last-payload cache for /game/sync replay) over
-        the shared `pump_engine_info` loop.
+        the shared `pump_engine_info` loop. Returns the pump's
+        (last_info, cancelled).
         """
         def _cache(payload: dict) -> None:
             self._last_analysis_info = payload
-        await pump_engine_info(
+        return await pump_engine_info(
             analysis,
             bus=self._bus,
             game_id=game_id,
@@ -1771,6 +1850,137 @@ class HumanVsEngine:
             if self._game_id == game_id and self._think_gen == gen:
                 self._out_of_book = True
         return None
+
+    async def _search_round(
+        self,
+        engine,
+        board: chess.Board,
+        limit: chess.engine.Limit,
+        game_id: str,
+        root_moves: list[chess.Move] | None = None,
+        capture_score: dict | None = None,
+    ) -> chess.Move | None:
+        """One engine search with live info pumped to the bus, optionally
+        restricted to `root_moves` (the difficulty pool). Returns the
+        bestmove (None when the search was stopped before one)."""
+        with await engine.analysis(board, limit=limit, root_moves=root_moves) as analysis:
+            self._analysis = analysis
+            try:
+                await self._pump_engine_info(
+                    analysis, game_id, board, capture_score=capture_score,
+                )
+                best = await analysis.wait()
+            finally:
+                self._analysis = None
+        return best.move
+
+    async def _probe_searchmoves(self, engine) -> bool:
+        """True when the engine honors `go searchmoves` (cached per engine
+        process). Restricted to a quiet move in a mate-in-1 position, a
+        compliant engine must return the quiet move. The caller degrades
+        a failed probe to full strength and notifies per move."""
+        cached = self._searchmoves_ok
+        if cached is not None and cached[0] is engine:
+            return cached[1]
+        probe_move = chess.Move.from_uci(PROBE_MOVE_UCI)
+        limit = chess.engine.Limit(depth=PROBE_DEPTH, time=PROBE_MOVETIME_SECONDS)
+        result = await engine.play(chess.Board(PROBE_FEN), limit, root_moves=[probe_move])
+        ok = result.move == probe_move
+        if not ok:
+            log.warning(
+                "engine %s ignores searchmoves (probe returned %s); "
+                "difficulty unavailable, playing at full strength",
+                self._supervisor.engine_name or self.engine_path,
+                result.move.uci() if result.move else None,
+            )
+        self._searchmoves_ok = (engine, ok)
+        return ok
+
+    async def _notify_difficulty_unavailable(self, game_id: str) -> None:
+        """Publish the difficulty-unavailable notice. Sent on every
+        degraded engine move; the client dedupes while its toast is up.
+        Carries the engine's UCI id name so the details popup can call
+        the engine out (empty when the engine never reported one)."""
+        await self._bus.publish(
+            Event(
+                kind=EVT_SYSTEM,
+                game_id=game_id,
+                payload={
+                    "error": DIFFICULTY_UNAVAILABLE_ERROR,
+                    "engine": self._supervisor.engine_name or "",
+                },
+            )
+        )
+
+    async def _visible_pool(
+        self, engine, board: chess.Board, level: int, game_id: str, gen: int,
+    ) -> list[chess.Move] | None:
+        """Shallow off-clock sweep + blinding pass (spec steps 1-3).
+        Scores every legal move at the sweep movetime, then builds the
+        auto-ranged, level-blinded pool the real search may see.
+        Returns None when the game/generation changed mid-sweep."""
+        clamp = getattr(self._settings, "hve_score_clamp_cp", _DEFAULT_HVE_SCORE_CLAMP_CP)
+        # Sweep on a copy: the live board must not have stale state sent
+        # mid-sweep while takeback/new-game can run concurrently.
+        root = board.copy()
+        moves = list(root.legal_moves)
+        floor_s = getattr(
+            self._settings, "hve_sweep_movetime_seconds",
+            _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS,
+        )
+        budget_s = getattr(
+            self._settings, "hve_sweep_budget_seconds",
+            _DEFAULT_HVE_SWEEP_BUDGET_SECONDS,
+        )
+        limit = chess.engine.Limit(time=max(floor_s, budget_s / len(moves)))
+        scores: list[float] = []
+        for mv in moves:
+            if self._game_id != game_id or self._think_gen != gen:
+                return None
+            # Keep the sweep off-clock as it runs: without this the
+            # engine clock visibly counts down (and can even flag)
+            # during the sweep.
+            self._clock.start_turn()
+            info = await engine.analyse(root, limit, root_moves=[mv])
+            score = info.get("score")
+            if score is None:
+                log.warning("sweep: no score for %s; treating as 0cp", mv.uci())
+                scores.append(0.0)
+                continue
+            scores.append(mover_cp(score.pov(chess.WHITE), root.turn, clamp))
+        step = getattr(self._settings, "hve_removal_step", _DEFAULT_HVE_REMOVAL_STEP)
+        wp_scale = getattr(
+            self._settings, "hve_winprob_scale_cp", _DEFAULT_HVE_WINPROB_SCALE_CP,
+        )
+        wp_drop = getattr(
+            self._settings, "hve_winprob_drop_cap", _DEFAULT_HVE_WINPROB_DROP_CAP,
+        )
+        pool = [
+            moves[i]
+            for i in candidate_pool(
+                scores, level, HVE_DIFFICULTY_MAX, step, wp_scale, wp_drop,
+            )
+        ]
+        log.info(
+            "difficulty %d: pool %s of %d legal moves",
+            level, [m.uci() for m in pool], len(moves),
+        )
+        return pool
+
+    async def _handle_engine_termination(self, engine, game_id: str, gen: int) -> None:
+        """Drop the dead engine reference and surface the crash unless it
+        was a deliberate teardown (takeback/shutdown bumped the
+        generation)."""
+        if self._engine is engine:
+            self._engine = None
+        if self._think_gen == gen:
+            log.error("engine crashed mid-search")
+            await self._cancel_tick()
+            await self._bus.publish(
+                Event(kind=EVT_SYSTEM, game_id=game_id, payload={"error": "engine_terminated"})
+            )
+        else:
+            log.info("engine terminated (takeback or shutdown)")
 
     async def _think_and_play(self) -> None:
         async with self._lock:
@@ -1809,6 +2019,36 @@ class HumanVsEngine:
             except Exception:
                 log.error("could not start engine for search", exc_info=True)
                 return
+        difficulty = getattr(self._settings, "hve_difficulty", HVE_DIFFICULTY_MAX)
+        # Below max difficulty (and with a searchmoves-compliant engine):
+        # off-clock sweep + blinding pass build the visible pool; the
+        # normal search below is then restricted to it. A failed probe
+        # degrades to full strength and notifies on every such move.
+        pool: list[chess.Move] | None = None
+        if difficulty < HVE_DIFFICULTY_MAX:
+            try:
+                if not await self._probe_searchmoves(engine):
+                    await self._notify_difficulty_unavailable(game_id)
+                else:
+                    # Blank stale info for the silent sweep; the
+                    # restricted search repopulates the panel.
+                    await self._bus.publish(
+                        Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={})
+                    )
+                    pool = await self._visible_pool(engine, board, difficulty, game_id, gen)
+                    if pool is None:
+                        return  # cancelled mid-sweep
+                    # Sweep was off-clock; the restricted search runs
+                    # on-clock from a fresh turn stopwatch.
+                    async with self._lock:
+                        if self._board is None or self._game_id != game_id or self._think_gen != gen:
+                            return
+                        self._clock.start_turn()
+            except chess.engine.EngineTerminatedError:
+                await self._handle_engine_termination(engine, game_id, gen)
+                return
+            except (asyncio.CancelledError, RuntimeError, BrokenPipeError):
+                return
         # Use the live remaining time, not the snapshot at turn start.
         white_clock = self._remaining(chess.WHITE)
         black_clock = self._remaining(chess.BLACK)
@@ -1827,30 +2067,18 @@ class HumanVsEngine:
         )
         captured: dict = {}
         try:
-            with await engine.analysis(board, limit=limit) as analysis:
-                self._analysis = analysis
-                await self._pump_engine_info(analysis, game_id, board, capture_score=captured)
-                result = analysis.wait()  # returns BestMove
-                best_move = await result
-                best = best_move.move
-                if best is None:
-                    return
+            best = await self._search_round(
+                engine, board, limit, game_id,
+                root_moves=pool,
+                capture_score=captured,
+            )
+            if best is None:
+                return
         except chess.engine.EngineTerminatedError:
-            if self._engine is engine:
-                self._engine = None
-            if self._think_gen == gen:
-                log.error("engine crashed mid-search")
-                await self._cancel_tick()
-                await self._bus.publish(
-                    Event(kind=EVT_SYSTEM, game_id=game_id, payload={"error": "engine_terminated"})
-                )
-            else:
-                log.info("engine terminated (takeback or shutdown)")
+            await self._handle_engine_termination(engine, game_id, gen)
             return
         except (asyncio.CancelledError, RuntimeError, BrokenPipeError):
             return
-        finally:
-            self._analysis = None
         await self._commit_engine_move(best, captured, game_id, gen)
 
     async def _commit_engine_move(
@@ -1883,10 +2111,12 @@ class HumanVsEngine:
                 self._maybe_save_pgn(result="*", termination="unterminated")
         if ended:
             await self._cancel_tick()
+            # Flush BEFORE announcing: clients react to game_result by
+            # loading the finished game from recents (auto view mode).
+            await self._flush_recents_save()
             await self._bus.publish(
                 Event(kind=EVT_GAME_RESULT, game_id=end_game_id, payload=end_payload)
             )
-            await self._flush_recents_save()
 
     async def _fail_analysis_start(self, game_id: str, detail: str) -> None:
         """Analysis engine failed to start: leave ANALYZING so the client

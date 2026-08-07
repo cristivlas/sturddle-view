@@ -6,7 +6,7 @@
 // localStorage cache is metadata-only and used to render the dropdown
 // before the server responds. Cache is updated optimistically on validate.
 
-import { apiErrorDetail, apiErrorObject, showDialog, toast } from "./dialogs.js";
+import { apiErrorDetail, apiErrorObject, confirm, showDialog, toast } from "./dialogs.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize } from "./col-resize.js";
@@ -530,6 +530,9 @@ function saveRecentsCache(entries) {
     format: e.format,
     summary: e.summary,
     ts: e.ts,
+    // Needed by the delete flow: RECENTS_CHANGED carries deletedGameId so
+    // play.js can flip to idle when the in-view game is force-deleted.
+    game_id: e.game_id ?? null,
   }));
   saveJson(RECENTS_CACHE_KEY, lean);
 }
@@ -582,55 +585,64 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
     delBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
       ev.preventDefault();
-      // Optimistic: remove from cache + DOM immediately so the
-      // dropdown feels snappy. Roll back on server failure.
-      const removed = entry;
-      ctx.recentsCache = ctx.recentsCache.filter((x) => x.hash !== removed.hash);
-      saveRecentsCache(ctx.recentsCache);
-      opt.remove();
-      if (!ctx.recentsCache.length) recentSel.style.visibility = "hidden";
-      api("DELETE", `/game/recent-imports/${removed.hash}`)
-        .then(async () => {
-          // Notify other perspectives that recents changed so they
-          // can refresh derived state (e.g. play.js x-game info,
-          // for the fork glyph + banner). Bus-style decoupling so
-          // the dialog stays unaware of who is listening.
-          window.dispatchEvent(new CustomEvent(APP_EVT.RECENTS_CHANGED, {
-            detail: { deletedHash: removed.hash },
-          }));
-          if (recentSel.querySelectorAll("wa-option").length >= RECENTS_DISPLAY_CAP) return;
-          try {
-            const r = await api("GET", "/game/recent-imports");
-            const known = new Set(ctx.recentsCache.map((c) => c.hash));
-            const fresh = (r.entries || []).filter(
-              (e) => e.hash !== removed.hash && !known.has(e.hash)
-            );
-            if (!fresh.length) return;
-            ctx.recentsCache = [...ctx.recentsCache, ...fresh].slice(0, RECENTS_DISPLAY_CAP);
-            saveRecentsCache(ctx.recentsCache);
-            render();
-          } catch (err) { /* offline -- keep current cache */ }
-        })
-        .catch((e) => {
-          ctx.recentsCache = [removed, ...ctx.recentsCache];
-          saveRecentsCache(ctx.recentsCache);
-          render();
-          // Friendly toast for the "blocked by live forks" 409 case
-          // (xgame nav). Falls back to the generic error otherwise.
-          const obj = apiErrorObject(e);
-          if (obj?.error === "has_children") {
-            const n = Array.isArray(obj.children) ? obj.children.length : 0;
-            const msg = n === 1
-              ? "Cannot delete: this game has 1 forked variation."
-              : `Cannot delete: this game has ${n} forked variations.`;
-            toast(msg, { variant: "warning" });
-          } else {
-            setStatus(apiErrorDetail(e), "err");
-          }
-        });
+      deleteRecent(entry, false);
     });
     opt.append(delBtn);
     return opt;
+  }
+  function deleteRecent(removed, force) {
+    // Optimistic: remove from cache + DOM immediately so the
+    // dropdown feels snappy. Roll back on server failure.
+    ctx.recentsCache = ctx.recentsCache.filter((x) => x.hash !== removed.hash);
+    saveRecentsCache(ctx.recentsCache);
+    render();
+    const qs = force ? "?force=1" : "";
+    api("DELETE", `/game/recent-imports/${removed.hash}${qs}`)
+      .then(async () => {
+        // Notify other perspectives that recents changed so they
+        // can refresh derived state (e.g. play.js x-game info,
+        // for the fork glyph + banner). Bus-style decoupling so
+        // the dialog stays unaware of who is listening.
+        window.dispatchEvent(new CustomEvent(APP_EVT.RECENTS_CHANGED, {
+          detail: { deletedHash: removed.hash, deletedGameId: removed.game_id ?? null },
+        }));
+        if (recentSel.querySelectorAll("wa-option").length >= RECENTS_DISPLAY_CAP) return;
+        try {
+          const r = await api("GET", "/game/recent-imports");
+          const known = new Set(ctx.recentsCache.map((c) => c.hash));
+          const fresh = (r.entries || []).filter(
+            (e) => e.hash !== removed.hash && !known.has(e.hash)
+          );
+          if (!fresh.length) return;
+          ctx.recentsCache = [...ctx.recentsCache, ...fresh].slice(0, RECENTS_DISPLAY_CAP);
+          saveRecentsCache(ctx.recentsCache);
+          render();
+        } catch (err) { /* offline -- keep current cache */ }
+      })
+      .catch(async (e) => {
+        ctx.recentsCache = [removed, ...ctx.recentsCache];
+        saveRecentsCache(ctx.recentsCache);
+        render();
+        // Friendly handling for the 409 cases (xgame nav pin, game open
+        // in View). Falls back to the generic error otherwise.
+        const obj = apiErrorObject(e);
+        if (obj?.error === "has_children") {
+          const n = Array.isArray(obj.children) ? obj.children.length : 0;
+          const msg = n === 1
+            ? "Cannot delete: this game has 1 forked variation."
+            : `Cannot delete: this game has ${n} forked variations.`;
+          toast(msg, { variant: "warning" });
+        } else if (obj?.error === "in_view") {
+          const ok = await confirm({
+            message: "This game is open in View. Delete it and close the view?",
+            okLabel: "Delete",
+            destructive: true,
+          });
+          if (ok) deleteRecent(removed, true);
+        } else {
+          setStatus(apiErrorDetail(e), "err");
+        }
+      });
   }
   function render() {
     const shown = ctx.recentsCache.slice(0, RECENTS_DISPLAY_CAP);

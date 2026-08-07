@@ -5,7 +5,7 @@
 import { apiErrorDetail, showDialog, toast } from "./dialogs.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
-import { loadRaw } from "./storage.js";
+import { loadRaw, saveRaw } from "./storage.js";
 import { mountEngineList } from "./engines.js";
 import { DEFAULT_BOARD_STYLE } from "./board-styles.js";
 import { mqNarrowDialog } from "./breakpoints.js";
@@ -18,12 +18,24 @@ import { buildDisplayTab } from "./settings-display-tab.js";
 import { debounce } from "./wb-utils.js";
 
 const SETTINGS_ENGINES_COL_PCTS_KEY = STORAGE_KEY.ENGINES_SETTINGS_COL_PCTS;
-export const PLAYER_NAME_KEY = STORAGE_KEY.PLAYER_NAME;
+const PLAYER_NAME_KEY = STORAGE_KEY.PLAYER_NAME;
 export const PLAYER_NAME_DEFAULT = "Human";
 const PLAYER_NAME_MAX_LEN = 32;
 
-export function getConfiguredPlayerName() {
-  return loadRaw(PLAYER_NAME_KEY) || PLAYER_NAME_DEFAULT;
+// One-time migration off the pre-0.5.2 localStorage name: if the server
+// name is still unset, push the local one; either way drop the local key.
+// Called at boot with the freshly fetched /settings payload.
+export function migrateLegacyPlayerName(api, serverSettings) {
+  const legacy = (loadRaw(PLAYER_NAME_KEY) || "").trim();
+  if (!legacy) return;
+  if (serverSettings?.player_name) {
+    saveRaw(PLAYER_NAME_KEY, null);
+    return;
+  }
+  // Clear only after the PUT lands, so a failed push retries next boot.
+  api("PUT", "/settings", { player_name: legacy })
+    .then(() => saveRaw(PLAYER_NAME_KEY, null))
+    .catch(() => {});
 }
 
 // Persisted unit is always seconds (float). The UI picks the most natural
@@ -199,7 +211,6 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const { tab: playTab, panel: playPanel } = buildPlayTab({
         initial, putSettings, putSettingsDebounced, makeDurationRow, pathRow,
         playerNameDefault: PLAYER_NAME_DEFAULT,
-        playerNameKey: PLAYER_NAME_KEY,
         playerNameMaxLen: PLAYER_NAME_MAX_LEN,
       });
 

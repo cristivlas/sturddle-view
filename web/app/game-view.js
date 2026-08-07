@@ -897,7 +897,6 @@ function buildViewApi(ctx) {
     setGameId(id) { ctx.gameId = id; },
     setHumanWhite: (v) => setHumanWhite(ctx, v),
     setNames: (n) => setNames(ctx, n),
-    setPlayerName(name) { ctx.playerName = name || PLAYER_NAME_DEFAULT; },
     applyEvent: (evt) => applyEvent(ctx, evt),
     previewPosition(fen, { animate = true } = {}) {
       if (!fen || fen === ctx.currentFen) return;

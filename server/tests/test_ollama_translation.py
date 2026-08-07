@@ -1,6 +1,6 @@
 """Unit tests for the Ollama provider's wire translations.
 
-Canonical internal shape is Anthropic (spec §Providers); the Ollama
+Canonical internal shape is Anthropic (spec section Providers); the Ollama
 provider translates to/from OpenAI on the wire. These tests pin both
 directions in isolation -- pure-function level, no HTTP -- so wire
 bugs don't masquerade as agent-loop bugs.
@@ -48,6 +48,23 @@ def test_assistant_message_with_text_and_tool_use_becomes_assistant_with_tool_ca
     assert calls[0]["function"]["name"] == "analyze"
     # Arguments must be JSON-encoded per the OpenAI spec.
     assert json.loads(calls[0]["function"]["arguments"]) == {"fen": "startpos"}
+
+
+def test_tool_use_arguments_keep_non_ascii_verbatim():
+    # ensure_ascii=True would turn accented text into \uXXXX escapes the
+    # model can parrot into prose; arguments must carry it verbatim.
+    family = "Gr\u00fcnfeld"
+    msg = {
+        "role": "assistant",
+        "content": [
+            {"type": "tool_use", "id": "t", "name": "related_openings",
+             "input": {"family": family}},
+        ],
+    }
+    out = messages_anthropic_to_openai([msg])
+    args = out[0]["tool_calls"][0]["function"]["arguments"]
+    assert family in args
+    assert "\\u00fc" not in args
 
 
 def test_tool_result_message_becomes_tool_role_message():

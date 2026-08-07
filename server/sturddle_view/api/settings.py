@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from .. import __author__, __copyright__, __version__
 from ..auth import require_token
-from ..config import VALID_BOOK_ORDERS
+from ..config import HVE_DIFFICULTY_MAX, HVE_DIFFICULTY_MIN, VALID_BOOK_ORDERS
 from ..engines import EngineNotFoundError
 
 log = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ _PGN_DIR_KEY = "pgn_dir"
 _TC_INITIAL_KEY = "tc_initial_seconds"
 _TC_INCREMENT_KEY = "tc_increment_seconds"
 _HUMAN_SIDE_KEY = "human_side"
+_PLAYER_NAME_KEY = "player_name"
 _ALLOW_TAKEBACK_KEY = "allow_takeback"
 _AUTO_CLAIM_DRAWS_KEY = "auto_claim_draws"
 _INHERIT_PGN_CLOCKS_KEY = "inherit_pgn_clocks"
@@ -50,6 +51,7 @@ _ENGINE_BOOK_PLIES_KEY = "engine_default_book_plies"
 _ENGINE_BOOK_ORDER_KEY = "engine_default_book_order"
 _ENGINE_BOOK_CURSOR_KEY = "engine_default_book_cursor"
 _HVE_USE_OPENING_BOOK_KEY = "hve_use_opening_book"
+_HVE_DIFFICULTY_KEY = "hve_difficulty"
 _AI_ENABLED_KEY = "ai_enabled"
 _AI_PROVIDER_KEY = "ai_provider"
 _AI_MODEL_KEY = "ai_model"
@@ -65,6 +67,8 @@ _AI_VERIFICATION_DEPTH_KEY = "ai_verification_depth"
 _ANALYSIS_ENGINE_KEY = "analysis_engine_id"
 # 100ms floor -- UCI wire is integer ms, and anything shorter is unplayable.
 _TC_INITIAL_MIN = 0.1
+# Mirrors the Settings dialog input's maxlength.
+_PLAYER_NAME_MAX_LEN = 32
 # Round caps must leave room for at least one full round.
 _AI_ROUNDS_MIN = 1
 # Depth caps must be at least one ply.
@@ -93,6 +97,7 @@ def _serialize(s) -> dict:
         _TC_INITIAL_KEY: s.tc_initial_seconds,
         _TC_INCREMENT_KEY: s.tc_increment_seconds,
         _HUMAN_SIDE_KEY: s.human_side,
+        _PLAYER_NAME_KEY: s.player_name,
         _ALLOW_TAKEBACK_KEY: s.allow_takeback,
         _AUTO_CLAIM_DRAWS_KEY: s.auto_claim_draws,
         _INHERIT_PGN_CLOCKS_KEY: s.inherit_pgn_clocks,
@@ -108,6 +113,7 @@ def _serialize(s) -> dict:
         _ENGINE_BOOK_PLIES_KEY: s.engine_default_book_plies,
         _ENGINE_BOOK_ORDER_KEY: s.engine_default_book_order,
         _HVE_USE_OPENING_BOOK_KEY: s.hve_use_opening_book,
+        _HVE_DIFFICULTY_KEY: s.hve_difficulty,
         _AI_ENABLED_KEY: s.ai_enabled,
         _AI_PROVIDER_KEY: s.ai_provider,
         _AI_MODEL_KEY: s.ai_model,
@@ -194,8 +200,8 @@ def _float_field(key: str, *, min_value: float):
     return apply
 
 
-def _int_field(key: str, *, min_value: int):
-    """Required-int field: reject non-integers and sub-floor values. Used
+def _int_field(key: str, *, min_value: int, max_value: int | None = None):
+    """Required-int field: reject non-integers and out-of-range values. Used
     for caps that always have a value (no clear-to-None semantics)."""
     def apply(payload, s, request):
         try:
@@ -204,6 +210,8 @@ def _int_field(key: str, *, min_value: int):
             raise HTTPException(status_code=400, detail=f"{key} must be an integer") from e
         if v < min_value:
             raise HTTPException(status_code=400, detail=f"{key} must be >= {min_value}")
+        if max_value is not None and v > max_value:
+            raise HTTPException(status_code=400, detail=f"{key} must be <= {max_value}")
         setattr(s, key, v)
     return apply
 
@@ -242,6 +250,12 @@ def _str_field(key: str):
     def apply(payload, s, request):
         setattr(s, key, str(payload[key] or "").strip())
     return apply
+
+
+def _apply_player_name(payload, s, request):
+    # Trim + cap to the UI input's maxlength; blank clears to "unset"
+    # (game start falls back to the stock default).
+    s.player_name = str(payload[_PLAYER_NAME_KEY] or "").strip()[:_PLAYER_NAME_MAX_LEN]
 
 
 def _apply_pgn_dir(payload, s, request):
@@ -306,6 +320,7 @@ _APPLIERS = {
     _TC_INITIAL_KEY: _float_field(_TC_INITIAL_KEY, min_value=_TC_INITIAL_MIN),
     _TC_INCREMENT_KEY: _float_field(_TC_INCREMENT_KEY, min_value=0),
     _HUMAN_SIDE_KEY: _enum_field(_HUMAN_SIDE_KEY, _VALID_SIDES),
+    _PLAYER_NAME_KEY: _apply_player_name,
     _ALLOW_TAKEBACK_KEY: _bool_field(_ALLOW_TAKEBACK_KEY),
     _AUTO_CLAIM_DRAWS_KEY: _bool_field(_AUTO_CLAIM_DRAWS_KEY),
     _INHERIT_PGN_CLOCKS_KEY: _bool_field(_INHERIT_PGN_CLOCKS_KEY),
@@ -321,6 +336,9 @@ _APPLIERS = {
     _ENGINE_BOOK_PATH_KEY: _apply_book_path,
     _ENGINE_BOOK_ORDER_KEY: _optional_enum_field(_ENGINE_BOOK_ORDER_KEY, VALID_BOOK_ORDERS),
     _HVE_USE_OPENING_BOOK_KEY: _bool_field(_HVE_USE_OPENING_BOOK_KEY),
+    _HVE_DIFFICULTY_KEY: _int_field(
+        _HVE_DIFFICULTY_KEY, min_value=HVE_DIFFICULTY_MIN, max_value=HVE_DIFFICULTY_MAX,
+    ),
     _AI_ENABLED_KEY: _bool_field(_AI_ENABLED_KEY),
     _AI_PROVIDER_KEY: _enum_field(_AI_PROVIDER_KEY, _VALID_AI_PROVIDERS),
     _AI_MODEL_KEY: _str_field(_AI_MODEL_KEY),

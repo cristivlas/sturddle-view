@@ -1,15 +1,13 @@
 """End-to-end tests for the custom player-name feature.
 
 Covers:
-  * Typing a name in Settings persists to localStorage.
-  * /game/new threads it into the server's HVE snapshot.
+  * Typing a name in Settings persists to the server settings store.
+  * /game/new picks up the persisted name into the HVE snapshot.
   * The play-mode clock label reflects the name.
   * The exported PGN [White]/[Black] headers carry the name.
   * Export -> import round trip: the re-imported PGN's view-mode clock
     labels still show the custom name.
-  * After a page reload the rehydrated game still surfaces the name --
-    the regression case where the name lived only in localStorage and
-    was lost when the server's board_update payload didn't carry it.
+  * After a page reload the rehydrated game still surfaces the name.
 
 Synchronization: all waits are deterministic. Engine-reply waits go through
 ``page.wait_for_function`` against server-published UI state (the move-list
@@ -33,7 +31,6 @@ from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E4
 
 ENGINE_NAME = "MyEngine 1.0"
 CUSTOM_NAME = "Alyssa P. Hacker"
-PLAYER_NAME_LS_KEY = "sturddle:player_name"
 
 
 def _make_fake_uci(root: Path, name: str) -> str:
@@ -84,21 +81,27 @@ async def _open_app(page, base: str) -> None:
 
 
 async def _set_name_in_settings(page, name: str) -> None:
-    """Open Settings, drive the wa-input value, commit via change event, close."""
+    """Open Settings, drive the wa-input value, commit via change event
+    (PUT /settings), await the commit signal, close."""
     await page.click("#settings-btn")
     await page.locator("wa-tab[panel='play']").click()
     name_input = page.locator("wa-tab-panel[name='play'] wa-input").last
     await name_input.wait_for(state="visible")
     # wa-input is a custom element; Playwright's fill() can't drive it
     # directly. Set .value on the host (the property setter forwards to
-    # the internal native input) then dispatch input/change.
+    # the internal native input) then dispatch input/change. The change
+    # handler PUTs to /settings and fires sturddle:settings-changed on
+    # success -- await that so the server has committed before we return.
     await name_input.evaluate(
         f"""(el) => {{
+            window.__nameSaved = new Promise((resolve) =>
+                window.addEventListener('sturddle:settings-changed', resolve, {{ once: true }}));
             el.value = {name!r};
             el.dispatchEvent(new Event('input', {{ bubbles: true, composed: true }}));
             el.dispatchEvent(new Event('change', {{ bubbles: true, composed: true }}));
         }}"""
     )
+    await page.evaluate("() => window.__nameSaved")
     await page.keyboard.press("Escape")
 
 
@@ -125,16 +128,15 @@ async def _wait_for_engine_reply(page) -> None:
 
 
 @pytest.mark.asyncio
-async def test_typing_name_in_settings_persists_to_local_storage(server, page):
-    """Typing the name in the Settings dialog must commit it to localStorage."""
+async def test_typing_name_in_settings_persists_to_server(server, page):
+    """Typing the name in the Settings dialog must commit it to the
+    server-side settings store (shared by all clients)."""
     base = server
     await _open_app(page, base)
     await _set_name_in_settings(page, CUSTOM_NAME)
 
-    stored = await page.evaluate(
-        f"() => localStorage.getItem({PLAYER_NAME_LS_KEY!r})"
-    )
-    assert stored == CUSTOM_NAME, stored
+    s = httpx.get(f"{base}/settings").json()
+    assert s.get("player_name") == CUSTOM_NAME, s
 
 
 @pytest.mark.asyncio
@@ -156,7 +158,7 @@ async def test_new_game_threads_custom_name_to_server_and_label(server, page):
 async def test_custom_name_survives_page_reload(server, page):
     """Set the name, start a game, play a move, refresh the page. The clock
     label must still show the custom name -- driven by the rehydrated server
-    snapshot, since localStorage is only read at /game/new time.
+    snapshot.
     """
     base = server
     await _open_app(page, base)
@@ -177,14 +179,17 @@ async def test_custom_name_survives_page_reload(server, page):
 
 async def _play_and_export(page, base: str) -> str:
     """Open the app, start a human-white game with the custom name, play one
-    move each side, and return the exported PGN text. Forces human_white via
-    direct POST so we don't depend on the random side selection the New-game
-    button would otherwise apply.
+    move each side, and return the exported PGN text. The name goes through
+    the settings API (the only path the server reads it from); human_white
+    is forced via direct POST so we don't depend on the random side selection
+    the New-game button would otherwise apply.
     """
     await _open_app(page, base)
+    httpx.put(
+        f"{base}/settings", json={"player_name": CUSTOM_NAME},
+    ).raise_for_status()
     httpx.post(
-        f"{base}/game/new",
-        json={"player_name": CUSTOM_NAME, "human_side": "white"},
+        f"{base}/game/new", json={"human_side": "white"},
     ).raise_for_status()
     httpx.post(f"{base}/game/move", json={"uci": "e2e4"}).raise_for_status()
     await _wait_for_engine_reply(page)
@@ -206,11 +211,8 @@ async def test_custom_name_in_exported_pgn(server, page):
 async def test_custom_name_roundtrip_export_import(server, page):
     """Full save/load loop: play with the custom name, export the PGN,
     import that exact text back -- the view-mode clock labels must show
-    the custom name, proving the name survives the whole round trip.
-
-    Deliberately does NOT set the name in Settings: localStorage stays
-    empty, so the label assertion can only be satisfied by the PGN-header
-    path, not a localStorage fallback.
+    the custom name, proving the name survives the whole round trip
+    through the PGN headers (view mode surfaces those, not the setting).
     """
     base = server
     pgn = await _play_and_export(page, base)

@@ -78,7 +78,9 @@ export function showDialog({ label, body, defaultValue = null, width, height }) 
 }
 
 /** Modal alert; `messageClass` opts into a custom message style, `width`
- *  constrains the dialog (defaults to content width). */
+ *  constrains the dialog (defaults to content width). `message` may be a
+ *  string, a Node, or a `(resolve) => Node` builder -- the builder form
+ *  lets embedded links close the dialog (e.g. deep links to Settings). */
 export function alert({ message, okLabel = "OK", messageClass, width } = {}) {
   return showDialog({
     label: "",
@@ -87,7 +89,8 @@ export function alert({ message, okLabel = "OK", messageClass, width } = {}) {
       dialog.setAttribute("no-header", "");
       const p = document.createElement("p");
       p.className = messageClass ? `confirm-message ${messageClass}` : "confirm-message";
-      if (message instanceof Node) p.appendChild(message);
+      if (typeof message === "function") p.appendChild(message(resolve));
+      else if (message instanceof Node) p.appendChild(message);
       else p.textContent = message ?? "";
       const ok = document.createElement("wa-button");
       ok.size = "small";
@@ -634,7 +637,7 @@ export function apiErrorObject(error) {
   }
 }
 
-const SETTINGS_TAB_ENGINES = "engines";
+export const SETTINGS_TAB_ENGINES = "engines";
 export const SETTINGS_TAB_ANALYSIS = "analysis";
 
 /** Dispatch the deep-link event that opens the Settings dialog at
@@ -745,8 +748,9 @@ export function makeToastDismissBtn(onClick) {
 
 /** A toast that stays until dismissed, with an X button. `content` is a
  *  string or a Node (laid out in the grow slot beside the button). For
- *  errors that must not auto-vanish before the user reads them. */
-export function stickyToast(content, { variant = "neutral", stack } = {}) {
+ *  errors that must not auto-vanish before the user reads them.
+ *  Optional `onDismiss` fires once, on X click or the returned fn. */
+export function stickyToast(content, { variant = "neutral", stack, onDismiss } = {}) {
   let dismiss;
   const grow = document.createElement("span");
   grow.className = "toast-grow";
@@ -755,16 +759,25 @@ export function stickyToast(content, { variant = "neutral", stack } = {}) {
   const node = document.createElement("span");
   node.className = "toast-sort-msg";
   node.append(grow, makeToastDismissBtn(() => dismiss?.()));
-  dismiss = toast(node, { variant, duration: 0, stack });
+  const hide = toast(node, { variant, duration: 0, stack });
+  let notified = false;
+  dismiss = () => {
+    hide();
+    if (!notified) {
+      notified = true;
+      onDismiss?.();
+    }
+  };
   return dismiss;
 }
 
 // Matches a leading sentence: up to the first ./!/? that is followed by
 // whitespace or end-of-string, so URLs (dots mid-token) stay intact.
 const FIRST_SENTENCE_RE = /.+?[.!?]+(?=\s|$)/;
-const DETAILS_ICON = "circle-info";
+export const DETAILS_ICON = "circle-info";
 const DETAILS_ARIA = "Error details";
-const VERBOSE_ERROR_WIDTH = "min(560px, 92vw)";
+// Standard width for details modals opened from a toast.
+export const DETAILS_DIALOG_WIDTH = "min(560px, 92vw)";
 
 /** Collapse whitespace and take the first sentence as a glanceable summary.
  *  Returns { summary, full, truncated }; `truncated` is true only when the
@@ -826,7 +839,7 @@ export function showVerboseErrorDetails(full) {
   return alert({
     message: linkifyText(full),
     messageClass: "error-detail-text",
-    width: VERBOSE_ERROR_WIDTH,
+    width: DETAILS_DIALOG_WIDTH,
   });
 }
 

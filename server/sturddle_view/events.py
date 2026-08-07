@@ -39,6 +39,7 @@ EVT_AI_TOOL_CALL_FAILED = "ai_tool_call_failed"
 EVT_AI_TOOL_CALL_COMPLETE = "ai_tool_call_complete"
 EVT_AI_RECOMMENDATION = "ai_recommendation"
 EVT_AI_POSITION_NOTE = "ai_position_note"
+EVT_AI_USAGE = "ai_usage"
 EVT_SYSTEM = "system"
 
 
@@ -58,6 +59,7 @@ EventKind = Literal[
     "ai_tool_call_complete",
     "ai_recommendation",
     "ai_position_note",
+    "ai_usage",
     "system",
 ]
 
