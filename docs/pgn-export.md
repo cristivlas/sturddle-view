@@ -1,6 +1,6 @@
-# PGN Export — Design Proposal
+# PGN Export
 
-Status: proposal, not yet implemented.
+Status: implemented.
 
 ## Problem
 
@@ -87,81 +87,14 @@ Frontend: floppy-disk button on both play and view ribbons
 (`desktop-only`). Single `onSavePgn` handler does a plain `fetch`
 and triggers a blob download with the server-supplied filename.
 
-### Pros
+### Rejected alternative
 
-- Smallest blast radius. No changes to data model, no new state on
-  HVE, no new persistence.
-- Autosave path keeps its exact current semantics; the refactor is
-  mechanical (extract method).
-- Clear separation: imports come from `recent_imports`, play-mode
-  comes from a fresh build.
-
-### Cons
-
-- Two code paths on the client (hash-based vs endpoint-based).
-  Client must know which mode it is in. (It already does, via the
-  `viewing` flag and the import hash it holds.)
-- Play games are not retained anywhere unless the user has
-  `pgn_autosave` + `pgn_dir` configured. Re-downloading the same
-  finished game after a page reload is not possible.
-- View mode after `play_from_here` followed by more moves: original
-  hash no longer matches the current game. Export would have to
-  fall through to the play-mode builder for the post-fork state,
-  which is fine but worth calling out.
-
-## Option B — Unified: Reuse `recent_imports` for Play Games
-
-On game end (and optionally on-demand via `GET /game/pgn`), call
-`_build_pgn(...)` and then `recent_imports.save(fmt="pgn", text=...)`
-with a summary like `"Human vs MyEngine — 1-0 (checkmate)"`. The
-returned hash is published on a `board_update` field
-(`play_pgn_hash`) or returned by `/game/pgn`.
-
-Frontend always downloads via `GET /game/recent-imports/{hash}`.
-Single code path.
-
-### Pros
-
-- One client code path for both modes. Simplest frontend.
-- Free side effect: completed play games appear in the recent-imports
-  dropdown, so users can re-open / replay them like any imported PGN.
-  This is arguably a feature (the dropdown becomes a session log).
-- Survives reload: the hash is persisted; re-downloading a finished
-  game across reboots works.
-- Mid-game export still works: we can either save mid-game
-  snapshots (noisy) or only save at game-end and serve a one-shot
-  fresh build for in-progress exports.
-
-### Cons
-
-- Polluting recents with auto-saved play games changes the meaning
-  of "recent imports" — it becomes "recent games." The dropdown,
-  cap (50), and eviction now compete with explicitly imported
-  positions. May need a separate cap or a `fmt="play"` tag and a
-  UI filter.
-- Save-on-every-move (to support mid-game export via hash) would
-  rewrite the same hash slot repeatedly (content-addressed: hash
-  changes per move = new blobs every move = eviction churn). Either
-  accept "no mid-game hash, fall back to fresh build" or skip the
-  save until game-end.
-- Race condition surface: `_maybe_save_pgn` already runs on resign,
-  time forfeit, normal end, and unterminated autosave. Adding a
-  recents.save into the same code path needs care so a half-written
-  game doesn't replace a finished one.
-- Coupling: the play engine now writes to a store that was scoped
-  to user-initiated imports. Conceptual creep.
-
-## Recommendation
-
-Option A. The autosave-to-`pgn_dir` feature stays as-is; the new
-endpoint is a 20-line wrapper around an extracted `_build_pgn`. The
-"two client paths" objection is small in practice — the frontend
-already knows whether it's in view mode and already holds the
-import hash, so the branch is one `if`.
-
-Option B's "completed games show up in recents" is appealing but
-better delivered as an explicit feature with its own store /
-dropdown section, not as a side effect of solving export.
+A unified "Option B" (route all downloads through `recent_imports` by
+auto-saving play games there) was rejected as a side effect of export:
+it changed the meaning of the recents store and added race surface.
+Auto-saving *finished* games to recents later shipped as its own
+explicit feature (see "Auto-Save Finished Games" below), which is the
+part of Option B that was actually worth having.
 
 ## Resolved Questions
 
@@ -173,14 +106,9 @@ dropdown section, not as a side effect of solving export.
    `Content-Disposition`. Implemented.
 4. FEN-only view: 409, no download. Implemented.
 
-<!-- ===================================================================
-     TODO sections below. Search "TODO:" to find actionable items.
-     Status tags: [TODO] not started, [WIP] in progress, [DONE] complete.
-     =================================================================== -->
-
 ## Engine Evaluations in Exported PGN
 
-Status: **[DONE]**
+Status: implemented.
 
 ### Gap
 
@@ -266,50 +194,9 @@ regex was added when the spec moved to "drop `[%clk]` entirely" --
 prior to that, human plies kept their clocks via `[%clk]` and no
 time-only cutechess token was ever emitted.
 
-### Testing Plan
-
-Unit (`pgn_build`):
-- White-to-move ply with `{"cp": 34}` writes `+0.34/<depth>` (no flip).
-- Black-to-move ply with `{"cp": 34}` writes `-0.34/<depth>` (POV flip).
-- Mate scores: `{"mate": 5}` on white -> `M5`; on black -> `-M5`.
-- Missing eval on a ply emits time-only token; no bare `/<depth>`.
-- `eval_history=None` produces identical output to today (no token,
-  no `[%clk]`).
-- Length mismatch (eval_history shorter/longer than moves): defined
-  behavior -- truncate or raise, pick one and assert it.
-
-Round-trip (`pgn_build` -> `_parse_pgn_eval`):
-- Build a game with mixed cp/mate/missing entries (white POV in
-  memory), serialize, re-parse via `_parse_pgn_eval`, assert the
-  re-parsed white-POV values equal the originals. Critical for the
-  sign-flip path on black plies.
-
-Play-mode capture (HVE):
-- After N engine moves, `_eval_history` has N entries, white POV,
-  shape matches `_view_eval_history`.
-- Human ply with no engine search recorded -> `None` entry.
-- `play_game_snapshot()` carries `eval_history`; `enter_view_mode()`
-  populates `_view_eval_history` from it; values unchanged.
-
-Transition + export:
-- Play a few moves, click edit, export from view mode: PGN contains
-  the captured evals. Compare to `_eval_history` snapshot pre-transition.
-- Play -> finish -> export directly from play mode: same evals.
-
-Imported PGN round-trip:
-- Import a cutechess PGN with evals, export, re-import. Assert
-  `_view_eval_history` equal across both imports.
-- Same for a Lichess `[%eval]` PGN (mixed-format read, cutechess
-  write).
-
-Negative / edge:
-- Empty game (no moves): export still succeeds, no eval tokens.
-- FEN-only view: unchanged (409).
-- `eval_history` present but all `None`: no eval tokens emitted.
-
 ## Auto-Save Finished Games to `recent_imports`
 
-Status: **[DONE]**
+Status: implemented.
 
 ### Behavior
 

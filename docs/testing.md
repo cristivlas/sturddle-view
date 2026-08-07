@@ -143,6 +143,42 @@ pure-data helpers, internal closures, or bookkeeping invariants.
 The web/vendor directory contains third-party packages with their own
 `package.json` files, but those are not part of our test infrastructure.
 
+### Perf benches
+
+Live under `server/tests/perf/`; collected but skipped by default.
+
+- Run: `SV_RUN_PERF_BENCHES=1 pytest server/tests/perf/`.
+- Regenerate baselines (`server/tests/perf/baselines.json`):
+  `SV_RUN_PERF_BENCHES=1 pytest --update-perf-baselines server/tests/perf/`
+  on a quiet machine (idle, AC power). Baseline bumps ship as their own
+  reviewed commit with a written justification -- never bundled with the
+  refactor that caused the drift.
+- Harness is `pytest-benchmark` (median-of-rounds compare); sub-microsecond
+  ops use an `INNER_LOOPS` wrapper to sit above timer resolution.
+- A failure within noise tolerance is still a signal -- bisect the real
+  cause, never write it off as load flake.
+- **DO NOT TOUCH locks**: `pgn_stats._iter_games_uncached`,
+  `_iter_games_keyed`, and `rewrite_drop_partial_pairs` must stay
+  regex/line-scan -- replacing them with `chess.pgn.read_game` or the
+  shared walker regresses ~50x. Dedicated benches pin them.
+
+### Leak hunting (ResourceWarnings, order-dependent failures)
+
+1. Flip `filterwarnings = ["error"]` in `pyproject.toml` (it ships on;
+   keep it on).
+2. Run the suite; failing tests point at warnings.
+3. Pass-alone + fail-in-suite = order-dependent contamination from a
+   prior test. A `pytest_runtest_teardown` hook calling `gc.collect()`
+   inside `warnings.catch_warnings(record=True)` attributes the leak to
+   the owning test (see git history for the reverted diagnostic hook).
+4. Common culprits: unclosed asyncio loops, `subprocess.Popen` without
+   `with`, module-level file handles reassigned without close,
+   magic-number `asyncio.sleep(0)` yield loops, `force_exit=True`
+   skipping uvicorn lifespan shutdown.
+5. Biggest bang for buck: strip explicit `timeout=N` kwargs from
+   Playwright/asyncio waits -- tight cushions are the #1 CI-flake
+   source; the framework's default 30s hang-bound covers genuine bugs.
+
 ### Security: manual smoke tests
 
 The auth, bind-policy, and TLS code paths are not covered by automated

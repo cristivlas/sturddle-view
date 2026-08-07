@@ -29,7 +29,14 @@ imports/
     <sha256>.pgn            # raw text of the imported PGN (or .fen)
 ```
 
-- `<sha256>` = SHA-256 hex of the trimmed text.
+- `<sha256>` = SHA-256 hex of the canonical form of the text (see
+  [canonical-hash.md](canonical-hash.md)); the stored blob stays verbatim.
+- Rows have since grown optional fields beyond the original sketch:
+  `game_id` (stable identity; see "game_id contracts" below), `refs`
+  (children pinning the row), `parent_game_id` / `fork_ply` (fork links;
+  see [x-game-navigation.md](x-game-navigation.md)), and
+  `summary["source"]="play"` on auto-saved finished play games (see
+  [pgn-export.md](pgn-export.md)).
 - `format`: "pgn" | "fen". Both formats are stored under the same scheme
   (FENs are tiny but kept here so "Recent" reflects everything the user
   opened, and the dropdown can flag them with a small badge later).
@@ -54,7 +61,7 @@ side effect of a successful import.
 3. Server parses ONCE:
    - Validates the text via `parse_pgn` / `parse_fen`.
    - Enters view mode with the parsed result.
-   - Computes `hash = sha256(text.trim())`.
+   - Computes `hash` via `canonical_hash` (see [canonical-hash.md](canonical-hash.md)).
    - Writes the blob to `imports/by-hash/<hash>.<ext>` if new.
    - Upserts the index entry `{hash: {format, summary, ts: now, file}}`.
      Summary is the same string the parser already produces.
@@ -150,4 +157,28 @@ metadata-only list overwrites it.
 Display cap (how many rows the dropdown shows) becomes independent
 from the server cap. Start at 10; the dropdown is a `wa-select`, so
 scrolling more is cheap.
+
+## game_id contracts
+
+Hard rules established when `game_id` was unified across the store,
+HVE sessions, and tournament Replay. Future work must preserve them.
+
+- **Immutability.** Once assigned to a store row, a `game_id` never
+  changes for that row's lifetime. Re-`save` of the same hash keeps
+  the original id.
+- **Bijection at any instant.** Each `game_id` resolves to exactly one
+  row; each row carries exactly one `game_id`. An evicted hash that is
+  re-imported gets a fresh id; the old id is dead forever.
+- **Sufficiency.** A `game_id` alone recovers the full row (`by-id`
+  endpoint family) without knowing the hash.
+- **Opacity.** Server-assigned; clients treat it as an opaque string --
+  no slicing, no length assumptions, no structural parsing.
+- **Uniqueness.** Same `game_id` for different hashes is a programming
+  bug, not a data condition; crash on detection.
+- **Active-session pinning.** The single active HVE session's
+  `game_id`, if it matches a stored row, is never evicted. Rows with
+  non-empty `refs` are also never evicted (cap becomes a soft floor).
+- **Hash != identity.** Content edits that change the stored text
+  invalidate the *hash* (row migrates to the new hash) but MUST
+  preserve the *id*. Any code path conflating the two is wrong.
 

@@ -581,10 +581,11 @@ A thin app-level wrapper (`web/app/dialogs.js`) exposes `confirm()`, `alert()`, 
 
 ## Tablebase Management
 
-TODO: not yet implemented. Plan:
-- Configure local tablebase paths (Syzygy, Gaviota) — `engine_default_syzygy_path` setting exists and is forwarded to engines, but no server-side lookup is wired up
-- Server-side lookup via python-chess built-in tablebase support exposed to both human vs engine and tournament observer views
-- Display DTZ/DTM, WDL result, best move in tablebase positions; publish in `board_update` payload (placeholder `tablebase: null` field exists)
+Implemented for human-vs-engine: `engine_default_syzygy_path` is
+forwarded to engines, and a server-side Syzygy WDL/DTZ probe
+(`play/tablebase.py`, python-chess) publishes results in the
+`board_update` payload (`tablebase` field), rendered by GameView.
+Not wired into tournament observation.
 
 ---
 
