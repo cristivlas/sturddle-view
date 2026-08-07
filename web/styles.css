@@ -349,8 +349,23 @@ wa-select::part(listbox) {
   user-select: text;
   word-break: break-word;
 }
-.confirm-message.error-detail-text a {
+.confirm-message a {
   color: var(--accent);
+}
+/* Inline protocol/UCI terms in dialog prose (e.g. the difficulty
+   details popup): code font in the app's accent-chip idiom (same
+   family as .status-badge--paused / .engines-list-active-badge) so
+   terms read as syntax, not as ordinary words or typos. Canonical
+   style for term highlighting in any dialog/message prose. */
+.confirm-message code {
+  font-family: var(--wa-font-family-code);
+  font-size: 0.9em;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  border-radius: 4px;
+  padding: 0 4px;
+  white-space: nowrap;
 }
 .play-ai-roundcap {
   display: flex;

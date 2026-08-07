@@ -78,7 +78,9 @@ export function showDialog({ label, body, defaultValue = null, width, height }) 
 }
 
 /** Modal alert; `messageClass` opts into a custom message style, `width`
- *  constrains the dialog (defaults to content width). */
+ *  constrains the dialog (defaults to content width). `message` may be a
+ *  string, a Node, or a `(resolve) => Node` builder -- the builder form
+ *  lets embedded links close the dialog (e.g. deep links to Settings). */
 export function alert({ message, okLabel = "OK", messageClass, width } = {}) {
   return showDialog({
     label: "",
@@ -87,7 +89,8 @@ export function alert({ message, okLabel = "OK", messageClass, width } = {}) {
       dialog.setAttribute("no-header", "");
       const p = document.createElement("p");
       p.className = messageClass ? `confirm-message ${messageClass}` : "confirm-message";
-      if (message instanceof Node) p.appendChild(message);
+      if (typeof message === "function") p.appendChild(message(resolve));
+      else if (message instanceof Node) p.appendChild(message);
       else p.textContent = message ?? "";
       const ok = document.createElement("wa-button");
       ok.size = "small";
@@ -634,7 +637,7 @@ export function apiErrorObject(error) {
   }
 }
 
-const SETTINGS_TAB_ENGINES = "engines";
+export const SETTINGS_TAB_ENGINES = "engines";
 export const SETTINGS_TAB_ANALYSIS = "analysis";
 
 /** Dispatch the deep-link event that opens the Settings dialog at

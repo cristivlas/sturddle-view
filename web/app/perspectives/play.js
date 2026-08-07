@@ -7,7 +7,7 @@ import { APP_EVT } from "../app-events.js";
 import { KIND, AI_KIND_PREFIX } from "../game-events.js";
 import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
-import { alert as showAlert, buildToastWithActions, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportError, reportVerboseError, stickyToast, toast } from "../dialogs.js";
+import { alert as showAlert, buildToastWithActions, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportError, reportVerboseError, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, getEvalBarApi, setUciLogEngine, isMobileLayout } from "../play-dock-windows.js";
 import {
@@ -70,6 +70,38 @@ let _cachedBoardUpdate = null;
 // the toast outlives a perspective remount, so a per-mount flag would
 // let the next degraded move stack a duplicate.
 let _difficultyToastUp = false;
+
+// Details popup body for the difficulty-unavailable toast: prose with
+// the UCI terms as code chips and "choose an engine" deep-linking to
+// Settings > Engines (resolving the popup first -- one modal at a time).
+function buildDifficultyDetails(engineName, resolve) {
+  const code = (term) => {
+    const el = document.createElement("code");
+    el.textContent = term;
+    return el;
+  };
+  const link = document.createElement("a");
+  link.href = "#";
+  link.textContent = MSG.DIFFICULTY_DETAILS_LINK;
+  link.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    resolve();
+    openSettings(SETTINGS_TAB_ENGINES);
+  });
+  const frag = document.createDocumentFragment();
+  frag.append(
+    MSG.DIFFICULTY_DETAILS_MECHANISM_PRE,
+    code(MSG.DIFFICULTY_DETAILS_TERM_FULL),
+    MSG.DIFFICULTY_DETAILS_MECHANISM_POST,
+    `${engineName} `,
+    MSG.DIFFICULTY_DETAILS_REST,
+    link,
+    MSG.DIFFICULTY_DETAILS_REST_HONORS,
+    code(MSG.DIFFICULTY_DETAILS_TERM),
+    ".",
+  );
+  return frag;
+}
 
 // X-game toast don't-nag flags, persisted across perspective mounts.
 // Keyed by game_id. Reset only on hard reload (fresh page load).
@@ -189,14 +221,21 @@ const MSG = {
   ENGINE_CRASHED: "Engine crashed unexpectedly.",
   ANALYSIS_ENGINE_FAILED: "Analysis engine failed to start.",
   DIFFICULTY_UNAVAILABLE: "Difficulty unavailable; playing at full strength.",
-  // Details popup: mechanism sentence, then "<engine name> <rest>".
-  DIFFICULTY_UNAVAILABLE_DETAILS_MECHANISM:
+  // Details popup fragments, assembled by buildDifficultyDetails():
+  // mechanism (UCI term as a code chip), "<engine name> <rest>", then a
+  // "choose an engine" deep link to Settings > Engines.
+  DIFFICULTY_DETAILS_MECHANISM_PRE:
     "Difficulty works by restricting which root moves the engine may " +
-    "search (UCI 'go searchmoves').",
-  DIFFICULTY_UNAVAILABLE_DETAILS_REST:
+    "search (UCI ",
+  DIFFICULTY_DETAILS_TERM_FULL: "go searchmoves",
+  DIFFICULTY_DETAILS_MECHANISM_POST: "). ",
+  DIFFICULTY_DETAILS_REST:
     "ignores that restriction, so reduced difficulty cannot be " +
     "enforced and games play at full strength. To play at reduced " +
-    "difficulty, choose an engine that honors searchmoves.",
+    "difficulty, ",
+  DIFFICULTY_DETAILS_LINK: "choose an engine",
+  DIFFICULTY_DETAILS_REST_HONORS: " that honors ",
+  DIFFICULTY_DETAILS_TERM: "searchmoves",
   DIFFICULTY_GENERIC_ENGINE: "This engine",
   DIFFICULTY_DETAILS_ARIA: "Difficulty details",
   // Confirm dialogs.
@@ -2186,7 +2225,7 @@ export const playPerspective = {
         setNoEngine(false);
       }
     }
-    noEngineBannerBtn.addEventListener("click", () => openSettings("engines"));
+    noEngineBannerBtn.addEventListener("click", () => openSettings(SETTINGS_TAB_ENGINES));
     const onEnginesChanged = (e) => {
       setNoEngine(!e.detail?.activeId);
     };
@@ -2526,16 +2565,13 @@ export const playPerspective = {
         if (!_difficultyToastUp) {
           _difficultyToastUp = true;
           const engineName = evt.payload?.engine || MSG.DIFFICULTY_GENERIC_ENGINE;
-          const details =
-            `${MSG.DIFFICULTY_UNAVAILABLE_DETAILS_MECHANISM} ` +
-            `${engineName} ${MSG.DIFFICULTY_UNAVAILABLE_DETAILS_REST}`;
           let dismiss;
           const body = buildToastWithActions(MSG.DIFFICULTY_UNAVAILABLE, [{
             icon: DETAILS_ICON,
             ariaLabel: MSG.DIFFICULTY_DETAILS_ARIA,
             onClick: async () => {
               await showAlert({
-                message: details,
+                message: (resolve) => buildDifficultyDetails(engineName, resolve),
                 width: DETAILS_DIALOG_WIDTH,
               });
               dismiss?.();
