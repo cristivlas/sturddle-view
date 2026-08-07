@@ -357,6 +357,17 @@ class HumanVsEngine:
         return self._game_id
 
     @property
+    def viewing_game_id(self) -> str | None:
+        """The view session's game_id, or None when not viewing.
+        EDITING is excluded: mid-edit the user is authoring a new
+        position, not viewing the row -- deleting it must not tear the
+        edit session down (commit re-saves fresh). Lock-free read,
+        same contract as ``game_id``."""
+        if self._editing:
+            return None
+        return self._game_id if self._viewing else None
+
+    @property
     def is_paused(self) -> bool:
         return self._mode is Mode.PAUSED
 
@@ -1469,6 +1480,24 @@ class HumanVsEngine:
         if parent_game_id is not None and fork_ply >= 1:
             self._fork_link = (parent_game_id, fork_ply)
         return new_id
+
+    async def close_view(self) -> None:
+        """Tear the view session down to the idle/no-game state (fresh
+        GameBundle). Used when the viewed game's recents row is force-
+        deleted: the view has nothing to show anymore. No-op outside view.
+
+        Suspend-origin sessions (scrub-back /view/start) never reach this
+        path -- their game_id is minted fresh and has no recents row -- so
+        dropping ``_suspended_play`` here cannot lose a live game."""
+        async with self._lock:
+            if not self._viewing:
+                return
+            await self._cancel_analysis()
+            await self._cancel_think()
+            await self._cancel_tick()
+            self._game = GameBundle()
+            self._fork_link = None
+            self._suspended_play = None
 
     async def resume_play(self) -> str:
         """Exit view mode back into the SAME play game suspended by

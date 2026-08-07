@@ -147,3 +147,85 @@ def test_repeat_fork_same_ply(client):
         f"SECOND FORK UNREACHABLE BY ID (status {r.status_code}); "
         f"rows={_rows(c)}"
     )
+
+
+def test_delete_in_view_row_requires_force_then_closes_view(client):
+    c = client
+    r = c.post("/game/import", json={"format": "pgn", "text": PARENT_PGN})
+    game_id = r.json()["game_id"]
+    h = r.json()["hash"]
+
+    # Unforced delete of the viewed row -> 409 in_view, row survives.
+    r = c.delete(f"/game/recent-imports/{h}")
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["error"] == "in_view"
+    assert c.get(f"/game/recent-imports/by-id/{game_id}").status_code == 200
+
+    # Forced delete -> row gone, view session closed (view ops now reject).
+    r = c.delete(f"/game/recent-imports/{h}?force=1")
+    assert r.status_code == 200, r.text
+    assert c.get(f"/game/recent-imports/by-id/{game_id}").status_code == 404
+    assert c.post("/game/view/goto", json={"ply": 1}).status_code == 400
+
+
+def test_delete_non_viewed_row_needs_no_force(client):
+    c = client
+    r = c.post("/game/import", json={"format": "pgn", "text": PARENT_PGN})
+    h = r.json()["hash"]
+    # View a different game, then delete the first row without force.
+    other = PARENT_PGN.replace("4. Qxf7# 1-0", "4. d3 Nd4 *").replace(
+        '[Result "1-0"]', '[Result "*"]'
+    )
+    c.post("/game/import", json={"format": "pgn", "text": other})
+    assert c.delete(f"/game/recent-imports/{h}").status_code == 200
+
+
+def test_force_delete_does_not_override_children_pin(client):
+    c = client
+    r = c.post("/game/import", json={"format": "pgn", "text": PARENT_PGN})
+    parent_id = r.json()["game_id"]
+    parent_hash = r.json()["hash"]
+    # Fork + finish so the parent gains a child ref.
+    assert c.post("/game/view/goto", json={"ply": 4}).status_code == 200
+    c.post("/game/view/play-from-here", json={})
+    assert c.post("/game/resign", json={}).status_code == 200
+    # Auto-view the finished child (now the in-view game is the child,
+    # not the parent) -- parent delete must hit the children pin.
+    child = _by_id(c, _by_id(c, parent_id)["children"][0]["game_id"])
+    c.post("/game/import", json={"format": child["format"], "text": child["text"]})
+    r = c.delete(f"/game/recent-imports/{parent_hash}?force=1")
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["error"] == "has_children"
+
+
+def test_children_pin_wins_over_in_view_confirm(client):
+    """A row that is both in-view and children-pinned must 409 with
+    has_children on an unforced delete -- never offer the in_view
+    confirm for a delete that would be refused anyway."""
+    c = client
+    r = c.post("/game/import", json={"format": "pgn", "text": PARENT_PGN})
+    parent_id = r.json()["game_id"]
+    parent_hash = r.json()["hash"]
+    # Fork + finish so the parent gains a child ref.
+    assert c.post("/game/view/goto", json={"ply": 4}).status_code == 200
+    c.post("/game/view/play-from-here", json={})
+    assert c.post("/game/resign", json={}).status_code == 200
+    # Re-view the PARENT: now it is in-view AND children-pinned.
+    c.post("/game/import", json={"format": "pgn", "text": PARENT_PGN})
+    r = c.delete(f"/game/recent-imports/{parent_hash}")
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["error"] == "has_children"
+    # Still present, still viewable.
+    assert c.get(f"/game/recent-imports/by-id/{parent_id}").status_code == 200
+
+
+def test_delete_edited_row_needs_no_force_and_keeps_edit_session(client):
+    """EDITING is not viewing: deleting the edited game's row succeeds
+    unforced and must not tear the edit session down."""
+    c = client
+    r = c.post("/game/import", json={"format": "pgn", "text": PARENT_PGN})
+    h = r.json()["hash"]
+    assert c.post("/game/edit/start", json={}).status_code == 200
+    assert c.delete(f"/game/recent-imports/{h}").status_code == 200
+    # Edit session survives: cancel still works (back to view mode).
+    assert c.post("/game/edit/cancel", json={}).status_code == 200

@@ -105,8 +105,11 @@ def test_get_by_hash_404_for_unknown(client):
 def test_delete_drops_entry(client):
     r = client.post("/game/import", json={"format": "pgn", "text": SAMPLE_PGN_A})
     h = r.json()["hash"]
+    # A is the in-view game right after import; view B so A is deletable
+    # without force (the in-view row requires ?force=1).
+    client.post("/game/import", json={"format": "pgn", "text": SAMPLE_PGN_B})
     assert client.delete(f"/game/recent-imports/{h}").status_code == 200
-    assert client.get("/game/recent-imports").json()["entries"] == []
+    assert len(client.get("/game/recent-imports").json()["entries"]) == 1
     # Deleting again -> 404.
     assert client.delete(f"/game/recent-imports/{h}").status_code == 404
 
