@@ -95,6 +95,7 @@ const inst = createDockableWindow({
   },
   dockOrder: DOCK_ORDER.COMMENTARY,
   getDockEl: () => dockEl,
+  railDockable: true,
   closable: true,
   onUserClose: () => {
     if (userCloseHandler) userCloseHandler();
