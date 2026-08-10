@@ -1,5 +1,5 @@
 // Display settings tab: presentation-only preferences (ribbon side, eval POV,
-// board style, PGN comments) -- no gameplay effect.
+// board style, PGN comments, eval graph) -- no gameplay effect.
 //
 // Board-style is special: changing it must reload the app on dialog close so
 // the live board picks up the new theme. That dirty-tracking lives in the
@@ -11,6 +11,7 @@ import { APP_EVT } from "./app-events.js";
 import { SIDE } from "./chess-consts.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
 import { mqMobile } from "./breakpoints.js";
+import { isEvalBarOpen, setEvalBarOpen } from "./play-dock-windows.js";
 import { makeDivider } from "./settings-ui-helpers.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import { STORAGE_KEY } from "./storage-keys.js";
@@ -82,6 +83,17 @@ export function buildDisplayTab({ initial, putSettings, initialStyle, onBoardSty
   showComments.title = "Display sanitized move comments in the left column while viewing a game (desktop only)";
   showComments.addEventListener("change", () => {
     putSettings({ view_show_pgn_comments: showComments.checked });
+  });
+
+  // Client-side placement state, not a server setting: the switch is just the
+  // way back after the window's own X closes it.
+  const showEvalBar = document.createElement("wa-switch");
+  showEvalBar.size = "small";
+  showEvalBar.checked = isEvalBarOpen();
+  showEvalBar.textContent = "Eval graph";
+  showEvalBar.title = "Show the per-move engine evaluation graph while playing (desktop only)";
+  showEvalBar.addEventListener("change", () => {
+    setEvalBarOpen(showEvalBar.checked);
   });
 
   // Board style: single preset picker + live preview swatch reusing
@@ -197,10 +209,10 @@ export function buildDisplayTab({ initial, putSettings, initialStyle, onBoardSty
   tournamentUxRow.append(tournamentUxLabel, tournamentUx);
 
   const showCommentsDisplayRow = document.createElement("div");
-  // PGN comments render in the left column, which is hidden on mobile;
-  // hide the toggle there too (desktop-only).
-  showCommentsDisplayRow.className = "settings-row desktop-only";
-  showCommentsDisplayRow.append(showComments);
+  // Both panels live in columns mobile does not lay out (PGN comments in the
+  // left column, the eval graph in the side rail), so the row is desktop-only.
+  showCommentsDisplayRow.className = "settings-row settings-toggles-grid desktop-only";
+  showCommentsDisplayRow.append(showComments, showEvalBar);
 
   const displayCol = document.createElement("div");
   displayCol.className = "settings-panel-col";
