@@ -51,6 +51,8 @@ const RAIL_NATURAL_CAP_VIEWPORT_PX = 1500;
 // Floor for the moves list when the rail-dock grip is dragged up.
 const MIN_MOVES_REM = 6;
 const RAIL_GRIP_SEL_CLASS = "play-rail-grip";
+// Hides a section that has nothing to show (display: none in styles.css).
+const IS_EMPTY_CLASS = "is-empty";
 // Grip thickness; it rides in the board-bottom gap, so it costs neither the
 // moves list nor the docked panel any height.
 const RAIL_GRIP_PX = 5;
@@ -189,12 +191,12 @@ async function copyFen(ctx) {
 function setOpening(ctx, opening) {
   if (!ctx.openingLine) return;
   if (!opening || (!opening.eco && !opening.name)) {
-    ctx.openingLine.classList.add("is-empty");
+    ctx.openingLine.classList.add(IS_EMPTY_CLASS);
     return;
   }
   ctx.openingEco.textContent = opening.eco ?? "";
   ctx.openingName.textContent = opening.name ?? "";
-  ctx.openingLine.classList.remove("is-empty");
+  ctx.openingLine.classList.remove(IS_EMPTY_CLASS);
 }
 
 function setTablebase(ctx, tb) {
@@ -202,7 +204,7 @@ function setTablebase(ctx, tb) {
   const hm = tb && Number.isFinite(tb.halfmove_clock) ? tb.halfmove_clock : null;
   const hasTb = tb && tb.wdl !== undefined && tb.wdl !== null;
   if (!hasTb && hm === null) {
-    ctx.tbLine.classList.add("is-empty");
+    ctx.tbLine.classList.add(IS_EMPTY_CLASS);
     return;
   }
   if (ctx.tbInfo) {
@@ -221,7 +223,7 @@ function setTablebase(ctx, tb) {
     ctx.hmClock.textContent = hm !== null ? `50-move rule: ${hm}/100` : "";
     ctx.hmClock.classList.toggle("hm-clock-warn", hm !== null && hm >= HALFMOVE_WARN_PLIES);
   }
-  ctx.tbLine.classList.remove("is-empty");
+  ctx.tbLine.classList.remove(IS_EMPTY_CLASS);
 }
 
 // ---- Names / clocks -----------------------------------------------------
@@ -306,6 +308,16 @@ function setClock(ctx, { white_time, black_time, turn, running, viewing }) {
   if (ctx.clockTopTime) ctx.clockTopTime.textContent = fmtClock(topTime);
   applyClockColors(ctx);
   applyClockActive(ctx, ctx.lastTurn, ctx.lastClockRunning);
+}
+
+// Sole toggle for the engine section's visibility: the rail's top edge is
+// aligned differently depending on it (see positionSideRail), so every
+// change has to re-run the layout or the rail keeps the stale alignment.
+function setEngineSectionEmpty(ctx, empty) {
+  if (!ctx.engineSection) return;
+  if (ctx.engineSection.classList.contains(IS_EMPTY_CLASS) === empty) return;
+  ctx.engineSection.classList.toggle(IS_EMPTY_CLASS, empty);
+  recomputeBoardSize(ctx);
 }
 
 function clearEngineInfoFields(ctx) {
@@ -711,7 +723,7 @@ function applyViewEval(ctx, evt) {
   const ev = evt.payload.view.eval;
   const hasAnyEval = !!evt.payload.view.has_eval;
   if (ev) {
-    ctx.engineSection?.classList.remove("is-empty");
+    setEngineSectionEmpty(ctx, false);
     clearEngineInfoFields(ctx);
     if (ctx.engineScore) ctx.engineScore.textContent = fmtScore(ev, { signed: true });
     if (ctx.engineDepth) ctx.engineDepth.textContent = ev.depth ?? "";
@@ -720,19 +732,19 @@ function applyViewEval(ctx, evt) {
     // bare PGNs don't inherit visibility from a prior import that had evals.
     if (ctx.engineScore) ctx.engineScore.textContent = "";
     if (ctx.engineDepth) ctx.engineDepth.textContent = "";
-    ctx.engineSection?.classList.add("is-empty");
+    setEngineSectionEmpty(ctx, true);
   } else {
     // PGN has evals elsewhere but this specific ply doesn't (e.g. last
     // move of a fastchess game tends to lack an eval). Keep the panel
     // visible so it doesn't disappear when scrubbing across plies, but
     // blank the per-ply fields so stale values don't leak through.
-    ctx.engineSection?.classList.remove("is-empty");
+    setEngineSectionEmpty(ctx, false);
     clearEngineInfoFields(ctx);
   }
 }
 
 function applyEngineInfo(ctx, evt) {
-  ctx.engineSection?.classList.remove("is-empty");
+  setEngineSectionEmpty(ctx, false);
   if (ctx.engineDepth && evt.payload.depth != null) {
     ctx.engineDepth.textContent = evt.payload.depth;
   }
@@ -950,7 +962,7 @@ function buildViewApi(ctx) {
     clearArrows() { ctx.board.clearArrows(); },
     clearEngineInfo() {
       clearEngineInfoFields(ctx);
-      ctx.engineSection?.classList.add("is-empty");
+      setEngineSectionEmpty(ctx, true);
     },
     setEnabled(enabled) { ctx.board.enableInput(ctx.interactive && enabled); },
     reset() {
@@ -962,7 +974,7 @@ function buildViewApi(ctx) {
       ctx.board.setPosition(INITIAL_FEN, null, false);
       if (ctx.moveListEl) ctx.moveListEl.innerHTML = "";
       clearEngineInfoFields(ctx);
-      ctx.engineSection?.classList.add("is-empty");
+      setEngineSectionEmpty(ctx, true);
       setOpening(ctx, null);
       setTablebase(ctx, null);
       setFen(ctx, INITIAL_FEN);
