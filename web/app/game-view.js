@@ -403,7 +403,16 @@ function positionSideRail(ctx, geom) {
   }
   const boardRect = ctx.boardEl.getBoundingClientRect();
   const ribbonRight = document.body.dataset.ribbonSide === "right";
-  const top = Math.ceil(boardRect.top);
+  // Align the rail's top with the top clock row when the engine-stat section
+  // is showing above the moves list, so its header lines up with the clock
+  // area. With no engine section (or it's empty/hidden) the moves list is
+  // the rail's only content, so keep it flush with the board top instead.
+  const clockTopRow = ctx.clockTopRow;
+  const topRef = clockTopRow && clockTopRow.offsetParent !== null
+    && !!ctx.engineSection && ctx.engineSection.offsetParent !== null
+    ? clockTopRow.getBoundingClientRect()
+    : boardRect;
+  const top = Math.ceil(topRef.top);
   // Cap the rail at its natural width only on wide viewports with an
   // empty dock side (keeps the picture centered). A visible docker
   // lets the rail fill `avail` at any width.
@@ -422,7 +431,7 @@ function positionSideRail(ctx, geom) {
     const avail = Math.max(0, window.innerWidth - left - rem(RAIL_EDGE_GAP_REM));
     width = capRail ? Math.min(railW, avail) : avail;
   }
-  const height = Math.max(rem(MIN_AVAIL_REM), Math.floor(boardRect.height));
+  const height = Math.max(rem(MIN_AVAIL_REM), Math.floor(boardRect.bottom - topRef.top));
   // Lift applies only while something is docked in the rail band; with an
   // empty band the moves list runs all the way down to the board bottom.
   ctx.railMaxLift = Math.max(0, height - rem(MIN_MOVES_REM));
