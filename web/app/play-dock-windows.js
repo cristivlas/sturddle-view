@@ -678,6 +678,7 @@ export function createDockableWindow(config) {
     getInlineEl = null,
     onUserClose,
     closable = false,
+    defaultOpen = false,
     titleActions = [],
     defaultDest = DOCK_DEST_MAIN,
     railDockable = false,
@@ -711,8 +712,12 @@ export function createDockableWindow(config) {
     setOpen(openKey, v);
   }
 
+  // An absent openKey means the user has never opened or closed this window,
+  // so it falls back to defaultOpen -- a window that ships visible stays
+  // visible until it is deliberately closed.
   function openState() {
-    return !closable || isOpen(openKey);
+    if (!closable) return true;
+    return loadRaw(openKey) !== null ? isOpen(openKey) : defaultOpen;
   }
 
   // Container this window docks into absent an explicit drop target: the
@@ -1067,10 +1072,14 @@ export function createDockableWindow(config) {
 
   const inst = {
     toggle, close, undock, redock, teardownSlot, closeForNav, restore, relayout, setTitle,
+    persistOpen,
     get wb() { return wb; },
     get slot() { return slot; },
     get inlineSlot() { return inlineSlot; },
     get body() { return body; },
+    // Persisted open state, valid even while the window is unmounted; the
+    // read twin of persistOpen.
+    get shouldBeOpen() { return openState(); },
     dockedKey,
     dockOrder,
     closable,
@@ -1303,7 +1312,7 @@ function buildEvalBarBody(_events, { setOff }) {
   return bar.el;
 }
 
-createDockableWindow({
+const evalBar = createDockableWindow({
   title: EVAL_TITLE,
   className: "sturddle-wb-evalbar",
   geoKey: EVAL_GEO_KEY,
@@ -1319,12 +1328,36 @@ createDockableWindow({
   },
   build: buildEvalBarBody,
   dockOrder: DOCK_ORDER.ENGINE_EVAL,
-  // Not closable: nothing in the UI reopens it, so it must stay revivable
-  // -- always open, movable between rail/dock/float.
-  closable: false,
+  // Closable, with the Display settings switch as the way back; defaultOpen
+  // keeps it visible for users who have never touched that switch.
+  closable: true,
+  defaultOpen: true,
   defaultDest: DOCK_DEST_RAIL,
   railDockable: true,
 });
+
+// Open/closed state for the Display settings switch. Read from the persisted
+// key rather than live DOM presence: the dialog also opens from perspectives
+// where Play is not mounted, and there the window is absent but not "off".
+// TODO: this lives in localStorage, unlike the server-backed switches beside
+// it, so it does not follow the user across browsers -- reconsider if that
+// starts to matter.
+export function isEvalBarOpen() {
+  return evalBar.shouldBeOpen;
+}
+
+// With Play mounted, toggle persists and applies in one step. The dialog also
+// opens over other perspectives, where there is no Play layout to place the
+// window into -- toggling there would float it over Studio/Tournaments or dock
+// it into a detached rail, and would leave the instance looking open so the
+// next Play mount's restore() skips it. So off Play, only record the choice.
+// toggle needs no events argument -- the body ignores it (play.js feeds the
+// strip via getEvalBarApi).
+export function setEvalBarOpen(open) {
+  if (open === isEvalBarOpen()) return;
+  if (dockEl) evalBar.toggle();
+  else evalBar.persistOpen(open);
+}
 
 // -- public API --------------------------------------------------------------
 
