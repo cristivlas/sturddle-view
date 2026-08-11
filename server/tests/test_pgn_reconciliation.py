@@ -258,18 +258,24 @@ async def test_pgn_record_arrives_after_dissolution_emits_reconciled(orch, emitt
 
 @pytest.mark.asyncio
 async def test_pgn_record_arrives_before_dissolution(orch, emitted):
-    """If the PGN flush wins the race, the record sits in the buffer
-    until the dissolution shows up."""
-    pair_id = await _drive_pair_to(orch, _LONG_MOVES)
+    """A record that whole-game-matches no confirmed pair (capture is
+    still too far behind) sits in the buffer until dissolution."""
+    full = _LONG_MOVES + ["c2c3", "e8g8", "h2h3"]
+    pair_id = await _drive_pair_to(orch, _LONG_MOVES)  # 12 of 15 plies
 
     record = PgnGameRecord(
         white="Engine A", black="Engine B",
         result="1/2-1/2", termination="adjudication",
-        uci_moves=list(_LONG_MOVES), game_n=3, round_tag="1",
+        uci_moves=full, game_n=3, round_tag="1",
     )
     await orch._on_pgn_record(record)
     assert _events_of(emitted, "game_reconciled") == []
+    assert orch._pair_ids  # pair not dissolved by the too-long record
 
+    # Capture catches up, then the pair dissolves normally.
+    await orch.ingest_proxy_lines(_PROXY_A, [
+        "position startpos moves " + " ".join(full),
+    ])
     await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
 
     reconciled = _events_of(emitted, "game_reconciled")
@@ -337,7 +343,7 @@ async def test_non_matching_pgn_record_does_not_emit(orch, emitted):
 
 
 # ---------------------------------------------------------------------------
-# PGN tailer is gated on game subscribers: no watchers => no 1Hz poll.
+# Tailer lifecycle is tournament-scoped: subscribers don't start/stop it.
 # ---------------------------------------------------------------------------
 
 
@@ -351,215 +357,149 @@ def _install_tailer(orch, tmp_path) -> PgnTailer:
     return tailer
 
 
+@pytest.mark.asyncio
+async def test_subscribe_does_not_touch_tailer_lifecycle(orch, tmp_path):
+    """The tailer runs tournament-scoped (started in start(), stopped
+    at teardown); watchers coming and going must not affect it."""
+    tailer = _install_tailer(orch, tmp_path)
+    pair_id = await _drive_pair_to(orch, _LONG_MOVES)
+
+    q = orch.subscribe_to_game(pair_id)
+    assert not tailer.is_running()
+
+    await tailer.start()
+    orch.unsubscribe_from_game(pair_id, q)
+    assert tailer.is_running()
+    await tailer.stop()
 
 
 @pytest.mark.asyncio
-async def test_tailer_does_not_start_without_subscribers(orch, tmp_path):
-    """No watcher => tailer stays idle. The orchestrator constructs
-    the tailer in start(), but the poll loop is gated."""
+async def test_dissolution_and_drain_leave_tailer_running(orch, tmp_path):
+    """Neither a dissolve (pending queued) nor the matching record
+    (queue drained, no watchers) stops the tournament-scoped tailer."""
     tailer = _install_tailer(orch, tmp_path)
     await _drive_pair_to(orch, _LONG_MOVES)
-    assert not tailer.is_running()
+    await tailer.start()
 
-
-@pytest.mark.asyncio
-async def test_tailer_starts_on_first_subscriber(orch, tmp_path):
-    """0->1 transition starts the poll loop."""
-    tailer = _install_tailer(orch, tmp_path)
-    pair_id = await _drive_pair_to(orch, _LONG_MOVES)
-    assert not tailer.is_running()
-
-    q = orch.subscribe_to_game(pair_id)
-    try:
-        await orch._await_pending_tailer_tasks()
-        assert tailer.is_running()
-    finally:
-        orch.unsubscribe_from_game(pair_id, q)
-        await orch._await_pending_tailer_tasks()
-        assert not tailer.is_running()
-
-
-@pytest.mark.asyncio
-async def test_tailer_stops_on_last_unsubscribe(orch, tmp_path):
-    """1->0 transition via unsubscribe stops the poll loop."""
-    tailer = _install_tailer(orch, tmp_path)
-    pair_id = await _drive_pair_to(orch, _LONG_MOVES)
-    q = orch.subscribe_to_game(pair_id)
-    await orch._await_pending_tailer_tasks()
-    assert tailer.is_running()
-
-    orch.unsubscribe_from_game(pair_id, q)
-    await orch._await_pending_tailer_tasks()
-    assert not tailer.is_running()
-
-
-@pytest.mark.asyncio
-async def test_tailer_keeps_running_while_pending_entry_unmatched(orch, tmp_path):
-    """Dissolution while watching queues a PendingMatch. The tailer
-    must keep running so the PGN flush has a chance to reconcile;
-    stopping immediately would silently drop the result."""
-    tailer = _install_tailer(orch, tmp_path)
-    pair_id = await _drive_pair_to(orch, _LONG_MOVES)
-    q = orch.subscribe_to_game(pair_id)
-    await orch._await_pending_tailer_tasks()
-    assert tailer.is_running()
-
-    # Dissolve. Subscriber dict empties, but pending_count > 0.
-    # Gate must skip the stop.
     await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
     assert orch._reconcile_queue.pending_count == 1
-    assert not orch._game_subscribers
-    # Any scheduled stop task must run and find pending entries -> no-op.
-    await orch._await_pending_tailer_tasks()
     assert tailer.is_running()
 
-    # Delivering the matching PGN record drains the queue and the
-    # post-match drain check stops the tailer.
     record = PgnGameRecord(
         white="Engine A", black="Engine B",
         result="1-0", termination="normal",
         uci_moves=list(_LONG_MOVES), game_n=1, round_tag="1",
     )
     await orch._on_pgn_record(record)
-    await orch._await_pending_tailer_tasks()
-    assert not tailer.is_running()
-    orch.unsubscribe_from_game(pair_id, q)  # cleanup
-
-
-@pytest.mark.asyncio
-async def test_tailer_stays_up_until_all_pending_drain(orch, tmp_path, emitted):
-    """Multi-pair regression: with N pending entries queued and no
-    subscribers, the tailer must keep running until the last entry
-    matches. Stopping early silently drops reconciliations for the
-    unmatched pairs -- the bug seen with 4 watched games where the
-    last one to dissolve missed its result.
-
-    Uses one real confirmed pair (to exercise the full subscribe ->
-    dissolve gate) plus a synthetic PendingMatch injected directly
-    into the queue, since the test orchestrator can only confirm one
-    FEN-bucketed pair at a time.
-    """
-    from sturddle_view.tournament.pgn_reconcile import PendingMatch
-
-    tailer = _install_tailer(orch, tmp_path)
-    real_pair_moves = list(_LONG_MOVES)
-    synth_moves = list(_LONG_MOVES)
-    synth_moves[-1] = "c8e6"  # diverge so PGN matcher can tell them apart
-
-    # One confirmed pair via the real subscribe path.
-    pair_id = await _drive_pair_to(orch, real_pair_moves)
-    q = orch.subscribe_to_game(pair_id)
-    await orch._await_pending_tailer_tasks()
-    assert tailer.is_running()
-
-    # Inject a second pending entry as if a second watched pair had
-    # just dissolved.
-    synth_entry = PendingMatch(
-        pair_id="synthetic-pair",
-        white_proxy="synth-w", black_proxy="synth-b",
-        white_engine="Synth W", black_engine="Synth B",
-        uci_moves=list(synth_moves),
-    )
-    orch._reconcile_queue.add_pending(synth_entry)
-
-    # Dissolve the real pair. After this, _game_subscribers is empty
-    # but pending_count == 2 (real + synthetic).
-    await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
-    assert not orch._game_subscribers
-    assert orch._reconcile_queue.pending_count == 2
-
-    await orch._await_pending_tailer_tasks()
-    assert tailer.is_running(), "tailer must remain up while pending entries are queued"
-
-    # First PGN record matches the real pair, drains one entry; the
-    # tailer must keep running because pending_count is still 1.
-    rec_real = PgnGameRecord(
-        white="Engine A", black="Engine B",
-        result="1-0", termination="normal",
-        uci_moves=list(real_pair_moves), game_n=1, round_tag="1",
-    )
-    await orch._on_pgn_record(rec_real)
-    assert orch._reconcile_queue.pending_count == 1
-    await orch._await_pending_tailer_tasks()
-    assert tailer.is_running(), "tailer must remain up until the last pending entry drains"
-
-    # Second record matches the synthetic entry; queue empty, stop.
-    rec_synth = PgnGameRecord(
-        white="Synth W", black="Synth B",
-        result="0-1", termination="normal",
-        uci_moves=list(synth_moves), game_n=2, round_tag="1",
-    )
-    await orch._on_pgn_record(rec_synth)
     assert orch._reconcile_queue.pending_count == 0
-    await orch._await_pending_tailer_tasks()
-    assert not tailer.is_running()
-
-    reconciled = _events_of(emitted, "game_reconciled")
-    assert len(reconciled) == 2
-    reconciled_pair_ids = {r["pair_id"] for r in reconciled}
-    assert reconciled_pair_ids == {pair_id, "synthetic-pair"}
-
-    orch.unsubscribe_from_game(pair_id, q)
-
-
-@pytest.mark.asyncio
-async def test_subscribe_during_pending_stop_keeps_tailer_alive(orch, tmp_path):
-    """Race: an unsubscribe schedules `tailer.stop()` as a create_task;
-    before the task runs, a new subscribe arrives. Without the
-    re-check helper the subscribe would see `is_running()` True
-    (stop hasn't executed yet) and skip starting -- then the pending
-    stop would shut the tailer down, leaving the new subscriber with
-    no reconciliation pipeline. The helper re-evaluates at task run
-    time so the stop becomes a no-op.
-    """
-    tailer = _install_tailer(orch, tmp_path)
-    pair_id = await _drive_pair_to(orch, _LONG_MOVES)
-    q1 = orch.subscribe_to_game(pair_id)
-    await orch._await_pending_tailer_tasks()
     assert tailer.is_running()
+    await tailer.stop()
 
-    # Tight race: unsubscribe schedules stop; subscribe scheduled
-    # immediately, before any yield. Both stop and start tasks now
-    # sit in the ready queue.
-    orch.unsubscribe_from_game(pair_id, q1)
-    q2 = orch.subscribe_to_game(pair_id)
 
-    # Await BOTH scheduled tasks (stop + start). The re-check inside
-    # _maybe_stop_tailer must make the stop a no-op.
-    await orch._await_pending_tailer_tasks()
-
-    assert tailer.is_running(), (
-        "tailer must remain up: a new subscriber arrived before the "
-        "pending stop ran, so the stop should have re-checked and skipped"
-    )
-    orch.unsubscribe_from_game(pair_id, q2)
-    await orch._await_pending_tailer_tasks()
-    assert not tailer.is_running()
+# ---------------------------------------------------------------------------
+# Dissolve-on-PGN-record: idle engines send no ucinewgame; the record
+# itself is the game-end signal.
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_records_flow_only_while_subscribed(orch, tmp_path, emitted):
-    """End-to-end: PGN record routed through _on_pgn_record while
-    subscribed emits game_reconciled. After unsubscribe, the tailer
-    is stopped; orchestrator-level emission still works when the
-    record is delivered directly (callers gate, not the callback)."""
-    _install_tailer(orch, tmp_path)
+async def test_pgn_record_dissolves_idle_confirmed_pair(orch, emitted):
+    """No ucinewgame anywhere: the record alone must dissolve the pair
+    with the real result and reconcile in the same pass."""
     pair_id = await _drive_pair_to(orch, _LONG_MOVES)
-    q = orch.subscribe_to_game(pair_id)
-    await orch._await_pending_tailer_tasks()
-    assert orch._pgn_tailer.is_running()
-    await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
 
     record = PgnGameRecord(
         white="Engine A", black="Engine B",
         result="1-0", termination="normal",
+        uci_moves=list(_LONG_MOVES), game_n=4, round_tag="1",
+    )
+    await orch._on_pgn_record(record)
+
+    finished = _events_of(emitted, "game_finished")
+    assert len(finished) == 1
+    assert finished[0]["pair_id"] == pair_id
+    assert finished[0]["result"] == "1-0"
+    assert finished[0]["termination"] == "normal"
+    reconciled = _events_of(emitted, "game_reconciled")
+    assert len(reconciled) == 1
+    assert reconciled[0]["pair_id"] == pair_id
+    assert reconciled[0]["game_n"] == 4
+    assert pair_id not in orch._pair_moves
+    assert not orch._pair_ids
+
+
+@pytest.mark.asyncio
+async def test_pgn_record_tolerates_captured_shortfall(orch, emitted):
+    """Captured normally trails the PGN by a ply or two (no position
+    after the final bestmove); the pair still dissolves."""
+    full = _LONG_MOVES + ["c2c3", "e8g8"]
+    pair_id = await _drive_pair_to(orch, _LONG_MOVES)  # 12 of 14 plies
+
+    record = PgnGameRecord(
+        white="Engine A", black="Engine B",
+        result="0-1", termination="normal",
+        uci_moves=full, game_n=1, round_tag="1",
+    )
+    await orch._on_pgn_record(record)
+
+    finished = _events_of(emitted, "game_finished")
+    assert len(finished) == 1
+    assert finished[0]["pair_id"] == pair_id
+    assert finished[0]["result"] == "0-1"
+
+
+@pytest.mark.asyncio
+async def test_pgn_record_prefix_does_not_dissolve_in_progress_pair(orch, emitted):
+    """A rematch replaying the same line: the in-progress pair's
+    captured moves are a too-short prefix of the finished record.
+    No dissolve; the record parks for normal reconciliation."""
+    full = _LONG_MOVES + ["c2c3", "e8g8", "h2h3"]
+    await _drive_pair_to(orch, _LONG_MOVES)  # 12 of 15 plies: shortfall 3
+
+    record = PgnGameRecord(
+        white="Engine A", black="Engine B",
+        result="1-0", termination="normal",
+        uci_moves=full, game_n=1, round_tag="1",
+    )
+    await orch._on_pgn_record(record)
+
+    assert _events_of(emitted, "game_finished") == []
+    assert orch._pair_ids
+    assert orch._reconcile_queue.pgn_buffer_count == 1
+
+
+@pytest.mark.asyncio
+async def test_pgn_record_swapped_colors_do_not_dissolve(orch, emitted):
+    """Colors-swapped rematch on the same opening: game 1's late record
+    must not dissolve game 2's pair -- names must match by color."""
+    await _drive_pair_to(orch, _LONG_MOVES)  # Engine A is white
+
+    record = PgnGameRecord(
+        white="Engine B", black="Engine A",
+        result="1-0", termination="normal",
         uci_moves=list(_LONG_MOVES), game_n=1, round_tag="1",
     )
     await orch._on_pgn_record(record)
-    assert len(_events_of(emitted, "game_reconciled")) == 1
-    orch.unsubscribe_from_game(pair_id, q)
-    await orch._await_pending_tailer_tasks()
-    assert not orch._pgn_tailer.is_running()
+
+    assert _events_of(emitted, "game_finished") == []
+    assert orch._pair_ids
+
+
+@pytest.mark.asyncio
+async def test_pgn_record_divergent_moves_do_not_dissolve(orch, emitted):
+    other = list(_LONG_MOVES)
+    other[-1] = "h7h6"
+    await _drive_pair_to(orch, _LONG_MOVES)
+
+    record = PgnGameRecord(
+        white="Engine A", black="Engine B",
+        result="1-0", termination="normal",
+        uci_moves=other, game_n=1, round_tag="1",
+    )
+    await orch._on_pgn_record(record)
+
+    assert _events_of(emitted, "game_finished") == []
+    assert orch._pair_ids
 
 
 # ---------------------------------------------------------------------------
@@ -607,14 +547,14 @@ async def test_terminal_teardown_reconciles_inflight_game(orch, tmp_path, emitte
 
     Drives the runner-event handler directly. Setup: confirmed pair,
     PGN file with a matching game already on disk (simulating
-    fastchess having flushed before exit). No subscriber, so the
-    tailer is paused -- teardown must finalize() it anyway.
+    fastchess having flushed before exit). Tailer installed but not
+    started -- teardown must finalize() it anyway.
     """
     pair_id = await _drive_pair_to(orch, _LONG_MOVES)
     pgn_path = tmp_path / "games.pgn"
     _write_pgn_for_long_moves(pgn_path)
     orch._pgn_tailer = PgnTailer(pgn_path, orch._on_pgn_record, poll_interval=0.01)
-    assert not orch._pgn_tailer.is_running()  # no subscribers
+    assert not orch._pgn_tailer.is_running()
 
     # Drive the runner-event handler with the terminal `done` event.
     # Store update will log an error (no real tournament), but the
@@ -634,16 +574,13 @@ async def test_terminal_teardown_reconciles_inflight_game(orch, tmp_path, emitte
 
 @pytest.mark.asyncio
 async def test_terminal_teardown_with_running_tailer(orch, tmp_path, emitted):
-    """Same teardown path, but with a watcher attached so the tailer
-    was already running. finalize() must still drive it to EOF and
-    exit cleanly."""
+    """Same teardown path with the tailer running (the normal case now).
+    finalize() must still drive it to EOF and exit cleanly."""
     pair_id = await _drive_pair_to(orch, _LONG_MOVES)
     pgn_path = tmp_path / "games.pgn"
     pgn_path.touch()
     orch._pgn_tailer = PgnTailer(pgn_path, orch._on_pgn_record, poll_interval=0.05)
-
-    q = orch.subscribe_to_game(pair_id)
-    await orch._await_pending_tailer_tasks()
+    await orch._pgn_tailer.start()
     assert orch._pgn_tailer.is_running()
 
     # Now the PGN flush lands (fastchess writes the game).
@@ -655,70 +592,5 @@ async def test_terminal_teardown_with_running_tailer(orch, tmp_path, emitted):
     assert len(reconciled) == 1
     assert reconciled[0]["pair_id"] == pair_id
     assert orch._pgn_tailer is None
-    orch.unsubscribe_from_game(pair_id, q)
 
 
-# ---------------------------------------------------------------------------
-# _maybe_stop_tailer: each guard condition independently keeps tailer alive
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_maybe_stop_tailer_keeps_alive_when_subscriber_present(orch, tmp_path):
-    """game_subscribers non-empty → tailer must not stop. Kills
-    `not _game_subscribers` AddNot/Delete-Not mutations."""
-    tailer = _install_tailer(orch, tmp_path)
-    await tailer.start()
-    assert tailer.is_running()
-
-    pair_id = await _drive_pair_to(orch, _LONG_MOVES)
-    q = orch.subscribe_to_game(pair_id)
-
-    await orch._maybe_stop_tailer("test")
-    assert tailer.is_running()
-    orch.unsubscribe_from_game(pair_id, q)
-    await tailer.stop()
-
-
-@pytest.mark.asyncio
-async def test_maybe_stop_tailer_keeps_alive_when_pending_reconcile(orch, tmp_path):
-    """reconcile_queue.pending_count > 0 → tailer must not stop. Kills
-    `== 0`→`!= 0` / `Gt`/`GtE` comparison mutations."""
-    from sturddle_view.tournament.pgn_reconcile import PendingMatch
-
-    tailer = _install_tailer(orch, tmp_path)
-    await tailer.start()
-    assert tailer.is_running()
-
-    # Park a pending entry so pending_count == 1.
-    moves = ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6",
-             "b5a6", "g8f6", "e1g1", "f8e7", "f1e1", "d7d6"]
-    entry = PendingMatch(
-        pair_id="p1", white_proxy="w", black_proxy="b",
-        white_engine="A", black_engine="B", uci_moves=moves,
-    )
-    orch._reconcile_queue.add_pending(entry)
-    assert orch._reconcile_queue.pending_count == 1
-
-    await orch._maybe_stop_tailer("test")
-    assert tailer.is_running()
-    await tailer.stop()
-
-
-@pytest.mark.asyncio
-async def test_maybe_stop_tailer_noop_when_tailer_is_none(orch):
-    """_pgn_tailer is None → function is a no-op (no crash). Kills
-    `is not None`→`is None` mutation."""
-    assert orch._pgn_tailer is None
-    await orch._maybe_stop_tailer("test")  # must not raise
-
-
-@pytest.mark.asyncio
-async def test_maybe_stop_tailer_noop_when_tailer_not_running(orch, tmp_path):
-    """tailer exists but not running → no stop call. Kills
-    `is_running()`→`not is_running()` / `ReplaceAndWithOr` mutations."""
-    tailer = _install_tailer(orch, tmp_path)
-    assert not tailer.is_running()
-
-    await orch._maybe_stop_tailer("test")
-    assert not tailer.is_running()  # still not running (was never started)

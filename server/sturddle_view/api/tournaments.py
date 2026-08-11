@@ -335,9 +335,11 @@ def _serialize(
         if orch is not None and orch.active_id() == t.id:
             out["proxies_active"] = orch.active_proxies()
             out["pairings_active"] = orch.active_pairings()
+            out["state_seq"] = orch.event_seq()
         else:
             out["proxies_active"] = []
             out["pairings_active"] = []
+            out["state_seq"] = None
         sprt_params = (t.template or {}).get("sprt")
         if sprt_params and len(t.engines) >= 2:
             try:

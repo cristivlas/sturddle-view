@@ -4676,17 +4676,19 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-sched-attach-btn--live:hover { background: var(--nav-btn-bg-hover); }
 .wb-sched-pair .wb-sched-icon { color: var(--muted); }
 
-/* Engine rows: playing/idle state (3+ engine tourneys leave engines idle). */
+/* Engine rows: playing/idle state (3+ engine tourneys leave engines idle).
+   Playing fills with the selection slate; idle stays a muted outline. */
 .wb-sched-list .wb-engine-state {
   flex: 0 0 auto;
   font-size: 0.6875rem;
   padding: 1px 5px;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--border-subtle);
   border-radius: 3px;
-  color: var(--accent);
+  background: var(--row-bg-selected);
+  color: var(--text);
 }
 .wb-sched-list .wb-engine-idle .wb-engine-state {
-  border-color: var(--border-subtle);
+  background: none;
   color: var(--muted);
 }
 .wb-sched-list .wb-engine-idle .wb-sched-icon,

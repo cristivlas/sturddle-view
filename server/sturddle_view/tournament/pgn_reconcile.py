@@ -34,6 +34,11 @@ RECONCILE_QUEUE_MAX = _env_int("SV_RECONCILE_QUEUE_MAX", 256)
 # the engine has already emitted bestmove.
 _MAX_CAPTURED_OVERRUN_PLIES = 1
 
+# Captured normally trails the PGN by 1-2 plies (no follow-up ``position``
+# after the final ``bestmove``); a bigger shortfall means the pair is
+# likely mid-game (e.g. a rematch replaying the same opening line).
+_MAX_CAPTURED_SHORTFALL_PLIES = 2
+
 
 def _moves_match(captured: list[str], pgn: list[str]) -> bool:
     """Compare captured (engine-side) and PGN move lists, walking
@@ -49,6 +54,16 @@ def _moves_match(captured: list[str], pgn: list[str]) -> bool:
         if captured[i] != pgn[i]:
             return False
     return True
+
+
+def moves_complete_match(captured: list[str], pgn: list[str]) -> bool:
+    """Whole-game match: the record describes THIS pair's finished game,
+    not a same-line prefix of a different, still-in-progress one."""
+    if len(captured) < MIN_PLIES_FOR_MATCH:
+        return False
+    if len(pgn) - len(captured) > _MAX_CAPTURED_SHORTFALL_PLIES:
+        return False
+    return _moves_match(captured, pgn)
 
 
 @dataclass
