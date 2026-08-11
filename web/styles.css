@@ -3793,7 +3793,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 /* Hover affordance on the sortable headers: highlight the cell and outline
    its extent (the column-size hint), like the file picker. */
-.studio-tourney-tbl thead th.th-sortable:hover, .studio-history-tbl thead th.th-sortable:hover {
+.studio-tourney-tbl thead th.th-sortable:hover, .studio-history-tbl thead th.th-sortable:hover,
+.wb-standings-tbl thead th.th-sortable:hover {
   background: var(--row-bg-hover);
   box-shadow:
     inset 2px 0 0 var(--wa-color-border-loud, #353841),

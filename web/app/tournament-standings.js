@@ -7,6 +7,8 @@ import { SPRT, sprtVerdict } from "./tournament-events.js";
 import { MIDDOT, NO_GAMES_MSG } from "./tournament-row.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
+import { SORT_DIR } from "./col-sort.js";
+import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { escapeHtml, markSelectable } from "./wb-utils.js";
 import { fmtSignedElo, fmtMargin } from "./tournament-format.js";
 
@@ -16,6 +18,24 @@ const STANDINGS_MIN_PCT = 4;
 
 // Ordo-cell tooltip when the fit is anchored to known engine ratings.
 const ANCHORED_TITLE = "Absolute Elo, anchored to rated engines";
+
+// Sort sentinel for "--" Elo/Ordo cells: far below any real rating so
+// they land last under the descending firstDir.
+const MISSING_ELO_SORT = -1e9;
+
+// Position-mapped to the <thead> ths. Numeric columns open descending
+// (biggest first); the name column is the deterministic tiebreak.
+const STANDINGS_SORT_COLS = [
+  { key: "name", firstDir: SORT_DIR.ASC, tiebreak: true },
+  { key: "games", numeric: true, firstDir: SORT_DIR.DESC },
+  { key: "wins", numeric: true, firstDir: SORT_DIR.DESC },
+  { key: "losses", numeric: true, firstDir: SORT_DIR.DESC },
+  { key: "draws", numeric: true, firstDir: SORT_DIR.DESC },
+  { key: "points", numeric: true, firstDir: SORT_DIR.DESC },
+  { key: "pct", numeric: true, firstDir: SORT_DIR.DESC },
+  { key: "elo", numeric: true, firstDir: SORT_DIR.DESC },
+  { key: "ordo", numeric: true, firstDir: SORT_DIR.DESC },
+];
 
 export function makeStandingsBody() {
   const el = document.createElement("div");
@@ -60,12 +80,27 @@ export function makeStandingsBody() {
     unit: "pct",
     applySizes: makePctApplySizes(colEls, STANDINGS_MIN_PCT),
   });
+  // Layered header sort, shared by every standings surface (Arena + Studio).
+  // The widget re-renders itself from the detail stashed by renderStandings.
+  el._sortStack = attachLayeredSort({
+    table: tableEl,
+    columns: STANDINGS_SORT_COLS,
+    sortKey: STORAGE_KEY.TOURNAMENTS_STANDINGS_SORT,
+    stackKey: STORAGE_KEY.TOURNAMENTS_STANDINGS_STACK,
+    defaultState: { key: "pct", dir: SORT_DIR.DESC },
+    // No detail yet = the default-seeding onChange that fires mid-attach,
+    // before el._sortStack is assigned; nothing to render then anyway.
+    onChange: () => { if (el._detail) renderStandings(el, el._detail, el._studio); },
+  }).get;
   return el;
 }
 
 // Fill a standings body (from makeStandingsBody) from a tournament detail
 // payload. Tolerates null detail (shows the empty state).
 export function renderStandings(el, detail, studio = false) {
+  // Stashed so the sort-change callback can re-render without a data refetch.
+  el._detail = detail;
+  el._studio = studio;
   const sprtSlot = el.querySelector(".wb-sprt-slot");
   const emptyEl = el.querySelector(".wb-standings-empty");
   const wrapEl = el.querySelector(".wb-standings-table-wrap");
@@ -81,8 +116,17 @@ export function renderStandings(el, detail, studio = false) {
   emptyEl.hidden = true;
   wrapEl.hidden = false;
   const sprt = detail.sprt;
-  tbody.innerHTML = standings.engines
-    .map((e) => {
+  // Sortable view of the engine list; an empty stack keeps the server order.
+  const rows = standings.engines.map((e) => ({
+    name: e.name, games: e.games, wins: e.wins, losses: e.losses,
+    draws: e.draws, points: e.points, pct: e.score_pct,
+    elo: e.elo ?? MISSING_ELO_SORT,
+    ordo: e.elo_anchored ?? e.elo_ordo ?? MISSING_ELO_SORT,
+    engine: e,
+  }));
+  sortByStack(rows, el._sortStack(), STANDINGS_SORT_COLS);
+  tbody.innerHTML = rows
+    .map(({ engine: e }) => {
       const eloCell = e.elo == null
         ? "--"
         : fmtSignedElo(e.elo) + fmtMargin(e.elo_margin_95);

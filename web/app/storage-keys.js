@@ -87,6 +87,8 @@ export const STORAGE_KEY = {
   WORKSPACE_PREFIX: "sturddle:workspace:",
   LIVE_PVTABLE_COL_WIDTHS: "sturddle:live:pvtable:colWidths",
   TOURNAMENTS_STANDINGS_COL_PCTS: "sturddle:tournaments:standingsColPcts",
+  TOURNAMENTS_STANDINGS_SORT: "sturddle:tournaments:standingsSort",
+  TOURNAMENTS_STANDINGS_STACK: "sturddle:tournaments:standingsStack",
   TOURNAMENTS_SORT_BY: "sturddle:tournaments:sortBy",
   TOURNAMENTS_SORT_ASC: "sturddle:tournaments:sortAsc",
 };
