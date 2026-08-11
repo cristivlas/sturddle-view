@@ -4580,7 +4580,8 @@ wa-dialog.tournament-info-dialog::part(body) {
   max-width: var(--lg-board-w, 100%);
 }
 .wb-livegame.lg-measuring .clock-row { visibility: hidden; }
-.wb-livegame .lg-result-overlay {
+.wb-livegame .lg-result-overlay,
+.wb-livegame .lg-waiting-overlay {
   position: absolute;
   left: 0; right: 0;
   top: 50%;
@@ -4591,6 +4592,10 @@ wa-dialog.tournament-info-dialog::part(body) {
   padding: 0.875em 0.5em;
   pointer-events: none;
   box-shadow: 0 0.125em 0.75em rgba(0, 0, 0, 0.6);
+}
+.wb-livegame .lg-waiting-overlay {
+  color: var(--muted);
+  font-size: 0.875em;
 }
 .wb-livegame .lg-result-score {
   font-size: 1.375em; font-weight: 700;
@@ -4669,6 +4674,22 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-sched-attach-btn--live { border-color: var(--accent); color: var(--accent); }
 .wb-sched-attach-btn--live:hover { background: var(--nav-btn-bg-hover); }
 .wb-sched-pair .wb-sched-icon { color: var(--muted); }
+
+/* Engine rows: playing/idle state (3+ engine tourneys leave engines idle). */
+.wb-sched-list .wb-engine-state {
+  flex: 0 0 auto;
+  font-size: 0.6875rem;
+  padding: 1px 5px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--accent);
+}
+.wb-sched-list .wb-engine-idle .wb-engine-state {
+  border-color: var(--border-subtle);
+  color: var(--muted);
+}
+.wb-sched-list .wb-engine-idle .wb-sched-icon,
+.wb-sched-list .wb-engine-idle .wb-sched-game { opacity: 0.5; }
 
 /* Ribbons center all buttons as one group everywhere, so the push spacer never
    expands -- it collapses to a normal divider in every layout. */

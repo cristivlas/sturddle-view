@@ -11,7 +11,7 @@
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, loadRaw, saveJson, saveRaw } from "./storage.js";
-import { ICON_ENGINE_ROW, ICON_GAME_ROW, progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
+import { ENGINE_IDLE_CLASS, engineStateBadge, ICON_ENGINE_ROW, ICON_GAME_ROW, progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
 import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, nextDir, scrollSortedRowIntoView } from "./col-sort.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
@@ -21,7 +21,7 @@ import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS 
 import { newTournamentCta, ribbonHtml, setStartVerb, tournamentActions } from "./tournaments.js";
 import { RESULT, SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
-import { closeAllLiveGames, getLiveWindows, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow, replayTournamentGame } from "./tournament-live-game.js";
+import { closeAllLiveGames, getLiveWindows, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow, replayTournamentGame, syncWaitingOverlays } from "./tournament-live-game.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { makeH2HBody, renderH2H } from "./tournament-h2h.js";
 import { renderEventLogList } from "./tournament-eventlog.js";
@@ -723,6 +723,7 @@ function renderLogPane(ctx) {
 function renderLivePanes(ctx) {
   renderEnginesPane(ctx);
   renderGamesPane(ctx);
+  if (ctx.live) syncWaitingOverlays(ctx.live);
 }
 
 function liveRow(iconHtml, label) {
@@ -755,6 +756,9 @@ function renderEnginesPane(ctx) {
   ul.className = "wb-sched-list";
   for (const [pid, label] of entries) {
     const li = liveRow(ICON_ENGINE_ROW, label);
+    const playing = ctx.live.livePairings.has(pid);
+    if (!playing) li.classList.add(ENGINE_IDLE_CLASS);
+    li.insertAdjacentHTML("beforeend", engineStateBadge(playing));
     addWatchControls(ctx, li, pid, { proxyId: pid, label, engineName: label });
     ul.appendChild(li);
   }
@@ -1055,6 +1059,8 @@ function placeBoard(ctx, res) {
   if (res?.wb && !res.wb.min) unmaximizeOthers(res.wb);
   regridBoards(ctx);
   renderTray(ctx);
+  // Overlay state for a freshly opened idle board -- next event is too late.
+  if (ctx.live) syncWaitingOverlays(ctx.live);
   saveBoards(ctx);
   return res;
 }

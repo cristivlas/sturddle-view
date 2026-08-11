@@ -21,6 +21,13 @@ export const NO_GAMES_MSG = "No completed games yet.";
 export const ICON_ENGINE_ROW = "&#9881;&#xFE0E;";
 export const ICON_GAME_ROW = "&#9822;&#xFE0E;";
 
+// Engine-row state: with 3+ engines some sit idle between games; badge and
+// dim those rows so the watcher can tell who is actually playing.
+export const ENGINE_IDLE_CLASS = "wb-engine-idle";
+export function engineStateBadge(playing) {
+  return `<span class="wb-engine-state">${playing ? "playing" : "idle"}</span>`;
+}
+
 // Total scheduled games for a tournament, or null when the template is
 // underspecified. Gauntlet seeds play every non-seed; round-robin pairs
 // every engine once per (rounds * games_per_round).

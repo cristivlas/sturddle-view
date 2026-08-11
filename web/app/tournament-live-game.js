@@ -236,6 +236,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
         <div class="lg-result-termination"></div>
         <button type="button" class="lg-result-replay" hidden>Review</button>
       </div>
+      <div class="lg-waiting-overlay" hidden>Waiting for next game</div>
     </div>
     <div class="clock-row lg-clock-bottom">
       <span class="clock-name lg-bottom-name">--</span>
@@ -294,6 +295,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   const pvNameBlackEl = body.querySelector('.lg-pv-side-name[data-color="black"]');
   const pvNameWhiteEl = body.querySelector('.lg-pv-side-name[data-color="white"]');
   const evalGraphHostEl = body.querySelector(".lg-eval-graph-host");
+  const waitingOverlayEl = body.querySelector(".lg-waiting-overlay");
   const resultOverlayEl = body.querySelector(".lg-result-overlay");
   const resultScoreEl = body.querySelector(".lg-result-score");
   const resultTerminationEl = body.querySelector(".lg-result-termination");
@@ -327,6 +329,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     class: variantClass ? `${defaultClass} ${variantClass}` : defaultClass,
   });
   wb._watchOpts = { proxyId, gameId, label, engineName };
+  wb._setWaiting = (on) => { waitingOverlayEl.hidden = !on; };
   // Reveals this window's body once drawn; surfaced so the opener can gate a
   // perspective-wide reveal until every restored board is ready.
   wb._ready = board.ready.then(() => { body.style.visibility = ""; });
@@ -780,6 +783,11 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
             lastOppInfo = null;
           }
           pendingOwnPly = ply;
+          // Live position implies the engine is playing again -- backstop in
+          // case the proxy_paired event that clears the overlay was missed.
+          // Snapshots replay the finished game's last position on subscribe
+          // and must not hide the overlay of an idle engine.
+          if (!snapshot) wb._setWaiting(false);
           queuePositionPaint(p.fen, p.last_move || null);
         }
         break;
@@ -996,6 +1004,17 @@ export function touchLiveWindow(wb) {
 
 export function isLiveWindowOpen(proxyId) {
   return liveWindows.has(proxyId);
+}
+
+// Toggle the waiting overlay on proxy-keyed windows from the live maps:
+// waiting = engine process alive but not currently paired. Game-keyed
+// windows dissolve at game end and never idle.
+export function syncWaitingOverlays(live) {
+  for (const wb of liveWindows.values()) {
+    const o = wb._watchOpts;
+    if (!o?.proxyId || o.gameId) continue;
+    wb._setWaiting(live.activeProxies.has(o.proxyId) && !live.livePairings.has(o.proxyId));
+  }
 }
 
 // Close one watched board. Unforced on purpose: the normal close path runs

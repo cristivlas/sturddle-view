@@ -15,6 +15,7 @@
 import {
   closeAllLiveGames, getLiveWindows, touchLiveWindow,
   isLiveWindowOpen, openLiveGameWindow, openFrozenGameWindow,
+  syncWaitingOverlays,
   LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT, DEBUG_WATCH,
 } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
@@ -40,7 +41,7 @@ import {
 } from "./tournament-live-state.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { renderEventLogList } from "./tournament-eventlog.js";
-import { ICON_ENGINE_ROW, ICON_GAME_ROW } from "./tournament-row.js";
+import { ENGINE_IDLE_CLASS, engineStateBadge, ICON_ENGINE_ROW, ICON_GAME_ROW } from "./tournament-row.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 
 const STORAGE_KEY_PREFIX = STORAGE_KEY.WORKSPACE_PREFIX;
@@ -586,6 +587,8 @@ function attachWatch(ctx, btn, attachKey, openOpts) {
   }
   if (result?.wb && !result.alreadyOpen && !result.wb.min && !result.wb.max) requestAnimationFrame(() => reapplyLayout(ctx));
   if (result?.wb && !result.alreadyOpen) wireLayoutHandlers(ctx, result.wb);
+  // Overlay state for a freshly opened idle board -- next event is too late.
+  if (result?.wb && !result.alreadyOpen) syncWaitingOverlays(ctx.live);
   if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive: isLiveWindowOpen(attachKey), slotted: !!claim });
   refreshWatchButtons(ctx);
 }
@@ -652,6 +655,7 @@ function pushEvent(ctx, evt) {
       inner === KIND.DONE || inner === KIND.STOPPED)
     scheduleRender(ctx, "_schedulePending", renderSchedule);
   if (inner === KIND.PROXY_STARTED || inner === KIND.PROXY_ENDED ||
+      inner === KIND.PROXY_PAIRED || inner === KIND.GAME_FINISHED ||
       evt.kind === EVT.STATUS || inner === KIND.DONE || inner === KIND.STOPPED)
     scheduleRender(ctx, "_enginesPending", renderEngines);
 
@@ -1029,6 +1033,7 @@ function renderEngines(ctx) {
   // single-engine identity (survives book-line ambiguity where pair
   // confirmation hasn't happened yet). Distinct from Live Games which
   // is keyed on confirmed pair_ids.
+  syncWaitingOverlays(ctx.live);
   if (ctx.activeProxies.size === 0) {
     ctx.enginesBody.innerHTML = `<div class="wb-empty">No active engines.</div>`;
     return;
@@ -1041,10 +1046,13 @@ function renderEngines(ctx) {
   for (const [pid, p] of ctx.activeProxies) {
     const li = document.createElement("li");
     li.className = "wb-sched-live";
+    const playing = ctx.livePairings.has(pid);
+    if (!playing) li.classList.add(ENGINE_IDLE_CLASS);
     const engineLabel = p.engineName || pid;
     li.innerHTML = `
       <span class="wb-sched-icon">${ICON_ENGINE_ROW}</span>
       <span class="wb-sched-game" title="${escapeHtml(engineLabel)}">${escapeHtml(engineLabel)}</span>
+      ${engineStateBadge(playing)}
     `;
     appendWatchControls(li, pid, (btn) => attachWatch(ctx, btn, pid, {
       proxyId: pid,
