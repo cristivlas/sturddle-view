@@ -2402,9 +2402,6 @@ export const playPerspective = {
     };
     window.addEventListener(APP_EVT.RECENTS_CHANGED, onRecentsChanged);
 
-    // Ask server to re-emit current state so the freshly-mounted view syncs.
-    ctx.api("POST", "/game/sync", {}).catch(() => {});
-
     const pausedBadge = document.getElementById("paused-badge");
     const finishedBadge = document.getElementById("finished-badge");
     state.el.pausedBadge = pausedBadge;
@@ -2497,6 +2494,10 @@ export const playPerspective = {
     uciLogBtn?.addEventListener("click", onUciLog);
     pvTableBtn?.addEventListener("click", onPvTable);
     restoreDebugWindows(ctx.events);
+    // After restoreDebugWindows: sync makes the server re-emit board state and
+    // the last engine_info, and only a panel that already exists can catch it.
+    // Reload would otherwise leave Search Lines blank until the next info line.
+    ctx.api("POST", "/game/sync", {}).catch(() => {});
     takebackBtn.addEventListener("click", onTakeback);
     switchSidesBtn.addEventListener("click", onSwitchSides);
     pauseBtn.addEventListener("click", onPause);
