@@ -1570,20 +1570,6 @@ body .side-popover.popover-floating {
 }
 .play-dock-left.dock-empty { visibility: hidden; }
 
-/* PGN commentary panel: a parallel dock container occupying the same left
-   column area as .play-dock-left. Holds at most one .dock-slot (commentary).
-   Visibility toggled via the .dock-empty class set by play-dock-windows.js. */
-.play-comments-host {
-  grid-column: 1;
-  grid-row: 1;
-  position: fixed;
-  left: calc(var(--ribbon-w) + var(--ribbon-border-w));
-  /* top/bottom/width set dynamically in JS to align with the board. */
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  z-index: 8;
-}
 .pgn-comments-body {
   font-size: 0.85rem;
   line-height: 1.4;
@@ -1627,15 +1613,12 @@ body .side-popover.popover-floating {
   cursor: default;
 }
 .play-dock-left:not(.dock-empty),
-.play-comments-host:not(.dock-empty),
 .play-rail-dock:not(.dock-empty) { border: 1px solid #454952; }
-.play-comments-host.dock-empty { visibility: hidden; }
 /* Drag-to-dock drop hint (play-dock-windows.js): a window title bar is being
    dragged, so reveal the drop zone even when dock-empty (must sit after the
    .dock-empty rules to win the specificity tie). The over-the-zone highlight
    is the landing ghost below, not a class on the container. */
-.play-dock-left.dock-drop-eligible,
-.play-comments-host.dock-drop-eligible {
+.play-dock-left.dock-drop-eligible {
   visibility: visible;
   outline: 1px solid color-mix(in srgb, var(--row-bg-selected), white 30%);
   outline-offset: -1px;
@@ -1661,7 +1644,6 @@ body .side-popover.popover-floating {
   border: 1px solid var(--border-subtle);
   background: var(--panel);
 }
-.play-comments-host .dock-slot { overflow: hidden; }
 .dock-grip {
   flex: 0 0 var(--dock-grip-size, 5px);
   cursor: row-resize;
@@ -1814,7 +1796,6 @@ body .side-popover.popover-floating {
      higher specificity (e.g. modifier classes set from JS). Mobile
      must hide the dock unconditionally. */
   .play-dock-left { display: none !important; }
-  .play-comments-host { display: none !important; }
   #play-perspective { display: block; }
   .play-grid {
     display: flex;
@@ -4798,8 +4779,7 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
       ". banner ."
       "side board  .";
   }
-  body[data-ribbon-side="right"] .play-dock-left,
-  body[data-ribbon-side="right"] .play-comments-host {
+  body[data-ribbon-side="right"] .play-dock-left {
     grid-column: 3;
     left: auto;
     right: calc(var(--ribbon-w) + var(--ribbon-border-w));

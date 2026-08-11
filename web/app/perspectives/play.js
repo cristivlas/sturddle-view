@@ -11,7 +11,6 @@ import { alert as showAlert, buildToastWithActions, confirm, DETAILS_DIALOG_WIDT
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, getEvalBarApi, setUciLogEngine, isMobileLayout } from "../play-dock-windows.js";
 import {
-  setCommentaryDockContainer,
   setOnUserCloseCommentary,
   openCommentary,
   closeCommentary,
@@ -526,7 +525,6 @@ const PLAY_PERSPECTIVE_HTML = `
   <section id="play-perspective">
     <div class="play-grid">
       <div class="play-dock-left"></div>
-      <aside class="play-comments-host dock-empty" aria-label="PGN commentary"></aside>
       <div id="no-engine-banner" class="no-engine-banner hidden" role="status">
         <span class="no-engine-banner__msg">No engine configured.</span>
         <button type="button" class="no-engine-banner__btn" aria-label="Open engine settings" title="Open engine settings">
@@ -1728,7 +1726,7 @@ function showEngineCrashToast() {
 // Commentary-dock visibility + server-authoritative edit-mode transitions.
 
 function syncCommentsVisibility(state) {
-  if (!state.el.commentsHost) return;
+  if (!state.el.dockLeft) return;
   const shouldShow = state.viewing && state.showPgnComments && !isMobileLayout()
     && !state.suppressCommentsForEditTransition;
   const open = isCommentaryOpen();
@@ -2363,9 +2361,7 @@ export const playPerspective = {
       isBarNavigable: (ply) => canEnterViewAtPly(state, ply),
     });
 
-    const commentsHost = root.querySelector(".play-comments-host");
-    state.el.commentsHost = commentsHost;
-    setCommentaryDockContainer(commentsHost);
+    state.el.dockLeft = dockLeft;
     setAiInlineHost(root.querySelector(".play-ai-inline"));
     // X on the commentary window (dock slot or float) -> clear setting.
     setOnUserCloseCommentary(() => {
@@ -2610,11 +2606,12 @@ export const playPerspective = {
         closeDebugWindows();
         // Announce no active ribbon so the global float manager unmounts it.
         window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: null } }));
+        // Before setDockContainer(null): commentary now lives in the shared
+        // dock, whose teardown would drop its slot out from under it.
+        closeCommentary();
         setDockContainer(null);
         setRailDockContainer(null);
         setEvalBarCallbacks(null);
-        closeCommentary();
-        setCommentaryDockContainer(null);
         setOnUserCloseCommentary(null);
         closeAi();
         setAiInlineHost(null);

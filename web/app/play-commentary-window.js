@@ -1,8 +1,8 @@
 // Dockable PGN-commentary window for play perspective view-mode.
 //
-// Reuses the createDockableWindow factory but with its own dock container
-// (.play-comments-host) -- independent of the debug dock so commentary
-// stacking is not coupled to the debug-window splitter logic.
+// Docks into the shared left dock alongside the debug windows, so commentary
+// and an open debug panel are visible at the same time. DOCK_ORDER.COMMENTARY
+// sorts it above them.
 //
 // Lifecycle is driven by play.js: when view-mode is active and the user
 // setting is enabled (and viewport isn't narrow), the window opens in its
@@ -12,7 +12,7 @@
 // Closing the window (dock X or float X) clears the user setting via the
 // onUserClose callback -- play.js then PUTs the new setting.
 
-import { createDockableWindow, DOCK_ORDER, registerExtraDock } from "./play-dock-windows.js";
+import { createDockableWindow, DOCK_ORDER } from "./play-dock-windows.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { markSelectable } from "./wb-utils.js";
 
@@ -25,8 +25,6 @@ const EMPTY_TEXT    = "No commentary at this ply.";
 let onNavPrev = null;
 let onNavNext = null;
 
-let dockEl = null;
-let unregisterDock = null;
 let userCloseHandler = null;
 
 function buildBody() {
@@ -94,8 +92,10 @@ const inst = createDockableWindow({
     return buildBody();
   },
   dockOrder: DOCK_ORDER.COMMENTARY,
-  getDockEl: () => dockEl,
   railDockable: true,
+  // play.js's syncCommentsVisibility owns when this opens (view mode + user
+  // setting + not mobile); restoreDebugWindows must not reopen it behind that.
+  selfManaged: true,
   closable: true,
   onUserClose: () => {
     if (userCloseHandler) userCloseHandler();
@@ -104,12 +104,6 @@ const inst = createDockableWindow({
 
 export function setOnUserCloseCommentary(fn) {
   userCloseHandler = fn;
-}
-
-export function setCommentaryDockContainer(el) {
-  if (unregisterDock) { unregisterDock(); unregisterDock = null; }
-  dockEl = el;
-  if (el) unregisterDock = registerExtraDock(el);
 }
 
 export function openCommentary() {

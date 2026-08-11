@@ -16,9 +16,9 @@
 // past a small threshold undocks into a float that follows the pointer.
 //
 // The exported createDockableWindow factory is reused by play-commentary-
-// window.js, which supplies its own dock container (.play-comments-host)
-// via getDockEl. Such instances are flagged !usesMainDock so main-dock
-// lifecycle helpers (closeDebugWindows, restoreDebugWindows) skip them.
+// window.js, which shares this dock column but passes selfManaged so the
+// main-dock lifecycle helpers (closeDebugWindows, restoreDebugWindows) skip
+// it -- play.js drives when commentary opens.
 //
 // Narrow-viewport behavior: at <=800px width / <=700px height, CSS hides
 // .play-dock-left. The JS still creates dock slots into the (hidden)
@@ -93,12 +93,6 @@ let dockResizeObs = null;
 // (N-1) grips; the array is rebuilt each time slots change via
 // syncDockVisibility.
 let dockGrips = [];
-// Additional, independent dock containers (e.g. commentary). Each entry:
-//   { el, resizeObs }
-// These get the same bounds-tracking treatment as the debug dock but do
-// NOT participate in slot/splitter accounting -- they are owned by their
-// respective window factories via createDockableWindow's `getDockEl`.
-const extraDocks = new Map();
 
 // Per-slot flex-grow ratios, keyed by the instance's dockedKey. Survives
 // slot additions/removals/reorders because each entry stands alone --
@@ -149,7 +143,6 @@ function applyDockBounds(el) {
 
 function updateDockBounds() {
   applyDockBounds(dockEl);
-  for (const { el } of extraDocks.values()) applyDockBounds(el);
 }
 
 // Board horizontal position shifts (e.g. left rail collapsing when the dock
@@ -328,10 +321,6 @@ function syncEmptyClass(el) {
   if (wasEmpty !== isEmpty) emitLayoutChanged();
 }
 
-function syncExtraDocksVisibility() {
-  for (const { el } of extraDocks.values()) syncEmptyClass(el);
-}
-
 function emitLayoutChanged() {
   window.dispatchEvent(new CustomEvent(APP_EVT.LAYOUT_CHANGED));
 }
@@ -501,7 +490,6 @@ function rebuildDockGrips() {
 
 function syncDockVisibility() {
   syncHiddenSlots();
-  syncExtraDocksVisibility();
   if (railDockEl) syncEmptyClass(railDockEl);
   if (!dockEl) return;
   syncEmptyClass(dockEl);
@@ -682,8 +670,12 @@ export function createDockableWindow(config) {
     titleActions = [],
     defaultDest = DOCK_DEST_MAIN,
     railDockable = false,
+    // Opt out of the debug-window lifecycle helpers (closeDebugWindows /
+    // restoreDebugWindows) while still docking into the shared column, for
+    // windows whose open/close is owned by their own state machine.
+    selfManaged = false,
   } = config;
-  const mainDock = !config.getDockEl;
+  const mainDock = !config.getDockEl && !selfManaged;
 
   let wb = null;
   let slot = null;
@@ -1095,11 +1087,10 @@ export function createDockableWindow(config) {
 export function setDockContainer(el) {
   if (dockResizeObs) { dockResizeObs.disconnect(); dockResizeObs = null; }
   window.removeEventListener("resize", updateDockBounds);
-  // Defensive: tear down any leftover slots when detaching.
-  // Only debug-window instances (default getDockEl -> module dockEl) are torn
-  // down here; extra-dock owners (e.g. commentary) manage their own lifecycle.
+  // Defensive: tear down any leftover slot parked in the container we are
+  // detaching, whoever owns it -- a stranded slot would outlive its host.
   if (!el) {
-    instances.forEach(i => { if (i.usesMainDock) i.teardownSlot(); });
+    instances.forEach(i => { if (i.slot?.parentElement === dockEl) i.teardownSlot(); });
     clearDockGrips();
   }
   dockEl = el;
@@ -1122,31 +1113,6 @@ export function setDockContainer(el) {
 export function setRailDockContainer(el) {
   railDockEl = el;
   if (el) syncEmptyClass(el);
-}
-
-// Register an extra dock container so it gets the same bounds-tracking
-// (resize observer + window resize listener) as the debug dock. Returns an
-// unregister function. Independent of slot/splitter accounting.
-export function registerExtraDock(el) {
-  if (!el) return () => {};
-  const board = document.querySelector(".play-board-host");
-  const entry = { el, resizeObs: null };
-  if (board) {
-    entry.resizeObs = new ResizeObserver(updateDockBounds);
-    entry.resizeObs.observe(board);
-  }
-  extraDocks.set(el, entry);
-  window.addEventListener("resize", updateDockBounds);
-  applyDockBounds(el);
-  syncEmptyClass(el);
-  return () => {
-    const e = extraDocks.get(el);
-    if (e?.resizeObs) e.resizeObs.disconnect();
-    extraDocks.delete(el);
-    if (!dockEl && extraDocks.size === 0) {
-      window.removeEventListener("resize", updateDockBounds);
-    }
-  };
 }
 
 // -- UCI log body ------------------------------------------------------------
