@@ -10,7 +10,7 @@
 // setCommentaryText() -- no comment at the current ply shows a placeholder
 // rather than closing the window. Exiting view-mode closes it.
 // Closing the window (dock X or float X) clears the user setting via the
-// onUserClose callback -- play.js then PUTs the new setting.
+// handler play.js installs with commentaryWindow.setOnUserClose.
 
 import { createDockableWindow, DOCK_ORDER } from "./play-dock-windows.js";
 import { STORAGE_KEY } from "./storage-keys.js";
@@ -24,8 +24,6 @@ const EMPTY_TEXT    = "No commentary at this ply.";
 
 let onNavPrev = null;
 let onNavNext = null;
-
-let userCloseHandler = null;
 
 function buildBody() {
   const root = document.createElement("div");
@@ -78,7 +76,9 @@ function setText(el, text) {
   }
 }
 
-const inst = createDockableWindow({
+// Exported for its setOnUserClose: play.js owns what an X means (PUT the
+// setting off), and only while it is mounted.
+export const commentaryWindow = createDockableWindow({
   title: "Commentary",
   className: "sturddle-wb-commentary",
   geoKey: GEO_KEY,
@@ -97,27 +97,20 @@ const inst = createDockableWindow({
   // setting + not mobile); restoreDebugWindows must not reopen it behind that.
   selfManaged: true,
   closable: true,
-  onUserClose: () => {
-    if (userCloseHandler) userCloseHandler();
-  },
 });
 
-export function setOnUserCloseCommentary(fn) {
-  userCloseHandler = fn;
-}
-
 export function openCommentary() {
-  if (inst.wb || inst.slot) return;
-  inst.toggle(null);
+  if (commentaryWindow.mounted) return;
+  commentaryWindow.toggle(null);
 }
 
 export function closeCommentary() {
-  inst.close();
+  commentaryWindow.close();
 }
 
 export function setCommentaryText(text) {
-  if (!inst.body) return;
-  setText(inst.body, text);
+  if (!commentaryWindow.body) return;
+  setText(commentaryWindow.body, text);
 }
 
 export function setCommentaryNavHandlers(prev, next) {
@@ -126,11 +119,11 @@ export function setCommentaryNavHandlers(prev, next) {
 }
 
 export function setCommentaryNavState(prevPly, nextPly) {
-  if (!inst.body) return;
-  inst.body._prevBtn.disabled = prevPly == null;
-  inst.body._nextBtn.disabled = nextPly == null;
+  if (!commentaryWindow.body) return;
+  commentaryWindow.body._prevBtn.disabled = prevPly == null;
+  commentaryWindow.body._nextBtn.disabled = nextPly == null;
 }
 
 export function isCommentaryOpen() {
-  return !!(inst.wb || inst.slot);
+  return commentaryWindow.mounted;
 }

@@ -88,6 +88,7 @@ def test_enum_field_rejects_invalid(client, field, invalid):
     "allow_takeback",
     "auto_claim_draws",
     "inherit_pgn_clocks",
+    "play_show_eval_graph",
     "view_show_pgn_comments",
     "ai_enabled",
     "ai_thinking_enabled",

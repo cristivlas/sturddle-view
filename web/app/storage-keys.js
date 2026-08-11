@@ -56,7 +56,6 @@ export const STORAGE_KEY = {
   EVALBAR_GEO: "sturddle:evalbar:geo",
   EVALBAR_WIN_STATE: "sturddle:evalbar:winstate",
   EVALBAR_DOCKED: "sturddle:evalbar:docked",
-  EVALBAR_OPEN: "sturddle:evalbar:open",
   UCILOG_GEO: "sturddle:ucilog:geo",
   UCILOG_WIN_STATE: "sturddle:ucilog:winstate",
   UCILOG_DOCKED: "sturddle:ucilog:docked",

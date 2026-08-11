@@ -1,10 +1,11 @@
 """E2E: PGN commentary dock/float lifecycle in Play view-mode.
 
 Covers the commentary window (web/app/play-commentary-window.js) which
-reuses the createDockableWindow factory with its own dock container
-(.play-comments-host). The factory must NOT close commentary when the
-play perspective tears down the debug-window stack (UCI Log / Search
-Lines) -- that was the regression caught during initial integration.
+reuses the createDockableWindow factory and docks into the shared left
+dock alongside the debug windows. The factory must NOT close commentary
+when the play perspective tears down the debug-window stack (UCI Log /
+Search Lines) -- that was the regression caught during initial
+integration.
 
 Skipped if Playwright is missing.
 """
@@ -22,8 +23,10 @@ from .conftest import run_uvicorn_subprocess  # noqa: E402
 
 
 PLAY_PERSP = "#play-perspective"
-COMMENTS_HOST = ".play-comments-host"
-COMMENTS_SLOT = f"{COMMENTS_HOST} .dock-slot"
+COMMENTS_HOST = ".play-dock-left"
+# Pin the slot by its occupant, not by position: the shared dock holds the
+# debug windows too, and commentary is rail-dockable.
+COMMENTS_SLOT = ".dock-slot:has(.pgn-comments-body)"
 COMMENTS_WB = ".winbox.sturddle-wb-commentary"
 
 SEED_ROOT_COMMENT = "Root annotation."
@@ -110,8 +113,8 @@ async def _goto_play_in_view_mode(page, base):
 async def _snapshot(page):
     return await page.evaluate("""
       () => {
-        const host = document.querySelector('.play-comments-host');
-        const slot = host?.querySelector('.dock-slot');
+        const host = document.querySelector('.play-dock-left');
+        const slot = document.querySelector('.dock-slot:has(.pgn-comments-body)');
         const body = slot?.querySelector('.pgn-comments-body');
         const wb = document.querySelector('.winbox.sturddle-wb-commentary');
         return {

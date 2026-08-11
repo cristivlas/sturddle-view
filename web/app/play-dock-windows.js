@@ -664,9 +664,11 @@ export function createDockableWindow(config) {
     defaultW, defaultH, defaultY, build, dockOrder,
     getDockEl = () => dockEl,
     getInlineEl = null,
-    onUserClose,
     closable = false,
-    defaultOpen = false,
+    // Where the open/closed decision is read from and written to. Defaults to
+    // the localStorage openKey; a window whose visibility is a user setting
+    // (not placement state) passes a store backed by that setting instead.
+    openStore = { load: () => isOpen(openKey), save: (v) => setOpen(openKey, v) },
     titleActions = [],
     defaultDest = DOCK_DEST_MAIN,
     railDockable = false,
@@ -676,6 +678,11 @@ export function createDockableWindow(config) {
     selfManaged = false,
   } = config;
   const mainDock = !config.getDockEl && !selfManaged;
+
+  // Rebindable via inst.setOnUserClose: the perspective that owns the
+  // consequences of an X sets it on mount and clears it on unmount, so the
+  // handler never outlives the layout it closes over.
+  let onUserClose = config.onUserClose ?? null;
 
   let wb = null;
   let slot = null;
@@ -694,22 +701,18 @@ export function createDockableWindow(config) {
   // A non-closable window is always open, so its openKey must not exist:
   // clear any stale entry persisted back when the window was closable, and
   // refuse writes -- persisting "closed" for one is a bug, not a state.
-  if (!closable) saveRaw(openKey, null);
+  if (!closable && openKey) saveRaw(openKey, null);
 
   function persistOpen(v) {
     if (!closable) {
       if (!v) throw new Error(`${title}: cannot persist closed on a non-closable window`);
       return; // open is implied; keep the key absent
     }
-    setOpen(openKey, v);
+    openStore.save(v);
   }
 
-  // An absent openKey means the user has never opened or closed this window,
-  // so it falls back to defaultOpen -- a window that ships visible stays
-  // visible until it is deliberately closed.
   function openState() {
-    if (!closable) return true;
-    return loadRaw(openKey) !== null ? isOpen(openKey) : defaultOpen;
+    return closable ? openStore.load() : true;
   }
 
   // Container this window docks into absent an explicit drop target: the
@@ -968,6 +971,16 @@ export function createDockableWindow(config) {
     uninline();
   }
 
+  // Drop a body kept alive by a nav detach (closeForNav leaves it mounted so
+  // restore() can revive it). A window being closed has nothing to keep it
+  // for, and leaving it would make the next restore() reopen the window.
+  function discardDetachedBody() {
+    if (inst.mounted || !body) return;
+    if (off) { off(); off = null; }
+    saved = null;
+    body = null;
+  }
+
   function close() {
     inst.openedByAnalysis = false;
     persistOpen(false);
@@ -978,11 +991,12 @@ export function createDockableWindow(config) {
       return;
     }
     teardownSlot();
+    discardDetachedBody();
     syncDockVisibility();
   }
 
   function toggle(events) {
-    if (wb || slot || inlineSlot) { close(); return; }
+    if (inst.mounted) { close(); return; }
     persistOpen(true);
     if (!body) body = build(events, { setOff });
     if (isMobileLayout() && getInlineEl?.()) {
@@ -1000,7 +1014,7 @@ export function createDockableWindow(config) {
   }
 
   function restore(events) {
-    if (wb || slot || inlineSlot) return; // already open from a prior call
+    if (inst.mounted) return; // already open from a prior call
     if (body || saved || openState()) toggle(events);
   }
 
@@ -1008,8 +1022,7 @@ export function createDockableWindow(config) {
   // when the viewport crosses the mobile breakpoint. Preserves body +
   // listeners; only the placement chrome is rebuilt.
   function relayout() {
-    const open = wb || slot || inlineSlot;
-    if (!open) return;
+    if (!inst.mounted) return;
     // Rail-dockable windows migrate on the breakpoint without an inline host:
     // into mobile the rail is hidden, so evacuate to the main dock; back on
     // desktop, return to the rail if that is still the remembered home and it
@@ -1064,14 +1077,13 @@ export function createDockableWindow(config) {
 
   const inst = {
     toggle, close, undock, redock, teardownSlot, closeForNav, restore, relayout, setTitle,
-    persistOpen,
+    setOnUserClose(fn) { onUserClose = fn; },
     get wb() { return wb; },
     get slot() { return slot; },
     get inlineSlot() { return inlineSlot; },
     get body() { return body; },
-    // Persisted open state, valid even while the window is unmounted; the
-    // read twin of persistOpen.
-    get shouldBeOpen() { return openState(); },
+    // Placed anywhere: dock slot, inline slot, or floating WinBox.
+    get mounted() { return !!(wb || slot || inlineSlot); },
     dockedKey,
     dockOrder,
     closable,
@@ -1239,7 +1251,13 @@ const EVAL_TOOLTIP = "Evaluation from the engine's point of view";
 const EVAL_GEO_KEY       = STORAGE_KEY.EVALBAR_GEO;
 const EVAL_WIN_STATE_KEY = STORAGE_KEY.EVALBAR_WIN_STATE;
 const EVAL_DOCKED_KEY    = STORAGE_KEY.EVALBAR_DOCKED;
-const EVAL_OPEN_KEY      = STORAGE_KEY.EVALBAR_OPEN;
+
+// Cache of the play_show_eval_graph server setting, which owns whether this
+// window is open. play.js primes it from /settings on mount and on every
+// settings change; the window's own X writes it back through its
+// setOnUserClose handler. Defaults to the server default so a mount that
+// races the GET shows the graph rather than flashing it away.
+let evalGraphEnabled = true;
 
 // Bar click/navigability handlers close over per-mount perspective state,
 // but the canvas (and its listeners) lives as long as the window body --
@@ -1278,13 +1296,14 @@ function buildEvalBarBody(_events, { setOff }) {
   return bar.el;
 }
 
-const evalBar = createDockableWindow({
+// Exported for its setOnUserClose: play.js owns what an X means (PUT the
+// setting off), and only while it is mounted.
+export const evalBar = createDockableWindow({
   title: EVAL_TITLE,
   className: "sturddle-wb-evalbar",
   geoKey: EVAL_GEO_KEY,
   winStateKey: EVAL_WIN_STATE_KEY,
   dockedKey: EVAL_DOCKED_KEY,
-  openKey: EVAL_OPEN_KEY,
   defaultW: () => rightColumnWidth(480),
   defaultH: 140,
   defaultY: (h) => {
@@ -1294,35 +1313,26 @@ const evalBar = createDockableWindow({
   },
   build: buildEvalBarBody,
   dockOrder: DOCK_ORDER.ENGINE_EVAL,
-  // Closable, with the Display settings switch as the way back; defaultOpen
-  // keeps it visible for users who have never touched that switch.
+  // Closable, with the Display settings switch as the way back. Open state is
+  // the play_show_eval_graph setting, not localStorage placement state.
   closable: true,
-  defaultOpen: true,
+  openStore: {
+    load: () => evalGraphEnabled,
+    save: (v) => { evalGraphEnabled = v; },
+  },
   defaultDest: DOCK_DEST_RAIL,
   railDockable: true,
 });
 
-// Open/closed state for the Display settings switch. Read from the persisted
-// key rather than live DOM presence: the dialog also opens from perspectives
-// where Play is not mounted, and there the window is absent but not "off".
-// TODO: this lives in localStorage, unlike the server-backed switches beside
-// it, so it does not follow the user across browsers -- reconsider if that
-// starts to matter.
-export function isEvalBarOpen() {
-  return evalBar.shouldBeOpen;
-}
-
-// With Play mounted, toggle persists and applies in one step. The dialog also
-// opens over other perspectives, where there is no Play layout to place the
-// window into -- toggling there would float it over Studio/Tournaments or dock
-// it into a detached rail, and would leave the instance looking open so the
-// next Play mount's restore() skips it. So off Play, only record the choice.
-// toggle needs no events argument -- the body ignores it (play.js feeds the
-// strip via getEvalBarApi).
-export function setEvalBarOpen(open) {
-  if (open === isEvalBarOpen()) return;
-  if (dockEl) evalBar.toggle();
-  else evalBar.persistOpen(open);
+// Apply the play_show_eval_graph setting. Closing works anywhere (it also
+// drops a body left docked by a nav detach). Opening needs a Play layout to
+// place the window into, so off Play only the cache updates -- the next
+// mount's restore() reads it. toggle needs no events argument: the body
+// ignores it (play.js feeds the strip via getEvalBarApi).
+export function setEvalGraphEnabled(on) {
+  evalGraphEnabled = on;
+  if (!on) evalBar.close();
+  else if (!evalBar.mounted && dockEl) evalBar.toggle(null);
 }
 
 // -- public API --------------------------------------------------------------
@@ -1364,8 +1374,8 @@ export function restoreDebugWindows(events) {
 
 // Save open state of debug windows as of the last view-mode analysis session.
 export function snapshotViewAnalysisState() {
-  setOpen(VIEW_UCI_OPEN_KEY, !!(uciLog.wb || uciLog.slot));
-  setOpen(VIEW_PV_OPEN_KEY,  !!(pvTable.wb || pvTable.slot));
+  setOpen(VIEW_UCI_OPEN_KEY, uciLog.mounted);
+  setOpen(VIEW_PV_OPEN_KEY,  pvTable.mounted);
 }
 
 // Open debug windows based on the last view-mode analysis snapshot.
@@ -1375,6 +1385,6 @@ export function restoreViewAnalysisWindows(events) {
     ? isOpen(VIEW_UCI_OPEN_KEY) : isOpen(UCI_OPEN_KEY);
   const pvShouldOpen  = loadRaw(VIEW_PV_OPEN_KEY) !== null
     ? isOpen(VIEW_PV_OPEN_KEY)  : isOpen(PV_OPEN_KEY);
-  if (uciShouldOpen && !uciLog.wb && !uciLog.slot) { uciLog.toggle(events); uciLog.openedByAnalysis = true; }
-  if (pvShouldOpen  && !pvTable.wb && !pvTable.slot) { pvTable.toggle(events); pvTable.openedByAnalysis = true; }
+  if (uciShouldOpen && !uciLog.mounted) { uciLog.toggle(events); uciLog.openedByAnalysis = true; }
+  if (pvShouldOpen  && !pvTable.mounted) { pvTable.toggle(events); pvTable.openedByAnalysis = true; }
 }

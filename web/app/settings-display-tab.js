@@ -11,8 +11,7 @@ import { APP_EVT } from "./app-events.js";
 import { SIDE } from "./chess-consts.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
 import { mqMobile } from "./breakpoints.js";
-import { isEvalBarOpen, setEvalBarOpen } from "./play-dock-windows.js";
-import { makeDivider } from "./settings-ui-helpers.js";
+import { makeDivider, makeSettingSwitch } from "./settings-ui-helpers.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { getTournamentUx, TOURNAMENT_UX } from "./tournament-studio.js";
@@ -76,24 +75,19 @@ export function buildDisplayTab({ initial, putSettings, initialStyle, onBoardSty
   evalPovLabel.textContent = "Eval display";
   evalPovRow.append(evalPovLabel, evalPov);
 
-  const showComments = document.createElement("wa-switch");
-  showComments.size = "small";
-  showComments.checked = initial.view_show_pgn_comments !== false;
-  showComments.textContent = "PGN comments";
-  showComments.title = "Display sanitized move comments in the left column while viewing a game (desktop only)";
-  showComments.addEventListener("change", () => {
-    putSettings({ view_show_pgn_comments: showComments.checked });
+  // Both switches are also the way back after their window's own X clears them.
+  const showComments = makeSettingSwitch({
+    label: "PGN comments",
+    title: "Display sanitized move comments in the left column while viewing a game (desktop only)",
+    checked: initial.view_show_pgn_comments !== false,
+    onChange: (on) => putSettings({ view_show_pgn_comments: on }),
   });
 
-  // Client-side placement state, not a server setting: the switch is just the
-  // way back after the window's own X closes it.
-  const showEvalBar = document.createElement("wa-switch");
-  showEvalBar.size = "small";
-  showEvalBar.checked = isEvalBarOpen();
-  showEvalBar.textContent = "Eval graph";
-  showEvalBar.title = "Show the per-move engine evaluation graph while playing (desktop only)";
-  showEvalBar.addEventListener("change", () => {
-    setEvalBarOpen(showEvalBar.checked);
+  const showEvalGraph = makeSettingSwitch({
+    label: "Eval graph",
+    title: "Show the per-move engine evaluation graph while playing (desktop only)",
+    checked: initial.play_show_eval_graph !== false,
+    onChange: (on) => putSettings({ play_show_eval_graph: on }),
   });
 
   // Board style: single preset picker + live preview swatch reusing
@@ -212,7 +206,7 @@ export function buildDisplayTab({ initial, putSettings, initialStyle, onBoardSty
   // Both panels live in columns mobile does not lay out (PGN comments in the
   // left column, the eval graph in the side rail), so the row is desktop-only.
   showCommentsDisplayRow.className = "settings-row settings-toggles-grid desktop-only";
-  showCommentsDisplayRow.append(showComments, showEvalBar);
+  showCommentsDisplayRow.append(showComments, showEvalGraph);
 
   const displayCol = document.createElement("div");
   displayCol.className = "settings-panel-col";
