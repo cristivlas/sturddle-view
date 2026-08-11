@@ -19,7 +19,7 @@ from typing import Any, AsyncIterator
 
 import httpx
 
-from ._errors import extract_error_message
+from ._errors import ThinkingUnsupported, extract_error_message, is_thinking_unsupported
 from .base import LLMProvider, Message, ProviderChunk, ProviderUsage, ToolWireSpec
 from .harmony_strip import flush_harmony_carry, strip_harmony_text
 from .inline_recovery import recover_inline_tool_calls
@@ -393,6 +393,15 @@ class OllamaProvider(LLMProvider):
                 if resp.status_code != 200:
                     raw = (await resp.aread()).decode("utf-8", errors="replace")
                     await self._tx_wire(transcript, round_index, f"HTTP {resp.status_code}: {raw}")
+                    # Reaching this path means the body carried think:true, so
+                    # a bad request naming thinking is the model refusing it.
+                    # Restate it in our own words off self._model, so the UI
+                    # never echoes provider phrasing back to the user; the raw
+                    # body is already in the transcript above.
+                    if is_thinking_unsupported(resp.status_code, raw):
+                        raise ThinkingUnsupported(
+                            f'"{self._model}" does not support extended thinking'
+                        )
                     raise RuntimeError(
                         f"ollama API error {resp.status_code}: {extract_error_message(raw)}"
                     )

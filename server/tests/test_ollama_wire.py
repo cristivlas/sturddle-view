@@ -19,6 +19,7 @@ import pytest
 from sturddle_view.llm import Transcript
 from sturddle_view.llm import ollama as ollama_mod
 from sturddle_view.llm import openai_compat as openai_compat_mod
+from sturddle_view.llm._errors import ThinkingUnsupported
 from sturddle_view.llm.ollama import (
     OllamaProvider,
     openai_tool_call_to_provider_chunk,
@@ -228,6 +229,53 @@ async def test_http_error_captured_then_raises(install_fake_httpx, tmp_path):
     content = tx_path.read_text("utf-8")
     assert "HTTP 500" in content
     assert "server exploded" in content
+
+
+@pytest.mark.asyncio
+async def test_thinking_refusal_raises_typed_error(install_fake_httpx, tmp_path):
+    # Thinking-enabled, so the native path runs and the request carries
+    # think:true. Ollama answers 400; the client keys its remediation on the
+    # class name, and the message must name the model in our own words --
+    # never the provider's phrasing.
+    install_fake_httpx(
+        lines=[], status=400,
+        body=b'{"error":"\\"granite4.1:8b\\" does not support thinking"}',
+    )
+    tx_path = tmp_path / "t.log"
+    async with Transcript(tx_path) as tx:
+        provider = OllamaProvider(
+            base_url="http://fake", model="granite4.1:8b", thinking_enabled=True,
+        )
+        with pytest.raises(ThinkingUnsupported) as excinfo:
+            async for _ in provider.stream(
+                system="", messages=[], transcript=tx, round_index=0,
+            ):
+                pass
+
+    assert str(excinfo.value) == '"granite4.1:8b" does not support extended thinking'
+    # The provider's own body stays in the transcript for diagnosis.
+    assert "does not support thinking" in tx_path.read_text("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_unrelated_bad_request_stays_generic(install_fake_httpx, tmp_path):
+    # Same path and status, but the body is about something else: the user
+    # must not be told the model cannot think.
+    install_fake_httpx(
+        lines=[], status=400, body=b'{"error":"model \'qwen3-thinking\' not found"}',
+    )
+    tx_path = tmp_path / "t.log"
+    async with Transcript(tx_path) as tx:
+        provider = OllamaProvider(
+            base_url="http://fake", model="qwen3-thinking", thinking_enabled=True,
+        )
+        with pytest.raises(RuntimeError, match="ollama API error 400") as excinfo:
+            async for _ in provider.stream(
+                system="", messages=[], transcript=tx, round_index=0,
+            ):
+                pass
+
+    assert not isinstance(excinfo.value, ThinkingUnsupported)
 
 
 # ---------- Tool-call argument JSON ----------------------------------

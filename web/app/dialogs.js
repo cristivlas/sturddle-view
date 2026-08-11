@@ -640,10 +640,18 @@ export function apiErrorObject(error) {
 export const SETTINGS_TAB_ENGINES = "engines";
 export const SETTINGS_TAB_ANALYSIS = "analysis";
 
+// Deep-link focus target: class on the extended-thinking control, shared
+// with the tab that builds it so the selector has one source of truth.
+export const AI_THINKING_MODE_CLASS = "ai-thinking-mode";
+
 /** Dispatch the deep-link event that opens the Settings dialog at
- *  `tab` (e.g. "engines"). Main wires up the actual open in main.js. */
-export function openSettings(tab) {
-  window.dispatchEvent(new CustomEvent(APP_EVT.OPEN_SETTINGS, { detail: { tab } }));
+ *  `tab` (e.g. "engines"). `focusClass` optionally names a control within
+ *  that tab to focus once the dialog is showing, so a link that exists to
+ *  fix one setting lands on it. Main wires up the actual open in main.js. */
+export function openSettings(tab, focusClass) {
+  window.dispatchEvent(new CustomEvent(APP_EVT.OPEN_SETTINGS, {
+    detail: { tab, focus: focusClass },
+  }));
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -671,26 +679,6 @@ export function inlineSvgIcon(innerSvg, { viewBox = "0 0 512 512", ariaLabel } =
   return svg;
 }
 
-// Map of well-known server error codes to inline toast actions.
-// Centralized here so every reportError call site picks up the same
-// remediation affordance (e.g. removing the active engine mid-session
-// surfaces "no_engine_configured" through many endpoints, not just
-// /game/new).
-const ERROR_CODE_ACTIONS = {
-  no_engine_configured: [{
-    icon: "gear",
-    ariaLabel: "Open engine settings",
-    onClick: () => openSettings(SETTINGS_TAB_ENGINES),
-  }],
-  // A verifier sub-run that never concluded -- usually the verifier round
-  // cap is too low. Gear deep-links to the Analysis tab to raise it.
-  no_verdict: [{
-    icon: "gear",
-    ariaLabel: "Open AI settings",
-    onClick: () => openSettings(SETTINGS_TAB_ANALYSIS),
-  }],
-};
-
 /** Canonical "open the Engines settings tab" toast action. Use this in
  *  client-side guards that want the same affordance as the server-side
  *  no_engine_configured handler. */
@@ -698,6 +686,32 @@ export const OPEN_ENGINES_ACTION = {
   icon: "gear",
   ariaLabel: "Open engine settings",
   onClick: () => openSettings(SETTINGS_TAB_ENGINES),
+};
+
+/** "Open the Analysis settings tab" toast action. `focusClass` optionally
+ *  names the control to land on once the dialog is up. */
+function openAnalysisAction(focusClass) {
+  return {
+    icon: "gear",
+    ariaLabel: "Open AI settings",
+    onClick: () => openSettings(SETTINGS_TAB_ANALYSIS, focusClass),
+  };
+}
+
+/** Canonical "open the Analysis settings tab" toast action, for failures
+ *  the user fixes among the AI settings. */
+export const OPEN_ANALYSIS_ACTION = openAnalysisAction();
+
+// Map of well-known server error codes to inline toast actions.
+// Centralized here so every reportError call site picks up the same
+// remediation affordance (e.g. removing the active engine mid-session
+// surfaces "no_engine_configured" through many endpoints, not just
+// /game/new).
+const ERROR_CODE_ACTIONS = {
+  no_engine_configured: [OPEN_ENGINES_ACTION],
+  // A verifier sub-run that never concluded -- usually the verifier round
+  // cap is too low. Gear deep-links to the Analysis tab to raise it.
+  no_verdict: [OPEN_ANALYSIS_ACTION],
 };
 
 /** Canonical inline actions for a server error code, or [] if none.
@@ -807,6 +821,24 @@ export function reportVerboseError(text, { variant = "danger" } = {}) {
   }]);
   dismiss = stickyToast(body, { variant });
   return dismiss;
+}
+
+// Inline fixes for the AI failures we recognize, keyed by the exception
+// class the server reports on the done event. The message stays the
+// server's -- it phrases these itself, naming the model -- so this only
+// says how to fix them.
+const AI_ERROR_ACTIONS = {
+  ThinkingUnsupported: [openAnalysisAction(AI_THINKING_MODE_CLASS)],
+};
+
+/** Sticky danger toast for a failed AI run. A recognized failure carries
+ *  the action that fixes it; anything else falls back to the plain verbose
+ *  error. Returns the toast dismiss fn. */
+export function reportAiError(name, detail) {
+  const actions = AI_ERROR_ACTIONS[name];
+  if (!actions) return reportVerboseError(detail || name);
+  const { summary } = summarizeError(detail || name);
+  return stickyToast(buildToastWithActions(summary, actions), { variant: "danger" });
 }
 
 // http(s) URLs, stopping before trailing punctuation that is more likely

@@ -265,11 +265,17 @@ document.getElementById("settings-btn").addEventListener("click", () => {
 });
 // Allow any module to deep-link into the Settings dialog without
 // threading the `api` reference through call chains. detail.tab opens
-// the named tab (e.g. "engines"). Used by the Play empty-state CTA and
-// the no-engine error toast.
+// the named tab (e.g. "engines"); detail.focus names a control within it
+// to land on. Used by the Play empty-state CTA and error-toast gears.
 window.addEventListener(APP_EVT.OPEN_SETTINGS, (e) => {
   const tab = e.detail?.tab;
-  openSettingsDialog({ api, initialTab: tab, getActivePerspective: () => router.activeId(), reloadPerspective });
+  openSettingsDialog({
+    api,
+    initialTab: tab,
+    focusClass: e.detail?.focus,
+    getActivePerspective: () => router.activeId(),
+    reloadPerspective,
+  });
 });
 
 // A server-backed tab can't survive a dropped socket, so fall back to Play --
