@@ -7,12 +7,11 @@ import { APP_EVT } from "../app-events.js";
 import { KIND, AI_KIND_PREFIX } from "../game-events.js";
 import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
-import { alert as showAlert, buildToastWithActions, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportError, reportVerboseError, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
+import { alert as showAlert, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportAiError, reportError, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, getEvalBarApi, setUciLogEngine, isMobileLayout } from "../play-dock-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, isMobileLayout } from "../play-dock-windows.js";
 import {
-  setCommentaryDockContainer,
-  setOnUserCloseCommentary,
+  commentaryWindow,
   openCommentary,
   closeCommentary,
   setCommentaryText,
@@ -125,6 +124,18 @@ function resultBadge(result) {
 
 // Cap server-supplied error detail (engine path / exception text) in toasts.
 const MAX_TOAST_DETAIL = 200;
+
+// Settings backing a dock window's visibility: read on refresh, cleared by
+// that window's X.
+const SETTING_SHOW_PGN_COMMENTS = "view_show_pgn_comments";
+const SETTING_SHOW_EVAL_GRAPH = "play_show_eval_graph";
+
+// X on a settings-backed dock window is the same gesture as flipping its
+// Display-tab switch off.
+function putSettingOff(ctx, key) {
+  ctx.api("PUT", "/settings", { [key]: false })
+    .catch((e) => reportError(ctx, MSG.SETTING_SAVE_FAILED, e));
+}
 
 // eval_history entries are white POV {cp|mate}; flip for a black engine.
 function evalToEnginePov(ev, engineWhite) {
@@ -372,8 +383,9 @@ function dispatchAiEvent(aiCtx, evt) {
         if (p.error) {
           // Provider errors can be many lines with URLs; the toast shows the
           // first sentence with a Details affordance for the rest. Sticky so
-          // a quota/outage failure stays until the user reads it.
-          reportVerboseError(p.error_detail || p.error);
+          // a quota/outage failure stays until the user reads it. Failures we
+          // recognize by class name also carry the action that fixes them.
+          reportAiError(p.error, p.error_detail);
         }
         // End the AI turn on completion AND error (clears the pulse + toast).
         // Cancel is excluded: it self-resolves via stopAnalysisFromUi ->
@@ -526,7 +538,6 @@ const PLAY_PERSPECTIVE_HTML = `
   <section id="play-perspective">
     <div class="play-grid">
       <div class="play-dock-left"></div>
-      <aside class="play-comments-host dock-empty" aria-label="PGN commentary"></aside>
       <div id="no-engine-banner" class="no-engine-banner hidden" role="status">
         <span class="no-engine-banner__msg">No engine configured.</span>
         <button type="button" class="no-engine-banner__btn" aria-label="Open engine settings" title="Open engine settings">
@@ -1098,10 +1109,11 @@ async function refreshSettings(state, { notifyOnDrift = false } = {}) {
   try {
     const s = await state.ctx.api("GET", "/settings");
     state.allowTakeback = s.allow_takeback !== false;
-    state.showPgnComments = s.view_show_pgn_comments !== false;
+    state.showPgnComments = s[SETTING_SHOW_PGN_COMMENTS] !== false;
     state.aiEnabled = !!s.ai_enabled;
     state.aiTitleModel = s.ai_enabled ? (s.ai_model || "") : "";
     syncCommentsVisibility(state);
+    setEvalGraphEnabled(s[SETTING_SHOW_EVAL_GRAPH] !== false);
     if (notifyOnDrift && !state.gameOver && state.resignAvailable) {
       const drift = [];
       // TC: compare against the snapshot taken at game start.
@@ -1728,7 +1740,7 @@ function showEngineCrashToast() {
 // Commentary-dock visibility + server-authoritative edit-mode transitions.
 
 function syncCommentsVisibility(state) {
-  if (!state.el.commentsHost) return;
+  if (!state.el.dockLeft) return;
   const shouldShow = state.viewing && state.showPgnComments && !isMobileLayout()
     && !state.suppressCommentsForEditTransition;
   const open = isCommentaryOpen();
@@ -2362,16 +2374,15 @@ export const playPerspective = {
       onBarClick: (ply) => enterViewAtPly(state, ply),
       isBarNavigable: (ply) => canEnterViewAtPly(state, ply),
     });
+    // X on the eval graph (dock slot or float) -> clear setting.
+    evalBar.setOnUserClose(() => putSettingOff(ctx, SETTING_SHOW_EVAL_GRAPH));
 
-    const commentsHost = root.querySelector(".play-comments-host");
-    state.el.commentsHost = commentsHost;
-    setCommentaryDockContainer(commentsHost);
+    state.el.dockLeft = dockLeft;
     setAiInlineHost(root.querySelector(".play-ai-inline"));
     // X on the commentary window (dock slot or float) -> clear setting.
-    setOnUserCloseCommentary(() => {
+    commentaryWindow.setOnUserClose(() => {
       state.showPgnComments = false;
-      ctx.api("PUT", "/settings", { view_show_pgn_comments: false })
-        .catch((e) => reportError(ctx, MSG.SETTING_SAVE_FAILED, e));
+      putSettingOff(ctx, SETTING_SHOW_PGN_COMMENTS);
     });
     const onCommentsResize = () => { syncCommentsVisibility(state); };
     window.addEventListener("resize", onCommentsResize);
@@ -2405,9 +2416,6 @@ export const playPerspective = {
       if (state.viewing && state.viewingGameId) fetchXgameInfo(state, state.viewingGameId);
     };
     window.addEventListener(APP_EVT.RECENTS_CHANGED, onRecentsChanged);
-
-    // Ask server to re-emit current state so the freshly-mounted view syncs.
-    ctx.api("POST", "/game/sync", {}).catch(() => {});
 
     const pausedBadge = document.getElementById("paused-badge");
     const finishedBadge = document.getElementById("finished-badge");
@@ -2501,6 +2509,10 @@ export const playPerspective = {
     uciLogBtn?.addEventListener("click", onUciLog);
     pvTableBtn?.addEventListener("click", onPvTable);
     restoreDebugWindows(ctx.events);
+    // After restoreDebugWindows: sync makes the server re-emit board state and
+    // the last engine_info, and only a panel that already exists can catch it.
+    // Reload would otherwise leave Search Lines blank until the next info line.
+    ctx.api("POST", "/game/sync", {}).catch(() => {});
     takebackBtn.addEventListener("click", onTakeback);
     switchSidesBtn.addEventListener("click", onSwitchSides);
     pauseBtn.addEventListener("click", onPause);
@@ -2566,7 +2578,7 @@ export const playPerspective = {
           _difficultyToastUp = true;
           const engineName = evt.payload?.engine || MSG.DIFFICULTY_GENERIC_ENGINE;
           let dismiss;
-          const body = buildToastWithActions(MSG.DIFFICULTY_UNAVAILABLE, [{
+          const actions = [{
             icon: DETAILS_ICON,
             ariaLabel: MSG.DIFFICULTY_DETAILS_ARIA,
             onClick: async () => {
@@ -2576,9 +2588,10 @@ export const playPerspective = {
               });
               dismiss?.();
             },
-          }]);
-          dismiss = stickyToast(body, {
+          }];
+          dismiss = stickyToast(MSG.DIFFICULTY_UNAVAILABLE, {
             variant: "warning",
+            actions,
             onDismiss: () => { _difficultyToastUp = false; },
           });
         }
@@ -2610,12 +2623,14 @@ export const playPerspective = {
         closeDebugWindows();
         // Announce no active ribbon so the global float manager unmounts it.
         window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: null } }));
+        // Before setDockContainer(null): commentary now lives in the shared
+        // dock, whose teardown would drop its slot out from under it.
+        closeCommentary();
         setDockContainer(null);
         setRailDockContainer(null);
         setEvalBarCallbacks(null);
-        closeCommentary();
-        setCommentaryDockContainer(null);
-        setOnUserCloseCommentary(null);
+        evalBar.setOnUserClose(null);
+        commentaryWindow.setOnUserClose(null);
         closeAi();
         setAiInlineHost(null);
         setOnUserCloseAi(null);

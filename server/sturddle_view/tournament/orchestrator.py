@@ -36,6 +36,7 @@ from .pgn_reconcile import (
     PendingMatch,
     ReconciledMatch,
     ReconciliationQueue,
+    moves_complete_match,
 )
 from .pgn_tail import PgnGameRecord, PgnTailer
 from .rescheck import RescheckError, check_template
@@ -81,11 +82,9 @@ def _opposite_side(side: str) -> str:
     return SIDE_BLACK if side == SIDE_WHITE else SIDE_WHITE
 
 
-# Result/termination on the `game_finished` event. Pair dissolution is
-# the sole game-end trigger; we don't parse fastchess stdout for game
-# results anymore (correlation under concurrency was unreliable). The
-# fields stay in the schema so a future implementation can populate
-# them via a different signal without breaking consumers.
+# Game end = pair dissolution: ucinewgame/session-end (result unknown
+# until reconciled) or a matching PGN record (real result; idle engines
+# send no ucinewgame until their next game).
 _RESULT_UNKNOWN = "*"
 _TERMINATION_UNKNOWN = "unknown"
 
@@ -254,8 +253,8 @@ class Orchestrator:
         self._active_id: str | None = None
         self._broadcast: BroadcastCallback | None = None
 
-        # Slice 9b: live observation pipeline. WS subscribers attach
-        # per-proxy and receive that engine's UCI line stream.
+        # Live observation pipeline. WS subscribers attach per-proxy
+        # and receive that engine's UCI line stream.
         self._proxy_subscribers: dict[str, set[CoalescingQueue]] = {}
         # Display name reported by each proxy on session start. Used to
         # label rows / buttons in the workspace UI. Cleared on session
@@ -311,10 +310,6 @@ class Orchestrator:
         # wins; handed to the reconciliation queue at dissolution.
         self._pair_moves: dict[str, list[str]] = {}
         self._pgn_tailer: PgnTailer | None = None
-        # Scheduled tailer start/stop tasks (fire-and-forget). Tests
-        # await these via _await_pending_tailer_tasks() to remove sleep
-        # polling at lifecycle transitions.
-        self._pending_tailer_tasks: set[asyncio.Task] = set()
         self._reconcile_queue = ReconciliationQueue()
         # Per-tournament secret embedded in the proxy --broadcast-url so
         # only proxies belonging to the active tournament can post.
@@ -371,8 +366,8 @@ class Orchestrator:
 
     def set_broadcast(self, broadcast: BroadcastCallback | None) -> None:
         """Install (or clear) the upstream broadcast callback. Used by the
-        REST/WS layer in Slice 5; tests pass ``None`` and inspect the
-        store directly."""
+        REST/WS layer; tests pass ``None`` and inspect the store
+        directly."""
         self._broadcast = broadcast
 
     def active_id(self) -> str | None:
@@ -480,11 +475,11 @@ class Orchestrator:
             await self._emit_status(rolled_back)
             raise
 
-        # PGN tailer for reconciliation. Constructed here but its poll
-        # loop is gated on _game_subscribers: started on first watcher,
-        # stopped when the last watcher leaves. Saves 1Hz file I/O +
-        # SAN->UCI parse when no one is watching individual games.
+        # PGN tailer: game-end detection (dissolve-on-record) and
+        # reconciliation both depend on it, so it runs for the whole
+        # tournament, not just while games are watched.
         self._pgn_tailer = PgnTailer(spec.pgn_path, self._on_pgn_record)
+        await self._pgn_tailer.start()
 
         return updated
 
@@ -630,7 +625,7 @@ class Orchestrator:
         DELETE endpoint so torn-down tournaments don't leak history."""
         self._event_history.pop(tournament_id, None)
 
-    # ---- Slice 9b: live-observation pipeline -------------------------------
+    # ---- live-observation pipeline -----------------------------------------
 
     def proxy_secret(self) -> str | None:
         """Per-tournament secret embedded in the proxy broadcast URL.
@@ -675,6 +670,11 @@ class Orchestrator:
                 "side_b":   SIDE_BLACK,
             })
         return out
+
+    def event_seq(self) -> int:
+        """Last stamped event ``_seq``; snapshot watermark so clients can
+        order REST detail payloads against the WS event stream."""
+        return self._event_seq
 
     def engine_name_for(self, proxy_id: str) -> str | None:
         """Display name reported by a proxy on its session start, or
@@ -929,11 +929,10 @@ class Orchestrator:
     ) -> None:
         """Emit ``proxy_paired`` for new pairs; dissolve orphans.
 
-        Pair dissolution is the sole game-end signal: when one of a
-        confirmed pair's proxies leaves its FEN bucket (typically via
-        ``ucinewgame``), that pair's game is over. Result/termination
-        are not derivable from UCI alone -- we report UNKNOWN and let
-        consumers fill them in from another signal if/when available."""
+        A proxy leaving its FEN bucket (typically ``ucinewgame``) ends
+        that pair's game; result/termination are not derivable from UCI
+        alone, so this path reports UNKNOWN and reconciliation fills
+        them in. The PGN-record path dissolves with the real result."""
         for group in new_pairs:
             white_pid, black_pid = self._white_black_for_group(group)
             await self._emit("proxy_paired", {
@@ -989,61 +988,32 @@ class Orchestrator:
         reconciled = self._reconcile_queue.add_pgn_record(record)
         if reconciled is not None:
             await self._emit_reconciled(reconciled)
-        # Drain check: if no watchers and the pending queue cleared,
-        # stop the tailer. This is the deferred stop the dissolution
-        # gate skipped while pending was non-empty.
-        self._schedule_tailer_stop("pending queue drained, no watchers")
-
-    async def _maybe_start_tailer(self, reason: str) -> None:
-        """Start the tailer if conditions still hold. Re-checks at task
-        run time so a stop scheduled by an earlier transition that
-        hasn't executed yet doesn't leave a subscriber tailer-less."""
-        if (
-            self._game_subscribers
-            and self._pgn_tailer is not None
-            and not self._pgn_tailer.is_running()
-        ):
-            log.info("PGN tailer starting: %s", reason)
-            try:
-                await self._pgn_tailer.start()
-            except Exception:
-                log.error("PGN tailer start failed", exc_info=True)
-
-    async def _maybe_stop_tailer(self, reason: str) -> None:
-        """Stop the tailer if conditions still hold. Re-checks at task
-        run time so a subscribe that arrived between schedule and run
-        keeps the tailer alive."""
-        if (
-            not self._game_subscribers
-            and self._reconcile_queue.pending_count == 0
-            and self._pgn_tailer is not None
-            and self._pgn_tailer.is_running()
-        ):
-            log.info("PGN tailer stopping: %s", reason)
-            try:
-                await self._pgn_tailer.stop()
-            except Exception:
-                log.error("PGN tailer stop failed", exc_info=True)
-
-    def _schedule_tailer_start(self, reason: str) -> None:
-        t = asyncio.create_task(self._maybe_start_tailer(reason))
-        self._pending_tailer_tasks.add(t)
-        t.add_done_callback(self._pending_tailer_tasks.discard)
-
-    def _schedule_tailer_stop(self, reason: str) -> None:
-        t = asyncio.create_task(self._maybe_stop_tailer(reason))
-        self._pending_tailer_tasks.add(t)
-        t.add_done_callback(self._pending_tailer_tasks.discard)
-
-    async def _await_pending_tailer_tasks(self) -> None:
-        """Test-only: await any currently-scheduled tailer lifecycle
-        tasks. Recurses once -- a stop may schedule a follow-up start
-        and vice versa via the re-check in _maybe_*_tailer."""
-        for _ in range(2):
-            tasks = list(self._pending_tailer_tasks)
-            if not tasks:
+            return
+        # No parked entry: a still-confirmed pair with these moves finished
+        # this game (both engines idle -> no ucinewgame). Dissolve it with
+        # the real result; add_pending inside matches the record just parked.
+        for pair_id, moves in self._pair_moves.items():
+            if (
+                moves_complete_match(moves, record.uci_moves)
+                and self._pair_names_fit(pair_id, record)
+            ):
+                await self._dissolve_pair(
+                    pair_id, record.result,
+                    record.termination or _TERMINATION_UNKNOWN,
+                )
                 return
-            await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _pair_names_fit(self, pair_id: str, record: PgnGameRecord) -> bool:
+        """Same-line collision guard (e.g. a colors-swapped rematch on the
+        same opening): known engine names must match the record by color.
+        Unknown names pass -- a mismatch just defers to ucinewgame."""
+        proxies = self._pair_proxies.get(pair_id)
+        if proxies is None:
+            return False
+        white_pid, black_pid = self._white_black_for_group(proxies)
+        w = self._proxy_engine_names.get(white_pid)
+        b = self._proxy_engine_names.get(black_pid)
+        return (w is None or w == record.white) and (b is None or b == record.black)
 
     async def _emit_reconciled(self, m: ReconciledMatch) -> None:
         log.info(
@@ -1095,9 +1065,9 @@ class Orchestrator:
         """Drops pair bookkeeping, flushes WS sentinel, emits
         ``proxy_unpaired`` + ``game_finished``. Idempotent.
 
-        ``terminal=True`` for tournament Stop/Done/Failed teardown:
-        skip the reconciliation push since the PGN won't ever have
-        these games (fastchess was killed mid-flight).
+        ``terminal=True`` tags Stop/Done/Failed teardown dissolves (log
+        only); entries park either way -- teardown finalizes the tailer
+        right after, giving them one shot at the freshly-drained PGN.
         """
         proxies = self._pair_proxies.pop(pair_id, None)
         if proxies is None:
@@ -1132,11 +1102,6 @@ class Orchestrator:
             # PGN before _reset_pairing_state wipes the queue.
             reconciled = self._reconcile_queue.add_pending(entry)
         game_subs = self._game_subscribers.pop(pair_id, None)
-        # Try the stop transition; the helper re-checks subs+pending at
-        # task run time. Skip in terminal mode -- teardown owns its own
-        # explicit poll_once()+stop() sequence.
-        if not terminal:
-            self._schedule_tailer_stop("last watched pair dissolved")
         if _DEBUG_PAIRING:
             log.debug(
                 "pair dissolved tag=%s result=%s termination=%s game_subs=%d",
@@ -1352,11 +1317,6 @@ class Orchestrator:
             })
             return q
         self._game_subscribers.setdefault(pair_id, set()).add(q)
-        # Wake the tailer so reconciliation is live while a watcher is
-        # attached. The helper re-checks at task run time, so a stop
-        # task scheduled by a prior unsubscribe in the same tick won't
-        # leave us tailer-less.
-        self._schedule_tailer_start("game subscriber attached")
         # Replay snapshot for both proxies so a late subscriber gets
         # instant board state without waiting for the next UCI event.
         for pid in proxies:
@@ -1380,7 +1340,6 @@ class Orchestrator:
             subs.discard(queue)
             if not subs:
                 self._game_subscribers.pop(pair_id, None)
-        self._schedule_tailer_stop("last game subscriber detached")
         queue.cancel_timers()
 
     def _close_all_proxy_subscribers(self) -> None:

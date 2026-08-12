@@ -104,6 +104,7 @@ PERSISTED_FIELDS = (
     "inherit_pgn_clocks",
     "board_style",
     "play_eval_pov",
+    "play_show_eval_graph",
     "view_show_pgn_comments",
     "ribbon_side",
     "tournament_fastchess_path",
@@ -178,6 +179,9 @@ class Settings(BaseSettings):
     # HVE eval display POV: "white" (default, status quo), "engine"
     # (raw UCI — engine's POV), or "human" (flipped to human's color).
     play_eval_pov: str = "white"
+    # Play mode: show the per-move engine eval graph in the side rail
+    # (desktop viewports only). Hidden when False.
+    play_show_eval_graph: bool = True
     # View mode: show sanitized PGN move commentary in the left column
     # (desktop viewports only). Hidden when False.
     view_show_pgn_comments: bool = True

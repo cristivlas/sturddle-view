@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import shutil
 import signal
 import subprocess
@@ -27,14 +26,6 @@ from .runner import EventCallback, RunSpec
 
 # Recent stderr/stdout lines retained for runner_crash diagnostics.
 _STDERR_TAIL_MAX = 40
-
-# Lines matching this pattern are kept in the crash tail but not
-# forwarded as runner_log events (they would flood the UI uselessly).
-# TODO: consider a "System" settings category with user-editable log filters
-# (hot-reload and perf implications TBD before exposing in UI).
-_LOG_FILTER = re.compile(
-    r"^Warning; Last info string with score not found from"
-)
 
 
 # SPRT models. New tournaments default to normalized pentanomial (the UI no
@@ -138,7 +129,7 @@ def build_command(spec: RunSpec) -> list[str]:
 
     cmd: list[str] = [spec.binary_path]
 
-    # Slice 9b: when proxy broadcast is configured, wrap each engine's
+    # When proxy broadcast is configured, wrap each engine's
     # cmd= so fastchess spawns the proxy script with the real engine as
     # an argument. The proxy forwards stdio transparently and POSTs a
     # copy to the GUI server.
@@ -611,8 +602,7 @@ class FastchessRunner:
                 if stripped:
                     tail = self._stderr_tail if tag == "err" else self._stdout_tail
                     tail.append(stripped)
-                    if not _LOG_FILTER.match(stripped):
-                        await self._emit("runner_log", {"stream": tag, "line": stripped})
+                    await self._emit("runner_log", {"stream": tag, "line": stripped})
         except asyncio.CancelledError:
             raise
         except Exception:

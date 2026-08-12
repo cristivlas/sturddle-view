@@ -16,7 +16,7 @@ from sturddle_view.engines import EngineRegistry
 from sturddle_view.llm import anthropic as anthropic_mod
 from sturddle_view.llm import ollama as ollama_mod
 from sturddle_view.llm import openai_compat as openai_compat_mod
-from sturddle_view.llm._errors import extract_error_message
+from sturddle_view.llm._errors import extract_error_message, is_thinking_unsupported
 from sturddle_view.llm.anthropic import AnthropicProvider
 from sturddle_view.llm.ollama import OllamaProvider
 
@@ -413,6 +413,42 @@ def test_extract_error_message_missing_error_field_fallback():
     # swallow whatever the upstream said.
     body = '{"status":"degraded","retry_after":30}'
     assert extract_error_message(body) == body
+
+
+# ---------- is_thinking_unsupported: refusal detection ---------------
+
+
+@pytest.mark.parametrize("body", [
+    # Ollama's own phrasing, the case this exists for.
+    '{"error":"\\"granite4.1:8b\\" does not support thinking"}',
+    '{"error":"model does not support thinking"}',
+    '{"error":"doesn\'t support thinking"}',
+    '{"error":"cannot support thinking"}',
+    '{"error":"thinking is not supported for this model"}',
+    '{"error":"thinking not enabled"}',
+])
+def test_is_thinking_unsupported_matches_refusals(body):
+    assert is_thinking_unsupported(400, body) is True
+
+
+@pytest.mark.parametrize("body", [
+    # A 400 that merely echoes a model id containing "thinking" must not be
+    # read as a refusal -- it would put a confident wrong headline on an
+    # unrelated failure (wrong id, bad tool schema).
+    '{"error":"model \'qwen3-thinking\' not found"}',
+    '{"error":"invalid tool schema for deepseek-thinking"}',
+    '{"error":"bad request"}',
+])
+def test_is_thinking_unsupported_ignores_incidental_mentions(body):
+    assert is_thinking_unsupported(400, body) is False
+
+
+def test_is_thinking_unsupported_only_on_bad_request():
+    # The refusal is a 400. A 500 quoting the same words is an outage, not
+    # a capability answer, and must stay a generic provider error.
+    body = '{"error":"does not support thinking"}'
+    assert is_thinking_unsupported(500, body) is False
+    assert is_thinking_unsupported(400, body) is True
 
 
 @pytest.mark.asyncio

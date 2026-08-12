@@ -1,8 +1,8 @@
-"""Slice 4: Orchestrator — composes Store + Runner.
+"""Orchestrator -- composes Store + Runner.
 
 Two layers of tests:
 
-  1. Unit tests with a fake Runner — exercise the orchestrator's logic
+  1. Unit tests with a fake Runner -- exercise the orchestrator's logic
      (single-active invariant, status persistence, reconciliation).
   2. One integration test that drives the orchestrator end-to-end with
      the real ``FastchessRunner`` + fake-fastchess script, proving the
@@ -81,8 +81,13 @@ def runner():
 
 
 @pytest.fixture
-def orch(store, runner):
-    return Orchestrator(store, runner)
+async def orch(store, runner):
+    o = Orchestrator(store, runner)
+    yield o
+    # start() now spins the tournament-scoped tailer; stop any leftover
+    # poll task so the session loop sees no destroyed-task warnings.
+    if o._pgn_tailer is not None:
+        await o._pgn_tailer.stop()
 
 
 def _create(store, **kw) -> str:
@@ -629,7 +634,10 @@ async def test_integration_real_runner_clean_exit(tmp_path, monkeypatch):
 
     async def cb(kind, payload):
         captured.append((kind, payload))
-        if kind == "status_change" and payload.get("status") == STATUS_DONE:
+        # The raw "done" event is forwarded after the teardown finally
+        # block, so it (unlike the earlier status broadcast) guarantees
+        # active_id has been cleared and the tailer finalized.
+        if kind == "done":
             done_evt.set()
 
     orch.set_broadcast(cb)

@@ -4,7 +4,7 @@
 
 import { inlineSvgIcon } from "./dialogs.js";
 import { CHESS_CLOCK_SVG_INNER, CHESS_CLOCK_VIEW_BOX } from "./icons.js";
-import { makeDivider, makeSection } from "./settings-ui-helpers.js";
+import { makeDivider, makeSection, makeSettingSwitch } from "./settings-ui-helpers.js";
 import { SIDE } from "./chess-consts.js";
 
 // Mirrors HVE_DIFFICULTY_MIN/MAX on the server (config.py). MAX = full
@@ -111,36 +111,28 @@ export function buildPlayTab({
   difficultyRow.className = "settings-row settings-row-headroom";
   difficultyRow.append(difficultyLabelEl, difficulty);
 
-  const inheritClocks = document.createElement("wa-switch");
-  inheritClocks.size = "small";
-  inheritClocks.checked = !!initial.inherit_pgn_clocks;
-  inheritClocks.textContent = "Resume clocks from imported PGN";
-  inheritClocks.addEventListener("change", () => {
-    putSettings({ inherit_pgn_clocks: inheritClocks.checked });
+  const inheritClocks = makeSettingSwitch({
+    label: "Resume clocks from imported PGN",
+    checked: !!initial.inherit_pgn_clocks,
+    onChange: (on) => putSettings({ inherit_pgn_clocks: on }),
   });
 
-  const allowTakeback = document.createElement("wa-switch");
-  allowTakeback.size = "small";
-  allowTakeback.checked = initial.allow_takeback !== false;
-  allowTakeback.textContent = "Allow undo";
-  allowTakeback.addEventListener("change", () => {
-    putSettings({ allow_takeback: allowTakeback.checked });
+  const allowTakeback = makeSettingSwitch({
+    label: "Allow undo",
+    checked: initial.allow_takeback !== false,
+    onChange: (on) => putSettings({ allow_takeback: on }),
   });
-  const autoClaimDraws = document.createElement("wa-switch");
-  autoClaimDraws.size = "small";
-  autoClaimDraws.checked = initial.auto_claim_draws !== false;
-  autoClaimDraws.textContent = "Claim draws";
-  autoClaimDraws.title = "Automatically end the game on threefold repetition or 50-move rule";
-  autoClaimDraws.addEventListener("change", () => {
-    putSettings({ auto_claim_draws: autoClaimDraws.checked });
+  const autoClaimDraws = makeSettingSwitch({
+    label: "Claim draws",
+    title: "Automatically end the game on threefold repetition or 50-move rule",
+    checked: initial.auto_claim_draws !== false,
+    onChange: (on) => putSettings({ auto_claim_draws: on }),
   });
-  const useOpeningBook = document.createElement("wa-switch");
-  useOpeningBook.size = "small";
-  useOpeningBook.checked = !!initial.hve_use_opening_book;
-  useOpeningBook.textContent = "Common book";
-  useOpeningBook.title = "Seed each new game from the opening book set on the Common tab";
-  useOpeningBook.addEventListener("change", () => {
-    putSettings({ hve_use_opening_book: useOpeningBook.checked });
+  const useOpeningBook = makeSettingSwitch({
+    label: "Common book",
+    title: "Seed each new game from the opening book set on the Common tab",
+    checked: !!initial.hve_use_opening_book,
+    onChange: (on) => putSettings({ hve_use_opening_book: on }),
   });
 
   // Inherit PGN clocks is a view->play transition setting; Allow Undo

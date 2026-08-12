@@ -560,8 +560,7 @@ function recomputeNow(ctx) {
     const usable = window.innerWidth - sidePad;
     railW = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.floor(usable * RAIL_WIDTH_FRACTION)));
     leftEmpty =
-      document.querySelector(".play-dock-left")?.classList.contains("dock-empty") !== false
-      && document.querySelector(".play-comments-host")?.classList.contains("dock-empty") !== false;
+      document.querySelector(".play-dock-left")?.classList.contains(DOCK_EMPTY_CLASS) !== false;
     leftRailW = leftEmpty ? Math.floor(railW * LEFT_RAIL_EMPTY_RATIO) : railW;
     availW = Math.max(rem(MIN_AVAIL_REM), Math.floor(usable - railW - leftRailW - 2 * gapW));
   }

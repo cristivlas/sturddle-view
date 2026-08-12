@@ -16,9 +16,12 @@ export function createLiveState() {
   return {
     // proxy_id -> { engineName }
     activeProxies: new Map(),
-    // proxy_id -> { pairId, proxyA, engineA, sideA, proxyB, engineB, sideB }.
-    // Both proxies in a pair map to the same info object.
+    // proxy_id -> { pairId, proxyA, engineA, sideA, proxyB, engineB, sideB,
+    // seq }. Both proxies in a pair map to the same info object; seq is the
+    // proxy_paired event's _seq (null when seeded from REST).
     livePairings: new Map(),
+    // High-water state_seq of applied REST snapshots (0 = none yet).
+    stateSeq: 0,
     // pair_id -> { gameN, result, termination }. From game_reconciled; lets a
     // re-open mark resolved windows for frozen-rehydration.
     resolvedGames: new Map(),
@@ -28,10 +31,27 @@ export function createLiveState() {
   };
 }
 
+// Register a confirmed pairing from an event or REST payload; both
+// proxies map to the same info object.
+function setPairing(s, p, seq) {
+  const info = { pairId: p.pair_id, proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
+                 proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b, seq };
+  s.livePairings.set(p.proxy_a, info);
+  s.livePairings.set(p.proxy_b, info);
+}
+
 // Seed proxies/pairings from a REST detail payload. While RUNNING the API can
-// lag WS events, so treat it as additive (add missing, never remove); when not
-// RUNNING replace authoritatively to drop ghosts.
+// lag WS events, so additions are additive and pairing removals seq-guarded:
+// drop only pairings the snapshot postdates (seq <= state_seq) yet no longer
+// lists -- dissolved during a WS gap. When not RUNNING replace authoritatively.
 export function seedFromDetail(s, detail) {
+  const seq = detail.state_seq ?? null;
+  // A stale snapshot (older in-flight GET resolving late) must not
+  // resurrect or remove anything a newer one already settled.
+  if (seq != null) {
+    if (seq < s.stateSeq) return;
+    s.stateSeq = seq;
+  }
   if (detail.status !== STATUS.RUNNING) s.activeProxies.clear();
   for (const p of (detail.proxies_active || [])) {
     if (p.proxy_id && !s.activeProxies.has(p.proxy_id)) {
@@ -39,12 +59,17 @@ export function seedFromDetail(s, detail) {
     }
   }
   if (detail.status !== STATUS.RUNNING) s.livePairings.clear();
+  if (detail.status === STATUS.RUNNING && seq != null) {
+    const activePairs = new Set((detail.pairings_active || []).map((p) => p.pair_id));
+    for (const [pid, info] of s.livePairings) {
+      if ((info.seq ?? 0) <= seq && !activePairs.has(info.pairId)) {
+        s.livePairings.delete(pid);
+      }
+    }
+  }
   for (const p of (detail.pairings_active || [])) {
     if (s.livePairings.has(p.proxy_a) || s.livePairings.has(p.proxy_b)) continue;
-    const info = { pairId: p.pair_id, proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
-                   proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b };
-    s.livePairings.set(p.proxy_a, info);
-    s.livePairings.set(p.proxy_b, info);
+    setPairing(s, p, seq);
   }
 }
 
@@ -117,10 +142,7 @@ export function applyEventKind(s, evt, inner, tournamentId) {
     if (pid) s.activeProxies.delete(pid);
   } else if (inner === KIND.PROXY_PAIRED) {
     const p = evt.payload;
-    const info = { pairId: p.pair_id, proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
-                   proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b };
-    s.livePairings.set(p.proxy_a, info);
-    s.livePairings.set(p.proxy_b, info);
+    setPairing(s, p, p._seq ?? null);
   } else if (inner === KIND.GAME_FINISHED) {
     s.livePairings.delete(evt.payload.proxy_a);
     s.livePairings.delete(evt.payload.proxy_b);

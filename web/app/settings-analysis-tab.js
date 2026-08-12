@@ -1,4 +1,4 @@
-import { apiErrorDetail, toast } from "./dialogs.js";
+import { AI_THINKING_MODE_CLASS, apiErrorDetail, toast } from "./dialogs.js";
 
 // AI/analysis wire field-name constants + provider list. Mirror of the
 // server contract in server/sturddle_view/api/settings.py.
@@ -179,7 +179,7 @@ function buildAiThinkingRow({ initial, putSettings, debounce, getProvider, getAd
   const mode = document.createElement("wa-select");
   mode.size = "small";
   mode.setAttribute("label", "Extended thinking");
-  mode.className = "ai-thinking-mode";
+  mode.className = AI_THINKING_MODE_CLASS;
   const budget = document.createElement("wa-input");
   budget.type = "number";
   budget.size = "small";

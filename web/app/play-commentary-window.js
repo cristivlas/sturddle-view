@@ -1,8 +1,8 @@
 // Dockable PGN-commentary window for play perspective view-mode.
 //
-// Reuses the createDockableWindow factory but with its own dock container
-// (.play-comments-host) -- independent of the debug dock so commentary
-// stacking is not coupled to the debug-window splitter logic.
+// Docks into the shared left dock alongside the debug windows, so commentary
+// and an open debug panel are visible at the same time. DOCK_ORDER.COMMENTARY
+// sorts it above them.
 //
 // Lifecycle is driven by play.js: when view-mode is active and the user
 // setting is enabled (and viewport isn't narrow), the window opens in its
@@ -10,9 +10,9 @@
 // setCommentaryText() -- no comment at the current ply shows a placeholder
 // rather than closing the window. Exiting view-mode closes it.
 // Closing the window (dock X or float X) clears the user setting via the
-// onUserClose callback -- play.js then PUTs the new setting.
+// handler play.js installs with commentaryWindow.setOnUserClose.
 
-import { createDockableWindow, DOCK_ORDER, registerExtraDock } from "./play-dock-windows.js";
+import { createDockableWindow, DOCK_ORDER } from "./play-dock-windows.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { markSelectable } from "./wb-utils.js";
 
@@ -24,10 +24,6 @@ const EMPTY_TEXT    = "No commentary at this ply.";
 
 let onNavPrev = null;
 let onNavNext = null;
-
-let dockEl = null;
-let unregisterDock = null;
-let userCloseHandler = null;
 
 function buildBody() {
   const root = document.createElement("div");
@@ -80,7 +76,9 @@ function setText(el, text) {
   }
 }
 
-const inst = createDockableWindow({
+// Exported for its setOnUserClose: play.js owns what an X means (PUT the
+// setting off), and only while it is mounted.
+export const commentaryWindow = createDockableWindow({
   title: "Commentary",
   className: "sturddle-wb-commentary",
   geoKey: GEO_KEY,
@@ -94,36 +92,25 @@ const inst = createDockableWindow({
     return buildBody();
   },
   dockOrder: DOCK_ORDER.COMMENTARY,
-  getDockEl: () => dockEl,
   railDockable: true,
+  // play.js's syncCommentsVisibility owns when this opens (view mode + user
+  // setting + not mobile); restoreDebugWindows must not reopen it behind that.
+  selfManaged: true,
   closable: true,
-  onUserClose: () => {
-    if (userCloseHandler) userCloseHandler();
-  },
 });
 
-export function setOnUserCloseCommentary(fn) {
-  userCloseHandler = fn;
-}
-
-export function setCommentaryDockContainer(el) {
-  if (unregisterDock) { unregisterDock(); unregisterDock = null; }
-  dockEl = el;
-  if (el) unregisterDock = registerExtraDock(el);
-}
-
 export function openCommentary() {
-  if (inst.wb || inst.slot) return;
-  inst.toggle(null);
+  if (commentaryWindow.mounted) return;
+  commentaryWindow.toggle(null);
 }
 
 export function closeCommentary() {
-  inst.close();
+  commentaryWindow.close();
 }
 
 export function setCommentaryText(text) {
-  if (!inst.body) return;
-  setText(inst.body, text);
+  if (!commentaryWindow.body) return;
+  setText(commentaryWindow.body, text);
 }
 
 export function setCommentaryNavHandlers(prev, next) {
@@ -132,11 +119,11 @@ export function setCommentaryNavHandlers(prev, next) {
 }
 
 export function setCommentaryNavState(prevPly, nextPly) {
-  if (!inst.body) return;
-  inst.body._prevBtn.disabled = prevPly == null;
-  inst.body._nextBtn.disabled = nextPly == null;
+  if (!commentaryWindow.body) return;
+  commentaryWindow.body._prevBtn.disabled = prevPly == null;
+  commentaryWindow.body._nextBtn.disabled = nextPly == null;
 }
 
 export function isCommentaryOpen() {
-  return !!(inst.wb || inst.slot);
+  return commentaryWindow.mounted;
 }

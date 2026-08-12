@@ -1,4 +1,4 @@
-"""Match queue and matching logic for PGN reconciliation (slice 3).
+"""Match queue and matching logic for PGN reconciliation.
 
 Pure unit tests for `ReconciliationQueue`. Orchestrator wiring
 is exercised in `test_pgn_reconciliation.py`.
@@ -13,6 +13,7 @@ from sturddle_view.tournament.pgn_reconcile import (
     RECONCILE_LATE_WARNING_S,
     PendingMatch,
     ReconciliationQueue,
+    moves_complete_match,
 )
 from sturddle_view.tournament.pgn_tail import PgnGameRecord
 
@@ -349,3 +350,37 @@ def test_fresh_match_does_not_warn(caplog):
         m = q.add_pgn_record(_record())
     assert m is not None
     assert not any("reconcile late" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# moves_complete_match: whole-game guard for dissolve-on-PGN-record
+# ---------------------------------------------------------------------------
+
+
+def test_complete_match_exact():
+    assert moves_complete_match(list(_ENOUGH), list(_ENOUGH))
+
+
+def test_complete_match_below_min_plies():
+    short = _ENOUGH[: MIN_PLIES_FOR_MATCH - 1]
+    assert not moves_complete_match(short, short)
+
+
+def test_complete_match_shortfall_boundary():
+    """Captured may trail the PGN by up to 2 plies; more means the pair
+    is likely mid-game on the same line (e.g. a rematch)."""
+    full = _ENOUGH + ["c2c3", "e8g8", "h2h3"]  # 15 plies
+    assert moves_complete_match(full[:-2], full)
+    assert not moves_complete_match(full[:-3], full)
+
+
+def test_complete_match_overrun_boundary():
+    """Adjudication: captured may overrun the PGN by exactly 1 ply."""
+    assert moves_complete_match(_ENOUGH + ["c2c3"], list(_ENOUGH))
+    assert not moves_complete_match(_ENOUGH + ["c2c3", "e8g8"], list(_ENOUGH))
+
+
+def test_complete_match_divergent_moves():
+    other = list(_ENOUGH)
+    other[-1] = "h7h6"
+    assert not moves_complete_match(other, list(_ENOUGH))

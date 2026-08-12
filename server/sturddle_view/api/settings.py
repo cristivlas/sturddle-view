@@ -40,6 +40,7 @@ _AUTO_CLAIM_DRAWS_KEY = "auto_claim_draws"
 _INHERIT_PGN_CLOCKS_KEY = "inherit_pgn_clocks"
 _BOARD_STYLE_KEY = "board_style"
 _PLAY_EVAL_POV_KEY = "play_eval_pov"
+_PLAY_SHOW_EVAL_GRAPH_KEY = "play_show_eval_graph"
 _VIEW_SHOW_PGN_COMMENTS_KEY = "view_show_pgn_comments"
 _RIBBON_SIDE_KEY = "ribbon_side"
 _ENGINE_THREADS_KEY = "engine_default_threads"
@@ -103,6 +104,7 @@ def _serialize(s) -> dict:
         _INHERIT_PGN_CLOCKS_KEY: s.inherit_pgn_clocks,
         _BOARD_STYLE_KEY: s.board_style,
         _PLAY_EVAL_POV_KEY: s.play_eval_pov,
+        _PLAY_SHOW_EVAL_GRAPH_KEY: s.play_show_eval_graph,
         _VIEW_SHOW_PGN_COMMENTS_KEY: s.view_show_pgn_comments,
         _RIBBON_SIDE_KEY: s.ribbon_side,
         _ENGINE_THREADS_KEY: s.engine_default_threads,
@@ -326,6 +328,7 @@ _APPLIERS = {
     _INHERIT_PGN_CLOCKS_KEY: _bool_field(_INHERIT_PGN_CLOCKS_KEY),
     _BOARD_STYLE_KEY: _enum_field(_BOARD_STYLE_KEY, _VALID_BOARD_STYLES),
     _PLAY_EVAL_POV_KEY: _enum_field(_PLAY_EVAL_POV_KEY, _VALID_EVAL_POV),
+    _PLAY_SHOW_EVAL_GRAPH_KEY: _bool_field(_PLAY_SHOW_EVAL_GRAPH_KEY),
     _VIEW_SHOW_PGN_COMMENTS_KEY: _bool_field(_VIEW_SHOW_PGN_COMMENTS_KEY),
     _RIBBON_SIDE_KEY: _enum_field(_RIBBON_SIDE_KEY, _VALID_RIBBON_SIDES),
     _ENGINE_THREADS_KEY: _optional_int_field(_ENGINE_THREADS_KEY, min_value=1),

@@ -114,7 +114,9 @@ function makeDurationRow({ label, seconds, minSeconds, onChange }) {
   return row;
 }
 
-export async function openSettingsDialog({ api, initialTab, getActivePerspective, reloadPerspective }) {
+export async function openSettingsDialog({
+  api, initialTab, focusClass, getActivePerspective, reloadPerspective,
+}) {
   let initial;
   let tournamentInitial;
   let engineList = [];
@@ -283,6 +285,17 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       } else if (startTab === analysisTab) {
         analysisMounted = true;
         mountAnalysis();
+      }
+
+      // Deep link naming a control: focus it once the dialog is showing, so
+      // the setting the link exists to fix is the one under the cursor.
+      // Silent no-op if the tab doesn't carry it.
+      if (focusClass) {
+        dialog.addEventListener("wa-after-show", function once(ev) {
+          if (ev.target !== dialog) return;
+          dialog.removeEventListener("wa-after-show", once);
+          dialog.querySelector(`.${focusClass}`)?.focus();
+        });
       }
 
       for (const { tab, panel } of TABS.values()) tabs.append(tab, panel);

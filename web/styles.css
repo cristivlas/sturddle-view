@@ -237,6 +237,10 @@ wa-select::part(listbox) {
   gap: 8px;
   color: var(--accent-line);
   font-style: italic;
+  /* Tight line so a folded summary is only as tall as its text, and a hair
+     smaller than the prose it introduces. */
+  font-size: 0.85em;
+  line-height: 1.2;
 }
 .play-ai-revision-summary::-webkit-details-marker { display: none; }
 .play-ai-revision-summary::marker { content: ""; }
@@ -689,19 +693,21 @@ wa-select::part(listbox) {
      "Refuted" sits tight against its border-left. */
   margin: 0 var(--tool-box-inset-right) 0 var(--tool-box-indent);
   padding: 0 8px;
-  font-size: calc(1em / var(--tool-row-scale));
+  /* Divide the row's shrink back out, then re-apply the same 0.9em the base
+     .play-ai-revision rule sets -- this declaration replaces it rather than
+     compounding, so restating it keeps both variants on one computed size. */
+  font-size: calc(0.9em / var(--tool-row-scale));
   font-family: var(--wa-font-family-body);
 }
 /* A little breathing room below the prose only when expanded. */
 .play-ai-verdict[open] {
   padding: 0 8px 4px;
 }
-/* Verdict summary: upright static label; tight line so the folded row is
-   only as tall as the text. A hair smaller than the prose. */
+/* Verdict summary is a static label ("Holds"/"Refuted"), not the narrated
+   aside a self-correction is -- so it stays upright. Size and line-height
+   are shared with the base summary rule. */
 .play-ai-verdict > .play-ai-revision-summary {
   font-style: normal;
-  font-size: 0.85em;
-  line-height: 1.2;
 }
 .play-ai-tool-label {
   /* Stay on one line; the head scrolls horizontally if needed. */
@@ -1570,20 +1576,6 @@ body .side-popover.popover-floating {
 }
 .play-dock-left.dock-empty { visibility: hidden; }
 
-/* PGN commentary panel: a parallel dock container occupying the same left
-   column area as .play-dock-left. Holds at most one .dock-slot (commentary).
-   Visibility toggled via the .dock-empty class set by play-dock-windows.js. */
-.play-comments-host {
-  grid-column: 1;
-  grid-row: 1;
-  position: fixed;
-  left: calc(var(--ribbon-w) + var(--ribbon-border-w));
-  /* top/bottom/width set dynamically in JS to align with the board. */
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  z-index: 8;
-}
 .pgn-comments-body {
   font-size: 0.85rem;
   line-height: 1.4;
@@ -1627,15 +1619,12 @@ body .side-popover.popover-floating {
   cursor: default;
 }
 .play-dock-left:not(.dock-empty),
-.play-comments-host:not(.dock-empty),
 .play-rail-dock:not(.dock-empty) { border: 1px solid #454952; }
-.play-comments-host.dock-empty { visibility: hidden; }
 /* Drag-to-dock drop hint (play-dock-windows.js): a window title bar is being
    dragged, so reveal the drop zone even when dock-empty (must sit after the
    .dock-empty rules to win the specificity tie). The over-the-zone highlight
    is the landing ghost below, not a class on the container. */
-.play-dock-left.dock-drop-eligible,
-.play-comments-host.dock-drop-eligible {
+.play-dock-left.dock-drop-eligible {
   visibility: visible;
   outline: 1px solid color-mix(in srgb, var(--row-bg-selected), white 30%);
   outline-offset: -1px;
@@ -1661,7 +1650,6 @@ body .side-popover.popover-floating {
   border: 1px solid var(--border-subtle);
   background: var(--panel);
 }
-.play-comments-host .dock-slot { overflow: hidden; }
 .dock-grip {
   flex: 0 0 var(--dock-grip-size, 5px);
   cursor: row-resize;
@@ -1814,7 +1802,6 @@ body .side-popover.popover-floating {
      higher specificity (e.g. modifier classes set from JS). Mobile
      must hide the dock unconditionally. */
   .play-dock-left { display: none !important; }
-  .play-comments-host { display: none !important; }
   #play-perspective { display: block; }
   .play-grid {
     display: flex;
@@ -3806,7 +3793,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 /* Hover affordance on the sortable headers: highlight the cell and outline
    its extent (the column-size hint), like the file picker. */
-.studio-tourney-tbl thead th.th-sortable:hover, .studio-history-tbl thead th.th-sortable:hover {
+.studio-tourney-tbl thead th.th-sortable:hover, .studio-history-tbl thead th.th-sortable:hover,
+.wb-standings-tbl thead th.th-sortable:hover {
   background: var(--row-bg-hover);
   box-shadow:
     inset 2px 0 0 var(--wa-color-border-loud, #353841),
@@ -4593,7 +4581,25 @@ wa-dialog.tournament-info-dialog::part(body) {
   max-width: var(--lg-board-w, 100%);
 }
 .wb-livegame.lg-measuring .clock-row { visibility: hidden; }
-.wb-livegame .lg-result-overlay {
+/* Overlay geometry. --lg-overlay-h derives the result banner's natural
+   height (sans Review button) from the very values its sibling rules use,
+   so pinning the waiting overlay to it cannot silently desync. */
+.wb-livegame {
+  --lg-line-h: 1.4;          /* body line-height, unitless -> scales per element */
+  --lg-overlay-pad-y: 0.875em;
+  --lg-score-fs: 1.375em;
+  --lg-term-fs: 0.875em;
+  --lg-term-gap: 0.25;       /* x --lg-term-fs */
+  /* --lg-waiting-scale: 0.875; */
+  --lg-waiting-scale: 1.1;
+  --lg-overlay-h: calc(
+    2 * var(--lg-overlay-pad-y)
+    + var(--lg-score-fs) * var(--lg-line-h)
+    + var(--lg-term-fs) * (var(--lg-term-gap) + var(--lg-line-h))
+  );
+}
+.wb-livegame .lg-result-overlay,
+.wb-livegame .lg-waiting-overlay {
   position: absolute;
   left: 0; right: 0;
   top: 50%;
@@ -4601,19 +4607,32 @@ wa-dialog.tournament-info-dialog::part(body) {
   text-align: center;
   background: rgba(20, 22, 26, 0.88);
   color: var(--fg);
-  padding: 0.875em 0.5em;
+  padding: var(--lg-overlay-pad-y) 0.5em;
+  min-height: var(--lg-overlay-h);
   pointer-events: none;
   box-shadow: 0 0.125em 0.75em rgba(0, 0, 0, 0.6);
 }
+/* min-height is divided by the scale because em here resolves against this
+   element's own reduced font-size, not the banner's. The :not([hidden])
+   guard keeps display:flex from defeating the hidden attribute. */
+.wb-livegame .lg-waiting-overlay {
+  /* color: var(--accent); */
+  color: var(--wa-color-brand-95);
+  font-size: calc(1em * var(--lg-waiting-scale));
+  min-height: calc(var(--lg-overlay-h) / var(--lg-waiting-scale));
+}
+.wb-livegame .lg-waiting-overlay:not([hidden]) {
+  display: flex; align-items: center; justify-content: center;
+}
 .wb-livegame .lg-result-score {
-  font-size: 1.375em; font-weight: 700;
+  font-size: var(--lg-score-fs); font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--accent);
 }
 .wb-livegame .lg-result-termination {
-  font-size: 0.875em;
-  margin-top: 0.25em;
-  min-height: 1.4em;   /* one inherited line (body line-height 1.4) so empty == filled */
+  font-size: var(--lg-term-fs);
+  margin-top: calc(1em * var(--lg-term-gap));
+  min-height: calc(1em * var(--lg-line-h));   /* one line, so empty == filled */
   color: var(--muted);
   text-transform: lowercase;
 }
@@ -4682,6 +4701,25 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-sched-attach-btn--live { border-color: var(--accent); color: var(--accent); }
 .wb-sched-attach-btn--live:hover { background: var(--nav-btn-bg-hover); }
 .wb-sched-pair .wb-sched-icon { color: var(--muted); }
+
+/* Engine rows: playing/idle state (3+ engine tourneys leave engines idle).
+   Playing fills with the selection slate; idle stays a muted outline. */
+.wb-sched-list .wb-engine-state {
+  flex: 0 0 auto;
+  font-size: 0.6875rem;
+  padding: 1px 5px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  background: var(--row-bg-selected);
+  color: var(--text);
+}
+.wb-sched-list .wb-engine-idle .wb-engine-state {
+  background: var(--wa-color-surface-border);
+  border-color: var(--wb-outline);
+  color: var(--muted-bright);
+}
+.wb-sched-list .wb-engine-idle .wb-sched-icon,
+.wb-sched-list .wb-engine-idle .wb-sched-game { opacity: 0.5; }
 
 /* Ribbons center all buttons as one group everywhere, so the push spacer never
    expands -- it collapses to a normal divider in every layout. */
@@ -4798,8 +4836,7 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
       ". banner ."
       "side board  .";
   }
-  body[data-ribbon-side="right"] .play-dock-left,
-  body[data-ribbon-side="right"] .play-comments-host {
+  body[data-ribbon-side="right"] .play-dock-left {
     grid-column: 3;
     left: auto;
     right: calc(var(--ribbon-w) + var(--ribbon-border-w));

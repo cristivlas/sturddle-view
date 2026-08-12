@@ -73,6 +73,9 @@ class PgnTailer:
         self._poll_interval = poll_interval
         self._task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
+        # Wakes the run loop out of its poll sleep; set by both stop()
+        # and finalize() so neither waits out a full poll interval.
+        self._wake_event: asyncio.Event | None = None
         self._offset = 0
         self._game_n = 0
         self._last_mtime_ns: int | None = None
@@ -113,6 +116,7 @@ class PgnTailer:
         # doesn't exit on its first poll because of a stale flag.
         self._finalize = False
         self._stop_event = asyncio.Event()
+        self._wake_event = asyncio.Event()
         self._task = asyncio.create_task(
             self._run(), name=f"pgn-tail:{self._path.name}",
         )
@@ -126,9 +130,8 @@ class PgnTailer:
         loop is active, runs a single ``poll_once`` to drain anything
         the gated tailer missed while paused, then returns."""
         if not self.is_running():
-            # Tailer was paused (no subscribers). Drain in one shot
-            # from the caller's context -- the gate kept us off so
-            # nothing is in flight from the run loop.
+            # Not running (never started, or already stopped): drain in
+            # one shot from the caller's context.
             try:
                 await self.poll_once()
                 while self._has_more:
@@ -137,12 +140,16 @@ class PgnTailer:
                 log.error("PgnTailer finalize (paused) failed", exc_info=True)
             return
         self._finalize = True
+        if self._wake_event is not None:
+            self._wake_event.set()
         task, self._task = self._task, None
         await task
 
     async def stop(self) -> None:
         if self._stop_event is not None:
             self._stop_event.set()
+        if self._wake_event is not None:
+            self._wake_event.set()
         task, self._task = self._task, None
         if task is None:
             return
@@ -176,15 +183,20 @@ class PgnTailer:
             else:
                 try:
                     await asyncio.wait_for(
-                        self._stop_event.wait(), timeout=self._poll_interval,
+                        self._wake_event.wait(), timeout=self._poll_interval,
                     )
-                    return  # stop requested
+                    if self._stop_event.is_set():
+                        return
+                    # Finalize wake: fall through to the drain poll below.
                 except asyncio.TimeoutError:
                     pass
             try:
                 await self.poll_once()
             except Exception:
-                # Parse error must not kill the tailer.
+                # Parse error must not kill the tailer. Drop the backlog flag
+                # so a poll that keeps raising falls back to the poll sleep
+                # instead of spinning (and log-flooding) on the no-sleep branch.
+                self._has_more = False
                 log.error("PgnTailer poll failed for %s", self._path, exc_info=True)
             # In finalize mode the writer is gone -- once we've caught
             # up to the current EOF (``not _has_more``) no further data
@@ -198,6 +210,9 @@ class PgnTailer:
             st = self._path.stat()
         except FileNotFoundError:
             # Pre-creation window: tailer may start before fastchess writes.
+            # Clear the backlog flag: nothing is pending on a file that isn't
+            # there, and leaving it set spins the run loop's no-sleep branch.
+            self._has_more = False
             return 0
 
         # Truncation guard (defensive; fastchess always appends).

@@ -56,7 +56,6 @@ export const STORAGE_KEY = {
   EVALBAR_GEO: "sturddle:evalbar:geo",
   EVALBAR_WIN_STATE: "sturddle:evalbar:winstate",
   EVALBAR_DOCKED: "sturddle:evalbar:docked",
-  EVALBAR_OPEN: "sturddle:evalbar:open",
   UCILOG_GEO: "sturddle:ucilog:geo",
   UCILOG_WIN_STATE: "sturddle:ucilog:winstate",
   UCILOG_DOCKED: "sturddle:ucilog:docked",
@@ -88,6 +87,8 @@ export const STORAGE_KEY = {
   WORKSPACE_PREFIX: "sturddle:workspace:",
   LIVE_PVTABLE_COL_WIDTHS: "sturddle:live:pvtable:colWidths",
   TOURNAMENTS_STANDINGS_COL_PCTS: "sturddle:tournaments:standingsColPcts",
+  TOURNAMENTS_STANDINGS_SORT: "sturddle:tournaments:standingsSort",
+  TOURNAMENTS_STANDINGS_STACK: "sturddle:tournaments:standingsStack",
   TOURNAMENTS_SORT_BY: "sturddle:tournaments:sortBy",
   TOURNAMENTS_SORT_ASC: "sturddle:tournaments:sortAsc",
 };

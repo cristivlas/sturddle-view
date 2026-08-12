@@ -436,7 +436,7 @@ const saved = loadRaw(TITLE_MODEL_KEY);
 if (saved) inst.setTitle(`${ANALYSIS_WINDOW_TITLE} (${saved})`);
 
 export function openAi() {
-  if (inst.wb || inst.slot || inst.inlineSlot) return;
+  if (inst.mounted) return;
   inst.toggle(null);
 }
 
@@ -445,7 +445,7 @@ export function closeAi() {
 }
 
 export function isAiOpen() {
-  return !!(inst.wb || inst.slot || inst.inlineSlot);
+  return inst.mounted;
 }
 
 // The actual scroller is the inner .play-ai-scroll wrapper; the

@@ -40,7 +40,9 @@ function promoteSort(stack, state) {
 // arrow/cycle and persists its single top entry (sortKey); the full stack is
 // kept under stackKey, restored on init (falling back to that top entry), and
 // repromoted on each click. Returns the live stack via get() for the renderer.
-export function attachLayeredSort({ table, columns, sortKey, stackKey, onChange }) {
+// `defaultState` ({ key, dir }) applies on first-ever visit only: a persisted
+// stack -- including the empty one a clearing third click leaves -- wins.
+export function attachLayeredSort({ table, columns, sortKey, stackKey, onChange, defaultState = null }) {
   let stack = [];
   const sortCtrl = attachColumnSort({
     table, columns, storageKey: sortKey,
@@ -52,7 +54,13 @@ export function attachLayeredSort({ table, columns, sortKey, stackKey, onChange 
   });
   const saved = loadJson(stackKey);
   const cur = sortCtrl.current();
-  stack = Array.isArray(saved) && saved.length ? saved : (cur ? [{ key: cur.key, dir: cur.dir }] : []);
+  if (Array.isArray(saved) && saved.length) stack = saved;
+  else if (cur) stack = [{ key: cur.key, dir: cur.dir }];
+  else if (defaultState && !Array.isArray(saved)) {
+    // set() routes through the arrow-sync + persist + onSort path, so the
+    // header indicator matches the seeded stack.
+    sortCtrl.set(defaultState);
+  }
   return { get: () => stack };
 }
 

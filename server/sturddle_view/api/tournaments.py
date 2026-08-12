@@ -335,9 +335,11 @@ def _serialize(
         if orch is not None and orch.active_id() == t.id:
             out["proxies_active"] = orch.active_proxies()
             out["pairings_active"] = orch.active_pairings()
+            out["state_seq"] = orch.event_seq()
         else:
             out["proxies_active"] = []
             out["pairings_active"] = []
+            out["state_seq"] = None
         sprt_params = (t.template or {}).get("sprt")
         if sprt_params and len(t.engines) >= 2:
             try:
@@ -639,9 +641,9 @@ def update_tournament_settings(payload: TournamentSettingsUpdate, request: Reque
     if payload.tournaments_root is not None:
         new_root = (payload.tournaments_root or "").strip() or None
         s.tournament_root = new_root
-        # Live-update the store's root. Phase 1: a change while a
-        # tournament is running affects only future tournaments (the
-        # running runner has its paths frozen in RunSpec).
+        # Live-update the store's root. A change while a tournament is
+        # running affects only future tournaments (the running runner
+        # has its paths frozen in RunSpec).
         store.set_root(Path(new_root) if new_root else _default_root_for_settings())
     if payload.default_template is not None:
         s.tournament_default_template = dict(payload.default_template)
@@ -656,7 +658,7 @@ def update_tournament_settings(payload: TournamentSettingsUpdate, request: Reque
 
 
 # ---------------------------------------------------------------------------
-# Slice 9b: proxy ingest + per-proxy WS subscription
+# proxy ingest + per-proxy WS subscription
 # ---------------------------------------------------------------------------
 
 
