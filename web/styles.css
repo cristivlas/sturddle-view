@@ -4590,7 +4590,8 @@ wa-dialog.tournament-info-dialog::part(body) {
   --lg-score-fs: 1.375em;
   --lg-term-fs: 0.875em;
   --lg-term-gap: 0.25;       /* x --lg-term-fs */
-  --lg-waiting-scale: 0.875;
+  /* --lg-waiting-scale: 0.875; */
+  --lg-waiting-scale: 1.1;
   --lg-overlay-h: calc(
     2 * var(--lg-overlay-pad-y)
     + var(--lg-score-fs) * var(--lg-line-h)
@@ -4615,7 +4616,8 @@ wa-dialog.tournament-info-dialog::part(body) {
    element's own reduced font-size, not the banner's. The :not([hidden])
    guard keeps display:flex from defeating the hidden attribute. */
 .wb-livegame .lg-waiting-overlay {
-  color: var(--accent);
+  /* color: var(--accent); */
+  color: var(--wa-color-brand-95);
   font-size: calc(1em * var(--lg-waiting-scale));
   min-height: calc(var(--lg-overlay-h) / var(--lg-waiting-scale));
 }
