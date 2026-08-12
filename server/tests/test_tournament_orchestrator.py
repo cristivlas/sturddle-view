@@ -1,8 +1,8 @@
-"""Slice 4: Orchestrator — composes Store + Runner.
+"""Orchestrator -- composes Store + Runner.
 
 Two layers of tests:
 
-  1. Unit tests with a fake Runner — exercise the orchestrator's logic
+  1. Unit tests with a fake Runner -- exercise the orchestrator's logic
      (single-active invariant, status persistence, reconciliation).
   2. One integration test that drives the orchestrator end-to-end with
      the real ``FastchessRunner`` + fake-fastchess script, proving the

@@ -11,7 +11,7 @@
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, loadRaw, saveJson, saveRaw } from "./storage.js";
-import { ENGINE_IDLE_CLASS, engineStateBadge, ICON_ENGINE_ROW, ICON_GAME_ROW, progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
+import { ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow, progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
 import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, nextDir, scrollSortedRowIntoView } from "./col-sort.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
@@ -756,9 +756,7 @@ function renderEnginesPane(ctx) {
   ul.className = "wb-sched-list";
   for (const [pid, label] of entries) {
     const li = liveRow(ICON_ENGINE_ROW, label);
-    const playing = ctx.live.livePairings.has(pid);
-    if (!playing) li.classList.add(ENGINE_IDLE_CLASS);
-    li.insertAdjacentHTML("beforeend", engineStateBadge(playing));
+    markEngineRow(li, ctx.live.livePairings.has(pid));
     addWatchControls(ctx, li, pid, { proxyId: pid, label, engineName: label });
     ul.appendChild(li);
   }

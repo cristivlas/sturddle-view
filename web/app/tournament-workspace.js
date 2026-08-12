@@ -41,7 +41,7 @@ import {
 } from "./tournament-live-state.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { renderEventLogList } from "./tournament-eventlog.js";
-import { ENGINE_IDLE_CLASS, engineStateBadge, ICON_ENGINE_ROW, ICON_GAME_ROW } from "./tournament-row.js";
+import { ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow } from "./tournament-row.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 
 const STORAGE_KEY_PREFIX = STORAGE_KEY.WORKSPACE_PREFIX;
@@ -1046,14 +1046,12 @@ function renderEngines(ctx) {
   for (const [pid, p] of ctx.activeProxies) {
     const li = document.createElement("li");
     li.className = "wb-sched-live";
-    const playing = ctx.livePairings.has(pid);
-    if (!playing) li.classList.add(ENGINE_IDLE_CLASS);
     const engineLabel = p.engineName || pid;
     li.innerHTML = `
       <span class="wb-sched-icon">${ICON_ENGINE_ROW}</span>
       <span class="wb-sched-game" title="${escapeHtml(engineLabel)}">${escapeHtml(engineLabel)}</span>
-      ${engineStateBadge(playing)}
     `;
+    markEngineRow(li, ctx.livePairings.has(pid));
     appendWatchControls(li, pid, (btn) => attachWatch(ctx, btn, pid, {
       proxyId: pid,
       label: `${engineLabel}`,

@@ -22,10 +22,19 @@ export const ICON_ENGINE_ROW = "&#9881;&#xFE0E;";
 export const ICON_GAME_ROW = "&#9822;&#xFE0E;";
 
 // Engine-row state: with 3+ engines some sit idle between games; badge and
-// dim those rows so the watcher can tell who is actually playing.
-export const ENGINE_IDLE_CLASS = "wb-engine-idle";
-export function engineStateBadge(playing) {
-  return `<span class="wb-engine-state">${playing ? "playing" : "idle"}</span>`;
+// dim those rows so the watcher can tell who is actually playing. Arena and
+// Studio both render engine rows, so the treatment lives here rather than
+// being wired twice.
+const ENGINE_IDLE_CLASS = "wb-engine-idle";
+
+// Appends the state badge to an engine row (after its existing content) and
+// dims the row when idle. Call once per row, before the watch controls.
+export function markEngineRow(li, playing) {
+  li.classList.toggle(ENGINE_IDLE_CLASS, !playing);
+  li.insertAdjacentHTML(
+    "beforeend",
+    `<span class="wb-engine-state">${playing ? "playing" : "idle"}</span>`,
+  );
 }
 
 // Total scheduled games for a tournament, or null when the template is

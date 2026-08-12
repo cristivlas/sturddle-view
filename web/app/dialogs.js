@@ -679,28 +679,26 @@ export function inlineSvgIcon(innerSvg, { viewBox = "0 0 512 512", ariaLabel } =
   return svg;
 }
 
-/** Canonical "open the Engines settings tab" toast action. Use this in
- *  client-side guards that want the same affordance as the server-side
- *  no_engine_configured handler. */
-export const OPEN_ENGINES_ACTION = {
-  icon: "gear",
-  ariaLabel: "Open engine settings",
-  onClick: () => openSettings(SETTINGS_TAB_ENGINES),
-};
-
-/** "Open the Analysis settings tab" toast action. `focusClass` optionally
- *  names the control to land on once the dialog is up. */
-function openAnalysisAction(focusClass) {
+/** Gear toast action that deep-links into a Settings tab. `focusClass`
+ *  optionally names the control to land on once the dialog is up. */
+function openSettingsAction(tab, ariaLabel, focusClass) {
   return {
     icon: "gear",
-    ariaLabel: "Open AI settings",
-    onClick: () => openSettings(SETTINGS_TAB_ANALYSIS, focusClass),
+    ariaLabel,
+    onClick: () => openSettings(tab, focusClass),
   };
 }
 
+/** Canonical "open the Engines settings tab" toast action. Use this in
+ *  client-side guards that want the same affordance as the server-side
+ *  no_engine_configured handler. */
+export const OPEN_ENGINES_ACTION =
+  openSettingsAction(SETTINGS_TAB_ENGINES, "Open engine settings");
+
 /** Canonical "open the Analysis settings tab" toast action, for failures
  *  the user fixes among the AI settings. */
-export const OPEN_ANALYSIS_ACTION = openAnalysisAction();
+export const OPEN_ANALYSIS_ACTION =
+  openSettingsAction(SETTINGS_TAB_ANALYSIS, "Open AI settings");
 
 // Map of well-known server error codes to inline toast actions.
 // Centralized here so every reportError call site picks up the same
@@ -828,7 +826,9 @@ export function reportVerboseError(text, { variant = "danger" } = {}) {
 // server's -- it phrases these itself, naming the model -- so this only
 // says how to fix them.
 const AI_ERROR_ACTIONS = {
-  ThinkingUnsupported: [openAnalysisAction(AI_THINKING_MODE_CLASS)],
+  ThinkingUnsupported: [
+    openSettingsAction(SETTINGS_TAB_ANALYSIS, "Open AI settings", AI_THINKING_MODE_CLASS),
+  ],
 };
 
 /** Sticky danger toast for a failed AI run. A recognized failure carries

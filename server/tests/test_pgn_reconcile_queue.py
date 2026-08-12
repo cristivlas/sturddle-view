@@ -1,4 +1,4 @@
-"""Match queue and matching logic for PGN reconciliation (slice 3).
+"""Match queue and matching logic for PGN reconciliation.
 
 Pure unit tests for `ReconciliationQueue`. Orchestrator wiring
 is exercised in `test_pgn_reconciliation.py`.

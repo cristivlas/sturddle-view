@@ -129,7 +129,7 @@ def build_command(spec: RunSpec) -> list[str]:
 
     cmd: list[str] = [spec.binary_path]
 
-    # Slice 9b: when proxy broadcast is configured, wrap each engine's
+    # When proxy broadcast is configured, wrap each engine's
     # cmd= so fastchess spawns the proxy script with the real engine as
     # an argument. The proxy forwards stdio transparently and POSTs a
     # copy to the GUI server.

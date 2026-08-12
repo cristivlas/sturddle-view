@@ -193,7 +193,10 @@ class PgnTailer:
             try:
                 await self.poll_once()
             except Exception:
-                # Parse error must not kill the tailer.
+                # Parse error must not kill the tailer. Drop the backlog flag
+                # so a poll that keeps raising falls back to the poll sleep
+                # instead of spinning (and log-flooding) on the no-sleep branch.
+                self._has_more = False
                 log.error("PgnTailer poll failed for %s", self._path, exc_info=True)
             # In finalize mode the writer is gone -- once we've caught
             # up to the current EOF (``not _has_more``) no further data
@@ -207,6 +210,9 @@ class PgnTailer:
             st = self._path.stat()
         except FileNotFoundError:
             # Pre-creation window: tailer may start before fastchess writes.
+            # Clear the backlog flag: nothing is pending on a file that isn't
+            # there, and leaving it set spins the run loop's no-sleep branch.
+            self._has_more = False
             return 0
 
         # Truncation guard (defensive; fastchess always appends).

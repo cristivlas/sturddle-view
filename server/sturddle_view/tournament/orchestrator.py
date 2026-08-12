@@ -253,8 +253,8 @@ class Orchestrator:
         self._active_id: str | None = None
         self._broadcast: BroadcastCallback | None = None
 
-        # Slice 9b: live observation pipeline. WS subscribers attach
-        # per-proxy and receive that engine's UCI line stream.
+        # Live observation pipeline. WS subscribers attach per-proxy
+        # and receive that engine's UCI line stream.
         self._proxy_subscribers: dict[str, set[CoalescingQueue]] = {}
         # Display name reported by each proxy on session start. Used to
         # label rows / buttons in the workspace UI. Cleared on session
@@ -366,8 +366,8 @@ class Orchestrator:
 
     def set_broadcast(self, broadcast: BroadcastCallback | None) -> None:
         """Install (or clear) the upstream broadcast callback. Used by the
-        REST/WS layer in Slice 5; tests pass ``None`` and inspect the
-        store directly."""
+        REST/WS layer; tests pass ``None`` and inspect the store
+        directly."""
         self._broadcast = broadcast
 
     def active_id(self) -> str | None:
@@ -625,7 +625,7 @@ class Orchestrator:
         DELETE endpoint so torn-down tournaments don't leak history."""
         self._event_history.pop(tournament_id, None)
 
-    # ---- Slice 9b: live-observation pipeline -------------------------------
+    # ---- live-observation pipeline -----------------------------------------
 
     def proxy_secret(self) -> str | None:
         """Per-tournament secret embedded in the proxy broadcast URL.

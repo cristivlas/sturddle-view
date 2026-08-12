@@ -1,9 +1,8 @@
 """PGN reconciliation: orchestrator integration.
 
-Slice 1 covers move-list capture; slice 3 covers the match queue +
-`game_reconciled` emission. Pure-queue mechanics live in
-`test_pgn_reconcile_queue.py`; the PGN tailer lives in
-`test_pgn_tail.py`.
+Covers move-list capture, the match queue, and `game_reconciled`
+emission. Pure-queue mechanics live in `test_pgn_reconcile_queue.py`;
+the PGN tailer lives in `test_pgn_tail.py`.
 """
 from __future__ import annotations
 
@@ -169,7 +168,7 @@ async def test_position_outside_confirmed_pair_is_ignored(orch):
 
 
 # ---------------------------------------------------------------------------
-# Slice 3: match queue + `game_reconciled` emission
+# match queue + `game_reconciled` emission
 # ---------------------------------------------------------------------------
 
 
