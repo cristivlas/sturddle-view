@@ -761,8 +761,11 @@ export function makeToastDismissBtn(onClick) {
 /** A toast that stays until dismissed, with an X button. `content` is a
  *  string or a Node (laid out in the grow slot beside the button). For
  *  errors that must not auto-vanish before the user reads them.
+ *  Optional `actions`: [{icon|label, ariaLabel?, onClick}] adds inline
+ *  buttons between the message and the X, as flex siblings -- not inline
+ *  text -- so they can't break away from the X when the message wraps.
  *  Optional `onDismiss` fires once, on X click or the returned fn. */
-export function stickyToast(content, { variant = "neutral", stack, onDismiss } = {}) {
+export function stickyToast(content, { variant = "neutral", stack, onDismiss, actions } = {}) {
   let dismiss;
   const grow = document.createElement("span");
   grow.className = "toast-grow";
@@ -770,7 +773,9 @@ export function stickyToast(content, { variant = "neutral", stack, onDismiss } =
   else grow.textContent = content;
   const node = document.createElement("span");
   node.className = "toast-sort-msg";
-  node.append(grow, makeToastDismissBtn(() => dismiss?.()));
+  node.append(grow);
+  for (const a of actions || []) node.appendChild(buildToastActionButton(a));
+  node.append(makeToastDismissBtn(() => dismiss?.()));
   const hide = toast(node, { variant, duration: 0, stack });
   let notified = false;
   dismiss = () => {
@@ -809,15 +814,15 @@ export function reportVerboseError(text, { variant = "danger" } = {}) {
   let dismiss;
   // Once the full text has been read in the modal the toast has served its
   // purpose; dismiss it when the modal closes.
-  const body = buildToastWithActions(summary, [{
+  const actions = [{
     icon: DETAILS_ICON,
     ariaLabel: DETAILS_ARIA,
     onClick: async () => {
       await showVerboseErrorDetails(full);
       dismiss?.();
     },
-  }]);
-  dismiss = stickyToast(body, { variant });
+  }];
+  dismiss = stickyToast(summary, { variant, actions });
   return dismiss;
 }
 
@@ -838,7 +843,7 @@ export function reportAiError(name, detail) {
   const actions = AI_ERROR_ACTIONS[name];
   if (!actions) return reportVerboseError(detail || name);
   const { summary } = summarizeError(detail || name);
-  return stickyToast(buildToastWithActions(summary, actions), { variant: "danger" });
+  return stickyToast(summary, { variant: "danger", actions });
 }
 
 // http(s) URLs, stopping before trailing punctuation that is more likely

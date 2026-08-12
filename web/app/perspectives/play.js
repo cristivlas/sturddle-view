@@ -7,7 +7,7 @@ import { APP_EVT } from "../app-events.js";
 import { KIND, AI_KIND_PREFIX } from "../game-events.js";
 import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
-import { alert as showAlert, buildToastWithActions, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportAiError, reportError, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
+import { alert as showAlert, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportAiError, reportError, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, isMobileLayout } from "../play-dock-windows.js";
 import {
@@ -2578,7 +2578,7 @@ export const playPerspective = {
           _difficultyToastUp = true;
           const engineName = evt.payload?.engine || MSG.DIFFICULTY_GENERIC_ENGINE;
           let dismiss;
-          const body = buildToastWithActions(MSG.DIFFICULTY_UNAVAILABLE, [{
+          const actions = [{
             icon: DETAILS_ICON,
             ariaLabel: MSG.DIFFICULTY_DETAILS_ARIA,
             onClick: async () => {
@@ -2588,9 +2588,10 @@ export const playPerspective = {
               });
               dismiss?.();
             },
-          }]);
-          dismiss = stickyToast(body, {
+          }];
+          dismiss = stickyToast(MSG.DIFFICULTY_UNAVAILABLE, {
             variant: "warning",
+            actions,
             onDismiss: () => { _difficultyToastUp = false; },
           });
         }
