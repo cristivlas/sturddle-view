@@ -4712,8 +4712,9 @@ wa-dialog.tournament-info-dialog::part(body) {
   color: var(--text);
 }
 .wb-sched-list .wb-engine-idle .wb-engine-state {
-  background: none;
-  color: var(--muted);
+  background: var(--wa-color-surface-border);
+  border-color: var(--wb-outline);
+  color: var(--muted-bright);
 }
 .wb-sched-list .wb-engine-idle .wb-sched-icon,
 .wb-sched-list .wb-engine-idle .wb-sched-game { opacity: 0.5; }
