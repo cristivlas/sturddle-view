@@ -1,4 +1,4 @@
-"""Slice 9c e2e: clicking a row in the Engines window opens a live
+"""e2e: clicking a row in the Engines window opens a live
 game window that subscribes to a proxy and renders the board.
 
 Uses a fake fastchess (a sleeping Python script) and injects proxy
@@ -128,7 +128,7 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
             )
 
             # Open the Engines window via the workspace JS API.
-            # Hovering the nested submenu (Window → Tournament →
+            # Hovering the nested submenu (Window -> Tournament ->
             # Engines) is brittle in Playwright; the API call is
             # what the menu handler invokes anyway.
             await page.evaluate(
@@ -142,13 +142,13 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
             )
 
             # The workspace seeds from `proxies_active` on its
-            # initial refresh — the active proxy should appear
+            # initial refresh -- the active proxy should appear
             # immediately as an Engines row.
             await page.wait_for_selector(
                 ".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn",
             )
 
-            # Click the watch button → live game window opens.
+            # Click the watch button -> live game window opens.
             await page.click(
                 ".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn"
             )
@@ -159,10 +159,10 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
             await page.wait_for_selector(".wb-livegame .lg-board", state="attached")
 
             # Drive the proxy stream:
-            #   1. position → engine learns it's playing Black (FEN
+            #   1. position -> engine learns it's playing Black (FEN
             #      side-to-move = "b").
-            #   2. go → triggers orientation flip + clock display.
-            #   3. info → eval score renders.
+            #   2. go -> triggers orientation flip + clock display.
+            #   3. info -> eval score renders.
             async with AsyncClient(base_url=base) as http:
                 r = await http.post("/internal/proxy", json={
                     "proxy_id": "proxy-white",
@@ -198,7 +198,7 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
                     if (!ranks.length) return null;
                     ranks.sort((a, b) => parseFloat(a.getAttribute('y')) - parseFloat(b.getAttribute('y')));
                     const top = ranks[0].textContent.trim();
-                    // Black-at-bottom ⇒ topmost rank label is "1".
+                    // Black-at-bottom => topmost rank label is "1".
                     return top === "1" ? top : false;
                 }""",
             )
@@ -206,6 +206,33 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
             assert top_rank_label == "1", (
                 f"Bug 4 regression: expected top rank label '1' "
                 f"(black-at-bottom), got {top_rank_label!r}"
+            )
+
+            # Waiting overlay must match a filled result banner's height.
+            # Review button is pulled out of layout: a post-reconcile
+            # addition the waiting box is not meant to match.
+            wait_h, result_h = await page.evaluate(
+                """() => {
+                    const wait = document.querySelector('.wb-livegame .lg-waiting-overlay');
+                    const result = document.querySelector('.wb-livegame .lg-result-overlay');
+                    const btn = result.querySelector('.lg-result-replay');
+                    result.querySelector('.lg-result-score').textContent = '1-0';
+                    result.querySelector('.lg-result-termination').textContent = 'checkmate';
+                    wait.hidden = false;
+                    result.hidden = false;
+                    btn.style.display = 'none';
+                    const h = [
+                        wait.getBoundingClientRect().height,
+                        result.getBoundingClientRect().height,
+                    ];
+                    btn.style.display = '';
+                    wait.hidden = true;
+                    result.hidden = true;
+                    return h;
+                }"""
+            )
+            assert abs(wait_h - result_h) < 0.5, (
+                f"overlay heights diverged: waiting {wait_h}px vs result {result_h}px"
             )
 
             # Close-on-terminal: stopping the tournament closes

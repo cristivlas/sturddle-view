@@ -4581,6 +4581,22 @@ wa-dialog.tournament-info-dialog::part(body) {
   max-width: var(--lg-board-w, 100%);
 }
 .wb-livegame.lg-measuring .clock-row { visibility: hidden; }
+/* Overlay geometry. --lg-overlay-h derives the result banner's natural
+   height (sans Review button) from the very values its sibling rules use,
+   so pinning the waiting overlay to it cannot silently desync. */
+.wb-livegame {
+  --lg-line-h: 1.4;          /* body line-height, unitless -> scales per element */
+  --lg-overlay-pad-y: 0.875em;
+  --lg-score-fs: 1.375em;
+  --lg-term-fs: 0.875em;
+  --lg-term-gap: 0.25;       /* x --lg-term-fs */
+  --lg-waiting-scale: 0.875;
+  --lg-overlay-h: calc(
+    2 * var(--lg-overlay-pad-y)
+    + var(--lg-score-fs) * var(--lg-line-h)
+    + var(--lg-term-fs) * (var(--lg-term-gap) + var(--lg-line-h))
+  );
+}
 .wb-livegame .lg-result-overlay,
 .wb-livegame .lg-waiting-overlay {
   position: absolute;
@@ -4590,23 +4606,31 @@ wa-dialog.tournament-info-dialog::part(body) {
   text-align: center;
   background: rgba(20, 22, 26, 0.88);
   color: var(--fg);
-  padding: 0.875em 0.5em;
+  padding: var(--lg-overlay-pad-y) 0.5em;
+  min-height: var(--lg-overlay-h);
   pointer-events: none;
   box-shadow: 0 0.125em 0.75em rgba(0, 0, 0, 0.6);
 }
+/* min-height is divided by the scale because em here resolves against this
+   element's own reduced font-size, not the banner's. The :not([hidden])
+   guard keeps display:flex from defeating the hidden attribute. */
 .wb-livegame .lg-waiting-overlay {
-  color: var(--muted);
-  font-size: 0.875em;
+  color: var(--muted-bright);
+  font-size: calc(1em * var(--lg-waiting-scale));
+  min-height: calc(var(--lg-overlay-h) / var(--lg-waiting-scale));
+}
+.wb-livegame .lg-waiting-overlay:not([hidden]) {
+  display: flex; align-items: center; justify-content: center;
 }
 .wb-livegame .lg-result-score {
-  font-size: 1.375em; font-weight: 700;
+  font-size: var(--lg-score-fs); font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--accent);
 }
 .wb-livegame .lg-result-termination {
-  font-size: 0.875em;
-  margin-top: 0.25em;
-  min-height: 1.4em;   /* one inherited line (body line-height 1.4) so empty == filled */
+  font-size: var(--lg-term-fs);
+  margin-top: calc(1em * var(--lg-term-gap));
+  min-height: calc(1em * var(--lg-line-h));   /* one line, so empty == filled */
   color: var(--muted);
   text-transform: lowercase;
 }
