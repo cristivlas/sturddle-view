@@ -1,4 +1,4 @@
-"""Slice 3: FastchessRunner — command building + process lifecycle.
+"""FastchessRunner — command building + process lifecycle.
 
 A real fastchess binary is not required: the lifecycle tests use a
 small inline Python program as a stand-in, started via the same
@@ -7,7 +7,11 @@ small inline Python program as a stand-in, started via the same
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import os
+import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -53,9 +57,10 @@ def _make_spec(
 #   --print-err N       : print N lines of stderr
 #   --sleep S           : sleep S seconds
 #   --exit RC           : exit with code RC
-#   --spawn-child PATH  : fork a long-sleeping child python; write its
-#                         pid to PATH (POSIX-only test helper for the
-#                         pgid-SIGTERM test).
+#   --spawn-child       : fork a long-sleeping child python and announce
+#                         its pid on stdout as "child <pid>".
+# The spawned child inherits stdout/stderr, so those pipes stay open
+# after the parent dies (models a surviving engine/proxy slot).
 # Order matters; the script does each in argv order.
 FAKE_FASTCHESS = r"""
 import os, subprocess, sys, time
@@ -76,9 +81,9 @@ while i < len(sys.argv):
     elif a == "--exit":
         rc = int(sys.argv[i+1]); i += 2
     elif a == "--spawn-child":
-        path = sys.argv[i+1]; i += 2
+        i += 1
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
-        with open(path, "w") as f: f.write(str(child.pid))
+        print(f"child {child.pid}", flush=True)
     else:
         i += 1
 sys.exit(rc)
@@ -90,6 +95,39 @@ def _fake_argv(*args: str) -> list[str]:
     return [sys.executable, "-c", FAKE_FASTCHESS, *args]
 
 
+def _kill_pid_externally(pid: int) -> None:
+    """Hard-kill exactly one pid, leaving its descendants alone -- models
+    an operator running ``taskkill /PID <pid> /F`` (no ``/T``) or
+    ``kill -9``. Deliberately bypasses the runner's own stop path."""
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/F"],
+            capture_output=True, check=True,
+        )
+    else:
+        os.kill(pid, signal.SIGKILL)
+
+
+def _pid_alive(pid: int) -> bool:
+    """True if *pid* is still a live process."""
+    if sys.platform == "win32":
+        out = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],
+            capture_output=True, text=True,
+        ).stdout
+        # CSV columns: "name","pid",... -- compare the pid field itself so
+        # a memory figure or another column can't match by coincidence.
+        return any(
+            len(row) > 1 and row[1] == str(pid)
+            for row in csv.reader(io.StringIO(out))
+        )
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
 class _Recorder:
     """Captures (kind, payload) tuples from the runner."""
 
@@ -97,11 +135,31 @@ class _Recorder:
         self.events: list[tuple[str, dict]] = []
         self.done = asyncio.Event()
         self._terminal = {"done", "stopped", "runner_crash"}
+        self._waiters: list[tuple[str, asyncio.Future]] = []
 
     async def __call__(self, kind: str, payload: dict) -> None:
         self.events.append((kind, payload))
+        if kind == "runner_log":
+            line = payload.get("line", "")
+            for prefix, fut in list(self._waiters):
+                if line.startswith(prefix) and not fut.done():
+                    fut.set_result(line)
+                    self._waiters.remove((prefix, fut))
         if kind in self._terminal:
             self.done.set()
+
+    async def log_line(self, prefix: str) -> str:
+        """Await the first ``runner_log`` line starting with *prefix*.
+
+        Lets a test wait on something the fake fastchess announces rather
+        than polling the filesystem for it.
+        """
+        for kind, payload in self.events:
+            if kind == "runner_log" and payload.get("line", "").startswith(prefix):
+                return payload["line"]
+        fut = asyncio.get_running_loop().create_future()
+        self._waiters.append((prefix, fut))
+        return await fut
 
 
 # ---------------------------------------------------------------------------
@@ -599,9 +657,9 @@ def test_build_command_tb_adjudication_off(tmp_path):
 
 
 def test_build_command_wraps_engines_in_proxy_when_configured(tmp_path):
-    """Slice 9b: when proxy_broadcast_url + proxy_secret are set on the
-    spec, each engine's cmd= becomes the python proxy invocation with
-    the real engine binary as an argument."""
+    """When proxy_broadcast_url + proxy_secret are set on the spec, each
+    engine's cmd= becomes the python proxy invocation with the real
+    engine binary as an argument."""
     import sys as _sys
 
     spec = _make_spec(
@@ -726,9 +784,8 @@ async def test_runner_clean_exit_emits_done(tmp_path, patched_runner):
 
 
 async def test_runner_emits_runner_log_per_stdout_line(tmp_path, patched_runner):
-    """Slice 9a: fastchess stdout is forwarded to the event bus as
-    ``runner_log`` events so the workspace's Event log window can show
-    each line."""
+    """fastchess stdout is forwarded to the event bus as ``runner_log``
+    events so the workspace's Event log window can show each line."""
     spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
     rec = _Recorder()
     runner = patched_runner(["--print", "3", "--print-err", "1", "--exit", "0"])
@@ -854,17 +911,11 @@ async def test_runner_stop_signals_whole_process_group_posix(tmp_path, patched_r
         pytest.skip("POSIX-only: pgid behavior")
     spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
     rec = _Recorder()
-    child_pid_path = tmp_path / "child.pid"
-    runner = patched_runner(["--spawn-child", str(child_pid_path), "--sleep", "60"])
+    runner = patched_runner(["--spawn-child", "--sleep", "60"])
 
     await runner.start(spec, rec)
-    # Wait until the fake fastchess has spawned the child.
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + 5.0
-    while not child_pid_path.exists() and loop.time() < deadline:
-        await asyncio.sleep(0.05)
-    assert child_pid_path.exists(), "fake fastchess never spawned its child"
-    child_pid = int(child_pid_path.read_text().strip())
+    # The fake announces the child on stdout once spawned.
+    child_pid = int((await rec.log_line("child ")).split()[1])
     # Child must be alive at this point.
     os.kill(child_pid, 0)
 
@@ -880,6 +931,42 @@ async def test_runner_stop_signals_whole_process_group_posix(tmp_path, patched_r
         await asyncio.sleep(0.05)
     with pytest.raises(ProcessLookupError):
         os.kill(child_pid, 0)
+
+
+async def test_runner_detects_external_kill_while_child_holds_pipes(
+    tmp_path, patched_runner
+):
+    """Externally-killed fastchess must still reach a terminal event when
+    a slot it spawned outlives it holding the inherited stdio pipes.
+
+    Regression: ``proc.wait()`` resolves only once the process has exited
+    *and* every pipe disconnected, so the supervisor wedged forever and
+    the tournament stayed 'running' until a server restart.
+    """
+    if sys.platform != "win32":
+        # The handle-wait fix (and the Job that reaps the orphaned slot)
+        # are Windows-only; POSIX still relies on proc.wait() alone.
+        pytest.skip("Windows-only: OS-handle exit detection")
+    spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
+    rec = _Recorder()
+    runner = patched_runner(["--spawn-child", "--sleep", "60"])
+
+    await runner.start(spec, rec)
+    # The fake announces its pipe-holding child on stdout once spawned.
+    child_pid = int((await rec.log_line("child ")).split()[1])
+
+    # Kill ONLY fastchess, leaving the grandchild holding the pipes --
+    # exactly what `taskkill /PID <fastchess> /F` (no /T) does.
+    _kill_pid_externally(runner._proc.pid)
+
+    # Bounded so a regression fails the run instead of hanging it -- the
+    # event is expected immediately, this is not a sync wait.
+    await asyncio.wait_for(rec.done.wait(), timeout=15)
+    assert rec.events[-1][0] == "runner_crash"
+    assert not runner.is_running()
+    # The orphaned slot must be reaped too, not merely abandoned --
+    # otherwise every external kill leaks an engine process.
+    assert not _pid_alive(child_pid)
 
 
 async def test_runner_stop_idempotent(tmp_path, patched_runner):

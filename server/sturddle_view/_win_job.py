@@ -7,6 +7,7 @@ trigger the cascading kill.
 """
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import logging
 import sys
@@ -15,7 +16,10 @@ from ctypes import wintypes
 log = logging.getLogger(__name__)
 
 if sys.platform == "win32":
-    _kernel32 = ctypes.windll.kernel32
+    # use_last_error: ctypes snapshots GetLastError() into thread-local
+    # storage right after each call, so ctypes.get_last_error() reports the
+    # failing call's code even if something else runs before we read it.
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     # ctypes restype defaults to c_int (32-bit); on 64-bit Windows that
     # truncates HANDLE return values. Declare explicitly.
     _kernel32.CreateJobObjectW.restype = wintypes.HANDLE
@@ -29,6 +33,16 @@ if sys.platform == "win32":
     _kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
     _kernel32.CloseHandle.restype = wintypes.BOOL
     _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    _kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    _kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, wintypes.LPDWORD]
+    _kernel32.WaitForMultipleObjects.restype = wintypes.DWORD
+    _kernel32.WaitForMultipleObjects.argtypes = [
+        wintypes.DWORD, ctypes.c_void_p, wintypes.BOOL, wintypes.DWORD]
+    _kernel32.CreateEventW.restype = wintypes.HANDLE
+    _kernel32.CreateEventW.argtypes = [
+        ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR]
+    _kernel32.SetEvent.restype = wintypes.BOOL
+    _kernel32.SetEvent.argtypes = [wintypes.HANDLE]
 else:
     _kernel32 = None
 
@@ -76,14 +90,14 @@ def create_job() -> int | None:
         return None
     h = _kernel32.CreateJobObjectW(None, None)
     if not h:
-        raise ctypes.WinError()
+        raise ctypes.WinError(ctypes.get_last_error())
     info = _EXTENDED_LIMIT()
     info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     if not _kernel32.SetInformationJobObject(
         h, _JobObjectExtendedLimitInformation,
         ctypes.byref(info), ctypes.sizeof(info),
     ):
-        err = ctypes.WinError()
+        err = ctypes.WinError(ctypes.get_last_error())
         _kernel32.CloseHandle(h)
         raise err
     return h
@@ -95,12 +109,89 @@ def assign_to_job(job_handle: int | None, pid: int) -> None:
         return
     h_proc = _kernel32.OpenProcess(_PROCESS_TERMINATE_AND_SET_QUOTA, False, pid)
     if not h_proc:
-        raise ctypes.WinError()
+        raise ctypes.WinError(ctypes.get_last_error())
     try:
         if not _kernel32.AssignProcessToJobObject(job_handle, h_proc):
-            raise ctypes.WinError()
+            raise ctypes.WinError(ctypes.get_last_error())
     finally:
         _kernel32.CloseHandle(h_proc)
+
+
+_SYNCHRONIZE = 0x00100000
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_WAIT_OBJECT_0 = 0x00000000
+_WAIT_FAILED = 0xFFFFFFFF
+_INFINITE = 0xFFFFFFFF
+_STILL_ACTIVE = 259
+
+
+async def wait_for_pid_exit(pid: int) -> int | None:
+    """Block until *pid* exits; return its exit code (None if unknown).
+
+    Waits on the OS process handle, which is signalled the moment the
+    process dies. Unlike ``asyncio``'s ``Process.wait()`` -- which also
+    requires every inherited stdio pipe to hit EOF -- this is unaffected
+    by descendants that outlive the process still holding those pipes.
+
+    The blocking wait runs in a worker thread and waits on two objects at
+    once: the process and a cancel event. Either one wakes it instantly,
+    so there is no polling and cancellation is not deferred. Each handle
+    is closed only once the wait can no longer refer to it. Raises
+    ``CancelledError`` if cancelled.
+    """
+    if sys.platform != "win32":
+        raise RuntimeError("wait_for_pid_exit is Windows-only")
+    # NOTE: opening by pid has an inherent reuse window -- if the process
+    # already exited and Windows recycled its pid, this can attach to an
+    # unrelated process. Callers that hold the original handle (asyncio's
+    # transport does) race this against their own wait, so a stale answer
+    # loses to the authoritative one.
+    h_proc = _kernel32.OpenProcess(
+        _SYNCHRONIZE | _PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not h_proc:
+        # Process already gone (and reaped) -- treat as exited, code unknown.
+        return None
+    # Manual-reset, initially unsignalled: the caller's "stop waiting" signal.
+    h_cancel = _kernel32.CreateEventW(None, True, False, None)
+    if not h_cancel:
+        _kernel32.CloseHandle(h_proc)
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    def _wait() -> int | None:
+        handles = (wintypes.HANDLE * 2)(h_proc, h_cancel)
+        status = _kernel32.WaitForMultipleObjects(2, handles, False, _INFINITE)
+        if status == _WAIT_FAILED:
+            log.warning("wait_for_pid_exit: wait failed for pid=%d (errno=%d)",
+                        pid, ctypes.get_last_error())
+            return None
+        if status != _WAIT_OBJECT_0:
+            return None  # cancel event fired; process is still running
+        code = wintypes.DWORD()
+        if not _kernel32.GetExitCodeProcess(h_proc, ctypes.byref(code)):
+            return None
+        return None if code.value == _STILL_ACTIVE else code.value
+
+    def _wait_and_close() -> int | None:
+        # The worker owns the process handle: closing it here guarantees
+        # it outlives the wait however the awaiting side unwinds.
+        try:
+            return _wait()
+        finally:
+            _kernel32.CloseHandle(h_proc)
+
+    # to_thread cancellation only abandons the future -- the worker thread
+    # itself runs on. Shield it so the thread is never orphaned mid-wait,
+    # and signal the event on the way out so it returns immediately.
+    task = asyncio.ensure_future(asyncio.to_thread(_wait_and_close))
+    try:
+        return await asyncio.shield(task)
+    finally:
+        # Signal first, then wait for the worker to stop using the event
+        # before closing it -- SetEvent on a closed handle would be a
+        # use-after-close, and so would closing it mid-wait.
+        _kernel32.SetEvent(h_cancel)
+        await asyncio.shield(task)
+        _kernel32.CloseHandle(h_cancel)
 
 
 def close_job(job_handle: int | None) -> None:
@@ -204,7 +295,7 @@ def _build_attribute_list(job_handle: int, handle_list: list[int] | None):
     buffer = (ctypes.c_byte * size.value)()
     attr_list = ctypes.cast(buffer, ctypes.c_void_p)
     if not _kernel32.InitializeProcThreadAttributeList(attr_list, n_attrs, 0, ctypes.byref(size)):
-        raise ctypes.WinError()
+        raise ctypes.WinError(ctypes.get_last_error())
     kept_alive: list = []
     job_h = wintypes.HANDLE(job_handle)
     kept_alive.append(job_h)
@@ -212,7 +303,7 @@ def _build_attribute_list(job_handle: int, handle_list: list[int] | None):
         attr_list, 0, _PROC_THREAD_ATTRIBUTE_JOB_LIST,
         ctypes.byref(job_h), ctypes.sizeof(job_h), None, None,
     ):
-        err = ctypes.WinError()
+        err = ctypes.WinError(ctypes.get_last_error())
         _kernel32.DeleteProcThreadAttributeList(attr_list)
         raise err
     if handle_list:
@@ -223,7 +314,7 @@ def _build_attribute_list(job_handle: int, handle_list: list[int] | None):
             attr_list, 0, _PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
             ctypes.byref(arr), ctypes.sizeof(arr), None, None,
         ):
-            err = ctypes.WinError()
+            err = ctypes.WinError(ctypes.get_last_error())
             _kernel32.DeleteProcThreadAttributeList(attr_list)
             raise err
     return buffer, attr_list, kept_alive
@@ -276,7 +367,7 @@ def _create_process_in_job(
     )
     if not ok:
         # Capture WinError BEFORE any other Win32 call clobbers GetLastError.
-        err = ctypes.WinError()
+        err = ctypes.WinError(ctypes.get_last_error())
         _kernel32.DeleteProcThreadAttributeList(attr_list)
         del buffer  # noqa: F841
         raise err
