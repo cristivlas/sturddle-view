@@ -19,13 +19,18 @@ import sys
 from collections import deque
 
 from .._runtime import proxy_argv_prefix
-from .._win_job import assign_to_job, close_job, create_job, spawn_in_job
+from .._win_job import assign_to_job, close_job, create_job, spawn_in_job, wait_for_pid_exit
 from .rescheck import ALLOW_OVERSUBSCRIBE_KEY
 from .runner import EventCallback, RunSpec
 
 
 # Recent stderr/stdout lines retained for runner_crash diagnostics.
 _STDERR_TAIL_MAX = 40
+
+# Stand-in exit code when the process is known dead but Windows could not
+# report its code. Non-zero so it classifies as a crash, and distinct from
+# the small negatives POSIX uses to encode terminating signals.
+_UNKNOWN_EXIT_RC = -9999
 
 
 # SPRT models. New tournaments default to normalized pentanomial (the UI no
@@ -350,6 +355,9 @@ class FastchessRunner:
     def __init__(self, binary_path: str | None = None) -> None:
         self._binary_path = binary_path
         self._proc: asyncio.subprocess.Process | None = None
+        # Exit code observed via the OS process handle when asyncio could
+        # not see it (surviving slot holding the pipes). None while running.
+        self._exited_rc: int | None = None
         self._stop_requested = False
         self._supervisor: asyncio.Task | None = None
         self._drain_tasks: list[asyncio.Task] = []
@@ -376,7 +384,9 @@ class FastchessRunner:
         self._binary_path = path
 
     def is_running(self) -> bool:
-        return self._proc is not None and self._proc.returncode is None
+        if self._proc is None or self._exited_rc is not None:
+            return False
+        return self._proc.returncode is None
 
     @staticmethod
     def detect_binary(configured_path: str | None) -> str | None:
@@ -406,6 +416,7 @@ class FastchessRunner:
 
         self._on_event = on_event
         self._spec = spec
+        self._exited_rc = None
         self._stop_requested = False
         self._stderr_tail.clear()
         self._stdout_tail.clear()
@@ -509,8 +520,13 @@ class FastchessRunner:
         if self._proc is None or self._supervisor is None:
             log.info("stop: no process to stop")
             return
-        if self._proc.returncode is not None:
-            log.info("stop: process already exited rc=%d", self._proc.returncode)
+        if not self.is_running():
+            # Covers both a normally-reaped exit and one seen only via the
+            # OS handle -- in the latter the terminal event has already
+            # been emitted, so setting _stop_requested now would relabel a
+            # crash as a user-requested stop.
+            rc = self._proc.returncode if self._proc.returncode is not None else self._exited_rc
+            log.info("stop: process already exited rc=%s", rc)
             return
         self._stop_requested = True
         pid = self._proc.pid
@@ -608,14 +624,55 @@ class FastchessRunner:
         except Exception:
             log.error("drain task (%s) crashed", tag, exc_info=True)
 
+    async def _wait_for_exit(self, pid: int) -> int | None:
+        """Return fastchess's exit code once the process is gone.
+
+        POSIX: plain ``proc.wait()``. Windows: also wait on the OS
+        process handle and take whichever resolves first. ``proc.wait()``
+        alone additionally requires every inherited stdio pipe to hit
+        EOF, so an engine slot that outlives an externally-killed
+        fastchess would otherwise wedge the supervisor forever.
+        """
+        assert self._proc is not None
+        proc_wait = asyncio.ensure_future(self._proc.wait())
+        if sys.platform != "win32":
+            return await proc_wait
+        handle_wait = asyncio.ensure_future(wait_for_pid_exit(pid))
+        try:
+            done, _ = await asyncio.wait(
+                (proc_wait, handle_wait), return_when=asyncio.FIRST_COMPLETED,
+            )
+            # proc.wait() carries asyncio's own bookkeeping, so prefer it
+            # when both resolved; otherwise use the OS exit code.
+            if proc_wait in done:
+                return proc_wait.result()
+            # asyncio never saw this exit (a surviving slot still holds
+            # its pipes), so ``_proc.returncode`` stays None -- record the
+            # exit ourselves so ``is_running()`` stops reporting True.
+            rc = handle_wait.result()
+            self._exited_rc = _UNKNOWN_EXIT_RC if rc is None else rc
+            return self._exited_rc
+        finally:
+            # On the usual path proc.wait() wins and this cancels the
+            # handle wait, which unblocks its worker immediately.
+            for fut in (proc_wait, handle_wait):
+                if not fut.done():
+                    fut.cancel()
+
     async def _supervise(self) -> None:
         assert self._proc is not None
         pid = self._proc.pid
         try:
-            rc = await self._proc.wait()
+            rc = await self._wait_for_exit(pid)
             log.info("supervise: pid=%d exited rc=%s", pid, rc)
         except asyncio.CancelledError:
             return
+        # Reap any surviving slots before draining -- an external kill
+        # (taskkill without /T) leaves them holding the inherited stdio
+        # pipes, which the drains below would otherwise wait on forever.
+        # Cancellation skips this; stop() owns the Job in that path.
+        close_job(self._job_handle)
+        self._job_handle = None
         # Wait for drain tasks to flush — they exit naturally on EOF.
         for t in self._drain_tasks:
             try:
@@ -629,11 +686,6 @@ class FastchessRunner:
         if hasattr(self._proc, "close"):
             self._proc.close()
 
-        # Close the Job on natural termination too (done/crash) — kills
-        # any descendants fastchess didn't reap. Idempotent for stop().
-        close_job(self._job_handle)
-        self._job_handle = None
-
         if self._stop_requested:
             kind, payload = "stopped", {"rc": rc}
         elif rc == 0:
@@ -643,7 +695,7 @@ class FastchessRunner:
             # CLI errors there) so the UI never gets an empty diagnostic.
             tail = list(self._stderr_tail) or list(self._stdout_tail)
             kind, payload = "runner_crash", {"rc": rc, "stderr_tail": tail}
-            log.error("runner_crash: rc=%d\n%s", rc, "\n".join(tail) if tail else "(no output captured)")
+            log.error("runner_crash: rc=%s\n%s", rc, "\n".join(tail) if tail else "(no output captured)")
 
         await self._emit(kind, payload)
 
