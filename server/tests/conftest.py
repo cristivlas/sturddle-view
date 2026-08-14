@@ -73,7 +73,12 @@ def _write_uci_stub(root: Path, name: str, extra_body: str = "", *, pre_loop: st
     """
     py = root / f"{name}.py"
     body = (
-        "#!/usr/bin/env python3\n"
+        # Use the test interpreter (which has `chess` and friends) rather
+        # than `/usr/bin/env python3`: the latter can resolve to a bare
+        # system Python lacking our deps. On Windows the .cmd wrapper below
+        # invokes sys.executable directly, so this shebang only matters on
+        # POSIX, where the stub is exec'd via its shebang.
+        f"#!{sys.executable}\n"
         "import sys\n"
         f"{pre_loop}"
         "while True:\n"
