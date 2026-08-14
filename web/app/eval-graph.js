@@ -30,6 +30,10 @@ const COLOR_WHITE_BAR = "#e8e8e8";
 const COLOR_BLACK_BAR = "#111";
 const COLOR_BLACK_BAR_EDGE = "#777"; // outline so black bars read on dark bg
 const COLOR_MIDLINE = "#555";
+// Play strip background tint: top half (engine's color, since positive =
+// engine ahead) / bottom half (opponent's color).
+const COLOR_HALF_WHITE = "rgba(255, 255, 255, 0.08)";
+const COLOR_HALF_BLACK = "rgba(0, 0, 0, 0.15)";
 // Numeric label: on the bar (contrast color) when it fits, else just
 // past the bar's tip in muted gray.
 const COLOR_LABEL = "#e8e8e8";
@@ -187,7 +191,8 @@ export const EVAL_EMPTY_CLASS = "eval-empty";
 // engine ply, running left to right, engine-POV centipawns against a
 // horizontal zero midline -- a bar grows up when the engine judged
 // itself ahead, down when behind, scaled to the strip's current height
-// (so it tracks layout reflow). Only the engine's plies get bars; the
+// (so it tracks layout reflow). Background is tinted top/bottom for the
+// engine's/opponent's side. Only the engine's plies get bars; the
 // human's are skipped. Fill marks the engine's color: light = white,
 // dark outlined = black. Bars have fixed width; when the game outgrows
 // the strip it scrolls, sticking to the newest ply unless scrolled away.
@@ -230,6 +235,13 @@ export function createEvalBar({ onBarClick = null, isBarNavigable = null } = {})
     canvas.style.width = `${w}px`;
     ctx.clearRect(0, 0, w, h);
     const mid = h / 2;
+    if (samples.length) {
+      const engineIsWhite = samples[0].w;
+      ctx.fillStyle = engineIsWhite ? COLOR_HALF_WHITE : COLOR_HALF_BLACK;
+      ctx.fillRect(0, 0, w, mid);
+      ctx.fillStyle = engineIsWhite ? COLOR_HALF_BLACK : COLOR_HALF_WHITE;
+      ctx.fillRect(0, mid, w, h - mid);
+    }
     ctx.fillStyle = COLOR_MIDLINE;
     ctx.fillRect(0, Math.round(mid) - 0.5, w, 1);
     const bw = BAR_THICKNESS_PX - BAR_GAP_PX;

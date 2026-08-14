@@ -1135,6 +1135,12 @@ const UCI_WIN_STATE_KEY = STORAGE_KEY.UCILOG_WIN_STATE;
 const UCI_DOCKED_KEY    = STORAGE_KEY.UCILOG_DOCKED;
 const UCI_OPEN_KEY      = STORAGE_KEY.UCILOG_OPEN;
 
+// Clear entry point ({clear}) or null while the window is closed. play.js
+// calls it when analysis starts and when the engine's (non-analysis) turn
+// starts, so stale traffic from the prior turn/session doesn't linger.
+let uciLogApi = null;
+export function clearUciLog() { uciLogApi?.clear(); }
+
 function buildUciLogBody(events, { setOff }) {
   const body = document.createElement("div");
   body.className = "wb-uci-log";
@@ -1155,6 +1161,8 @@ function buildUciLogBody(events, { setOff }) {
   let lineCount = 0;
   let paused = false;
 
+  const clear = () => { lines.textContent = ""; lineCount = 0; copyBtn.disabled = true; };
+
   copyBtn.disabled = true;
   pauseChk.addEventListener("change", () => { paused = pauseChk.checked; });
   copyBtn.addEventListener("click", () => {
@@ -1163,11 +1171,11 @@ function buildUciLogBody(events, { setOff }) {
       .then(() => toast("UCI log copied to clipboard", { variant: "success", duration: 1500 }))
       .catch((e) => toast(`Copy failed: ${e.message}`, { variant: "danger" }));
   });
-  clearBtn.addEventListener("click", () => { lines.textContent = ""; lineCount = 0; copyBtn.disabled = true; });
+  clearBtn.addEventListener("click", clear);
 
   // Autoscroll only when the user is already pinned to the bottom; otherwise
   // they're inspecting earlier output and new lines must not yank them away.
-  setOff(events.on((evt) => {
+  const off = events.on((evt) => {
     if (evt.kind !== "uci_log" || paused) return;
     const { dir, line } = evt.payload;
     // body.parentElement is wb.body when floating, .dock-slot-body when docked.
@@ -1186,7 +1194,10 @@ function buildUciLogBody(events, { setOff }) {
       }
     }
     if (pinned) scrollToBottom(scroller);
-  }));
+  });
+
+  uciLogApi = { clear };
+  setOff(() => { off(); uciLogApi = null; });
 
   return body;
 }
