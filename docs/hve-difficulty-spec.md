@@ -51,6 +51,14 @@ Below max, per engine move:
    score, so one constant does both jobs. The clamp
    only folds mates and huge evals to a finite cp -- the worst legal
    move still sets the auto-range denominator.
+   Deficit relief: when the engine's best move is below even odds,
+   `relief = min(cap, gain * (0.5 - wp(best)))` (defaults cap 0.6,
+   gain 2.0) replaces the set level with an effective
+   `level + relief * (10 - level)` in the auto-range and blinding
+   formulas -- a losing engine is blinded less and gets a sporting
+   chance to recoup, while the cap (clamped below 1 regardless of the
+   knobs) keeps it short of full strength so the set level still
+   rules. Setting and UI untouched.
 3. Blinding pass, one Bernoulli roll per pool move: removal odds
    decay linearly across the admitted band,
    `q = qmax * (1 - g / width)` with `width = (10 - level) / 10` and
@@ -113,6 +121,8 @@ shortening book plies, not weakening the book.
 | `SV_HVE_SCORE_CLAMP_CP` | 1000 | mate folding / cp clipping before ranging |
 | `SV_HVE_WINPROB_SCALE_CP` | 180 | logistic scale for cp -> win prob |
 | `SV_HVE_WINPROB_DROP_CAP` | 0.15 | max win-prob drop vs best for admission |
+| `SV_HVE_DEFICIT_RELIEF_GAIN` | 2.0 | relief per unit of win-prob shortfall |
+| `SV_HVE_DEFICIT_RELIEF_CAP` | 0.6 | max blinding fraction lifted when behind |
 
 ## Why this works with any engine
 
