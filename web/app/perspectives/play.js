@@ -9,7 +9,7 @@ import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
 import { alert as showAlert, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportAiError, reportError, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, isMobileLayout } from "../play-dock-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, clearUciLog, isMobileLayout } from "../play-dock-windows.js";
 import {
   commentaryWindow,
   openCommentary,
@@ -135,6 +135,10 @@ const SETTING_SHOW_EVAL_GRAPH = "play_show_eval_graph";
 function putSettingOff(ctx, key) {
   ctx.api("PUT", "/settings", { [key]: false })
     .catch((e) => reportError(ctx, MSG.SETTING_SAVE_FAILED, e));
+}
+
+function humanToMove(state) {
+  return state.humanWhite ? state.turn === SIDE.WHITE : state.turn === SIDE.BLACK;
 }
 
 // eval_history entries are white POV {cp|mate}; flip for a black engine.
@@ -1255,7 +1259,7 @@ function refreshButtons(state) {
     });
     return;
   }
-  const humanToMove = state.humanWhite ? state.turn === SIDE.WHITE : state.turn === SIDE.BLACK;
+  const humanIsToMove = humanToMove(state);
   // Completed AI analysis in play mode reads as paused to the user; show
   // Resume (see aiAnalysisDone / onPause). Engine-only analysis and
   // in-progress runs keep the plain Pause/Resume toggle.
@@ -1264,7 +1268,7 @@ function refreshButtons(state) {
   // Needs a live game; Pause then needs the human's turn (Resume is always
   // allowed once a game exists, which any showResume state implies).
   configureBtn(state.el.pauseBtn, {
-    disabled: !state.resignAvailable || state.gameOver || (!aiDone && state.analyzing) || (!showResume && !humanToMove),
+    disabled: !state.resignAvailable || state.gameOver || (!aiDone && state.analyzing) || (!showResume && !humanIsToMove),
     label: showResume ? "Resume" : "Pause",
     icon: showResume ? "forward-step" : "pause",
   });
@@ -1637,6 +1641,7 @@ async function startAnalysisFromUiImpl(state) {
   // the close can't race the new analysis state.
   if (!state.aiEnabled && isAiOpen()) closeAi();
   state.aiShared.turnFinished = false;
+  clearUciLog();
   // Build ALL start-state (toast + panel) synchronously BEFORE the POST.
   // An instant-fail turn's done/error event arrives during the await; with
   // everything built first it tears it all down cleanly. Setup split across
@@ -1792,6 +1797,7 @@ function enterIdleAfterViewDelete(state) {
   // nothing of the deleted game may linger.
   state.view.clearArrows();
   state.view.reset();
+  clearUciLog();
   state.movesPlayed = 0;
   _viewingHash = null;
   _viewingSummary = null;
@@ -1916,6 +1922,10 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       const wasViewing = state.viewing;
       const prevGameId = state.viewingGameId;
       state.viewingGameId = evt.game_id ?? null;
+      const gameChanged = state.viewingGameId !== prevGameId;
+      // New game (New Game / Play from here / opening a different game):
+      // drop the prior game's UCI traffic before its own lands.
+      if (prevGameId != null && gameChanged) clearUciLog();
       state.viewing = !!v;
       // Read analyzing early: syncCommentsVisibility (called below) gates
       // view/goto on !analyzing; the main analyzing block runs later in
@@ -1926,7 +1936,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         // trip that produced this event; consumed on arrival.
         const autoEntry = !wasViewing && state.autoViewFromGameOver;
         state.autoViewFromGameOver = false;
-        if (!wasViewing || state.viewingGameId !== prevGameId) {
+        if (!wasViewing || gameChanged) {
           // The play-mode dialog already announced the result; start the
           // view session with the game-over toast spent.
           state.viewGameOverAlertShown = autoEntry;
@@ -2017,10 +2027,12 @@ function handleBusEvent(state, ai, aiCtx, evt) {
           detail: { viewing: state.viewing },
         }));
       }
+      const wasHumanToMove = humanToMove(state);
       if (typeof evt.payload.human_white === "boolean") {
         state.humanWhite = evt.payload.human_white;
       }
       if (evt.payload.turn) state.turn = evt.payload.turn;
+      const isHumanToMove = humanToMove(state);
       // humanWhite is settled above; rebuild the eval strip in engine POV.
       feedEvalBar(state, evt.payload.eval_history);
       if (typeof evt.payload.analyzing === "boolean") {
@@ -2043,6 +2055,9 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       // analysis engine is named at analysis start; here we cover the play
       // engine (or bare when none, e.g. viewing an imported game).
       if (!state.analyzing) setUciLogEngine(evt.payload.engine_name || "");
+      // Engine's (non-analysis) turn just started -- drop the prior turn's
+      // traffic so the log doesn't carry it into the new one.
+      if (!state.analyzing && !state.viewing && wasHumanToMove && !isHumanToMove) clearUciLog();
       state.el.boardHost.classList.remove("board-idle");
       setDisabled(state.el.newGameBtn, false);
       refreshButtons(state);
