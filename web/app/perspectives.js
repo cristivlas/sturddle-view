@@ -28,6 +28,14 @@ function _cssMs(value) {
 
 const ACTIVE_PERSPECTIVE_KEY = STORAGE_KEY.ACTIVE_PERSPECTIVE;
 
+// persist defaults to true (deliberate switch); the single source of truth
+// for that default, shared by _activateImpl and the coalescing guard.
+const PERSIST_DEFAULT = true;
+
+function isDeliberate(opts) {
+  return Boolean(opts.persist ?? PERSIST_DEFAULT);
+}
+
 export class PerspectiveRouter {
   constructor({ root, ctx }) {
     this._root = root;
@@ -35,6 +43,8 @@ export class PerspectiveRouter {
     this._registry = new Map();
     this._active = null;
     this._activeController = null;
+    this._activating = null;
+    this._latestRequest = null;
   }
 
   register(perspective) {
@@ -53,7 +63,42 @@ export class PerspectiveRouter {
   // rewrite the remembered perspective. Involuntary switches -- e.g. the
   // disconnect fallback out of a server-backed tab -- must not, or a
   // transient drop silently becomes the user's new startup tab.
-  async activate(id, { force = false, persist = true } = {}) {
+  //
+  // Serialized: concurrent calls would interleave across _activateImpl's
+  // awaits (fade, unmount, mount), double-mounting perspectives and leaking
+  // the loser's controller (orphan toasts, live handlers with no dock).
+  // Queued calls coalesce last-wins: superseded ones skip and return false.
+  // Exception: an involuntary switch (persist:false) never displaces a
+  // queued deliberate one -- the user's click wins, the fallback skips.
+  async activate(id, opts = {}) {
+    const req = { id, opts, queued: true };
+    const latest = this._latestRequest;
+    const displacesQueuedDeliberate =
+      latest?.queued && isDeliberate(latest.opts) && !isDeliberate(opts);
+    if (!displacesQueuedDeliberate) {
+      this._latestRequest = req;
+    }
+    const run = (this._activating ?? Promise.resolve())
+      .catch(() => {})
+      .then(() => {
+        req.queued = false;
+        if (this._latestRequest !== req) return false;
+        return this._activateImpl(id, opts);
+      });
+    this._activating = run;
+    // Queue drained: drop the settled promise and request so they don't
+    // outlive the switch. Trailing catch: this side chain must not turn
+    // a mount failure (already surfaced via `run`) into an unhandled one.
+    run.finally(() => {
+      if (this._activating === run) {
+        this._activating = null;
+        this._latestRequest = null;
+      }
+    }).catch(() => {});
+    return run;
+  }
+
+  async _activateImpl(id, { force = false, persist = PERSIST_DEFAULT } = {}) {
     if (!force && id === this._active) {
       // Already here, but a deliberate pick still claims the startup slot:
       // after an involuntary switch the stored id is the pre-drop tab, and
@@ -97,11 +142,16 @@ export class PerspectiveRouter {
     const persp = this._registry.get(id);
     this._active = id;
     if (persist) saveRaw(ACTIVE_PERSPECTIVE_KEY, id);
-    this._activeController = (await persp.mount(this._root, this._ctx)) ?? null;
-    if (this._activeController?.ready) {
-      await this._activeController.ready;
+    try {
+      this._activeController = (await persp.mount(this._root, this._ctx)) ?? null;
+      if (this._activeController?.ready) {
+        await this._activeController.ready;
+      }
+    } finally {
+      // A mount/ready throw must not leave the root opacity-locked (a
+      // permanently blank perspective); clear is-pending on every exit.
+      this._root.classList.remove("is-pending");
     }
-    this._root.classList.remove("is-pending");
     return true;
   }
 

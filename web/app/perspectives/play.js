@@ -824,6 +824,9 @@ function buildChildrenToast(state, childrenHere) {
   return node;
 }
 function refreshXgameToasts(state) {
+  // Reached via async callers (fetchXgameInfo); post-unmount these sticky
+  // toasts would orphan -- closeXgameToasts already ran.
+  if (state.unmounted) return;
   // Child -> parent: cursor lands precisely on the fork ply of the
   // current child + the game has a parent. Auto-close on ply
   // change (does NOT count as a dismiss).
@@ -1636,6 +1639,9 @@ async function resolveAnalysisEngineName(state) {
 }
 
 async function startAnalysisFromUiImpl(state) {
+  // Unmounted while a caller (e.g. re-analyze's stop POST) awaited: building
+  // the toast/panel now would orphan them -- unmount already ran.
+  if (state.unmounted) return;
   // Engine-only analysis: close any leftover AI panel from a prior AI run
   // before starting, so the dock shows engine-only output. Done first so
   // the close can't race the new analysis state.
@@ -1655,6 +1661,10 @@ async function startAnalysisFromUiImpl(state) {
     resetAi();
   }
   await state.ctx.api("POST", "/game/analysis/start", {});
+  // Unmounted mid-POST (user navigated away): unmount already dismissed the
+  // toast and dropped the dock container -- opening windows now would float
+  // them over the next perspective.
+  if (state.unmounted) return;
   // Name the UCI Log after the analysis engine (may differ from the play
   // engine). Async + best-effort so it can't delay or fail the start.
   resolveAnalysisEngineName(state)
@@ -2136,6 +2146,9 @@ export const playPerspective = {
       // Set while this client drives an analysis stop/restart round trip: its
       // own panel sequencing wins over the events that transition emits.
       analysisTransitionInFlight: false,
+      // Set by unmount(); post-await continuations check it so they don't
+      // build UI (toasts, dock windows) into a torn-down perspective.
+      unmounted: false,
       aiEnabled: false,
       aiTitleModel: "",
       noEngine: false,
@@ -2625,6 +2638,7 @@ export const playPerspective = {
         });
       },
       unmount() {
+        state.unmounted = true;
         // Un-float/close edit popovers first: a floated popover lives at
         // <body>, and the teardown below removes the dismiss listeners
         // without firing them -- so it would orphan otherwise.
