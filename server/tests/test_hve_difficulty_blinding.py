@@ -15,6 +15,8 @@ import chess
 import chess.engine
 
 from sturddle_view.config import (
+    _DEFAULT_HVE_DEFICIT_RELIEF_CAP,
+    _DEFAULT_HVE_DEFICIT_RELIEF_GAIN,
     _DEFAULT_HVE_SWEEP_BUDGET_SECONDS,
     _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS,
 )
@@ -150,7 +152,7 @@ def _forbidden(message):
 def _fix_pool(monkeypatch, indices):
     """Bypass blinding randomness: candidate_pool returns `indices`."""
     monkeypatch.setattr(
-        hve_mod, "candidate_pool", lambda *a, **kw: list(indices),
+        hve_mod, "candidate_pool", lambda *a, **kw: (list(indices), 0.0),
     )
 
 
@@ -202,6 +204,24 @@ async def test_sweep_time_spreads_budget_over_moves(monkeypatch):
         _DEFAULT_HVE_SWEEP_BUDGET_SECONDS / 4,
     )
     assert engine.sweep_limits == [expected] * 4
+
+
+async def test_relief_knobs_reach_candidate_pool(monkeypatch):
+    """The settings knobs are passed through; relief derivation is
+    candidate_pool's own (pure tests cover it)."""
+    hve, _ = _make()
+    seen = []
+    monkeypatch.setattr(
+        hve_mod, "candidate_pool",
+        lambda *a, **kw: (seen.append(a), ([0], 0.0))[1],
+    )
+    _capture_commit(hve, monkeypatch)
+    await hve._think_and_play()
+    ((_, level, *_rest, gain, cap),) = seen
+    assert level == 5
+    assert (gain, cap) == (
+        _DEFAULT_HVE_DEFICIT_RELIEF_GAIN, _DEFAULT_HVE_DEFICIT_RELIEF_CAP,
+    )
 
 
 # ----- probe: caching, degrade -----

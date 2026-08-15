@@ -23,6 +23,8 @@ from ..config import (
     DEFAULT_TC_INCREMENT_SECONDS,
     DEFAULT_TC_INITIAL_SECONDS,
     HVE_DIFFICULTY_MAX,
+    _DEFAULT_HVE_DEFICIT_RELIEF_CAP,
+    _DEFAULT_HVE_DEFICIT_RELIEF_GAIN,
     _DEFAULT_HVE_REMOVAL_STEP,
     _DEFAULT_HVE_SCORE_CLAMP_CP,
     _DEFAULT_HVE_SWEEP_BUDGET_SECONDS,
@@ -1955,15 +1957,20 @@ class HumanVsEngine:
         wp_drop = getattr(
             self._settings, "hve_winprob_drop_cap", _DEFAULT_HVE_WINPROB_DROP_CAP,
         )
-        pool = [
-            moves[i]
-            for i in candidate_pool(
-                scores, level, HVE_DIFFICULTY_MAX, step, wp_scale, wp_drop,
-            )
-        ]
+        relief_gain = getattr(
+            self._settings, "hve_deficit_relief_gain", _DEFAULT_HVE_DEFICIT_RELIEF_GAIN,
+        )
+        relief_cap = getattr(
+            self._settings, "hve_deficit_relief_cap", _DEFAULT_HVE_DEFICIT_RELIEF_CAP,
+        )
+        indices, relief = candidate_pool(
+            scores, level, HVE_DIFFICULTY_MAX, step, wp_scale, wp_drop,
+            relief_gain, relief_cap,
+        )
+        pool = [moves[i] for i in indices]
         log.info(
-            "difficulty %d: pool %s of %d legal moves",
-            level, [m.uci() for m in pool], len(moves),
+            "difficulty %d relief %.2f: pool %s of %d legal moves",
+            level, relief, [m.uci() for m in pool], len(moves),
         )
         return pool
 

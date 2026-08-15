@@ -71,6 +71,13 @@ _DEFAULT_HVE_SCORE_CLAMP_CP = 1000.0
 _DEFAULT_HVE_WINPROB_SCALE_CP = 180.0
 _DEFAULT_HVE_WINPROB_DROP_CAP = 0.15
 
+# Deficit relief: when the engine is behind, lift a fraction of the
+# blinding -- relief = min(cap, gain * (0.5 - best win prob)) moves the
+# effective level that fraction of the way toward MAX. The cap (< 1)
+# keeps the engine short of full strength, so the set level still rules.
+_DEFAULT_HVE_DEFICIT_RELIEF_GAIN = 2.0
+_DEFAULT_HVE_DEFICIT_RELIEF_CAP = 0.6
+
 # Opening-book line order. Shared by the settings API (validation), the
 # HVE seed path, and opening_lines (selection). None = fastchess default
 # (sequential).
@@ -231,6 +238,8 @@ class Settings(BaseSettings):
     hve_score_clamp_cp: float = _DEFAULT_HVE_SCORE_CLAMP_CP
     hve_winprob_scale_cp: float = _DEFAULT_HVE_WINPROB_SCALE_CP
     hve_winprob_drop_cap: float = _DEFAULT_HVE_WINPROB_DROP_CAP
+    hve_deficit_relief_gain: float = _DEFAULT_HVE_DEFICIT_RELIEF_GAIN
+    hve_deficit_relief_cap: float = _DEFAULT_HVE_DEFICIT_RELIEF_CAP
 
     # AI analysis & commentary. Master toggle gates the engine+AI behavior
     # off the existing Analyze ribbon buttons; provider/model/base_url are

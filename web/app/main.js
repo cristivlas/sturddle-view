@@ -186,7 +186,8 @@ let inViewMode = false;
 let tabLeftOnDisconnect = null;
 
 // The one deliberate-switch path: persists the choice (activate's default)
-// and cancels a pending disconnect-restore.
+// and cancels a pending disconnect-restore. Fast successive clicks coalesce
+// last-wins in the router -- only the final target mounts, by design.
 async function pickPerspective(id) {
   tabLeftOnDisconnect = null;
   await router.activate(id);

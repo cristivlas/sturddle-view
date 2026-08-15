@@ -210,6 +210,17 @@ function formatGameOver(payload, humanWhite) {
 const ANALYZE_ICON_STOP = "magnifying-glass-minus";
 const ANALYZE_ICON_START = "magnifying-glass-plus";
 
+// Board-terminal endings, mirroring the server's start_analysis guard
+// (python-chess is_game_over: no claimable draws, no variant_* -- standard
+// boards can't reach them). Pinned by test_view_analyze_forced_set.
+const FORCED_TERMINATIONS = new Set([
+  "checkmate",
+  "stalemate",
+  "insufficient_material",
+  "seventyfive_moves",
+  "fivefold_repetition",
+]);
+
 // User-facing copy, grouped for an eventual move to a shared i18n
 // catalog. HTML-template aria-labels stay inline (static markup).
 const MSG = {
@@ -396,14 +407,13 @@ function dispatchAiEvent(aiCtx, evt) {
         // analyzing=false. Without this, an error left the button pulsing.
         if (!p.cancelled) {
           aiShared.turnFinished = true;
-          aiShared.dismissAnalysisToast?.();
-          aiShared.dismissAnalysisToast = null;
+          dismissAnalysisToast(aiShared);
           refreshButtons();
         }
         // A failed turn never produced analysis: close the panel locally.
         // The server exits ANALYZING on its own (its analyzing=false
         // board_update clears the spinner) -- we don't POST /stop back.
-        if (p.error) teardownAiPanel();
+        if (p.error) teardownAiPanel(aiShared);
       }
       return true;
     }
@@ -824,6 +834,9 @@ function buildChildrenToast(state, childrenHere) {
   return node;
 }
 function refreshXgameToasts(state) {
+  // Reached via async callers (fetchXgameInfo); post-unmount these sticky
+  // toasts would orphan -- closeXgameToasts already ran.
+  if (state.unmounted) return;
   // Child -> parent: cursor lands precisely on the fork ply of the
   // current child + the game has a parent. Auto-close on ply
   // change (does NOT count as a dismiss).
@@ -959,7 +972,7 @@ function setAnalyzing(state, v) {
   document.body.classList.toggle(XGAME_LOCK_CLASS, state.analyzing);
   // The session is server-owned: whoever ended it, every client drops the
   // panel -- its replay buffer is gone, so it can't be restored anyway.
-  if (was && !state.analyzing && !state.analysisTransitionInFlight) teardownAiPanel();
+  if (was && !state.analyzing && !state.analysisTransitionInFlight) teardownAiPanel(state.aiShared);
 }
 
 // Re-apply the stashed AI recommendation arrow after a board_update wiped
@@ -993,11 +1006,9 @@ async function stopAnalysisFromUi(state) {
     state.analysisTransitionInFlight = false;
   }
   state.aiShared.turnFinished = false;
-  state.aiShared.dismissAnalysisToast?.();
-  state.aiShared.dismissAnalysisToast = null;
   // The AI window's lifecycle is tied to the analysis session, so it
   // always closes on stop. PV/UCI close only if analysis opened them.
-  teardownAiPanel();
+  teardownAiPanel(state.aiShared);
   return true;
 }
 
@@ -1248,7 +1259,7 @@ function refreshButtons(state) {
     // normal ("Analysis mode") even though `analyzing` is true.
     const viewShowAsActive = state.analyzing && !state.aiShared.turnFinished;
     configureBtn(state.el.viewAnalyzeBtn, {
-      disabled: state.noEngine && !viewShowAsActive,
+      disabled: (state.noEngine || state.viewPositionTerminal) && !viewShowAsActive,
       active: viewShowAsActive,
       label: viewShowAsActive
         ? MSG.STOP_ANALYSIS
@@ -1594,8 +1605,15 @@ async function onEditAnnotateImpl(state) {
 
 // Analysis toggle cluster. The persistent "Analysis mode" toast wires Search
 // Lines / UCI log / Stop; start/stop/reanalyze drive the server + AI panel.
+
+// Dismiss the persistent "Analysis mode" toast and drop its handle.
+function dismissAnalysisToast(aiShared) {
+  aiShared.dismissAnalysisToast?.();
+  aiShared.dismissAnalysisToast = null;
+}
+
 function showAnalysisToastImpl(state) {
-  state.aiShared.dismissAnalysisToast?.();
+  dismissAnalysisToast(state.aiShared);
   const msg = document.createElement("span");
   msg.className = "toast-sort-msg";
   const label = document.createElement("span");
@@ -1636,6 +1654,9 @@ async function resolveAnalysisEngineName(state) {
 }
 
 async function startAnalysisFromUiImpl(state) {
+  // Unmounted while a caller (e.g. re-analyze's stop POST) awaited: building
+  // the toast/panel now would orphan them -- unmount already ran.
+  if (state.unmounted) return;
   // Engine-only analysis: close any leftover AI panel from a prior AI run
   // before starting, so the dock shows engine-only output. Done first so
   // the close can't race the new analysis state.
@@ -1655,6 +1676,10 @@ async function startAnalysisFromUiImpl(state) {
     resetAi();
   }
   await state.ctx.api("POST", "/game/analysis/start", {});
+  // Unmounted mid-POST (user navigated away): unmount already dismissed the
+  // toast and dropped the dock container -- opening windows now would float
+  // them over the next perspective.
+  if (state.unmounted) return;
   // Name the UCI Log after the analysis engine (may differ from the play
   // engine). Async + best-effort so it can't delay or fail the start.
   resolveAnalysisEngineName(state)
@@ -1663,11 +1688,11 @@ async function startAnalysisFromUiImpl(state) {
   restoreViewAnalysisWindows(state.ctx.events);
 }
 
-// Local AI-panel teardown (no server call). Shared by the start-failure
-// catch and the turn-error event, both of which tear down a panel the
-// server has already left (or never entered) -- so they must NOT POST
-// /analysis/stop back.
-function teardownAiPanel() {
+// Local teardown (no server call; never POST /analysis/stop back -- the
+// server already left analysis or never entered). Unconditionally drops
+// the toast: session over, idempotent, start-failures emit no event.
+function teardownAiPanel(aiShared) {
+  dismissAnalysisToast(aiShared);
   if (isAiOpen()) closeAi();
   closeAnalysisOpenedWindows();
 }
@@ -1692,7 +1717,7 @@ async function onAnalyzeImpl(state) {
   try {
     await startAnalysisFromUiImpl(state);
   } catch (e) {
-    teardownAiPanel();
+    teardownAiPanel(state.aiShared);
     reportError(state.ctx, MSG.START_ANALYSIS_FAILED, e, { duration: 0 });
   } finally {
     state.analysisTransitionInFlight = false;
@@ -1713,7 +1738,7 @@ async function onReanalyzeImpl(state) {
     }
     await startAnalysisFromUiImpl(state);
   } catch (e) {
-    teardownAiPanel();
+    teardownAiPanel(state.aiShared);
     reportError(state.ctx, MSG.REANALYZE_FAILED, e, { duration: 0 });
   } finally {
     state.analysisTransitionInFlight = false;
@@ -1955,6 +1980,11 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         state.viewCursor = v.cursor ?? 0;
         state.viewTotalPlies = v.total_plies ?? 0;
         state.viewGameOver = !!v.game_over;
+        // termination is stamped at EVERY cursor of a finished game.
+        // ANDing game_over narrows to the position with a real outcome:
+        // mid-game cursors of finished games report game_over false.
+        state.viewPositionTerminal =
+          state.viewGameOver && FORCED_TERMINATIONS.has(v.termination);
         // Auto-return to the SAME play game (no fork) when a resumable
         // session (entered via /view/start on the live game) scrubs to the
         // last ply. The viewReachedNonLast gate (set only when cursor was
@@ -2005,6 +2035,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
           }
         }
       } else {
+        state.viewPositionTerminal = false;
         state.lastViewComment = null;
         _viewingHash = null;
         _viewingSummary = null;
@@ -2041,8 +2072,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         syncPausedUi(state);
         pushNavToUi(state);
         if (!state.analyzing) {
-          state.aiShared.dismissAnalysisToast?.();
-          state.aiShared.dismissAnalysisToast = null;
+          dismissAnalysisToast(state.aiShared);
         } else if (!state.aiShared.dismissAnalysisToast) {
           // Server reports analysis active but no toast exists -- we
           // were re-mounted (e.g. user navigated to another
@@ -2071,8 +2101,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       state.gameOver = true;
       state.paused = false;
       setAnalyzing(state, false);
-      state.aiShared.dismissAnalysisToast?.();
-      state.aiShared.dismissAnalysisToast = null;
+      dismissAnalysisToast(state.aiShared);
       state.resignAvailable = false;
       setDisabled(state.el.newGameBtn, false);
       state.el.boardHost.classList.add("board-idle");
@@ -2136,6 +2165,9 @@ export const playPerspective = {
       // Set while this client drives an analysis stop/restart round trip: its
       // own panel sequencing wins over the events that transition emits.
       analysisTransitionInFlight: false,
+      // Set by unmount(); post-await continuations check it so they don't
+      // build UI (toasts, dock windows) into a torn-down perspective.
+      unmounted: false,
       aiEnabled: false,
       aiTitleModel: "",
       noEngine: false,
@@ -2143,6 +2175,7 @@ export const playPerspective = {
       movesPlayed: 0,
       viewTotalPlies: 0,
       viewGameOver: false,
+      viewPositionTerminal: false,
       humanWhite: true,
       turn: SIDE.WHITE,
       resignAvailable: false,
@@ -2625,6 +2658,7 @@ export const playPerspective = {
         });
       },
       unmount() {
+        state.unmounted = true;
         // Un-float/close edit popovers first: a floated popover lives at
         // <body>, and the teardown below removes the dismiss listeners
         // without firing them -- so it would orphan otherwise.
@@ -2650,8 +2684,7 @@ export const playPerspective = {
         setAiInlineHost(null);
         setOnUserCloseAi(null);
         setOnReanalyzeAi(null);
-        state.aiShared.dismissAnalysisToast?.();
-        state.aiShared.dismissAnalysisToast = null;
+        dismissAnalysisToast(state.aiShared);
         state.dismissGameOverToast?.();
         state.dismissGameOverToast = null;
         pausedBadge?.classList.add("hidden");

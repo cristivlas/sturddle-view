@@ -60,6 +60,18 @@ def win_prob(cp: float, scale_cp: float) -> float:
     return 1.0 / (1.0 + math.exp(-cp / scale_cp))
 
 
+WINPROB_EVEN = 0.5
+# Hard relief ceiling: 1.0 would zero the blinding width (division by
+# zero in removal_odds), so misconfigured knobs clamp below it.
+RELIEF_CEILING = 0.95
+
+
+def deficit_relief(best_wp: float, gain: float, cap: float) -> float:
+    """Blinding fraction to lift when behind, clamped to [0, ceiling]."""
+    raw = min(cap, gain * max(0.0, WINPROB_EVEN - best_wp))
+    return max(0.0, min(RELIEF_CEILING, raw))
+
+
 def removal_odds(gap: float, width: float, qmax: float) -> float:
     """Blinding probability for one admitted move: linear decay from
     qmax at the best move to 0 at the admission edge."""
@@ -73,25 +85,34 @@ def candidate_pool(
     removal_step: float,
     winprob_scale_cp: float,
     winprob_drop_cap: float,
+    relief_gain: float = 0.0,
+    relief_cap: float = 0.0,
     rng: random.Random | None = None,
-) -> list[int]:
-    """Indices of the moves the engine is allowed to see.
+) -> tuple[list[int], float]:
+    """(indices the engine is allowed to see, applied deficit relief).
 
-    Admission is auto-ranged -- normalized gap <= (level_max - level) /
-    level_max -- and win-prob capped at every level: the move's win-prob
-    drop vs the best must stay under winprob_drop_cap, so no level hangs
-    a piece from a healthy position while a losing side keeps a wide
-    pool. Each admitted move is then removed with removal_odds(); lower
-    levels remove better moves more aggressively. Never empty: if every
-    admitted move is blinded, the best one is retained."""
+    Admission is auto-ranged -- normalized gap <= (level_max - eff) /
+    level_max -- and win-prob capped: the move's win-prob drop vs the
+    best must stay under winprob_drop_cap, so no level hangs a piece
+    from a healthy position. Each admitted move is then removed with
+    removal_odds(); lower levels remove better moves more aggressively.
+    Never empty: if every admitted move is blinded, the best one is
+    retained.
+
+    eff is the set level raised by deficit_relief(best_wp, relief_gain,
+    relief_cap) toward -- never to -- level_max: a losing engine keeps
+    a narrower, better pool and is blinded less, while the wp cap alone
+    would loosen and leave it weak."""
     # level_max never blinds (callers gate on level < max); width 0
     # would divide removal_odds by zero.
     assert level < level_max, "blinding is undefined at max level"
     r = rng or random
     gaps = normalized_gaps(scores_cp)
-    width = (level_max - level) / level_max
-    qmax = removal_step * (level_max - level)
     best_wp = win_prob(max(scores_cp), winprob_scale_cp)
+    relief = deficit_relief(best_wp, relief_gain, relief_cap)
+    eff = level + relief * (level_max - level)
+    width = (level_max - eff) / level_max
+    qmax = removal_step * (level_max - eff)
     admitted = [
         i for i, g in enumerate(gaps)
         if g <= width
@@ -103,4 +124,4 @@ def candidate_pool(
     ]
     if not survivors:
         survivors = [min(admitted, key=lambda i: gaps[i])]
-    return survivors
+    return survivors, relief
