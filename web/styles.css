@@ -5,17 +5,16 @@
   --muted-bright: #aaa;
   --wb-outline: rgba(136, 136, 136, 0.4);
   --wb-radius: 8px;
-  /* Bottom strip where minimized WinBoxes dock; tournament-workspace.js
-     reads this for layout math (MINIMIZE_FOOTER_H). */
+  /* Minimized-WinBox dock strip; tournament-workspace.js reads it as
+     MINIMIZE_FOOTER_H. */
   --wb-min-footer-h: 36px;
-  /* Docked ribbon rail width and its edge border; centered board areas and
-     toast stacks reserve --ribbon-w plus this so they clear the ribbon
-     exactly (no 1px eat/gap). */
+  /* Ribbon rail width + edge border. Centered boards and toast stacks
+     reserve both, so they clear the ribbon exactly (no 1px eat/gap). */
   --ribbon-w: 44px;
   --ribbon-border-w: 1px;
-  /* Viewport-edge breathing room beside the moves-list rail; the fork/xgame
-     toast stack aligns to this outer edge, not the ribbon. Paired with
-     RAIL_EDGE_GAP_REM in game-view.js (CSS can't read the JS constant). */
+  /* Viewport-edge gap beside the moves-list rail; the fork/xgame toast stack
+     aligns here, not to the ribbon. Mirrors RAIL_EDGE_GAP_REM in
+     game-view.js (CSS can't read the JS constant). */
   --rail-edge-gap: 1rem;
   --accent: #f59e0b;
   --accent-rgb: 245, 158, 11;
@@ -32,10 +31,9 @@
   --border-subtle: #2e3138;
   --border-faint: #26282e;  /* row separators: fainter than --border-subtle */
 
-  /* Status callouts (used by import dialog and similar). Pinned because
-     webawesome's --wa-color-{success,danger}-50 tokens are dark-mode
-     tuned and clash with dark text on a dark surface. Theming work
-     should redefine these tokens per theme. */
+  /* Status callouts (import dialog and similar). Pinned because webawesome's
+     --wa-color-{success,danger}-50 are dark-mode tuned and clash with dark
+     text on a dark surface. Theming should redefine these per theme. */
   --status-ok-fg:  #6ee7a3;
   --status-ok-bg:  rgba(46, 160, 67, 0.12);
   --status-err-fg: #ff8a80;
@@ -48,8 +46,8 @@
   --wa-font-family-heading: var(--wa-font-family-body);
   --wa-font-family-code: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, monospace;
 
-  /* Brand: deep amber (chrome) so --accent (bright) keeps the active-state read.
-     Map the full 5..95 scale — derived tokens otherwise leak the WA blue default. */
+  /* Brand: deep amber (chrome) so --accent (bright) keeps the active-state
+     read. Full 5..95 scale -- derived tokens otherwise leak WA's blue. */
   --wa-color-brand-5:  #1c0c02;
   --wa-color-brand-10: #431407;
   --wa-color-brand-20: #7c2d12;
@@ -62,32 +60,31 @@
   --wa-color-brand-90: #fb923c;
   --wa-color-brand-95: #fdba74;
 
-  /* TODO: revisit danger tone — between wine (#7f1d1d) and burgundy (#722f37);
-     may want a touch more saturation once the warm palette settles. */
+  /* TODO: revisit danger tone -- between wine (#7f1d1d) and burgundy
+     (#722f37); may want more saturation once the warm palette settles. */
   --wa-color-danger-fill-loud: #7a2a2a;
   --wa-color-danger-on-loud: #fee2e2;
   --wa-color-neutral-fill-loud: #3a3d44;
   --wa-color-neutral-on-loud: #e8e8e8;
   --wa-color-overlay-modal: rgb(0 0 0 / 0.45);
 
-  /* Breakpoints. Expressed in rem so they scale with browser font-size and
-     remain meaningful under zoom. JS reads these via getComputedStyle. */
+  /* Breakpoints in rem so they scale with browser font-size and stay
+     meaningful under zoom. JS reads these via getComputedStyle. */
   --bp-narrow-dialog: 30rem;  /* 480px @ default font */
   --bp-mobile:        50rem;  /* 800px @ default font */
   --bp-mobile-h:      30rem;  /* 480px @ default font; height analog */
   --bp-mobile-h-play: 42.5rem; /* 680px; play side-rail short-height gate */
   --bp-wide:          93.75rem; /* 1500px @ default font */
 
-  /* Import dialog: a single panel height shared by all 3 tabs so switching
-     never resizes the dialog. Sized to the tallest content (the openings
-     list); PGN/FEN textareas flex to fill it. */
+  /* Import dialog: one panel height shared by all 3 tabs so switching never
+     resizes it. Sized to the tallest content (openings list); PGN/FEN
+     textareas flex to fill. */
   --import-panel-h: 24rem; /* 384px @ default font */
 }
 
-/* Clamp the root font-size so the layout stays usable under extreme
-   browser font-size preferences. `1em` here resolves to the user's
-   browser default (16px unless overridden in chrome://settings/fonts),
-   so the user's preference still flows through within the bounds. */
+/* Clamp root font-size so the layout survives extreme browser font-size
+   preferences. `1em` resolves to the user's browser default (16px unless
+   overridden), so their preference still flows through within the bounds. */
 html { font-size: clamp(14px, 1em, 24px); }
 :root { --wa-font-size-scale: 1; }
 
@@ -95,20 +92,19 @@ a { color: var(--wa-color-brand-70); }
 ::selection { background: var(--wa-color-brand-fill-loud); color: #fff; }
 :focus-visible { outline-color: var(--wa-color-focus, var(--wa-color-brand-60)); }
 
-/* Subdue WA's autofill highlight. CSS vars cascade through shadow DOM
-   and WA's :-webkit-autofill rule reads --wa-color-brand-fill-quiet. */
+/* Subdue WA's autofill highlight: vars cascade through shadow DOM and its
+   :-webkit-autofill rule reads --wa-color-brand-fill-quiet. */
 wa-input, wa-number-field { --wa-color-brand-fill-quiet: var(--bg); }
 
 * { box-sizing: border-box; }
 
-/* App feel: chrome is not text-selectable, so a mouse drag can't grab the
-   page. markSelectable() lists/tables ([data-selectable]) are selectable; the
-   JS handler (installSelection) suppresses the native page-wide Ctrl/Cmd+A
-   outside lists, scopes it to the focused list, and clears on blur/Escape.
-   Native form controls keep their own selection. */
+/* App feel: chrome isn't text-selectable, so a mouse drag can't grab the page.
+   markSelectable() regions ([data-selectable]) are; installSelection scopes
+   Ctrl/Cmd+A to the focused list and clears on blur/Escape. Native form
+   controls keep their own selection. */
 body { -webkit-user-select: none; user-select: none; }
 [data-selectable] { -webkit-user-select: text; user-select: text; }
-/* Column headers are controls (sort/resize), not copyable content: no text
+/* Column headers are controls (sort/resize), not copyable content: no
    selection, no iOS long-press callout, no double-tap zoom. Also outranks the
    wa-dialog [data-selectable] * re-opt-in below. */
 [data-selectable] thead th, thead th {
@@ -117,21 +113,18 @@ body { -webkit-user-select: none; user-select: none; }
   -webkit-touch-callout: none;
   touch-action: manipulation;
 }
-/* Regions are focusable (tabindex=-1) only so Ctrl/Cmd+A can target them; they
-   are not tab stops, so suppress the focus ring that would otherwise outline
-   the whole list after a click or Ctrl+A. */
+/* Focusable (tabindex=-1) only so Ctrl/Cmd+A can target them, never tab
+   stops: suppress the ring that would box the whole list after a click. */
 [data-selectable]:focus, [data-selectable]:focus-visible { outline: none; }
 /* Chrome makes every scroll container keyboard-focusable, so panes and table
-   wraps draw a default ring boxing the whole region (and sticky headers paint
-   over its top edge). These are layout containers, never tab stops -- controls
-   inside keep their own rings. Anything given an explicit tabindex is opted
-   out, so deliberate focus targets are untouched. */
+   wraps draw a ring boxing the whole region (and sticky headers paint over its
+   top edge). These are layout containers, never tab stops -- controls inside
+   keep their own rings, and an explicit tabindex opts out. */
 :is(div, ul, ol, table, pre, section):not([tabindex]):focus,
 :is(div, ul, ol, table, pre, section):not([tabindex]):focus-visible { outline: none; }
 
-/* Thin, macOS-style scrollbars everywhere. Firefox honors scrollbar-width;
-   WebKit/Chromium honors the ::-webkit-scrollbar pseudo-elements. The
-   thumb is muted by default and brightens on hover. */
+/* Thin, macOS-style scrollbars. Firefox honors scrollbar-width;
+   WebKit/Chromium the ::-webkit-scrollbar pseudo-elements. */
 * {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
@@ -144,26 +137,23 @@ body { -webkit-user-select: none; user-select: none; }
 }
 *::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.32); }
 *::-webkit-scrollbar-corner { background: transparent; }
-/* `*` doesn't pierce shadow DOM, so wa-select's listbox keeps the
-   chunky default scrollbar. Reach into its part to apply the same
-   theme. (Firefox honors scrollbar-* via the part selector too.) */
+/* `*` doesn't pierce shadow DOM, so wa-select's listbox keeps the chunky
+   default; reach into its part. (Firefox honors scrollbar-* there too.) */
 wa-select::part(listbox) {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
 
-/* Toggling `disabled` on wa-input / wa-select runs the component's
-   default 150ms color transition, briefly painting a brighter "enabled"
-   border before the new state settles -- looks like a focus flash on
-   the AI settings rows when the master toggle flips. Suppress only on
-   the AI rows; other forms still get the smooth transition. */
+/* Toggling `disabled` runs WA's 150ms color transition, briefly painting a
+   brighter "enabled" border -- reads as a focus flash on the AI rows when the
+   master toggle flips. Suppressed here only; other forms keep the transition. */
 .ai-row wa-input::part(base),
 .ai-row wa-select::part(combobox) {
   transition: none !important;
 }
 
-/* AI key masking: text-security visually bullets the chars while the
-   wa-input stays type=text, so browsers don't offer to save it. */
+/* AI key masking: text-security bullets the chars while the wa-input stays
+   type=text, so browsers don't offer to save it. */
 .ai-key-masked::part(input) {
   -webkit-text-security: disc;
   text-security: disc;
@@ -175,56 +165,50 @@ wa-select::part(listbox) {
 }
 .ai-key-toggle:hover { color: inherit; }
 
-/* AI prose paragraph -- preserve newlines so blank lines from the
-   model render as paragraph breaks. We stream tokens into a single
-   <p> rather than splitting into multiple nodes (chunks may carry
-   partial whitespace; pre-wrap handles it without DOM gymnastics). */
+/* AI prose -- preserve newlines so the model's blank lines read as paragraph
+   breaks. Tokens stream into a single <p>: chunks may carry partial
+   whitespace, and pre-wrap handles it without DOM gymnastics. */
 .play-ai-prose {
   white-space: pre-wrap;
   word-wrap: break-word;
   margin: 0 12px;
-  /* Paint with the panel background so prose covers the rounds-
-     container vertical rule where it overlaps. position:relative +
-     z-index puts prose above the rule's pseudo-element. */
+  /* Panel background + z-index so prose covers the rounds-container vertical
+     rule where it overlaps. */
   position: relative;
   z-index: 1;
   background: var(--panel, var(--bg));
-  /* Box around the prose; matches the vertical timeline rule for
-     visual cohesion (same color, same muted opacity via rgba). */
+  /* Box matching the timeline rule (same color, same muted rgba opacity). */
   border: 1px solid rgba(204, 204, 204, 0.18);
   border-radius: 4px;
   padding: 6px 8px;
 }
-/* Rounds whose model never emitted prose (tool-only) leave the
-   paragraph empty -- don't render an empty box. */
+/* Tool-only rounds leave the paragraph empty -- don't render an empty box. */
 .play-ai-prose:empty {
   display: none;
 }
 
-/* Revision: <details> that folds away prose the AI corrected. The summary
-   carries the model's own self-correction line; the body holds the struck
-   flawed prose. Neutral (not warning) accent -- a self-correction, not an
-   error. margin-left aligns with the timeline spine (15px). */
+/* Revision: <details> folding away prose the AI corrected. Summary carries the
+   model's self-correction line, body the struck flawed prose. Neutral (not
+   warning) accent; margin-left aligns with the timeline spine (15px). */
 .play-ai-revision {
   margin: 0 12px 0 15px;
   padding: 4px 8px;
   border: none;
-  border-left: 3px solid var(--muted, #888);
+  /* border-left: 3px solid var(--muted, #888); */
   border-radius: 0;
   background: transparent;
   font-size: 0.9em;
 }
 .play-ai-revision[hidden] { display: none; }
-/* Extra bottom padding only when expanded, so the folded draft has a
-   little breathing room below it. */
+/* Extra bottom padding when expanded, so the draft has room below it. */
 .play-ai-revision[open] { padding: 4px 8px 6px; }
 .play-ai-revision[open] > .play-ai-revision-summary {
   margin-inline: 0;
   border-radius: 0;
 }
-/* Mirrors the proven .play-ai-thinking disclosure exactly (same marker
-   override + ::before triangle); only color/italic differ. native.css
-   summary defaults (space-between) are overridden by flex-start. */
+/* Mirrors the .play-ai-thinking disclosure (same marker override + ::before
+   triangle); only color/italic differ. flex-start overrides native.css's
+   space-between summary default. */
 .play-ai-revision-summary {
   cursor: pointer;
   user-select: none;
@@ -237,7 +221,7 @@ wa-select::part(listbox) {
   gap: 8px;
   color: var(--accent-line);
   font-style: italic;
-  /* Tight line so a folded summary is only as tall as its text, and a hair
+  /* Tight line: a folded summary is only as tall as its text, and a hair
      smaller than the prose it introduces. */
   font-size: 0.85em;
   line-height: 1.2;
@@ -249,8 +233,7 @@ wa-select::part(listbox) {
   content: "\25B6";
   flex: 0 0 auto;
   line-height: 1;
-  /* The summary is italic; without resetting it the triangle glyph is
-     skewed, reading as a tilted ~45deg arrow. */
+  /* Summary is italic; unreset, the triangle skews to a ~45deg arrow. */
   font-style: normal;
   transition: transform 120ms ease;
 }
@@ -258,9 +241,8 @@ wa-select::part(listbox) {
   transform: rotate(90deg);
 }
 .play-ai-revision-body { margin-top: 4px; }
-/* Folded prose sits on a warm off-white "marked-up draft" panel so the
-   black text reads clearly against the dark UI; only the flagged tokens
-   are struck. */
+/* Warm off-white "marked-up draft" panel so the black text reads against the
+   dark UI; only the flagged tokens are struck. */
 .play-ai-revision-body > .play-ai-prose {
   color: #000;
   margin: 0;
@@ -270,8 +252,8 @@ wa-select::part(listbox) {
   background: #e8e6e0;
 }
 /* Flagged tokens crossed out where the AI corrects itself. Scoped under the
-   prose so its (0,2,0) specificity beats the body's color: #000; the token
-   text is accent-colored so the marked-through claim reads as deliberate. */
+   prose so its (0,2,0) beats the body's color:#000; accent-colored so the
+   marked-through claim reads as deliberate. */
 .play-ai-prose .play-ai-prose-struck {
   text-decoration: line-through;
   text-decoration-color: #000;
@@ -279,9 +261,8 @@ wa-select::part(listbox) {
   color: #c0392b;
 }
 
-/* AI analysis status line: spinner + short text. Sits above the prose
-   so streaming text can append below without re-flow. Slightly dimmer
-   than the prose since it's transient progress state, not content. */
+/* AI status line: spinner + short text, above the prose so streaming text
+   appends below without re-flow. Dimmer: transient progress, not content. */
 .play-ai-body {
   display: flex;
   flex-direction: column;
@@ -304,14 +285,12 @@ wa-select::part(listbox) {
   border-bottom: 1px solid var(--border-subtle);
 }
 .play-ai-status[hidden] { display: none; }
-/* AI window scrolls inside its own inner wrapper, so the host bodies
-   stop scrolling at this layer. */
+/* The AI window scrolls in its own inner wrapper: host bodies stop here. */
 .winbox.sturddle-wb-ai .wb-body,
 .dock-slot-body:has(> .play-ai-body) { overflow: hidden; padding: 0; }
 .play-ai-status-text { line-height: 1; }
-/* Cumulative token ticker beside the status text; muted so it reads as
-   telemetry, not as part of the status message. Empty until the
-   provider reports usage. */
+/* Cumulative token ticker; muted so it reads as telemetry, not status.
+   Empty until the provider reports usage. */
 .play-ai-status-tokens {
   line-height: 1;
   margin-left: auto;
@@ -326,10 +305,9 @@ wa-select::part(listbox) {
   padding: 4px 0;
 }
 
-/* Inline failure / guardrail markers in the AI panel. Error is loud
-   (red border, bolded header); round-cap is a softer informational
-   note. Both sit at the bottom of the prose paragraph so they don't
-   push existing text out of view. */
+/* Inline failure / guardrail markers. Error is loud (red border, bold
+   header), round-cap a softer note. Both sit at the prose paragraph's bottom
+   so they don't push existing text out of view. */
 .play-ai-error {
   display: block;
   margin-top: 8px;
@@ -346,8 +324,8 @@ wa-select::part(listbox) {
   white-space: pre-wrap;
   word-break: break-word;
 }
-/* Verbose-error details: a plain alert, but selectable (overriding the
-   global user-select:none) so the user can copy it. */
+/* Verbose-error details: a plain alert, but selectable (overrides the global
+   user-select:none) so the user can copy it. */
 .confirm-message.error-detail-text {
   -webkit-user-select: text;
   user-select: text;
@@ -356,11 +334,10 @@ wa-select::part(listbox) {
 .confirm-message a {
   color: var(--accent);
 }
-/* Inline protocol/UCI terms in dialog prose (e.g. the difficulty
-   details popup): code font in the app's accent-chip idiom (same
-   family as .status-badge--paused / .engines-list-active-badge) so
-   terms read as syntax, not as ordinary words or typos. Canonical
-   style for term highlighting in any dialog/message prose. */
+/* Inline protocol/UCI terms in dialog prose (e.g. the difficulty popup):
+   code font in the accent-chip idiom (as .status-badge--paused /
+   .engines-list-active-badge) so terms read as syntax, not typos.
+   Canonical style for term highlighting in any dialog prose. */
 .confirm-message code {
   font-family: var(--wa-font-family-code);
   font-size: 0.9em;
@@ -391,8 +368,7 @@ wa-select::part(listbox) {
 
 /* Thinking disclosure: dimmer + smaller than prose; user opt-in. */
 .play-ai-thinking {
-  /* Padded right of the timeline's vertical rule so the disclosure
-     header doesn't sit on the line. */
+  /* Padded right of the timeline rule so the header doesn't sit on it. */
   margin: 0 0 8px 14px;
   font-size: 0.85em;
   opacity: 0.75;
@@ -412,8 +388,8 @@ wa-select::part(listbox) {
 }
 .play-ai-thinking > summary::-webkit-details-marker { display: none; }
 .play-ai-thinking > summary::marker { content: ""; }
-/* Web Awesome's native.css paints a chevron via summary::after { mask: svg }.
-   Override for our disclosure -- we render our own ::before triangle. */
+/* native.css paints a chevron via summary::after { mask: svg }; override it --
+   we render our own ::before triangle. */
 .play-ai-thinking > summary::after { display: none; mask: none; background: none; }
 .play-ai-thinking > summary::before {
   content: "\25B6";
@@ -423,17 +399,15 @@ wa-select::part(listbox) {
 .play-ai-thinking[open] > summary::before {
   transform: rotate(90deg);
 }
-/* Live "Thinking" label gets an animated ellipsis via ::after. Removed
-   on freeze: JS drops .is-active when the round's first non-thinking
-   chunk lands and the summary text snaps to "Thought for Ns". */
+/* Live "Thinking" label gets an animated ellipsis. JS drops .is-active when
+   the round's first non-thinking chunk lands ("Thought for Ns"). */
 .play-ai-thinking > summary.is-active::after {
   content: "";
   display: inline-block;
   width: 1.2em;
   text-align: left;
-  /* Web Awesome's native.css sets `rotate: 90deg` on details[open]
-     summary::after (not `transform`). Cancel that here so the
-     animated dots stay horizontal when the disclosure is open. */
+  /* native.css sets `rotate: 90deg` (not `transform`) on details[open]
+     summary::after; cancel it so the dots stay horizontal when open. */
   rotate: none;
   mask: none;
   background: none;
@@ -461,9 +435,8 @@ wa-select::part(listbox) {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* Round panel: one per agent-loop round. Stacks under status; each
-   round shows thinking, tool calls, prose. Vertical spacing visually
-   separates rounds. */
+/* Round panel: one per agent-loop round, stacked under status; each shows
+   thinking, tool calls, prose. Vertical spacing separates rounds. */
 .play-ai-round {
   display: block;
   margin: 0 0 4px;
@@ -471,37 +444,32 @@ wa-select::part(listbox) {
   /* DEBUG */
   /* border: 1px solid red; */
 }
-/* Tool-only rounds: prose was never emitted (already hidden via
-   .play-ai-prose:empty). Trim the round's own vertical padding +
-   margin so the next round's content sits close (but not flush)
-   against this one's tools. Non-empty rounds keep their spacing. */
+/* Tool-only rounds (prose already hidden via .play-ai-prose:empty): trim the
+   round's vertical padding + margin so the next round sits close, not flush.
+   Non-empty rounds keep their spacing. */
 .play-ai-round:has(.play-ai-prose:empty) {
   margin-bottom: 4px;
   padding-top: 0;
 }
-/* Thinking keeps its natural bottom margin (8px) so the tool calls
-   below don't crowd the disclosure header. */
+/* Thinking keeps its 8px bottom margin so tool calls don't crowd it. */
 .play-ai-round:has(.play-ai-prose:empty) .play-ai-tools {
   margin-top: 0;
   margin-bottom: 0;
 }
-/* A round that follows a tool-only round drops its own top padding,
-   since the previous round just supplied the 4px margin-bottom. */
+/* After a tool-only round, drop top padding -- it supplied the 4px margin. */
 .play-ai-round:has(.play-ai-prose:empty) + .play-ai-round {
   padding-top: 0;
 }
-/* Timeline: Thinking + tool-call rows in one container. The vertical
-   rule lives on the .play-ai-rounds container (see below) so it stays
-   continuous across rounds without per-panel gaps. */
+/* Timeline: Thinking + tool-call rows in one container. The vertical rule
+   lives on .play-ai-rounds (below) so it stays continuous across rounds. */
 .play-ai-timeline {
   margin: 0 12px;
   /* DEBUG */
   /* border: 2px solid blue; */
 }
-/* Continuous muted rule passing through the dot column for all rounds.
-   Lives on the rounds-container so gaps between round panels don't
-   break it. Dot column x = timeline margin-left (12px) + dot-half
-   (4px) - line-half (0.5px) = ~15.5px. */
+/* Continuous muted rule through the dot column, on the rounds-container so
+   gaps between panels don't break it. Dot column x = timeline margin-left
+   (12px) + dot-half (4px) - line-half (0.5px) = ~15.5px. */
 .play-ai-rounds {
   position: relative;
 }
@@ -516,8 +484,8 @@ wa-select::part(listbox) {
   opacity: 0.18;
   pointer-events: none;
 }
-/* Tool-call lines: colored dot per tool family + compact label.
-   Names mapped to dot color via .play-ai-tool-dot-<name>. */
+/* Tool-call lines: colored dot per tool family + compact label. Name maps to
+   dot color via .play-ai-tool-dot-<name>. */
 .play-ai-tools {
   /* Inside .play-ai-timeline -- margin handled by timeline padding. */
   margin: 4px 0;
@@ -528,25 +496,25 @@ wa-select::part(listbox) {
   gap: 2px;
   overflow: hidden;
 }
-/* No tool rows -> no box; otherwise its margin+padding waste ~22px.
-   With thinking also hidden this leaves the (zero-vertical-margin)
-   timeline at 0 height, so a prose-only round carries no blank space. */
+/* No tool rows -> no box; its margin+padding would waste ~22px. With thinking
+   also hidden the (zero-vertical-margin) timeline collapses to 0 height, so a
+   prose-only round carries no blank space. */
 .play-ai-tools:empty {
   display: none;
 }
-/* No tools -> thinking is the last timeline child; drop its bottom
-   margin so it doesn't dangle 8px of empty space. */
+/* No tools -> thinking is the last timeline child; drop its bottom margin so
+   it doesn't dangle 8px of empty space. */
 .play-ai-timeline:has(.play-ai-tools:empty) .play-ai-thinking {
   margin-bottom: 0;
 }
 .play-ai-tool-call {
-  /* Verifier children indent + detail-box insets, shared by the rules
-     below so the nested box can be realigned to top-level from one source. */
+  /* Verifier-child indent + detail-box insets, shared by the rules below so
+     the nested box realigns to top-level from one source. */
   --tool-nest-indent: 18px;
   --tool-box-indent: 20px;
   --tool-box-inset-right: 8px;
-  /* The row's own shrink factor, exposed so a child (the verdict prose) can
-     divide it back out and recover the panel's true base font-size. */
+  /* Row shrink factor, exposed so the verdict prose can divide it back out
+     and recover the panel's true base font-size. */
   --tool-row-scale: 0.85;
   display: flex;
   align-items: center;
@@ -555,13 +523,13 @@ wa-select::part(listbox) {
   font-size: calc(var(--tool-row-scale) * 1em);
   opacity: 0.85;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  /* Anchor the verifier spine (drawn on the parent row that owns a
-     .play-ai-tool-children) to the parent dot, not to the children box. */
+  /* Anchors the verifier spine (drawn on the row owning a
+     .play-ai-tool-children) to the parent dot, not the children box. */
   position: relative;
 }
 /* Dot + label + arrow stay on one line and scroll horizontally rather than
-   wrapping the arrow below a long label. Full-width so details/children
-   (flex-basis 100%) still break onto their own lines beneath it. */
+   wrapping the arrow under a long label. Full-width so details/children
+   (flex-basis 100%) still break onto their own lines beneath. */
 .play-ai-tool-head {
   flex: 1 1 100%;
   min-width: 0;
@@ -589,10 +557,9 @@ wa-select::part(listbox) {
 .play-ai-tool-dot-delegate       { background: var(--wa-color-cyan-60, #0ea5b5); }
 .play-ai-tool-dot-report_line    { background: var(--wa-color-teal-60, #14b8a6); }
 .play-ai-tool-dot-related_openings { background: var(--wa-color-indigo-60, #6366f1); }
-/* Verifier sub-run's tool calls, nested under their "Verifying line"
-   row. Full-width break (flex-wrap). A vertical spine runs through the
-   child dot centers (dot is 8px wide -> center at x=4px), tying the
-   check's sub-calls into one timeline. */
+/* Verifier sub-run tool calls, nested under their "Verifying line" row.
+   Full-width break (flex-wrap); a vertical spine runs through the child dot
+   centers (8px dot -> center x=4px), tying the sub-calls into one timeline. */
 .play-ai-tool-children {
   flex: 1 0 100%;
   display: flex;
@@ -603,12 +570,11 @@ wa-select::part(listbox) {
   margin: 0 0 2px var(--tool-nest-indent);
   position: relative;
 }
-/* Vertical spine connecting the parent "Verifying line" dot down to the
-   last child's dot. Drawn on the PARENT ROW (not the children box) and
-   anchored to the parent dot's center, so expanding the parent's
-   delegate(...) <pre> -- which wraps in between the dot and the children
-   -- can't open a gap above the spine. Bottom is the row's own bottom
-   padding, tuned to land on the last child dot's center. */
+/* Spine from the parent "Verifying line" dot down to the last child dot.
+   Drawn on the PARENT ROW (not the children box), anchored to the parent
+   dot's center, so expanding the parent's delegate(...) <pre> -- which wraps
+   between dot and children -- can't open a gap above it. Bottom is tuned to
+   land on the last child dot's center. */
 .play-ai-tool-call:has(> .play-ai-tool-children)::before {
   content: "";
   position: absolute;
@@ -620,18 +586,17 @@ wa-select::part(listbox) {
   background: var(--wa-color-cyan-60, #0ea5b5);
   opacity: 0.6;
 }
-/* Nested rows: anchor the elbow, and reset font-size (nesting would
-   otherwise compound the parent's 0.85em -> 0.85 x 0.85). */
+/* Nested rows: anchor the elbow, and reset font-size -- nesting would
+   compound the parent's 0.85em to 0.85 x 0.85. */
 .play-ai-tool-children .play-ai-tool-call {
   position: relative;
   min-width: 0;  /* allow the details <pre> to shrink + scroll */
   font-size: 1em;
 }
-/* Short horizontal elbow from the spine into each child dot. Drawn on the
-   child ROW (not the dot) so it sits outside the head's overflow-x clip;
-   anchored to top:8px (dot center) so an expanded details <pre> growing the
-   row height can't drop it. Spans from the spine to the dot's left edge.
-   Uses ::after so a nested delegate row's spine (::before) can't collide. */
+/* Elbow from the spine into each child dot. Drawn on the child ROW (not the
+   dot) so it sits outside the head's overflow-x clip, anchored to top:8px
+   (dot center) so an expanded <pre> growing the row can't drop it. ::after,
+   so a nested delegate row's spine (::before) can't collide. */
 .play-ai-tool-children .play-ai-tool-call::after {
   content: "";
   position: absolute;
@@ -642,8 +607,8 @@ wa-select::part(listbox) {
   background: var(--wa-color-cyan-60, #0ea5b5);
   opacity: 0.6;
 }
-/* Failed tool call: red dot + struck-through label. The error detail
-   is appended into the collapsible details body by the renderer. */
+/* Failed tool call: red dot + struck label. The renderer appends the error
+   detail into the collapsible details body. */
 .play-ai-tool-call-failed .play-ai-tool-dot {
   background: var(--wa-color-danger-60, #d9534f);
 }
@@ -651,19 +616,17 @@ wa-select::part(listbox) {
   opacity: 0.7;
   text-decoration: line-through;
 }
-/* Superseded call: the tool ran fine but the loop steered the model to a
-   better move (e.g. a stronger move named, or a red-team hold). Struck
-   through to show it was set aside, but the dot keeps the tool's own color --
-   it is not a failure. */
+/* Superseded: the tool ran fine but the loop steered the model to a better
+   move (stronger move named, or a red-team hold). Struck to show it was set
+   aside; the dot keeps the tool's color -- it is not a failure. */
 .play-ai-tool-call-superseded .play-ai-tool-label {
   opacity: 0.7;
   text-decoration: line-through;
 }
-/* Verifier verdict on a "Verifying line" (delegate) row: refuted badges a
-   red cross, holds a green check, after the label. The dot keeps the
-   delegate color so the row still reads as a verification step.
-   Direct child (> head > label) so the badge lands on the delegate row's
-   own label, never a nested sub-operation's label inside the same row. */
+/* Verifier verdict on a delegate row: refuted badges a red cross, holds a
+   green check, after the label. The dot keeps the delegate color so the row
+   still reads as a verification step. Direct child (> head > label) so the
+   badge lands on the delegate row's own label, not a nested one's. */
 .play-ai-tool-call-refuted > .play-ai-tool-head > .play-ai-tool-dot {
   background: var(--wa-color-danger-60, #d9534f);
 }
@@ -677,35 +640,35 @@ wa-select::part(listbox) {
   color: var(--wa-color-success-60, #28a745);
   font-weight: 600;
 }
-/* Verifier verdict prose: reuses .play-ai-revision visuals verbatim (warm
-   panel, border-left, fonts). It lives inside the delegate row, which shrinks
-   font to --tool-row-scale and forces a monospace family -- both would leak
-   into the prose. Divide the row's scale back out (recovering the panel's
-   true base) and restore the body family, so the em-based revision rules
-   compute off the SAME base as a top-level correction and the fonts are
-   identical. Layout: break to its own line, indent to the detail-box column.
-   The single-level divide is exact because a delegate row is always top-level
-   (verifier sub-runs can't nest another delegate). */
+/* Verifier verdict prose: reuses .play-ai-revision visuals (warm panel,
+   border-left, fonts). It lives inside the delegate row, which shrinks font
+   to --tool-row-scale and forces monospace -- both would leak in. Divide the
+   scale back out and restore the body family, so the em-based revision rules
+   compute off the SAME base as a top-level correction. Layout: own line,
+   indented to the detail-box column. The single-level divide is exact because
+   a delegate row is always top-level (sub-runs can't nest another). */
 .play-ai-verdict {
   flex: 1 1 100%;
   min-width: 0;
   /* Hug the folded row: kill the revision's vertical padding + margin so
      "Refuted" sits tight against its border-left. */
-  margin: 0 var(--tool-box-inset-right) 0 var(--tool-box-indent);
+  /* margin: 0 var(--tool-box-inset-right) 0 var(--tool-box-indent); */
+  /* Alternatively: pack tigher, no left "accent" border line -- commented out above. */
+  margin: 0 calc(var(--tool-box-indent) / 2);
+
   padding: 0 8px;
-  /* Divide the row's shrink back out, then re-apply the same 0.9em the base
-     .play-ai-revision rule sets -- this declaration replaces it rather than
-     compounding, so restating it keeps both variants on one computed size. */
-  font-size: calc(0.9em / var(--tool-row-scale));
+  /* Divide the row's shrink back out, then restate the base rule's 0.9em:
+     this replaces rather than compounds, keeping both variants one size. */
+  font-size: calc(1.0em / var(--tool-row-scale));
   font-family: var(--wa-font-family-body);
 }
-/* A little breathing room below the prose only when expanded. */
+/* Breathing room below the prose only when expanded. */
 .play-ai-verdict[open] {
   padding: 0 8px 4px;
 }
-/* Verdict summary is a static label ("Holds"/"Refuted"), not the narrated
-   aside a self-correction is -- so it stays upright. Size and line-height
-   are shared with the base summary rule. */
+/* The verdict summary is a static label ("Holds"/"Refuted"), not the narrated
+   aside a self-correction is, so it stays upright. Size and line-height come
+   from the base summary rule. */
 .play-ai-verdict > .play-ai-revision-summary {
   font-style: normal;
 }
@@ -719,9 +682,8 @@ wa-select::part(listbox) {
   cursor: pointer;
   user-select: none;
   flex: 0 0 auto;
-  /* Rotate the single caret glyph open/closed (identical size both ways).
-     inline-block so the transform applies; nudge down to sit on the
-     label baseline. */
+  /* One caret glyph rotated open/closed (identical size both ways).
+     inline-block so the transform applies; nudged to the label baseline. */
   display: inline-block;
   transform: translateY(2px);
   transition: transform 0.12s ease;
@@ -733,15 +695,15 @@ wa-select::part(listbox) {
   flex: 1 1 100%;
   min-width: 0;  /* let the text columns shrink so they can scroll */
   margin: 2px var(--tool-box-inset-right) 0 var(--tool-box-indent);
-  /* basis is 100% of the row; the left indent + right inset must come out
-     of the width or the box (and its scrollbar) overruns the right edge. */
+  /* Basis is 100% of the row; the indent + inset must come out of the width
+     or the box (and its scrollbar) overruns the right edge. */
   max-width: calc(100% - var(--tool-box-indent) - var(--tool-box-inset-right));
   background-color: black;
   border: 1px solid #555;
 }
-/* Nested verifier boxes: the children container is inset by the nest indent
-   from the parent. Shift the box left by that and widen it by the same, so
-   both its left and right edges land exactly on a top-level box's. */
+/* Nested verifier boxes: the children container is inset by the nest indent,
+   so shift left and widen by the same amount -- both edges then land exactly
+   on a top-level box's. */
 .play-ai-tool-children .play-ai-tool-details-body {
   position: relative;
   left: calc(-1 * var(--tool-nest-indent));
@@ -778,13 +740,13 @@ wa-select::part(listbox) {
   border-radius: 0;
 }
 
-/* Terminal markers (cancelled/error/round-cap/no-response) sit
-   outside any round panel since they belong to the whole turn. */
+/* Terminal markers (cancelled/error/round-cap/no-response) sit outside any
+   round panel -- they belong to the whole turn. */
 .play-ai-terminal {
   margin: 0 12px 8px;
 }
-/* Final prose on a natural multi-round completion: thicker, brighter
-   bottom border signals "AI is done" without a separate separator. */
+/* Final prose of a natural multi-round completion: a thicker, brighter border
+   signals "AI is done" without a separate separator. */
 .play-ai-prose-final {
   border: 2px solid var(--play-ai-prose-final-border);
 }
@@ -814,8 +776,7 @@ header {
   gap: 16px;
   padding: 8px 16px;
   position: relative;
-  /* Above the docked ribbons (z-index:10) so they slide under the header
-     instead of painting over it. */
+  /* Above the docked ribbons (z-index:10) so they slide under, not over. */
   z-index: 20;
   background: var(--panel);
   border-bottom: 2px solid var(--accent-line);
@@ -885,8 +846,8 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
 .toast-grow.is-active { color: var(--wa-color-brand-90); }
 
 /* Shared chrome for every toast button: bordered, square, light fill.
-   .toast-action-btn is the only text-bearing variant (keeps padding);
-   the rest are icon-only and get fixed square sizing just below. */
+   .toast-action-btn is the only text-bearing variant (keeps its padding);
+   the rest are icon-only and get fixed square sizing below. */
 .toast-icon-btn,
 .toast-action-btn,
 .xgame-toast-arrow,
@@ -922,8 +883,8 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.22);
 }
-/* Icon-only toast buttons: uniform square. Text .toast-action-btn is
-   excluded so its label keeps the padded sizing above. */
+/* Icon-only toast buttons: uniform square. .toast-action-btn is excluded so
+   its label keeps the padded sizing above. */
 .toast-icon-btn,
 .xgame-toast-arrow,
 .xgame-toast-x {
@@ -941,9 +902,8 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   align-items: center;
   gap: 8px;
 }
-/* Eats the flex-row slack so a trailing dismiss/action button lands at
-   the toast's right edge. Shared by every toast that pairs a message
-   with right-aligned controls. */
+/* Eats the flex-row slack so a trailing dismiss/action button lands at the
+   toast's right edge. Shared by every message + right-controls toast. */
 .toast-grow { flex: 1; min-width: 0; }
 
 .toast-ws-toggle {
@@ -971,11 +931,11 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/window-restore.svg);
   mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/window-restore.svg);
 }
-/* When a status badge is visible, it claims the auto-margin so .conn stops
-   pushing right; collapse .conn's auto-margin to a normal gap. */
+/* A visible status badge claims the auto-margin, so collapse .conn's to a
+   normal gap and stop it pushing right. */
 .status-badge:not(.hidden) ~ .conn { margin-left: 0; }
-/* Two badges should never be visible together (paused vs finished are
-   mutually exclusive), but if they are, only the first claims auto-margin. */
+/* Paused vs finished are mutually exclusive, but if both ever show, only the
+   first claims the auto-margin. */
 .status-badge:not(.hidden) ~ .status-badge { margin-left: 8px; }
 .conn.connected {
   background: #6c6;
@@ -996,8 +956,8 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
 .icon-btn:hover { color: var(--accent); border-color: #444; }
 .icon-btn wa-icon { font-size: 1.125rem; }
 
-/* When disconnected: visually disable Settings gear and the Engines nav button.
-   Play stays usable for last-known state inspection. */
+/* Disconnected: disable the Settings gear and Engines nav. Play stays usable
+   for last-known state inspection. */
 body.disconnected #settings-btn,
 body.disconnected nav#perspective-nav button[data-perspective="engines"] {
   opacity: 0.4;
@@ -1005,8 +965,8 @@ body.disconnected nav#perspective-nav button[data-perspective="engines"] {
   cursor: not-allowed;
 }
 
-/* Web Awesome's reset turns svg into width:100%; height:auto, which destroys
-   the cm-chessboard piece SVGs. Restore native sizing for the chessboard only. */
+/* WA's reset turns svg into width:100%/height:auto, destroying cm-chessboard
+   piece SVGs. Restore native sizing for the chessboard only. */
 svg.cm-chessboard {
   width: 100% !important;
   height: 100% !important;
@@ -1016,12 +976,12 @@ svg.cm-chessboard {
 #toast-stack,
 #xgame-toast-stack {
   position: fixed;
-  /* Shared base for both stacks. #toast-stack is ribbon-side: left inset is
-     --ribbon-w to clear the ribbon buttons (right-ribbon override below flips
-     it right). #xgame-toast-stack lives on the opposite (moves-list) side and
-     the override below re-anchors it to --rail-edge-gap, not the ribbon.
-     Longhand on purpose: top/right also override the UA popover inset:0, and
-     bottom stays owned by this rule plus .toast-stack-lifted only. */
+  /* Shared base for both stacks. #toast-stack is ribbon-side: left inset
+     --ribbon-w clears the ribbon buttons (the right-ribbon override flips it).
+     #xgame-toast-stack sits on the moves-list side, re-anchored below to
+     --rail-edge-gap. Longhand on purpose: top/right also override the UA
+     popover inset:0, and bottom stays owned by this rule plus
+     .toast-stack-lifted only. */
   top: auto;
   right: auto;
   bottom: 4px;
@@ -1031,9 +991,8 @@ svg.cm-chessboard {
   gap: 8px;
   z-index: 9999;
   pointer-events: none;
-  /* Toast stack uses popover="manual" so it joins the top-layer and
-     renders above an open <wa-dialog> backdrop. Strip the UA popover
-     chrome so it stays a transparent column. */
+  /* popover="manual" joins the top layer so the stack renders above an open
+     <wa-dialog> backdrop. Strip UA popover chrome to keep it transparent. */
   margin: 0;
   padding: 0;
   border: 0;
@@ -1046,9 +1005,9 @@ svg.cm-chessboard {
   color: inherit;
 }
 #xgame-toast-stack { left: auto; right: var(--rail-edge-gap); }
-/* Lifted above the WinBox minimize dock when a minimized window actually
-   overlaps the stack horizontally; dialogs.js toggles the class. Side
-   placement rules set only left/right so this bottom always wins. */
+/* Lifted above the WinBox minimize dock when a minimized window overlaps the
+   stack horizontally (dialogs.js toggles the class). Side-placement rules set
+   only left/right, so this bottom always wins. */
 #toast-stack.toast-stack-lifted,
 #xgame-toast-stack.toast-stack-lifted {
   bottom: calc(4px + var(--wb-min-footer-h));
@@ -1071,9 +1030,8 @@ svg.cm-chessboard {
   font-size: 0.8125rem;
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-  /* Re-enable pointer events: the stack has pointer-events:none so
-     empty regions stay click-through, but individual toasts need to
-     receive clicks for interactive content (xgame nav arrow + X). */
+  /* The stack is pointer-events:none so empty regions stay click-through;
+     individual toasts need clicks back for the xgame nav arrow + X. */
   pointer-events: auto;
 }
 .toast-success { border-color: #6c6; }
@@ -1084,9 +1042,8 @@ svg.cm-chessboard {
   #toast-stack, #xgame-toast-stack { opacity: 1; }
 }
 
-/* The page is a flex column that fills the viewport. <main> takes the
-   remaining vertical space so perspectives can size their content to fit
-   without page-level scrolling. */
+/* The page is a viewport-filling flex column; <main> takes the remaining
+   space so perspectives fit their content without page-level scrolling. */
 html, body { height: 100%; }
 body { display: flex; flex-direction: column; --main-pad: 16px; }
 main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden; }
@@ -1101,27 +1058,26 @@ main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 800px = --bp-mobile, 680px = --bp-mobile-h-play (media queries can't
-   read custom props; keep these literals in sync with :root). */
+/* 800px = --bp-mobile, 680px = --bp-mobile-h-play. Media queries can't read
+   custom props; keep these literals in sync with :root. */
 @media (max-width: 800px), (max-height: 680px) {
-  /* Non-play perspectives keep `main` as the scroller (their inner lists
-     are flex:1 + overflow-y:auto and need a bounded ancestor). */
+  /* Non-play perspectives keep `main` as the scroller -- their inner lists
+     are flex:1 + overflow-y:auto and need a bounded ancestor. */
   main { overflow-y: auto; }
-  /* Play only: single scroll context -- the document scrolls, not `main`.
-     Unlock the height:100% frame so body grows to content and `main`
-     overflow stays visible (no nested scroller -- the double-scrollbar
-     bug). */
+  /* Play only: one scroll context -- the document scrolls, not `main`. Unlock
+     the height:100% frame so body grows to content and main's overflow stays
+     visible (a nested scroller is the double-scrollbar bug). */
   body:has(#play-perspective) { height: auto; min-height: 100%; }
-  /* Both axes visible: a visible/hidden mix computes the visible axis to
-     auto, which would re-add main's scroller. Play mobile children are
-     width-bounded (align-items:center; width:100%) so x won't escape. */
+  /* Both axes visible: a visible/hidden mix computes the visible axis to auto,
+     re-adding main's scroller. Play mobile children are width-bounded
+     (align-items:center; width:100%) so x won't escape. */
   #perspective-root:has(#play-perspective) { overflow: visible; }
-  /* Analysis locks body scroll (.xgame-nav-locked) on the assumption that
-     `main` is the scroller; in the play document-scroll model the body IS
-     the scroller, so re-enable it or content gets clipped with no bar. */
+  /* .xgame-nav-locked locks body scroll assuming `main` is the scroller; in
+     play's document-scroll model the body IS it, so re-enable or content gets
+     clipped with no bar. */
   body.xgame-nav-locked:has(#play-perspective) { overflow-y: visible; }
   /* Pin the footer to the viewport bottom while content scrolls above;
-     opaque bg so scrolling content doesn't show through. */
+     opaque bg so that content doesn't show through. */
   body:has(#play-perspective) #app-footer {
     position: sticky;
     bottom: 0;
@@ -1131,12 +1087,11 @@ main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden
 @media (max-width: 800px) {
   .desktop-only { display: none !important; }
   header h1 { display: none; }
-  /* Every header item stays visible on one row, no overlap, no scroll.
-     Not enough real estate for the connection dot, so it is dropped here;
-     that also removes one of the two competing margin-left:auto items (the
-     other is .status-badge), which is what pushed the trailing icons past
-     the right edge. The nav owns the spacing and is the only item allowed
-     to shrink -- it sheds button padding down to the text. */
+  /* Every header item on one row, no overlap, no scroll. Too little room for
+     the connection dot, so it's dropped -- that also removes one of the two
+     competing margin-left:auto items (.status-badge is the other), which was
+     pushing the trailing icons past the right edge. The nav owns the spacing
+     and is the only item allowed to shrink, shedding padding down to text. */
   #conn-status { display: none; }
   header { gap: 8px; }
   #perspective-nav {
@@ -1145,9 +1100,8 @@ main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden
     margin-right: auto;
     overflow: hidden;
   }
-  /* Buttons truncate rather than overflow: a shrunk flex container does not
-     clip by default, so without this the labels paint outside the nav and
-     over the badge at narrow widths. */
+  /* Buttons truncate rather than overflow: a shrunk flex container doesn't
+     clip by default, so labels would paint over the badge at narrow widths. */
   #perspective-nav button {
     flex: 0 1 auto;
     min-width: 0;
@@ -1165,8 +1119,8 @@ main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden
 
 .import-pos-form { display: flex; flex-direction: column; gap: 12px; }
 .import-pos-form.drag-over { outline: 2px dashed var(--wa-color-brand-50); outline-offset: -4px; }
-/* All panels share one fixed height so switching tabs never resizes the
-   dialog; the panel base fills it. */
+/* One fixed height for all panels so tab switches never resize the dialog;
+   the panel base fills it. */
 .import-pos-tabs wa-tab-panel { height: var(--import-panel-h); }
 .import-pos-tabs wa-tab-panel::part(base) {
   height: 100%;
@@ -1175,22 +1129,22 @@ main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden
   flex-direction: column;
 }
 /* Only the openings list/ribbon needs clipping; text panels stay visible so
-   input/button focus rings are not cut off at the panel edge. */
+   focus rings aren't cut off at the panel edge. */
 .import-pos-tabs wa-tab-panel[name="openings"]::part(base) { overflow: hidden; }
-/* Breathing room between the tab rail and the panel content. Right padding
-   stays 0 so the content's right edge lines up with the footer's Open button
-   (both align to the dialog body's right padding). Keyed to .dialog-side-tabs
-   because wa-tab-group does not reflect `placement` to an attribute. */
+/* Breathing room between tab rail and panel content. Right padding stays 0 so
+   the content's right edge lines up with the footer's Open button (both align
+   to the dialog body's right padding). Keyed to .dialog-side-tabs because
+   wa-tab-group doesn't reflect `placement` to an attribute. */
 .import-pos-tabs.dialog-side-tabs::part(body) { padding: 3px 3px 0 12px; overflow: visible; }
-/* PGN/FEN panel content: textarea grows to fill, shared toolbar/status pinned
-   below it with the form's gap so the side-tab rail sits beside all of it. */
+/* PGN/FEN panels: textarea grows to fill, toolbar/status pinned below it with
+   the form's gap so the side-tab rail sits beside all of it. */
 .import-pos-panel-body {
   display: flex;
   flex-direction: column;
   gap: 12px;
   height: 100%;
-  /* Clearance from the dialog footer (dialog body padding-bottom is 0 so the
-     openings ribbon can sit flush; text panels need their own breathing room). */
+  /* Footer clearance: the dialog body's padding-bottom is 0 so the openings
+     ribbon can sit flush, so text panels supply their own. */
   padding-bottom: 12px;
   box-sizing: border-box;
 }
@@ -1218,8 +1172,8 @@ wa-dialog:has(.import-pos-form)::part(body) {
 .import-pos-status.muted { background: transparent; color: var(--muted); }
 .import-pos-playas { display: flex; align-items: center; gap: 12px; }
 .import-pos-playas-label { font-size: 0.9rem; color: var(--wa-color-neutral-700, #555); }
-/* Openings tab: reuses the Engines list look (sticky resizable header,
-   bottom ribbon, slide-up search). Shared .th-grip / .col-drag-line apply. */
+/* Openings tab: reuses the Engines list look (sticky resizable header, bottom
+   ribbon, slide-up search); shared .th-grip / .col-drag-line apply. */
 .openings-panel { position: relative; display: flex; flex-direction: column; height: 100%; flex: 1 1 auto; min-height: 0; }
 .openings-table-wrap {
   position: relative;
@@ -1312,7 +1266,7 @@ wa-dialog:has(.import-pos-form)::part(body) {
               visibility 0s;
 }
 .openings-search { width: 100%; --wa-focus-ring-width: 0px; }
-/* Trash-x in each recents <wa-option>. Subtle until hovered. */
+/* Trash-x in each recents <wa-option>; subtle until hovered. */
 button.recent-del {
   appearance: none; background: transparent; border: 0; padding: 0 4px;
   color: var(--muted); cursor: pointer; display: inline-flex;
@@ -1320,8 +1274,8 @@ button.recent-del {
   flex-shrink: 0;
 }
 button.recent-del:hover { color: var(--status-err-fg, #d33); }
-/* Recent option layout: explicit flex so the label can shrink + clip
-   while the trash slot keeps its size, regardless of WA defaults. */
+/* Explicit flex so the label shrinks + clips while the trash slot keeps its
+   size, regardless of WA defaults. */
 wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
 .recent-label {
   flex: 1 1 auto;
@@ -1384,8 +1338,8 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   display: flex;
   flex-direction: column;
 }
-/* Docked ribbons: fixed vertical rail, buttons centered, over the footer.
-   top defaults to 0 (Play, Studio -- under the z-20 header); Arena sets
+/* Docked ribbons: fixed vertical rail, buttons centered, over the footer. top
+   defaults to 0 (Play, Studio -- under the z-20 header); Arena sets
    --arena-ribbon-top from JS so its rail starts below the menubar. */
 .board-ribbon,
 .studio-ribbon,
@@ -1403,8 +1357,8 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   background: var(--panel);
   border-right: var(--ribbon-border-w) solid var(--border-subtle);
 }
-/* Play's rail has always sat at 8px; the mobile flip block's fluid gap
-   overrides this when the rail turns horizontal. */
+/* Play's rail sits at 8px; the mobile flip block's fluid gap overrides this
+   when the rail turns horizontal. */
 .board-ribbon { gap: 8px; }
 /* Floating mode: hide ribbons still in their original DOM position. */
 body[data-ribbon-float] .play-grid .board-ribbon,
@@ -1444,9 +1398,9 @@ body[data-ribbon-float] .studio-ribbon {
 }
 .ribbon-btn.is-active { color: var(--wa-color-brand-90); }
 .ribbon-btn.is-active::before { background: var(--wa-color-brand-90); }
-/* Pulse marks a LIVE action (analysis running), not a toggled state. Scope
-   it to the analyze buttons only -- other ribbon buttons use .is-active
-   merely to mark on/selected state and must not pulse. */
+/* Pulse marks a LIVE action (analysis running), not a toggled state -- scoped
+   to the analyze buttons, since other ribbon buttons use .is-active merely
+   for on/selected state and must not pulse. */
 #analyze.is-active wa-icon, #view-analyze.is-active wa-icon {
   animation: analyze-pulse 1.4s ease-in-out infinite;
 }
@@ -1479,18 +1433,18 @@ body[data-ribbon-float] .studio-ribbon {
   box-shadow: 0 6px 16px rgba(0,0,0,0.45);
   display: flex; flex-direction: column; gap: 8px;
 }
-/* Right-docked ribbon hugs the right screen edge: open the popover leftward
-   so it doesn't run off-screen. */
+/* Right-docked ribbon hugs the screen edge: open the popover leftward so it
+   doesn't run off-screen. */
 body[data-ribbon-side="right"] .castle-popover,
 body[data-ribbon-side="right"] .side-popover {
   left: auto; right: 100%;
   margin-left: 0; margin-right: 8px;
 }
-/* Floating ribbon lives in a WinBox whose body clips overflow (contain:
-   strict), so the popover can't render inside it. JS portals it to <body>
-   and positions it (position: fixed) against the viewport. body[...] prefix
-   keeps this winning over the right-docked flip rule when float's last-docked
-   side is "right" (both attrs are set on <body> in float mode). */
+/* The floating ribbon's WinBox body clips overflow (contain: strict), so the
+   popover can't render inside; JS portals it to <body> and positions it fixed
+   against the viewport. The body[...] prefix keeps this winning over the
+   right-docked flip rule when float's last-docked side is "right" (float mode
+   sets both attrs on <body>). */
 body .castle-popover.popover-floating,
 body .side-popover.popover-floating {
   position: fixed;
@@ -1559,15 +1513,15 @@ body .side-popover.popover-floating {
   position: fixed;
   /* left/top/width/height driven by JS on desktop; reset on mobile */
 }
-/* Left dock: occupies the grid's first (left-gap) column, full board height.
-   Hidden when empty; the column width is unchanged so the board stays put. */
+/* Left dock: the grid's first (left-gap) column, full board height. Hidden
+   when empty; the column width is unchanged so the board stays put. */
 .play-dock-left {
   grid-column: 1;
   grid-row: 1;
   /* Fixed so it aligns with the ribbon regardless of grid centering. */
   position: fixed;
   left: calc(var(--ribbon-w) + var(--ribbon-border-w));
-  /* top, bottom, width set dynamically in JS to align with clock rows and board */
+  /* JS sets top/bottom/width to align with the clock rows and board. */
   --dock-grip-size: 5px;
   display: flex;
   flex-direction: column;
@@ -1620,19 +1574,19 @@ body .side-popover.popover-floating {
 }
 .play-dock-left:not(.dock-empty),
 .play-rail-dock:not(.dock-empty) { border: 1px solid #454952; }
-/* Drag-to-dock drop hint (play-dock-windows.js): a window title bar is being
-   dragged, so reveal the drop zone even when dock-empty (must sit after the
-   .dock-empty rules to win the specificity tie). The over-the-zone highlight
-   is the landing ghost below, not a class on the container. */
+/* Drag-to-dock hint (play-dock-windows.js): a title bar is being dragged, so
+   reveal the drop zone even when dock-empty -- must follow the .dock-empty
+   rules to win the specificity tie. The over-the-zone highlight is the
+   landing ghost below, not a class on the container. */
 .play-dock-left.dock-drop-eligible {
   visibility: visible;
   outline: 1px solid color-mix(in srgb, var(--row-bg-selected), white 30%);
   outline-offset: -1px;
 }
 /* Landing preview: a ghost flex child inserted at the drop boundary while the
-   pointer is over the zone (play-dock-windows.js). Being a real flex sibling,
-   it reflows existing slots to their post-dock heights and, when the column is
-   empty, grows to fill it -- so it doubles as the full-area drop highlight. */
+   pointer is over the zone (play-dock-windows.js). As a real flex sibling it
+   reflows slots to their post-dock heights and, on an empty column, grows to
+   fill it -- doubling as the full-area drop highlight. */
 .dock-ghost {
   flex: 1 1 0;
   min-height: 0;
@@ -1695,9 +1649,8 @@ body .side-popover.popover-floating {
 .dock-slot-action:hover,
 .dock-slot-undock:hover,
 .dock-slot-close:hover { color: var(--fg); background: var(--nav-btn-bg-hover); }
-/* Floating-mode (WinBox title-bar control). Mirrors the
-   wb-ribbon-rotate-ctrl pattern; the !important rules override the
-   WinBox vendor CSS that paints a default background-image. */
+/* Floating-mode (WinBox title-bar control), mirroring wb-ribbon-rotate-ctrl.
+   The !important overrides WinBox vendor CSS's default background-image. */
 .play-ai-reanalyze-ctrl {
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
   mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
@@ -1707,30 +1660,28 @@ body .side-popover.popover-floating {
   background-color: rgba(255,255,255,0.85) !important;
   background-image: none !important;
 }
-/* Docked-mode override: the dock-slot-action button uses the muted
-   button theme. Reset mask/background back to the button's natural
-   styling, then paint the icon via ::before so hover/disabled colors
-   work via currentColor. */
+/* Docked mode uses the muted button theme: reset mask/background to the
+   button's natural styling, then paint the icon via ::before so
+   hover/disabled colors work through currentColor. */
 .dock-slot-action.play-ai-reanalyze-ctrl {
   -webkit-mask-image: none !important; mask-image: none !important;
   background-color: transparent !important;
 }
 
 /* Mobile inline AI-analysis host. Hidden on desktop (the dock column and
-   floating WinBox cover that case); shown only in the stacked mobile layout
-   below the board. Empty -> no box. The panel grows with its content and the
-   page scrolls (no fixed height): the inline slot sizes to content. */
+   floating WinBox cover that); shown only in the stacked mobile layout below
+   the board. Empty -> no box. No fixed height: the slot sizes to content and
+   the page scrolls. */
 .play-ai-inline { display: none; }
 .play-ai-inline.inline-empty { display: none !important; }
-/* Inline slot reuses .dock-slot chrome but folds via a .collapsed class
-   toggled by the header click. The parent .play-ai-inline is block flow, so
-   the slot sizes to content (no flex item rule needed). */
+/* Reuses .dock-slot chrome but folds via .collapsed, toggled by the header
+   click. The parent is block flow, so the slot sizes to content. */
 .dock-slot.inline-slot .dock-slot-header { cursor: pointer; }
 .dock-slot.inline-slot .dock-slot-undock { display: none; } /* nowhere to pop to */
 .dock-slot.inline-slot.collapsed .dock-slot-body { display: none; }
-/* Vertical: grow with content, the page is the scroller. Horizontal: keep
-   dock mode's x-scroll so a long nowrap tool label can't bleed past the
-   panel and trigger a page-wide horizontal scrollbar. */
+/* Vertical: grow with content, the page scrolls. Horizontal: keep dock mode's
+   x-scroll so a long nowrap tool label can't bleed past the panel and trigger
+   a page-wide horizontal scrollbar. */
 .dock-slot.inline-slot .dock-slot-body { overflow-x: auto; overflow-y: visible; }
 .dock-slot.inline-slot .play-ai-scroll { max-height: none; overflow: visible; }
 .dock-slot-action.play-ai-reanalyze-ctrl::before {
@@ -1777,15 +1728,15 @@ body .side-popover.popover-floating {
   pointer-events: none;
   filter: grayscale(0.4);
 }
-/* Game paused (not analyzing): block board interaction. No visual dim --
-   the header badge alone signals the paused state. */
+/* Paused (not analyzing): block board interaction. No visual dim -- the
+   header badge alone signals the state. */
 .play-board-host.board-paused .board {
   pointer-events: none;
 }
-/* One-shot attention pulse: drawn on the Paused badge and Resume button when
-   the user clicks the (inert) paused board, to point them at how to resume.
-   Uses an INSET ring + brightness flash (no outward box-shadow or scale) so it
-   never clips against edge-hugging ribbons or the float WinBox's contain. */
+/* One-shot attention pulse on the Paused badge + Resume button when the user
+   clicks the inert board, pointing at how to resume. INSET ring + brightness
+   flash (no outward box-shadow or scale) so it never clips against
+   edge-hugging ribbons or the float WinBox's contain. */
 @keyframes pause-hint-pulse {
   0%, 100% { box-shadow: inset 0 0 0 0 rgba(var(--accent-rgb), 0); filter: brightness(0.5); }
   50%      { box-shadow: inset 0 0 0 2px rgba(var(--accent-rgb), 0.85); filter: brightness(1); }
@@ -1795,12 +1746,11 @@ body .side-popover.popover-floating {
   .pause-hint-pulse { animation: none; }
 }
 
-/* 800px = --bp-mobile, 680px = --bp-mobile-h-play (media queries can't
-   read custom props; keep these literals in sync with :root). */
+/* 800px = --bp-mobile, 680px = --bp-mobile-h-play. Media queries can't read
+   custom props; keep these literals in sync with :root. */
 @media (max-width: 800px), (max-height: 680px) {
-  /* !important guards against any later .play-dock-left rule with
-     higher specificity (e.g. modifier classes set from JS). Mobile
-     must hide the dock unconditionally. */
+  /* !important guards against later, more specific .play-dock-left rules
+     (e.g. JS-set modifier classes): mobile hides the dock unconditionally. */
   .play-dock-left { display: none !important; }
   #play-perspective { display: block; }
   .play-grid {
@@ -1810,8 +1760,8 @@ body .side-popover.popover-floating {
     height: auto;
   }
   .play-board-host { display: block; }
-  /* Inline AI panel: visible in the stacked layout, below the board.
-     Empty-state hiding is handled by the base .inline-empty rule. */
+  /* Inline AI panel: visible in the stacked layout, below the board. The
+     base .inline-empty rule handles empty-state hiding. */
   .play-ai-inline { display: block; }
   .board-ribbon {
     position: static;
@@ -1822,15 +1772,15 @@ body .side-popover.popover-floating {
     background: transparent;
     border-right: 0;
     border-bottom: 1px solid var(--border-subtle);
-    /* The ribbon must never break into a second row at any width. Gap is
-       fluid: fixed gaps are per-button overhead that shrinking can't recover. */
+    /* Never break into a second row at any width. Fluid gap: fixed gaps are
+       per-button overhead that shrinking can't recover. */
     flex-wrap: nowrap;
     gap: clamp(0px, 0.5vw, 4px);
   }
   /* Buttons divide the row evenly and shrink without a floor, so any button
-     count fits one row on any screen; 44px is the cap, not a fixed size.
-     The popover wrappers are the flex items in the edit ribbon, so they
-     shrink alongside the bare buttons and pass the width to the button. */
+     count fits one row on any screen; 44px caps rather than fixes the size.
+     The popover wrappers are the edit ribbon's flex items, so they shrink
+     alongside the bare buttons and pass the width down. */
   .board-ribbon > .ribbon-btn,
   .tournaments-ribbon > .ribbon-btn,
   .studio-ribbon > .ribbon-btn,
@@ -1856,9 +1806,9 @@ body .side-popover.popover-floating {
     left: 6px; right: 6px; bottom: -1px; top: auto;
     width: auto; height: 2px;
   }
-  /* Applies to plain separators and the (collapsed) push spacer alike --
-     ribbon-sep--push also carries the .ribbon-sep class. Margin is fluid so
-     the separators give width back to the buttons on narrow screens. */
+  /* Covers plain separators and the collapsed push spacer alike (which also
+     carries .ribbon-sep). Fluid margin so separators give width back to the
+     buttons on narrow screens. */
   .board-ribbon > .ribbon-sep,
   .tournaments-ribbon > .ribbon-sep,
   .studio-ribbon > .ribbon-sep {
@@ -1866,18 +1816,17 @@ body .side-popover.popover-floating {
     width: 1px; height: 18px;
     margin: 0 clamp(1px, 1vw, 4px);
   }
-  /* Horizontal ribbon: popovers open above the button (ribbon sits at
-     bottom of the page on mobile). body[...] prefix keeps this winning over
-     the global right-docked flip rule, which has the same attribute weight. */
+  /* Horizontal ribbon: popovers open above the button (the ribbon sits at the
+     page bottom on mobile). The body[...] prefix keeps this winning over the
+     global right-docked flip rule, which has the same attribute weight. */
   body[data-ribbon-side] .castle-popover,
   body[data-ribbon-side] .side-popover {
     left: 0; right: auto; top: auto; bottom: 100%;
     margin-left: 0; margin-right: 0; margin-bottom: 8px;
   }
-  /* Display order: ribbon on top, then board, then AI analysis, then side
-     panel. The horizontal ribbon's accent line sits at the button bottom
-     (bottom: -1px above), which only reads correctly when the ribbon
-     is above the board. */
+  /* Order: ribbon, board, AI analysis, side panel. The horizontal ribbon's
+     accent line sits at the button bottom (bottom:-1px above), which only
+     reads correctly with the ribbon above the board. */
   #no-engine-banner,
   #board-controls,
   #view-controls,
@@ -1891,9 +1840,8 @@ body .side-popover.popover-floating {
     width: 100%;
     max-width: var(--board-max-px, 100%);
   }
-  /* Mobile flows in the document scroll: the move list expands to full
-     content height with no inner scroller, so the page is the only
-     scrollbar -- no nested second one. */
+  /* Mobile flows in the document scroll: the move list expands to full content
+     height with no inner scroller, so the page is the only scrollbar. */
   .game-view-side { height: auto; }
   .game-view-moves { flex: 0 0 auto; }
   .game-view-moves .move-list {
@@ -1908,9 +1856,9 @@ body .side-popover.popover-floating {
   gap: 8px;
   min-height: 0;
   align-items: center;
-  /* Board is a width-capped square; on tall windows this column has vertical
-     slack. Center the stack so the leftover splits top/bottom instead of
-     pooling into a dead band below the board. */
+  /* The board is a width-capped square, so tall windows leave vertical slack.
+     Centering splits it top/bottom instead of pooling it into a dead band
+     below the board. */
   justify-content: center;
 }
 .game-view-side {
@@ -1953,7 +1901,7 @@ body .side-popover.popover-floating {
   border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
   padding: 6px;
 }
-/* No moves yet: drop the frame so an empty box isn't shown. */
+/* No moves yet: drop the frame so no empty box shows. */
 .game-view-moves:has(.move-list:empty) {
   border-color: transparent;
   padding: 0;
@@ -1967,13 +1915,12 @@ body .side-popover.popover-floating {
   height: auto;
   max-height: none;
 }
-/* Rail dock under the moves box: a capacity-one dock destination. Fixed-
-   positioned (left/top/width/height set by positionSideRail) so it occupies
-   the gap between the board bottom and the clock bottom without touching
-   the moves-list flow. Default home of the Engine Eval window; visibility
-   and drop-hint classes managed by play-dock-windows.js.
-   Desktop-only: it hangs off board geometry the mobile document-flow layout
-   doesn't provide. Gated here rather than hidden in the mobile block -- an
+/* Rail dock under the moves box: a capacity-one dock destination. Fixed
+   (geometry from positionSideRail) so it fills the gap between board bottom
+   and clock bottom without touching the moves-list flow. Default home of the
+   Engine Eval window; play-dock-windows.js manages visibility and drop-hint
+   classes. Desktop-only -- it hangs off board geometry mobile's document flow
+   doesn't provide. Gated here rather than hidden in the mobile block, since an
    unconditional base rule would win on source order at equal specificity. */
 .play-rail-dock { display: none; }
 @media (min-width: 801px) and (min-height: 681px) {
@@ -1987,25 +1934,25 @@ body .side-popover.popover-floating {
   }
 }
 .play-rail-dock.dock-empty { visibility: hidden; }
-/* Resize handle between the moves list and the rail band. Fixed sibling of
-   the band (geometry from positionSideRail) so it rides in the gap under
-   the board instead of inside the docked panel's border. Desktop-only for
-   the same reason as .play-rail-dock. */
+/* Resize handle between the moves list and the rail band. A fixed sibling of
+   the band (geometry from positionSideRail) so it rides in the gap under the
+   board, not inside the docked panel's border. Desktop-only, same reason as
+   .play-rail-dock. */
 .play-rail-grip { display: none; }
 @media (min-width: 801px) and (min-height: 681px) {
   .play-rail-grip { display: block; position: fixed; z-index: 8; }
 }
-/* Auto-hide: a docked slot holding an empty eval strip (view mode / no
-   evals yet) disappears entirely; play-dock-windows.js stamps the class and
-   counts such slots out of dock-empty/grip accounting. */
+/* Auto-hide: a slot holding an empty eval strip (view mode / no evals yet)
+   disappears entirely. play-dock-windows.js stamps the class and counts such
+   slots out of dock-empty/grip accounting. */
 .dock-slot.dock-slot-hidden { display: none; }
 .play-rail-dock.dock-drop-eligible {
   visibility: visible;
   outline: 1px solid color-mix(in srgb, var(--row-bg-selected), white 30%);
   outline-offset: -1px;
 }
-/* Eval strip body: fills its host (dock-slot body or WinBox body); the
-   strip scrolls horizontally itself. */
+/* Eval strip fills its host (dock-slot or WinBox body) and scrolls
+   horizontally itself. */
 .game-view-eval-bar {
   height: 100%;
   overflow-x: auto;
@@ -2024,9 +1971,8 @@ body .side-popover.popover-floating {
 #perspective-root.is-pending {
   opacity: 0;
 }
-/* Arena (engines perspective) needs to fill the viewport so the tournaments
- * list can scroll within the available space. Scoped via :has() so the
- * Play perspective's layout stays unchanged. */
+/* Arena (engines perspective) fills the viewport so the tournaments list can
+ * scroll within it. Scoped via :has() so Play's layout stays unchanged. */
 #perspective-root:has(#engines-perspective) {
   display: flex;
   flex-direction: column;
@@ -2091,9 +2037,8 @@ body .side-popover.popover-floating {
   flex-direction: column;
   gap: 2px;
   font-size: 0.75rem;
-  /* Reserve space for FEN + opening + tablebase lines so the page doesn't
-     reflow when they appear. FEN is rendered slightly larger than the
-     other meta lines, so account for that explicitly. */
+  /* Reserve space for the FEN + opening + tablebase lines so the page doesn't
+     reflow when they appear; FEN renders slightly larger, hence the split. */
   min-height: calc(2 * 1.4em + 13px * 1.4 + 4px);
 }
 .fen-line { min-height: calc(13px * 1.4); }
@@ -2168,9 +2113,9 @@ body .side-popover.popover-floating {
   font-family: ui-monospace, SFMono-Regular, monospace;
   transition: border-color 0.15s, background 0.15s, color 0.15s;
 }
-/* On-move: uniform accent ring all around (play and tournament alike).
-   Row height is content-driven, so a wider border would shift the board;
-   the 1px border + 1px inset shadow read as 2px with zero layout change. */
+/* On-move: uniform accent ring (play and tournament alike). Row height is
+   content-driven, so a wider border would shift the board -- the 1px border +
+   1px inset shadow read as 2px with zero layout change. */
 .clock-row.active {
   border-color: var(--accent);
   box-shadow: inset 0 0 0 1px var(--accent);
@@ -2185,12 +2130,12 @@ body .side-popover.popover-floating {
 /* AI recommendation arrow: purple. */
 .cm-chessboard .arrow-secondary .arrow-head { fill: #7c3aed; }
 .cm-chessboard .arrow-secondary .arrow-line { stroke: #7c3aed; opacity: 0.55; }
-/* Sturddle board themes (Staunty, Wine, ...). Each carries the shared
-   `sturddle-board` class plus its own variant class; the variant sets the
-   --sb-* palette and the rules below paint from it. cm-chessboard only
-   applies the cssClass to the SVG; these square/border/coordinate fills live
-   here in app CSS (loaded after chessboard.css) so the vendored set is
-   untouched. Adding a theme = one var block + the board-styles.js entry. */
+/* Sturddle board themes (Staunty, Wine, ...): each carries `sturddle-board`
+   plus its own variant class, which sets the --sb-* palette the rules below
+   paint from. cm-chessboard only applies the cssClass to the SVG, so these
+   square/border/coordinate fills live here (loaded after chessboard.css) and
+   the vendored set stays untouched. New theme = one var block + a
+   board-styles.js entry. */
 .cm-chessboard.sturddle-board .board .square.white { fill: var(--sb-light); }
 .cm-chessboard.sturddle-board .board .square.black { fill: var(--sb-dark); }
 .cm-chessboard.sturddle-board.border-type-thin .board .border { stroke: var(--sb-dark); stroke-width: 0.7%; fill: var(--sb-dark); }
@@ -2208,9 +2153,8 @@ body .side-popover.popover-floating {
 .cm-chessboard.sturddle-board .arrow-secondary .arrow-head { fill: var(--sb-arrow-secondary); }
 .cm-chessboard.sturddle-board .arrow-secondary .arrow-line { stroke: var(--sb-arrow-secondary); opacity: 0.75; }
 
-/* Sturddle Staunty: staunty pieces (set in board-styles.js) over navy squares.
-   Dark square = the tournament selected-row color; light is that navy lifted
-   toward slate-blue. */
+/* Staunty: staunty pieces (set in board-styles.js) over navy squares. Dark =
+   the tournament selected-row color; light is that navy lifted to slate. */
 .cm-chessboard.sturddle-staunty {
   --sb-dark: #2a3a4a;
   --sb-light: rgb(112, 134, 134);
@@ -2219,7 +2163,7 @@ body .side-popover.popover-floating {
   --sb-arrow-secondary: rgb(18, 82, 179);
 }
 
-/* Sturddle Wine: classic pieces over a darkish wine board. */
+/* Wine: classic pieces over a darkish wine board. */
 .cm-chessboard.sturddle-wine {
   --sb-dark: #743042;
   --sb-light: #c3a3aa;
@@ -2247,9 +2191,9 @@ body .side-popover.popover-floating {
   color: inherit;
   flex-shrink: 0;
 }
-/* Play/view clock cards only (.game-view-board scope keeps the tournament
-   live-game windows untouched): WinBox-matched chrome, faint vertical
-   gradient, steady digits. Cosmetic only -- same elements and states. */
+/* Play/view clock cards only -- the .game-view-board scope leaves tournament
+   live-game windows untouched. WinBox-matched chrome, faint gradient, steady
+   digits; cosmetic only, same elements and states. */
 .game-view-board .clock-row {
   border-color: var(--wb-outline);
   background: linear-gradient(#40434b, #34373d);
@@ -2262,8 +2206,8 @@ body .side-popover.popover-floating {
   border-color: var(--accent);
   box-shadow: inset 0 0 0 1px var(--accent);
 }
-/* Black-active rows: the dark #111 fill makes full --accent look brighter
-   by contrast; the softer --accent-line evens out perceived brightness.
+/* Black-active rows: the #111 fill makes full --accent look brighter by
+   contrast, so the softer --accent-line evens out perceived brightness.
    Placed after the game-view rule so the tie-break covers both scopes. */
 .clock-row[data-color="black"].active {
   border-color: var(--accent-line);
@@ -2312,9 +2256,9 @@ body .side-popover.popover-floating {
   margin-left: 1px;
   vertical-align: super;
 }
-/* X-game nav toasts: live inside the regular toast-stack (bottom of
-   screen). Collapsible variant has its list above the header so the
-   expansion grows upward away from the screen edge. */
+/* X-game nav toasts live in the regular (bottom-of-screen) toast stack. The
+   collapsible variant puts its list above the header so the expansion grows
+   upward, away from the screen edge. */
 .xgame-toast {
   display: flex;
   align-items: center;
@@ -2332,8 +2276,8 @@ body .side-popover.popover-floating {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  /* Inner padding gives focus rings on the first/leftmost items room
-     to breathe without getting clipped by the toast box. */
+  /* Inner padding keeps the first/leftmost items' focus rings from being
+     clipped by the toast box. */
   padding: 4px 4px 6px 4px;
   margin-bottom: 2px;
   border-bottom: 1px solid var(--wa-color-border-loud, #353841);
@@ -2357,17 +2301,16 @@ body .side-popover.popover-floating {
   overflow-y: hidden;
 }
 .xgame-toast .xgame-link:hover { color: var(--accent); filter: brightness(1.15); }
-/* Analysis on: x-game nav links are greyed and inert (no jumping games
-   mid-analysis). The expand arrow stays live so labels remain browsable. */
+/* Analysis on: nav links grey out and go inert (no jumping games mid-run).
+   The expand arrow stays live so labels remain browsable. */
 body.xgame-nav-locked .xgame-toast .xgame-link {
   opacity: 0.6;
   pointer-events: none;
   cursor: not-allowed;
   text-decoration: none;
 }
-/* Chrome, square sizing, and icon size come from the shared toast-button
-   rules near .toast-icon-btn; arrow/X keep a muted resting color that
-   brightens on hover. */
+/* Chrome, square sizing and icon size come from the shared toast-button rules
+   near .toast-icon-btn; arrow/X keep a muted resting color. */
 .xgame-toast-arrow,
 .xgame-toast-x { color: var(--muted); }
 .xgame-toast-arrow:hover,
@@ -2391,9 +2334,9 @@ body.xgame-nav-locked .xgame-toast .xgame-link {
 #engines-perspective .placeholder .muted { font-size: 0.75rem; }
 pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-size: 0.75rem; }
 
-/* Engines list/ribbon styles for the Settings dialog Engines tab.
-   The horizontal ribbon, drop-up search bar, and list-host modifiers
-   are defined further down (see "Settings dialog Engines tab" section). */
+/* Engines list/ribbon for the Settings dialog Engines tab. The ribbon,
+   drop-up search bar and list-host modifiers are further down (see the
+   "Settings dialog Engines tab" section). */
 .engines-body-content { display: flex; flex-direction: column; min-width: 0; }
 .engines-search { width: 100%; --wa-focus-ring-width: 0px; }
 
@@ -2412,28 +2355,22 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
 }
 .engine-opt-path wa-input { flex: 1 1 auto; min-width: 0; }
 
-/* Engine settings dialog: pin the tab-group, panels, and inner forms
-   to the same fixed height so switching tabs can't reflow the dialog.
-   The wa-tab-panel sits in wa-tab-group's shadow DOM in a slot wrapper
-   that does NOT propagate ``height: 100%`` from its parent — without
-   an explicit panel height, the panel sizes to its content and the
-   wa-tab-group becomes the scroll surface, dragging the left rail.
-   Pinning every level to the same height keeps the form as the only
-   scroll container. The bottom padding on each form leaves clearance
-   for the dialog's footer button strip; the 4px elsewhere preserves
-   focus-ring space against the panel edge. */
+/* Engine settings dialog: pin tab-group, panels and inner forms to one fixed
+   height so tab switches can't reflow the dialog. wa-tab-panel sits in
+   wa-tab-group's shadow DOM in a slot wrapper that does NOT propagate
+   `height: 100%`; without an explicit panel height the panel sizes to content
+   and wa-tab-group becomes the scroll surface, dragging the left rail.
+   Pinning every level keeps the form the only scroll container. */
 wa-dialog .engine-settings-tabs {
-  /* Narrow / portrait viewports get a much larger share of the screen
-     because the dialog is the *only* surface in view; on desktop the
-     dialog is one of many things competing for vertical space. */
+  /* Narrow/portrait viewports get a larger share: the dialog is the only
+     surface in view, where on desktop it competes for vertical space. */
   --engine-settings-panel-h: 46vh;
   height: var(--engine-settings-panel-h);
 }
 @media (max-width: 480px) {
-  /* Mobile: drop the panel-height cap entirely so tabs size to their
-     content and the form doesn't scroll inside a too-short panel. The
-     "no reflow on tab switch" rule we hold on desktop is relaxed here
-     — phone users configure one tab at a time, not bounce between. */
+  /* Mobile: drop the height cap so tabs size to content and the form doesn't
+     scroll inside a too-short panel. Desktop's "no reflow on tab switch" rule
+     is relaxed here -- phone users configure one tab at a time. */
   wa-dialog .engine-settings-tabs {
     --engine-settings-panel-h: auto;
   }
@@ -2449,29 +2386,23 @@ wa-dialog .engine-settings-tabs wa-tab-panel {
   height: var(--engine-settings-panel-h);
   overflow: clip;
 }
-/* wa-tab-panel's shadow ``[part="base"]`` slot wrapper defaults to
-   32px padding on every side. Zero only the right (so input/scrollbar
-   right edges line up with the wa-dialog footer button strip) and
-   keep the left so the form has visual breathing room from the tab
-   rail. The form's own padding handles the rest. */
+/* wa-tab-panel's shadow [part="base"] wrapper defaults to 32px padding all
+   round. Zero only the right, so input/scrollbar right edges line up with the
+   footer button strip; the left keeps the form clear of the tab rail. */
 wa-dialog .engine-settings-tabs wa-tab-panel::part(base) {
   padding-right: 0;
 }
-/* wa-tab's shadow ``[part="base"]`` defaults to 21px padding on every
-   side — that adds to wa-dialog::part(body)'s 24px to make side-tab
-   labels look ~21px more inset than the form's right edge. Trim the
-   left so labels sit closer to the body's content-left edge while
-   leaving enough room for the focus ring (2px outline + 2px breathing
-   room ≈ 4px minimum). Scoped to ``.dialog-side-tabs`` so top-tab
-   dialogs (e.g. Import position) keep their first-tab indentation. */
+/* wa-tab's shadow [part="base"] defaults to 21px padding all round, which
+   adds to wa-dialog::part(body)'s 24px and leaves side-tab labels ~21px more
+   inset than the form's right edge. Trim the left, keeping the focus ring's
+   minimum (2px outline + 2px breathing room). Scoped to .dialog-side-tabs so
+   top-tab dialogs (e.g. Import position) keep their first-tab indent. */
 wa-dialog .dialog-side-tabs wa-tab::part(base) {
   padding-left: 10px;
 }
-/* Equalize side-tab widths so focus rings + active-tab bars form a
-   consistent vertical strip instead of hugging each label's content
-   width. Each tab's ::part(base) fills the rail's column. Only apply
-   when the rail is actually a vertical column — on narrow viewports we
-   switch placement to "top" via JS and tabs go horizontal. */
+/* Equalize side-tab widths so focus rings + active-tab bars form one vertical
+   strip instead of hugging each label. Only while the rail is actually a
+   column -- on narrow viewports JS switches placement to "top". */
 @media (min-width: 481px) {
   wa-dialog .dialog-side-tabs wa-tab,
   wa-dialog .dialog-side-tabs wa-tab::part(base) {
@@ -2488,30 +2419,26 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
 }
 .engine-launch-form,
 .engine-opt-form {
-  /* Fill the panel's full inner width so input/scrollbar right edges
-     align with the wa-dialog footer's button strip. Without this the
-     form sizes to its content (or its grid intrinsic width) and ends
-     ~30px short of the panel — the wa-tab-panel slot wrapper padding
-     leaks through and the right edges stop misaligned. */
+  /* Fill the panel's inner width so input/scrollbar right edges align with
+     the footer's button strip. Otherwise the form sizes to its content (or
+     grid intrinsic width) and stops ~30px short: the wa-tab-panel slot
+     wrapper's padding leaks through and the right edges misalign. */
   width: 100%;
   max-height: var(--engine-settings-panel-h);
   overflow-y: auto;
-  /* Reserve scrollbar space at all times so inputs don't slide under
-     the scrollbar (which would clip the right-side focus ring) when
-     the form starts overflowing. Trades perfect "input flush with
-     Save" alignment for a stable layout and clean focus rings. */
+  /* Always reserve scrollbar space so inputs don't slide under it (clipping
+     the right focus ring) once the form overflows. Trades flush "input to
+     Save" alignment for stable layout and clean rings. */
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
   box-sizing: border-box;
-  /* `contain: layout` only — `paint` would clip child focus rings at
-     the form's box edge. Vertical overflow is already handled by
-     ``overflow-y: auto`` so we don't need paint containment for that. */
+  /* `layout` only -- `paint` would clip child focus rings at the form's box
+     edge, and overflow-y:auto already handles vertical overflow. */
   contain: layout;
-  /* Padding budget: 4px each side leaves clearance for input focus
-     rings, which the form's scroll container would otherwise clip
-     (scroll containers always clip overflow -- `contain` doesn't help).
-     Trade-off: input right edge sits ~4px short of the Save button,
-     but focus rings stay visible. */
+  /* 4px each side clears the input focus rings that the scroll container
+     would otherwise clip (scroll containers always clip; `contain` doesn't
+     help). Costs ~4px of right-edge alignment with Save. The bottom padding
+     on each form also clears the dialog's footer button strip. */
   padding: 4px;
 }
 .engine-launch-form {
@@ -2527,25 +2454,22 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   font-size: 0.8125rem;
 }
 .engine-opt-form {
-  /* Grid layout the row class relies on (lives inside this form via
-     display: contents). */
+  /* The grid .engine-opt-row relies on, via display: contents. */
   display: grid;
   grid-template-columns: minmax(120px, max-content) 1fr;
   gap: 8px 16px;
   align-content: start;
   align-items: center;
 }
-/* Narrow viewports (phones, small tablets in portrait): collapse the
-   form to one column so labels stack above inputs and inputs get the
-   full available width. The label-on-top layout is denser per row but
-   readable, and avoids the "Stur..." truncation in the screenshot. */
+/* Narrow viewports (phones, portrait tablets): one column, so labels stack
+   above inputs and inputs get the full width. Denser per row but readable,
+   and it avoids truncating long option names. */
 @media (max-width: 480px) {
   .engine-opt-form,
   .engine-launch-form {
-    /* Mobile drops the panel-height cap so the dialog grows with
-       content; the desktop bottom-padding-to-clear-footer reserve is
-       no longer needed. Keep a small buffer so the last row's focus
-       ring isn't kissed by the footer button strip. */
+    /* Mobile drops the height cap so the dialog grows with content, retiring
+       the desktop footer reserve. Small buffer so the last row's focus ring
+       isn't kissed by the footer button strip. */
     padding-bottom: 12px;
   }
   .engine-opt-form {
@@ -2601,9 +2525,8 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   gap: 6px;
   align-items: center;
 }
-/* Force the wa-input web components to fill their grid track instead
-   of sitting at their intrinsic ~280px width (which clips the second
-   env column and triggers a horizontal scrollbar at narrow widths). */
+/* Fill the grid track instead of the intrinsic ~280px width, which clips the
+   second env column and adds a horizontal scrollbar at narrow widths. */
 .engine-launch-args-row wa-input,
 .engine-launch-env-row wa-input {
   width: 100%;
@@ -2624,9 +2547,8 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   table-layout: fixed;
   width: 100%;
   border-collapse: separate;
-  /* No vertical spacing -- a non-zero border-spacing leaves a gap above
-     the sticky thead that scrolls with the content. Row breathing room
-     is provided by td padding instead. */
+  /* Non-zero border-spacing leaves a gap above the sticky thead that scrolls
+     with the content; td padding gives the rows their breathing room. */
   border-spacing: 0;
 }
 .engines-table thead th {
@@ -2700,8 +2622,8 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   width: 8px;
   cursor: col-resize;
   user-select: none;
-  /* pan-y: vertical swipes starting on the grip still scroll the table;
-     horizontal drags (past the JS slop) resize. */
+  /* pan-y: vertical swipes from the grip still scroll the table; horizontal
+     drags (past the JS slop) resize. */
   touch-action: pan-y;
   z-index: 2;
 }
@@ -2716,9 +2638,8 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   transition: opacity 0.15s;
 }
 .th-grip:hover::after, .th-grip.dragging::after { opacity: 1; }
-/* Touch devices: fatten the hit area (centered on the boundary; the last
-   column's grip keeps its 4px overhang so tables don't gain horizontal
-   overflow). The grip line still shows only while dragging. */
+/* Touch: fatten the hit area, centered on the boundary. The last column's
+   grip keeps its 4px overhang so tables gain no horizontal overflow. */
 @media (pointer: coarse) {
   .th-grip { right: -14px; width: 28px; }
   .th-grip::after { left: auto; margin-left: 0; right: 13px; }
@@ -2737,15 +2658,14 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
 .muted { color: var(--muted); }
 
 /* ---------- Dialog content system ----------
- * Unified spacing for tab panels: every row gets the same vertical rhythm
- * and the same horizontal padding so nothing kisses the dialog edges.
+ * Unified tab-panel spacing: one vertical rhythm and one horizontal padding,
+ * so no row kisses the dialog edges.
  */
 wa-dialog::part(body) { overflow-x: hidden !important; }
-/* Header actions: spacing between buttons. */
 wa-dialog::part(header-actions) { gap: 6px; align-items: center; }
-/* WA components reset user-select:text in their shadow DOM, overriding the
-   global body none. A multi-click in an open dialog then selects label text.
-   Force none on dialog chrome; [data-selectable] regions re-opt in. */
+/* WA components reset user-select:text in their shadow DOM, overriding body's
+   none, so a multi-click in a dialog selects label text. Force none on the
+   chrome; [data-selectable] regions re-opt in. */
 wa-dialog, wa-dialog *:not(input):not(textarea),
 wa-dialog::part(title), wa-dialog::part(header),
 wa-dialog::part(body), wa-dialog::part(footer) {
@@ -2813,34 +2733,29 @@ wa-dialog[no-header]::part(dialog) {
   letter-spacing: 0.2px;
 }
 wa-dialog wa-tab-group { min-width: 0; }
-/* Inherit Web Awesome's default tab-panel padding for the Settings dialog;
-   Settings is now form-shaped only, so default WA spacing fits naturally. */
-/* Allow popovers/dropdowns inside dialogs to escape clipping ancestors. */
+/* Settings is form-shaped only, so it keeps WA's default tab-panel padding. */
+/* Let popovers/dropdowns inside dialogs escape clipping ancestors. */
 wa-dialog::part(body) { overflow: visible !important; }
-/* Suppress focus-visible ring on the scrollable body div; it flashes amber
-   briefly on open (showModal triggers focus before any user gesture). */
+/* Suppress the focus-visible ring on the scrollable body div: it flashes
+   amber on open, since showModal focuses before any user gesture. */
 wa-dialog::part(body):focus-visible { outline: none; }
 wa-dialog::part(dialog) {
   overflow: visible !important;
 }
-/* Optional fixed height: callers set --dialog-height on the host (e.g. the
-   Settings dialog, which wants a stable size). When unset, leave height
-   alone so the panel sizes to its content. */
+/* Optional fixed height: callers set --dialog-height on the host (e.g.
+   Settings, which wants a stable size). Unset, the panel sizes to content. */
 wa-dialog[style*="--dialog-height"]::part(dialog) {
   height: var(--dialog-height);
 }
 
-/* Consistent vertical breathing room between any two adjacent
-   top-level children of a settings tab panel — no need for per-row
-   margin rules on each component type. */
+/* One vertical gap between any two adjacent top-level children of a settings
+   tab panel, so no per-component-type margin rules are needed. */
 wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 
-/* Settings dialog: cap each tab's form to a reasonable column width so
-   short panels (Common, Gameplay) don't strand whitespace on the right.
-   The wa-tab's shadow ``[part="base"]`` already pads the form 32px on
-   each side horizontally; we add small vertical padding so focus rings
-   on the first/last row don't get clipped at the panel's top/bottom
-   edge. */
+/* Cap each tab's form to a column width so short panels (Common, Gameplay)
+   don't strand whitespace on the right. wa-tab's shadow [part="base"] already
+   pads 32px horizontally; the vertical padding here keeps first/last-row
+   focus rings from clipping at the panel's top/bottom edge. */
 wa-dialog .settings-tabs wa-tab-panel::part(base) {
   padding-top: 6px;
   padding-bottom: 6px;
@@ -2848,27 +2763,26 @@ wa-dialog .settings-tabs wa-tab-panel::part(base) {
 wa-dialog .settings-tabs wa-tab-panel > * {
   max-width: 480px;
 }
-/* Per-tab inter-row spacing -- each tab's content has a different
-   natural height, so the gap is tuned per tab to use the available
-   space without overflowing the dialog cap. */
+/* Per-tab row spacing: each tab's content has a different natural height, so
+   the gap is tuned to fill the space without overflowing the dialog cap. */
 wa-dialog .settings-tabs wa-tab-panel[name="general"] > * + * {
   margin-top: 38px;
 }
 /* wa-dialog .settings-tabs wa-tab-panel[name="play"] {
   --settings-group-gap: 18px;
 } */
-/* Gameplay content is wider than the shared 360px column so the
-   side-by-side name/side row has room to breathe. */
+/* Wider than the shared 360px column, so the side-by-side name/side row on
+   the Gameplay tab has room to breathe. */
 wa-dialog .settings-tabs wa-tab-panel[name="play"] .settings-panel-col {
   width: 440px;
 }
-/* Extra breathing room between the PGN directory row and the clock section:
-   two row-gaps, tied to the shared token so it tracks the settings rhythm. */
+/* Two row-gaps between the PGN directory row and the clock section, tied to
+   the shared token so it tracks the settings rhythm. */
 wa-dialog .settings-tabs wa-tab-panel[name="play"] .settings-panel-col > .settings-section:first-of-type {
   margin-top: calc(var(--settings-row-gap) * 2);
 }
-/* Gameplay tab: pair two short selects (e.g. Human plays as + Eval
-   display) on the same line. Each takes equal share. */
+/* Gameplay tab: two short selects (e.g. Human plays as + Eval display) share
+   a line, equal width each. */
 .settings-pair-row {
   display: flex;
   align-items: end;
@@ -2906,8 +2820,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   font-family: var(--wa-font-family-body);
   margin-bottom: 4px;
 }
-/* Toggles row: switches flow horizontally, wrapping to a new line when
-   they exceed the panel width. */
+/* Switches flow horizontally, wrapping when they exceed the panel width. */
 .settings-toggles-grid {
   display: flex;
   flex-wrap: wrap;
@@ -2915,24 +2828,22 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   align-items: center;
   max-width: 460px;
 }
-/* Vertical rhythm tokens for settings panels: group/row gaps share these
-   so the three-different-magic-numbers problem stays out of the markup. */
+/* Vertical rhythm tokens for settings panels: group/row gaps share these, so
+   the markup never grows three competing magic numbers. */
 :root {
   --settings-group-gap: 20px;
   --settings-row-gap: 12px;
   --settings-section-pad: 14px;
 }
-/* Hairline separator between conceptual groups in a settings panel.
-   Matches the wa-tab-group rail (same track-color, same 0.125rem width)
-   so the dialog reads as one visual system with the tab nav rail. */
+/* Hairline between conceptual groups, matching the wa-tab-group rail (same
+   track-color and 0.125rem width) so the dialog reads as one system. */
 .settings-divider {
   border: 0;
   border-top: 1px solid var(--wa-color-neutral-fill-normal);
   margin: var(--settings-group-gap) 0;
 }
-/* Subtle bordered card around a related-controls group; legend inset on
-   the top border (fieldset-style). Uses the same neutral-fill-normal
-   rail color as .settings-divider for consistency. */
+/* Bordered card around a related-controls group, legend inset on the top
+   border (fieldset-style). Same rail color as .settings-divider. */
 .settings-section {
   border: 1px solid var(--wa-color-neutral-fill-normal);
   border-radius: var(--wa-border-radius-m, 4px);
@@ -2947,17 +2858,15 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   display: inline-flex;
   align-items: center;
 }
-/* Legend hosts a single icon; size it explicitly so it isn't subject to
-   the surrounding legend default. Applies to wa-icon AND our custom
-   inlineSvgIcon, which sizes off em. */
+/* The legend hosts one icon; size it explicitly so it escapes the legend
+   default. Covers wa-icon and our inlineSvgIcon, which sizes off em. */
 .settings-section legend wa-icon,
 .settings-section legend svg { font-size: 1rem; width: 1.5em; height: 1.5em; }
 .settings-section legend svg { color: var(--muted); }
 .settings-section > .settings-row { margin: 0; }
 .settings-section > .settings-row + .settings-row { margin-top: var(--settings-row-gap); }
-/* Centered, fixed-width column for a settings tab content. All direct
-   children share this width so the section box, the standalone rows and
-   the dividers line up visually. */
+/* Centered fixed-width column for a settings tab. All direct children share
+   the width, so section box, standalone rows and dividers line up. */
 .settings-panel-col {
   width: 360px;
   max-width: 100%;
@@ -2969,15 +2878,14 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   max-width: none;
   width: 100%;
 }
-/* Extra headroom on a row that sits below a select/input within the same
-   conceptual group (e.g. a switch after a dropdown). Avoids ad-hoc inline
-   margins on .settings-row elements. */
+/* Headroom for a row below a select/input in the same group (e.g. a switch
+   after a dropdown), instead of ad-hoc inline margins. */
 .settings-row-spaced { margin-top: var(--settings-row-gap); }
-/* Double gap for a standalone row that follows another group with no
-   divider between them (e.g. the difficulty slider). */
+/* Double gap for a standalone row following another group with no divider
+   between (e.g. the difficulty slider). */
 .settings-row-headroom { margin-top: calc(var(--settings-row-gap) * 2); }
-/* Inset standalone rows by the section's inner padding so toggle labels
-   align with the left edge of inputs inside a .settings-section card. */
+/* Inset standalone rows by the section's inner padding, so toggle labels
+   align with input left edges inside a .settings-section card. */
 .settings-row-section-inset { padding-left: var(--settings-section-pad); }
 .settings-row label {
   display: block;
@@ -2991,8 +2899,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   --wa-form-control-value-line-height: 1.4;
 }
 .settings-row wa-slider { width: 100%; }
-/* Value + unit pair (e.g. time control). Total width matches the other
-   single-control rows (max-width: 360px from .settings-row). */
+/* Value + unit pair (e.g. time control); total width matches the other
+   single-control rows (max-width 360px, from .settings-row). */
 .settings-duration {
   display: flex;
   gap: 6px;
@@ -3001,19 +2909,18 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .settings-duration wa-input { flex: 1 1 auto; min-width: 0; width: auto; }
 .settings-duration wa-select { flex: 0 0 7em; width: auto; }
 
-/* Aligns right edge with the path-field in .settings-tournament-path-inner.
-   The reserved-width subtraction here must match ``.settings-row-actions``'
-   width below. */
+/* Aligns the right edge with .settings-tournament-path-inner's path field;
+   the reserved width must match .settings-row-actions' width below. */
 .settings-panel-aligned { max-width: calc(100% - 6em - 8px); }
 .settings-num-group { display: flex; gap: 12px; }
 .settings-num-group > div { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .settings-num-group label { display: block; color: var(--muted); font-size: 0.75rem; margin-bottom: 4px; }
 .settings-num-group wa-input { width: 100%; }
-/* Threads subgroup: "Threads" header sits to the LEFT of a bordered
-   box holding Analysis + Play inputs. Specificity: must chain the
-   parent class so we match at (0,2,0) and beat `.settings-num-group >
-   div` (0,1,1, due to the `div` type selector) — otherwise the
-   subgroup inherits flex-direction: column and the header stacks. */
+/* Threads subgroup: the "Threads" header sits LEFT of a bordered box holding
+   the Analysis + Play inputs. The parent class is chained to match at (0,2,0)
+   and beat `.settings-num-group > div` (0,1,1 via the type selector);
+   otherwise the subgroup inherits flex-direction:column and the header
+   stacks. */
 .settings-num-group .settings-threads-subgroup {
   flex: 2 1 0 !important;
   min-width: 0;
@@ -3039,8 +2946,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .settings-threads-subgroup-inner > div { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .settings-threads-subgroup-inner label { display: block; color: var(--muted); font-size: 0.75rem; margin-bottom: 4px; }
 .settings-threads-subgroup-inner wa-input { width: 100%; }
-/* Hash gets a matching border so it visually pairs with the threads
-   box without changing its label/input structure. */
+/* Matching border so Hash pairs with the threads box, without changing its
+   label/input structure. */
 .settings-hash-boxed {
   border: 1px solid #34373d;
   border-radius: 6px;
@@ -3051,7 +2958,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .settings-row-pair > wa-input { flex: 0 0 5em; width: auto; }
 .settings-row-pair > wa-select { flex: 1 1 auto; min-width: 0; width: auto; }
 
-/* Engines panel host — sits inside a tab panel and uses the same rhythm. */
+/* Engines panel host: sits in a tab panel and keeps the same rhythm. */
 .engines-host {
   min-width: 0;
   overflow-x: hidden;
@@ -3064,7 +2971,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-picker-pathbar { display: flex; gap: 8px; align-items: center; }
 .fs-picker-pathbar wa-input { flex: 1; }
 .fs-exe-only-btn[aria-pressed="true"] { color: var(--accent); }
-/* Overlay host for the resize drag-lines; also the scroll container. */
+/* Overlay host for the resize drag-lines, and the scroll container. */
 .fs-picker-table-wrap {
   position: relative;
   border: 1px solid #34373d;
@@ -3144,7 +3051,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .tournaments-menubar {
   position: relative;
   display: flex; list-style: none;
-  /* Span edge-to-edge: negative margins escape main's padding, matching
+  /* Edge-to-edge: negative margins escape main's padding, and the matching
      padding keeps the menu items at their original inset. */
   margin: 0 calc(-1 * var(--main-pad));
   padding: 0 var(--main-pad);
@@ -3220,10 +3127,9 @@ wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
 .sprt-params-form .settings-row { max-width: none; }
 .sprt-settings-grid .settings-row:has(wa-select),
 .sprt-params-form .settings-row:has(wa-select) { grid-column: 1 / -1; }
-/* Width must accommodate the two icon buttons' intrinsic width + gap
-   (otherwise they overflow the container and the rightmost button
-   extends past the form's visual right edge). 6em comfortably fits
-   the folder-open and xmark buttons at our default sizing. */
+/* Must fit both icon buttons' intrinsic width + gap, or they overflow and the
+   rightmost extends past the form's right edge. 6em fits folder-open and
+   xmark at our default sizing. */
 .settings-row-actions {
   display: flex;
   justify-content: flex-end;
@@ -3231,7 +3137,7 @@ wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
   width: 6em;
   flex-shrink: 0;
 }
-/* Icon buttons have intrinsic size — don't stretch them across the column. */
+/* Icon buttons have intrinsic size; don't stretch them across the column. */
 .settings-row-actions > * { flex: 0 0 auto; }
 .settings-row-hint {
   font-size: 0.8125rem;
@@ -3246,8 +3152,8 @@ wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
   text-transform: uppercase; letter-spacing: 0.05em;
 }
 
-/* Vertical scroll only on dialog body (X stays visible so wa-select popups
-   can still escape the clipping ancestors). */
+/* Vertical scroll only: X stays visible so wa-select popups can still escape
+   the clipping ancestors. */
 wa-dialog::part(body) {
   overflow-y: auto !important;
   max-height: calc(var(--dialog-height, 80vh) - 4rem);
@@ -3266,14 +3172,14 @@ wa-dialog::part(body) {
 .engines-empty .empty-message { pointer-events: auto; }
 .engines-empty.hidden { display: none; }
 
-/* Settings dialog Engines tab -- horizontal ribbon + full-width scrollable list.
-   The engines panel sizes itself via JS (mountEngineList sets an explicit
-   pixel height on .engines-table-wrap that fits the available dialog body
-   space). That keeps the dialog body chain untouched -- no overflow hacks,
-   no height inheritance through wa-tab-panel slot wrappers. */
+/* Settings Engines tab: horizontal ribbon + full-width scrollable list. JS
+   sizes the panel (mountEngineList sets a pixel height on
+   .engines-table-wrap that fits the dialog body), leaving the dialog body
+   chain untouched -- no overflow hacks, no height inheritance through
+   wa-tab-panel slot wrappers. */
 .settings-engines-panel { padding: 0 !important; }
-/* override the .settings-tabs ::part(base) 6px vertical padding and the
-   > * 480px max-width for this panel only */
+/* Override the .settings-tabs ::part(base) 6px vertical padding and the
+   > * 480px max-width, for this panel only. */
 wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel::part(base) {
   padding: 0;
 }
@@ -3283,11 +3189,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .engines-list-host { display: flex; flex-direction: column; flex: 1; min-height: 0; position: relative; }
 .engines-body-main { padding: 0; }
 
-/* Drop-up search bar overlaid above the ribbon. The ribbon stays
-   reachable while searching; the last list row sits behind the bar but
-   is reachable by scrolling (JS adds bottom padding to the list while
-   open). Nothing else in the layout resizes, so the dialog body
-   geometry stays constant and no scrollbar flashes. */
+/* Drop-up search bar overlaid above the ribbon, which stays reachable while
+   searching. The last list row sits behind the bar but scrolls into view (JS
+   pads the list while open). Nothing else resizes, so the dialog body
+   geometry holds and no scrollbar flashes. */
 .engines-search-wrap {
   position: absolute;
   left: 0; right: 0; bottom: var(--engines-ribbon-h, 36px);
@@ -3313,9 +3218,9 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
               visibility 0s;
 }
 
-/* Horizontal ribbon at the bottom of the panel (between list and search).
-   The top border faces the list above; the active-button accent line
-   appears on the top edge of each button (pointing toward the list). */
+/* Horizontal ribbon at the panel bottom (between list and search). The top
+   border faces the list above, and each button's active accent line sits on
+   its top edge, pointing at the list. */
 .engines-ribbon {
   display: flex; flex-direction: row; justify-content: center;
   align-items: center; gap: 4px;
@@ -3355,9 +3260,9 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   display: flex;
   flex: 1; min-height: 0;
 }
-/* Tournament Studio frame: fixed action ribbon in a left gutter, matching
-   right gutter, centered main column. Studio has no menubar, so the ribbon
-   spans the full viewport height like Play (Arena's is menubar-anchored). */
+/* Studio frame: fixed action ribbon in a left gutter, matching right gutter,
+   centered main column. Studio has no menubar, so the ribbon spans the full
+   viewport height like Play (Arena's is menubar-anchored). */
 .studio-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .studio-body {
   display: flex;
@@ -3368,28 +3273,28 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   margin-left: auto; margin-right: auto;
   display: flex; flex-direction: column;
   min-height: 0;
-  /* No extra gap -- the resizer grip itself is the only separation between
-     the board area and the bottom row. */
+  /* The resizer grip is the only separation between board area and bottom
+     row -- no extra gap. */
   gap: 0;
 }
-/* Boards (top) vs bottom tab row -- the vertical (top/bottom) split.
-   Boards are WinBoxes rooted here (position:relative); the region scrolls
-   and the canvas spacer gives it the virtual height of the board grid. */
+/* Boards (top) vs bottom tab row: the vertical split. Boards are WinBoxes
+   rooted here (position:relative); the region scrolls, and the canvas spacer
+   gives it the board grid's virtual height. */
 .studio-boards {
   flex: 1 1 0; min-height: 0;
   position: relative;
   overflow: auto;
 }
-/* No boards: the region is just the (clipped) art backdrop -- never scroll,
+/* No boards: the region is only the clipped art backdrop -- never scroll,
    whatever the split height. */
 .studio-boards.no-boards { overflow: hidden; }
 .studio-boards-canvas { width: 1px; height: 0; pointer-events: none; }
 
-/* Info wall: a comic-noir splash painted on the empty Boards region. Muted
+/* Info wall: a comic-noir splash on the empty Boards region -- muted
    monochrome ink, thick-outlined stat panels with hard shadows, a slanted
-   status placard, and tag-style engines. Content stretches full width so the
-   composition isn't left-heavy. Recedes behind boards when present. Local
-   ink/paper vars keep it self-contained. */
+   status placard, tag-style engines. Full-width so the composition isn't
+   left-heavy; recedes behind boards when present. Local ink/paper vars keep
+   it self-contained. */
 .studio-boards-wall {
   --iw-ink: #4a4e57;          /* very muted ink -- barely-there backdrop */
   --iw-paper: #14161b;        /* near-black panel fill */
@@ -3407,7 +3312,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 /* Each row spans the wall so the splash fills the region. */
 .studio-boards-wall > * { width: 100%; }
 .studio-boards-wall[hidden] { display: none; }
-/* Empty state: the wall hosts a clickable New-tournament CTA (poster art is
+/* Empty state: the wall hosts a clickable New-tournament CTA (poster art
    suppressed), so undo the backdrop fade and re-enable pointer events. */
 .studio-boards-wall.is-empty { opacity: 1; pointer-events: auto; }
 .studio-empty {
@@ -3427,22 +3332,22 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   letter-spacing: 0.28em; text-transform: uppercase;
   box-shadow: 5px 5px 0 var(--iw-shadow);
 }
-/* Running pops a touch louder: the buttery pasted-stamp fill (vs the muted ink). */
+/* Running pops louder: buttery pasted-stamp fill, vs the muted ink. */
 .iw-burst--running { background: var(--iw-buttery); }
 /* Terminal states get an inverted (white outline on black) placard. */
 .iw-burst--done, .iw-burst--stopped, .iw-burst--failed {
   background: #000; color: var(--accent-line); border: 2px solid var(--iw-ink);
 }
-/* SPRT: a stamped placard in the same family, outlined (a mode tag, not a
-   status), tilted the other way so the two stamps read as hand-pasted. */
+/* SPRT: same family but outlined (a mode tag, not a status) and tilted the
+   other way, so the two stamps read as hand-pasted. */
 .iw-burst--sprt {
   background: var(--iw-paper); color: var(--iw-ink);
   border: 2px solid var(--iw-ink);
   transform: rotate(3deg);
 }
-/* Live run: tint the SPRT lettering amber so it reads as "test in progress". */
+/* Live run: amber lettering, so it reads as "test in progress". */
 .iw-burst--sprt-live { color: var(--accent-line); }
-/* Stamp group: SPRT + status placards clustered hard right of the headline. */
+/* SPRT + status placards clustered hard right of the headline. */
 .iw-stamps { display: flex; align-items: center; gap: clamp(8px, 1vw, 16px); flex: 0 0 auto; }
 
 /* Headline row spans the wall: title left, status placard hard right. */
@@ -3452,9 +3357,9 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .iw-name {
   margin: 0; min-width: 0;
-  /* Italic glyphs overhang their box and the shadow drops below; pad right +
-     bottom so -webkit-line-clamp's overflow:hidden doesn't shave the last
-     slanted character or clip the drop-shadow. */
+  /* Italic glyphs overhang their box and the shadow drops below, so pad right
+     + bottom or -webkit-line-clamp's overflow:hidden shaves the last slanted
+     character and clips the shadow. */
   padding-right: 0.18em; padding-bottom: 0.16em;
   font-style: italic; font-weight: 900;
   font-size: clamp(28px, 6vw, var(--iw-name-max, 96px));
@@ -3465,8 +3370,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   overflow: hidden;
 }
 
-/* The bill body: tale of the tape (left) and the contenders (right), each a
-   framed block. They share the wall width and wrap on narrow regions. */
+/* Bill body: tale of the tape (left) and contenders (right), each framed.
+   They share the wall width and wrap on narrow regions. */
 .iw-bill {
   display: flex; flex-wrap: wrap; align-items: flex-start;
   gap: clamp(14px, 2vw, 26px);
@@ -3490,8 +3395,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border-bottom: 2px solid var(--iw-ink);
 }
 
-/* Tale-of-the-tape ledger row: label, leader dots that eat the slack, big
-   numeral hard right. The dots fill the width so no value ever floats. */
+/* Ledger row: label, leader dots eating the slack, big numeral hard right.
+   The dots fill the width so no value ever floats. */
 .iw-tape-row {
   display: flex; align-items: baseline; gap: 10px;
   padding: clamp(3px, 0.5vw, 7px) 0;
@@ -3537,8 +3442,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   margin-right: 4px;
 }
 
-/* Adjudication marks: skewed sanctioning stickers, echoing the engine
-   name-plates but smaller and inked on paper. */
+/* Adjudication marks: skewed sanctioning stickers, echoing the engine plates
+   but smaller and inked on paper. */
 .iw-adj-stamps {
   display: inline-flex; flex-wrap: wrap; align-items: center;
   gap: 6px 8px; vertical-align: middle;
@@ -3626,9 +3531,9 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   font-size: 14px; color: var(--muted-bright);
 }
 .iw-created { font-size: 12px; color: var(--muted); }
-/* Minimize tray: a strip just below the Boards region (outside its scroll
-   area) so chips stay at the region's visible bottom regardless of scroll.
-   Native minimize is hidden; each minimized board gets a restore chip. */
+/* Minimize tray: a strip below the Boards region, outside its scroll area, so
+   chips stay at the visible bottom regardless of scroll. Native minimize is
+   hidden; each minimized board gets a restore chip. */
 .studio-boards-tray {
   flex: 0 0 auto;
   display: flex; flex-wrap: nowrap;
@@ -3636,9 +3541,9 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   overflow-x: auto; overflow-y: hidden;
 }
 .studio-boards-tray[hidden] { display: none; }
-/* Each chip is a standalone minimized window's title bar: its board's own
-   header color (set inline) + the window outline, winbox's X reused. Packed
-   tight, adjacent borders collapsed into a single seam. */
+/* Each chip is a minimized window's title bar: its board's header color (set
+   inline) + the window outline, reusing winbox's X. Packed tight, adjacent
+   borders collapsed into one seam. */
 .studio-tray-chip {
   flex: 0 0 auto;
   display: flex; align-items: stretch;
@@ -3652,14 +3557,14 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   flex: 1 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 0 10px; text-align: left;
-  /* line-height = chip height minus its 1px top+bottom border, so the leading
+  /* line-height = chip height minus its 1px top+bottom border, so leading
      stays even and the title sits dead-centre. Default cursor like a native
-     minimized title bar -- only the X (a control) shows the pointer. */
+     minimized title bar -- only the X, a control, shows the pointer. */
   font-size: 14px; line-height: calc(var(--wb-min-footer-h) - 2px);
   font-family: Arial, sans-serif; color: inherit;
   cursor: default;
 }
-/* Reuse winbox's own X asset; just size and center it for the chip. */
+/* Reuse winbox's X asset; size and center it for the chip. */
 .studio-tray-chip .wb-close {
   flex: 0 0 auto; width: 24px;
   background-color: transparent; background-repeat: no-repeat;
@@ -3668,9 +3573,9 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .studio-tray-chip .wb-close:hover { opacity: 1; }
 /* Keyboard-reachable window chrome (tray chips, board title controls). The
-   app-wide outline-color at the top of this file can't reach these: they fall
-   back to the UA ring, whose `outline-style: auto` is browser-drawn and
-   ignores outline-color. Restate it as a solid ring, like .ribbon-btn. */
+   app-wide outline-color at the top of this file can't reach these -- they
+   fall back to the UA ring, whose browser-drawn `outline-style: auto` ignores
+   outline-color. Restated as a solid ring, like .ribbon-btn. */
 .studio-tray-chip:focus-visible,
 .studio-tray-chip .wb-close:focus-visible,
 .winbox.sturddle-wb-studio .wb-control > span:focus-visible {
@@ -3678,13 +3583,13 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   outline-offset: -2px;
 }
 .winbox.sturddle-wb-studio.min { display: none; }
-/* Rooted Studio boards position within the scrolling region (not the
-   viewport) and skip the slide transition so re-grids land instantly.
-   Square corners are enforced near the shared .sturddle-wb radius rules
-   below (source order matters at equal specificity). */
+/* Rooted Studio boards position within the scrolling region, not the
+   viewport, and skip the slide transition so re-grids land instantly. Square
+   corners are enforced near the shared .sturddle-wb radius rules below
+   (source order matters at equal specificity). */
 .winbox.sturddle-wb-studio {
   position: absolute; transition: none;
-  /* Grid-placed: no drag-shadow; header isn't a drag handle. Edge is a
+  /* Grid-placed: no drag-shadow, header isn't a drag handle. The edge is a
      border (set below), not an outline -- outline sits in the clipped pad. */
   box-shadow: none; outline: none;
 }
@@ -3736,16 +3641,15 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-pane { height: 100%; overflow: auto; }
 /* Selection-change loading state for the selDetail-fed panes (Standings,
    Head-to-Head, Games): dim the outgoing tourney's rows and spin, so stale
-   numbers are never readable as current.
+   numbers never read as current.
 
-   The overlay lives on the pane's NON-SCROLLING wrapper, not on
-   .studio-pane itself. Inside the scroller neither sticky nor absolute
-   works: absolute is positioned against the scrollable area (scrolls away
-   with content), and sticky only clamps a box that is already in flow-view
-   -- as ::after (last child) it starts below the fold on long lists, and it
-   renders off-screen entirely after a tab is hidden and re-shown. The
-   wrapper doesn't scroll, so absolute centering is stable in every case. */
-/* Fills the tab panel so the pane keeps its 100% height and the overlay's
+   The overlay lives on the pane's NON-SCROLLING wrapper, not .studio-pane.
+   Inside the scroller neither sticky nor absolute works: absolute positions
+   against the scrollable area (scrolling away with content), and sticky only
+   clamps a box already in flow-view -- as ::after it starts below the fold on
+   long lists and renders off-screen entirely after a tab is hidden and
+   re-shown. The wrapper doesn't scroll, so absolute centering is stable.
+   It fills the tab panel so the pane keeps 100% height and the overlay's
    50%/50% centering resolves against the visible area. */
 .studio-pane-loading-host { position: relative; height: 100%; min-height: 0; }
 .studio-pane--loading { opacity: 0.4; pointer-events: none; }
@@ -3766,9 +3670,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 @media (prefers-reduced-motion: reduce) {
   .studio-pane-loading-host.is-loading::after { animation-duration: 2.4s; }
 }
-/* A little headroom above the live-list panes (Engines/Games) and the event
-   log -- on the panel (outside the scroll pane) so it stays put as content
-   scrolls/tails. */
+/* Headroom above the live-list panes (Engines/Games) and the event log. On
+   the panel, outside the scroll pane, so it stays put as content tails. */
 .studio-tabs wa-tab-panel[name="log"]::part(base),
 .studio-tabs wa-tab-panel[name="engines"]::part(base),
 .studio-tabs wa-tab-panel[name="h2h"]::part(base),
@@ -3776,9 +3679,9 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tabs wa-tab-panel[name="livegames"]::part(base) { padding-top: 8px; }
 /* Keep the watch buttons off the pane's right edge / scrollbar. */
 .studio-pane .wb-sched-attach-btn { margin-right: 8px; }
-/* Studio tourney table: sortable + resizable sticky header, flat rows
-   (Settings engines look). The wrap is the resize overlay's positioned host
-   (mirrors the file picker's tableWrap). */
+/* Studio tourney table: sortable + resizable sticky header, flat rows (the
+   Settings engines look). The wrap hosts the resize overlay, mirroring the
+   file picker's tableWrap. */
 .studio-tourney-wrap, .studio-history-wrap { position: relative; }
 .studio-tourney-tbl, .studio-history-tbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .studio-tourney-tbl thead th, .studio-history-tbl thead th {
@@ -3787,12 +3690,12 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   padding: 6px 8px; background: var(--bg);
   border-bottom: 1px solid var(--border-subtle);
   user-select: none; white-space: nowrap;
-  /* Keep the resize grip from being covered by the next sticky cell, so its
-     hover indicator shows (matches the file picker header). */
+  /* Keeps the next sticky cell off the resize grip so its hover indicator
+     shows (matches the file picker header). */
   overflow: hidden;
 }
-/* Hover affordance on the sortable headers: highlight the cell and outline
-   its extent (the column-size hint), like the file picker. */
+/* Sortable-header hover: highlight the cell and outline its extent (the
+   column-size hint), like the file picker. */
 .studio-tourney-tbl thead th.th-sortable:hover, .studio-history-tbl thead th.th-sortable:hover,
 .wb-standings-tbl thead th.th-sortable:hover {
   background: var(--row-bg-hover);
@@ -3806,9 +3709,9 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border-bottom: 1px solid var(--border-faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* The list is a tab stop, which opts it out of the generic container-ring
+/* Being a tab stop opts the list out of the generic container-ring
    suppression above. Its selected row is the focus affordance, so drop the
-   ring that would box the whole table (same look as the fs picker's list). */
+   ring that would box the whole table (as in the fs picker's list). */
 .studio-tourney-tbl:focus, .studio-tourney-tbl:focus-visible { outline: none; }
 .studio-tourney-row, .studio-history-row {
   cursor: pointer;
@@ -3821,8 +3724,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-history-num, .studio-history-result { color: var(--muted); }
 .studio-history-result { font-family: var(--wa-font-family-code); }
 .studio-tourney-created { color: var(--muted); }
-/* Status cell holds status + optional SPRT pill; clip (no ellipsis) rather
-   than widen the column. */
+/* Status + optional SPRT pill: clip (no ellipsis) rather than widen. */
 .studio-tourney-tbl tbody td.studio-tourney-status { text-overflow: clip; }
 /* Running tourney's Games cell: Arena's progress bar + inline label. */
 .studio-progress { display: flex; align-items: center; gap: 8px; }
@@ -3853,8 +3755,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   .tournaments-panel { gap: 0; }
   .tournaments-body { display: flex; flex-direction: column; }
   /* Arena and Studio flip to the same horizontal top bar on mobile. They
-     share .ribbon-btn, so the fluid button sizing applies here too; these
-     rails must never break into a second row either. */
+     share .ribbon-btn, so the fluid sizing applies here too, and these rails
+     must never break into a second row either. */
   .tournaments-ribbon,
   .studio-ribbon {
     position: static;
@@ -3875,9 +3777,9 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   .t-workspace, .tmb-window-menu { display: none; }
 
   .studio-body { flex-direction: column; }
-  /* Mobile Studio uses the document-scroll model (like Play): the page
-     scrolls, the footer stays put, the board area is pinned to one board
-     (JS sets its height), and the tab groups flow at natural height. */
+  /* Mobile Studio uses Play's document-scroll model: the page scrolls, the
+     footer stays put, the board area is pinned to one board (JS sets the
+     height), and the tab groups flow at natural height. */
   body:has(.studio-panel) { height: auto; min-height: 100%; }
   #perspective-root:has(.studio-panel) { overflow: visible; }
   #engines-perspective:has(.studio-panel) { flex: 0 0 auto; min-height: 0; }
@@ -3886,24 +3788,24 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   .studio-main { width: 100%; display: block; }
   .studio-boards { flex: 0 0 auto; }
   .studio-grip-row, .studio-grip-col { display: none; }
-  /* Tab groups stacked, each at natural (content) height -- no inner scroll.
-     The desktop body part is flex:1/min-height:0 (collapses to 0 without a
-     bounded parent), so force it to content height here. */
+  /* Tab groups stacked at natural height, no inner scroll. The desktop body
+     part is flex:1/min-height:0, which collapses to 0 without a bounded
+     parent, so force content height here. */
   .studio-bottom, .studio-bottom-left, .studio-bottom-right, .studio-tabs { display: block; }
   .studio-tabs::part(base),
   .studio-tabs wa-tab-panel,
   .studio-tabs wa-tab-panel::part(base) { height: auto; }
   .studio-tabs::part(body) { flex: 0 0 auto; min-height: auto; }
   .studio-pane { height: auto; overflow: visible; }
-  /* The page owns vertical scroll here, so the loading host is content-height
-     and its 50% would land mid-content -- below the fold on a long list.
-     Fixed centering pins the spinner to the viewport instead. */
+  /* The page owns vertical scroll, so the loading host is content-height and
+     its 50% lands mid-content -- below the fold on a long list. Fixed
+     centering pins the spinner to the viewport instead. */
   .studio-pane-loading-host { height: auto; }
   .studio-pane-loading-host.is-loading::after { position: fixed; }
-  /* Log rows are nowrap and can run long. The pane above is overflow:visible
-     so the page owns vertical scroll, which disables horizontal scrolling too,
-     so give the list its own x scroller. Its height is content-driven, so the
-     overflow-y:auto the spec implies here never adds a second scrollbar. */
+  /* Log rows are nowrap and run long. The pane above is overflow:visible so
+     the page owns vertical scroll, which disables horizontal too -- hence the
+     list's own x scroller. Its height is content-driven, so the implied
+     overflow-y:auto never adds a second scrollbar. */
   .studio-pane-log .wb-eventlog-list { overflow-x: auto; }
 }
 .tournament-engines {
@@ -3942,9 +3844,9 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border-color: #3d4d6e;
   color: #c8d4ee;
 }
-/* SPRT pill: inherits .tournament-status geometry; auto width (not the 6em
-   status column) and accent-tinted so it reads as a mode marker next to the
-   status badge. Declared after the base so equal-specificity wins hold. */
+/* SPRT pill: inherits .tournament-status geometry, but auto width (not the
+   6em status column) and accent-tinted so it reads as a mode marker beside
+   the badge. After the base rule, so the equal-specificity wins hold. */
 .tournament-status--sprt {
   width: auto;
   padding-left: 0.5em; padding-right: 0.5em;
@@ -4005,9 +3907,8 @@ wa-dialog.tournament-info-dialog::part(body) {
 .tournament-info-reveal-btn:hover { color: var(--wa-color-neutral-950); }
 .tournament-info-engines {
   margin: 0; padding: 0; list-style: none;
-  /* Cap the engines list so a long roster scrolls in place instead of
-     stretching the info dialog past the viewport and forcing the user
-     to scroll past unrelated rows to see Status/Games/etc. */
+  /* Cap the list so a long roster scrolls in place, instead of stretching the
+     dialog past the viewport and burying Status/Games below it. */
   max-height: 6em;
   overflow-y: auto;
 }
@@ -4059,8 +3960,8 @@ wa-dialog.tournament-info-dialog::part(body) {
 .nt-name-row { display: flex; align-items: end; gap: 10px; }
 .nt-name-row .nt-name { flex: 1 1 auto; }
 .nt-name-row .nt-sprt-host { flex: 0 0 auto; }
-/* SPRT control beside Name: an on/off toggle + a gear that edits params.
-   Both greyed when the roster isn't exactly 2 engines. */
+/* SPRT control beside Name: on/off toggle + a params gear. Both greyed
+   unless the roster is exactly 2 engines. */
 .sprt-control { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; }
 .new-tournament-form wa-input::part(form-control-label) {
   font-size: 0.75rem;
@@ -4128,17 +4029,16 @@ wa-dialog.tournament-info-dialog::part(body) {
   font-weight: normal;
   color: var(--muted);
 }
-/* Switch label part: style directly — slotted label inherits unreliably. */
+/* Style the label part directly -- a slotted label inherits unreliably. */
 .tournament-template-form wa-switch::part(label) {
   font-size: 0.75rem;
   font-weight: normal;
   color: var(--muted);
 }
-/* When the SPRT toggle disables the type select, its combobox outline
-   sits at full-alpha white under the surface. Removing the disabled
-   attribute then runs a 75ms outline-color fade-out from white to
-   transparent — visible as a focus-ring flash. Force the disabled-state
-   outline to be transparent so there's nothing to fade. */
+/* When the SPRT toggle disables the type select, its combobox outline sits at
+   full-alpha white under the surface; removing `disabled` then runs a 75ms
+   fade from white to transparent, seen as a focus-ring flash. Force the
+   disabled outline transparent so there's nothing to fade. */
 .tournament-template-form wa-select[data-key="tournament_type"][disabled]::part(combobox) {
   outline-color: transparent;
 }
@@ -4152,9 +4052,9 @@ wa-dialog.tournament-info-dialog::part(body) {
   grid-template-columns: repeat(3, 1fr) 9.815em;
 }
 .tournament-template-form .ttf-grid > * { min-width: 0; }
-/* Narrow viewports: collapse the 5-column row (TC, parallel, rounds,
-   tournament type, seeds) to 2 columns. The fixed em-based desktop
-   widths (7em + 8em + 6em + 12em ≈ 33em) overflow a phone-width form. */
+/* Narrow viewports: collapse the 5-column row (TC, parallel, rounds, type,
+   seeds) to 2. The fixed em desktop widths (7 + 8 + 6 + 12em, about 33em)
+   overflow a phone-width form. */
 @media (max-width: 480px) {
   .tournament-template-form .ttf-grid,
   .tournament-template-form .ttf-grid.ttf-grid--no-seeds {
@@ -4164,9 +4064,9 @@ wa-dialog.tournament-info-dialog::part(body) {
 .tournament-template-form .ttf-switch-row {
   display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: center;
 }
-/* Fixed width on the first two switches of both switch rows (top row +
-   resign header) so, with equal gaps, the third switch (Restart engines /
-   Tablebase) lines up vertically across rows. The third is left auto-width. */
+/* Fixed width on the first two switches of both rows (top row + resign
+   header) so, with equal gaps, the third (Restart engines / Tablebase) lines
+   up vertically across rows. The third stays auto-width. */
 .tournament-template-form .ttf-switch-row > wa-switch:nth-child(-n + 2),
 .tournament-template-form .ttf-adj-header > wa-switch:nth-child(-n + 2) {
   width: 8em;
@@ -4187,8 +4087,8 @@ wa-dialog.tournament-info-dialog::part(body) {
   font-size: 0.75rem;
   display: flex; align-items: center; gap: 24px;
 }
-/* web-awesome dims disabled controls by setting opacity:0.5 on their inner
-   part="base". Lift it for better contrast in this dense adjudication block. */
+/* WA dims disabled controls via opacity:0.5 on their inner part="base"; lift
+   it for contrast in this dense adjudication block. */
 .tournament-template-form .ttf-adj-fields wa-input[disabled]::part(base),
 .tournament-template-form .ttf-adj-subswitch[disabled]::part(base) {
   opacity: 0.5;
@@ -4208,12 +4108,12 @@ wa-dialog.tournament-info-dialog::part(body) {
 .tournament-template-form .ttf-sections {
   display: flex; flex-direction: column; gap: 16px;
 }
-/* Desktop: reserve a FIXED height so opening a section never grows the dialog
-   nor scrolls the body -- the tallest section (Adjudication, single-row fields)
-   plus both collapsed headers. overflow:hidden contains the open panel; the
-   padding + negative margin give focus rings room inside the clip box (height
-   includes the vertical padding). On mobile the fields stack (much taller) and
-   the dialog scrolls anyway, so the reserve is dropped there to avoid
+/* Desktop: a FIXED reserve -- the tallest section (Adjudication, single-row
+   fields) plus both collapsed headers -- so opening a section never grows the
+   dialog nor scrolls the body. overflow:hidden contains the open panel; the
+   padding + negative margin give focus rings room inside the clip box (the
+   height includes that vertical padding). Mobile stacks the fields much
+   taller and scrolls anyway, so the reserve is dropped there to avoid
    clipping. */
 @media (min-width: 601px) {
   .tournament-template-form .ttf-sections {
@@ -4224,9 +4124,9 @@ wa-dialog.tournament-info-dialog::part(body) {
   }
 }
 
-/* Section disclosures (Adjudication, Opening book): strip wa-details chrome
-   so the header reads as a section label, not a boxed card. Chevron sits left
-   of the label via icon-placement="start"; nudge the gap tighter. */
+/* Section disclosures (Adjudication, Opening book): strip wa-details chrome so
+   the header reads as a section label, not a boxed card. The chevron sits
+   left of the label via icon-placement="start", with a tighter gap. */
 .tournament-template-form .ttf-details::part(base) {
   border: none; background: none;
 }
@@ -4245,8 +4145,8 @@ wa-dialog.tournament-info-dialog::part(body) {
   display: grid; gap: 6px;
   grid-template-columns: 1fr 1fr;
 }
-/* The X-cycle toggles these fields' disabled state; WA's opacity/border
-   transition reads as a flash there, so disable it. */
+/* The X-cycle toggles these fields' disabled state, where WA's opacity/border
+   transition reads as a flash. */
 .tournament-template-form .ttf-book-opts wa-input::part(base),
 .tournament-template-form .ttf-book-opts wa-select::part(combobox) {
   transition: none;
@@ -4259,8 +4159,8 @@ wa-dialog.tournament-info-dialog::part(body) {
 .inspect-meta { font-size: 0.75rem; }
 
 /* Tournament workspace windows */
-/* opacity: WinBox's fade-in keyframe ends at 0.85 with no closing 100%
-   stop, leaving every window permanently faded; force full opacity. */
+/* opacity: WinBox's fade-in keyframe ends at 0.85 with no closing 100% stop,
+   leaving every window permanently faded. */
 .winbox.sturddle-wb {
   background: var(--panel);
   color: var(--fg);
@@ -4269,31 +4169,31 @@ wa-dialog.tournament-info-dialog::part(body) {
   opacity: 1 !important;
   border-radius: var(--wb-radius);
 }
-/* Round the header/body corners instead of overflow:hidden on the window,
-   which would clip the edge resize handles that extend outside it. */
+/* Round the header/body corners rather than overflow:hidden on the window,
+   which would clip the edge resize handles extending outside it. */
 .winbox.sturddle-wb .wb-header { border-radius: var(--wb-radius) var(--wb-radius) 0 0; }
 .winbox.sturddle-wb .wb-body { border-radius: 0 0 var(--wb-radius) var(--wb-radius); }
 .winbox.sturddle-wb.max,
 .winbox.sturddle-wb.max .wb-header,
 .winbox.sturddle-wb.max .wb-body { border-radius: 0; }
-/* Tournament workspace: no-shadow marks layout-managed placement (see
-   setShadow in tournament-workspace.js); square corners while tiled,
-   rounded only when freely dragged (shadow on). */
+/* no-shadow marks layout-managed placement (setShadow in
+   tournament-workspace.js): square while tiled, rounded only when freely
+   dragged (shadow on). */
 .winbox.sturddle-wb.no-shadow,
 .winbox.sturddle-wb.no-shadow .wb-header,
 .winbox.sturddle-wb.no-shadow .wb-body { border-radius: 0; }
-/* Minimized: square corners while docked in the bottom strip. Restore
-   removes .min, so the float/tiled rules above decide the shape again. */
+/* Minimized: square while docked in the bottom strip. Restore removes .min,
+   handing the shape back to the float/tiled rules above. */
 .winbox.sturddle-wb.min,
 .winbox.sturddle-wb.min .wb-header,
 .winbox.sturddle-wb.min .wb-body { border-radius: 0; }
-/* Floating controls window: always straight corners, whatever the
-   shared .sturddle-wb radius rules decide for other windows. */
+/* Floating controls window: always straight corners, whatever the shared
+   .sturddle-wb radius rules decide for other windows. */
 .winbox.sturddle-wb-ribbon,
 .winbox.sturddle-wb-ribbon .wb-header,
 .winbox.sturddle-wb-ribbon .wb-body { border-radius: 0; }
-/* Studio boards: always straight corners (must follow the .sturddle-wb
-   radius rules above to win at equal specificity). */
+/* Studio boards: always straight corners; must follow the .sturddle-wb radius
+   rules above to win at equal specificity. */
 .winbox.sturddle-wb-studio,
 .winbox.sturddle-wb-studio .wb-header,
 .winbox.sturddle-wb-studio .wb-body { border-radius: 0; }
@@ -4323,22 +4223,22 @@ wa-dialog.tournament-info-dialog::part(body) {
 .winbox.sturddle-wb-ribbon .wb-body {
   padding: 0 !important;
   overflow: hidden !important;
-  top: 20px !important; /* match thin title bar height instead of default 35px */
+  top: 20px !important; /* thin title bar height, vs the default 35px */
   contain: none !important;
   background: var(--panel) !important;
 }
-/* Center the ribbon child inside the body without making the body a flex
-   container (that would constrain ribbon scrollWidth during orientation
-   toggles, breaking fitToContent). */
+/* Center the ribbon child without making the body a flex container, which
+   would constrain ribbon scrollWidth during orientation toggles and break
+   fitToContent. */
 .winbox.sturddle-wb-ribbon .wb-body > .board-ribbon,
 .winbox.sturddle-wb-ribbon .wb-body > .tournaments-ribbon,
 .winbox.sturddle-wb-ribbon .wb-body > .studio-ribbon {
   margin: 0 auto;
 }
-/* Ribbon inside WinBox: static positioning, no edge border.
-   !important wins over body[data-ribbon-float] .ribbon { display: none !important }.
-   flex-direction + width are set inline by ribbon-window.js so they can
-   switch between horizontal and vertical orientations. */
+/* Ribbon inside WinBox: static positioning, no edge border. !important beats
+   body[data-ribbon-float] .ribbon { display: none !important }.
+   ribbon-window.js sets flex-direction + width inline, to switch between
+   horizontal and vertical orientations. */
 .winbox.sturddle-wb-ribbon .wb-body .board-ribbon,
 .winbox.sturddle-wb-ribbon .wb-body .tournaments-ribbon,
 .winbox.sturddle-wb-ribbon .wb-body .studio-ribbon {
@@ -4349,13 +4249,13 @@ wa-dialog.tournament-info-dialog::part(body) {
   padding: 4px 0;
   justify-content: center;
 }
-/* Vertical mode: hide the title text (no room next to the rotate ctrl) and
-   don't let the title text reserve width. */
+/* Vertical mode: hide the title text -- no room next to the rotate ctrl, and
+   it must not reserve width. */
 .winbox.sturddle-wb-ribbon.ribbon-vertical .wb-title {
   display: none;
 }
-/* Rotate-orientation control button. Uses mask-image like other custom
-   WinBox controls (see .wb-log-copy-ctrl). */
+/* Rotate-orientation control; mask-image like the other custom WinBox
+   controls (see .wb-log-copy-ctrl). */
 .wb-ribbon-rotate-ctrl {
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-left.svg);
   mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-left.svg);
@@ -4390,9 +4290,9 @@ wa-dialog.tournament-info-dialog::part(body) {
   top: 6px; bottom: 6px; right: -1px; left: auto;
   height: auto; width: 2px;
 }
-/* Floating vertical ribbon: full border around active/hovered buttons instead
-   of the one-side accent stripe. Suppress the ::before stripe and use an
-   inset box-shadow so the ring stays inside the fixed button dimensions. */
+/* Floating vertical ribbon: full border around active/hovered buttons, not
+   the one-side accent stripe. The ::before stripe is suppressed and an inset
+   box-shadow keeps the ring inside the fixed button dimensions. */
 .winbox.sturddle-wb-ribbon.ribbon-vertical .wb-body .ribbon-btn::before {
   display: none;
 }
@@ -4408,8 +4308,7 @@ wa-dialog.tournament-info-dialog::part(body) {
   100%     { outline: 2px solid transparent;  outline-offset: -1px; }
 }
 .winbox.wb-attention { animation: wb-attention 1.1s ease-out forwards; }
-/* Title bar matches the panel; default WinBox blue is jarring against
-   our dark theme. */
+/* Title bar matches the panel; WinBox's default blue jars with the theme. */
 .winbox.sturddle-wb .wb-header {
   background: var(--nav-btn-bg);
   color: var(--fg);
@@ -4421,8 +4320,8 @@ wa-dialog.tournament-info-dialog::part(body) {
   padding: 8px 12px;
   overflow: auto;
 }
-/* Live Games panel: reserve scrollbar gutter so adding/removing rows
-   doesn't visibly shrink the inner width when overflow toggles. */
+/* Reserve the scrollbar gutter so adding/removing rows doesn't shrink the
+   inner width when overflow toggles. */
 .winbox.sturddle-wb-live-games .wb-body { scrollbar-gutter: stable; }
 .wb-empty { color: var(--muted); padding: 12px; text-align: center; }
 .wb-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
@@ -4433,9 +4332,8 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-standings-table-wrap { position: relative; }
 .wb-standings-tbl { table-layout: fixed; }
 .wb-standings-tbl th { position: relative; }
-/* Pin the column header so it stays put while rows scroll (matches H2H). The
-   th keeps its own border-bottom + a solid bg, so collapsed borders don't
-   detach on scroll. */
+/* Pin the column header while rows scroll (matches H2H). The th keeps its own
+   border-bottom + solid bg, so collapsed borders don't detach on scroll. */
 .wb-standings-tbl thead th { position: sticky; top: 0; z-index: 1; background: var(--bg); }
 .wb-standings-tbl td { overflow: hidden; text-overflow: ellipsis; }
 .wb-standings-tbl thead th:hover,
@@ -4458,10 +4356,10 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-sprt--h1 { box-shadow: inset 3px 0 0 #2d6a3f; }
 .wb-sprt--h0 { box-shadow: inset 3px 0 0 #7a2222; }
 .wb-sprt--studio { background: var(--row-bg-selected); margin: 0 8px 10px; }
-/* Studio Head-to-Head pane: a fixed banner (2-engine) + an internally scrolled
-   table so the banner and column header stay put while rows scroll. The wrap is
-   both the scroll container and the resize overlay's positioned host; the
-   sticky thead is positioned, which also anchors the .th-grip handles. */
+/* Studio Head-to-Head: a fixed 2-engine banner + an internally scrolled table,
+   so banner and column header stay put while rows scroll. The wrap is both
+   scroll container and resize-overlay host; the sticky thead is positioned,
+   which also anchors the .th-grip handles. */
 .wb-h2h { height: 100%; display: flex; flex-direction: column; min-height: 0; }
 .h2h-banner { margin: 0 8px 10px; background: var(--row-bg-selected); }
 .h2h-table-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
@@ -4519,9 +4417,9 @@ wa-dialog.tournament-info-dialog::part(body) {
   height: 100%; min-height: 0;
   position: relative; /* anchors .lg-pv-side gutter panels */
 }
-/* Side PV panels: absolute overlays in the gutters beside the square
-   board. JS publishes --lg-side-* and toggles .lg-pv-sides when each
-   gutter is wide enough (see PV_SIDE_MIN_RATIO). */
+/* Side PV panels: absolute overlays in the gutters beside the square board.
+   JS publishes --lg-side-* and toggles .lg-pv-sides once each gutter is wide
+   enough (see PV_SIDE_MIN_RATIO). */
 .wb-livegame .lg-pv-side {
   display: none;
   position: absolute;
@@ -4539,10 +4437,10 @@ wa-dialog.tournament-info-dialog::part(body) {
   flex-shrink: 0;
   font-size: 0.75rem;
   padding: 0 0.375em;
-  /* Clock-row height (1rem * 1.2 line-height + 0.3125em * 2 padding)
-     plus the 0.25rem body gap -- see liveFontMetrics -- so the table
-     header below lines up with the board's top edge.
-     line-height = height centers the text; flex would break ellipsis. */
+  /* Clock-row height (1rem * 1.2 line-height + 0.3125em * 2 padding) plus the
+     0.25rem body gap (see liveFontMetrics), so the table header below lines
+     up with the board's top edge. line-height = height centers the text;
+     flex would break the ellipsis. */
   height: calc(1.2rem + 0.625rem + 0.25rem);
   line-height: calc(1.2rem + 0.625rem + 0.25rem);
   border-bottom: 1px solid var(--border-subtle);
@@ -4571,19 +4469,18 @@ wa-dialog.tournament-info-dialog::part(body) {
   overflow: hidden;
   position: relative;
 }
-/* Clocks match the board's measured width and center under it; preserves
-   the prior JS-driven behavior. JS publishes --lg-board-w after sizing
-   and removes .lg-measuring once the first measurement has been applied,
-   so clocks don't flash at full body width on initial spawn. */
+/* Clocks match the board's measured width and center under it. JS publishes
+   --lg-board-w after sizing and drops .lg-measuring once the first
+   measurement lands, so clocks don't flash at full body width on spawn. */
 .wb-livegame .clock-row {
   align-self: center;
   width: 100%;
   max-width: var(--lg-board-w, 100%);
 }
 .wb-livegame.lg-measuring .clock-row { visibility: hidden; }
-/* Overlay geometry. --lg-overlay-h derives the result banner's natural
-   height (sans Review button) from the very values its sibling rules use,
-   so pinning the waiting overlay to it cannot silently desync. */
+/* Overlay geometry. --lg-overlay-h derives the result banner's natural height
+   (sans Review button) from the same values its sibling rules use, so pinning
+   the waiting overlay to it cannot silently desync. */
 .wb-livegame {
   --lg-line-h: 1.4;          /* body line-height, unitless -> scales per element */
   --lg-overlay-pad-y: 0.875em;
@@ -4612,9 +4509,9 @@ wa-dialog.tournament-info-dialog::part(body) {
   pointer-events: none;
   box-shadow: 0 0.125em 0.75em rgba(0, 0, 0, 0.6);
 }
-/* min-height is divided by the scale because em here resolves against this
-   element's own reduced font-size, not the banner's. The :not([hidden])
-   guard keeps display:flex from defeating the hidden attribute. */
+/* min-height divides by the scale because em resolves against this element's
+   own reduced font-size, not the banner's. The :not([hidden]) guard keeps
+   display:flex from defeating the hidden attribute. */
 .wb-livegame .lg-waiting-overlay {
   /* color: var(--accent); */
   color: var(--wa-color-brand-95);
@@ -4654,10 +4551,9 @@ wa-dialog.tournament-info-dialog::part(body) {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   color: var(--muted);
   font-family: var(--wa-font-family-code); font-size: 0.8125rem;
-  /* Reserve the populated row height so the board doesn't snap-shrink
-     when the first eval event arrives. 1.4 line-height matches the
-     rendered row; line-height auto + padding pushed actual height past
-     a 1em reserve. */
+  /* Reserve the populated row height so the board doesn't snap-shrink on the
+     first eval event. 1.4 matches the rendered row -- line-height auto +
+     padding pushed the real height past a 1em reserve. */
   min-height: 1.4em; line-height: 1.4; flex-shrink: 0;
 }
 .wb-livegame .lg-eval > span:not(:empty) ~ span:not(:empty) { margin-left: 0.5em; }
@@ -4702,8 +4598,8 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-sched-attach-btn--live:hover { background: var(--nav-btn-bg-hover); }
 .wb-sched-pair .wb-sched-icon { color: var(--muted); }
 
-/* Engine rows: playing/idle state (3+ engine tourneys leave engines idle).
-   Playing fills with the selection slate; idle stays a muted outline. */
+/* Engine rows: playing/idle (3+ engine tourneys leave engines idle). Playing
+   fills with the selection slate; idle stays a muted outline. */
 .wb-sched-list .wb-engine-state {
   flex: 0 0 auto;
   font-size: 0.6875rem;
@@ -4721,13 +4617,13 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-sched-list .wb-engine-idle .wb-sched-icon,
 .wb-sched-list .wb-engine-idle .wb-sched-game { opacity: 0.5; }
 
-/* Ribbons center all buttons as one group everywhere, so the push spacer never
-   expands -- it collapses to a normal divider in every layout. */
+/* Ribbons center all buttons as one group, so the push spacer never expands --
+   it collapses to a normal divider in every layout. */
 .ribbon-sep--push { flex: 0 0 auto; }
 
-/* UCI log window. Negative margin + sticky top:-8px cancel wb-body's
-   default 8px/12px padding so the toolbar pins to the body edge while
-   the lines below keep that padding. */
+/* UCI log window. The negative margin + sticky top:-8px cancel wb-body's
+   default 8px/12px padding, pinning the toolbar to the body edge while the
+   lines below keep that padding. */
 .wb-uci-log-toolbar {
   display: flex; align-items: center; gap: 12px;
   padding: 4px 8px; margin: -8px -12px 8px;
@@ -4748,8 +4644,8 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-uci-log-line.uci-out { color: #7ec8e3; }
 .wb-uci-log-line.uci-in  { color: #a8e6a3; }
 
-/* Search Lines window. Fixed layout with user-resizable columns.
-   The PV cell scrolls horizontally so full variations are readable. */
+/* Search Lines window: fixed layout, user-resizable columns. The PV cell
+   scrolls horizontally so full variations are readable. */
 .wb-pvtable { position: relative; }
 .sturddle-wb-pvtable .wb-body { overflow-x: auto; }
 /* border-spacing:0 (not collapse) so the sticky thead keeps its
@@ -4779,18 +4675,18 @@ wa-dialog.tournament-info-dialog::part(body) {
 .dock-slot-body:has(> .wb-pvtable) { padding: 0; }
 .dock-slot-body:has(> .game-view-eval-bar) { padding: 0; overflow: hidden; }
 .sturddle-wb-evalbar .wb-body { overflow: hidden; }
-/* Auto-hide parity with docked slots: an empty strip hides the float too
-   (e.g. view mode); it pops back when evals arrive. */
+/* Auto-hide parity with docked slots: an empty strip hides the float too (e.g.
+   view mode), and it pops back when evals arrive. */
 .winbox.sturddle-wb-evalbar:has(.eval-empty) { display: none; }
 .wb-pvtable-col-pv { min-width: 200px; }
 .wb-pvtable-pv { white-space: nowrap; }
 .wb-pv-movenum { color: var(--muted, #888); font-weight: 600; }
 
 /* ------------------------------------------------------------------
-   Ribbon-side mirror: when body[data-ribbon-side="right"], flip the
-   ribbon, board side rail, left dock, comments host, toast stack, and
-   tournament accent to the opposite edge. Mobile (<=800px) already
-   docks the ribbon horizontally and is unaffected.
+   Ribbon-side mirror: on body[data-ribbon-side="right"], flip the ribbon,
+   board side rail, left dock, comments host, toast stack and tournament
+   accent to the opposite edge. Mobile (<=800px) already docks the ribbon
+   horizontally and is unaffected.
    ------------------------------------------------------------------ */
 body[data-ribbon-side="right"] #toast-stack {
   left: auto; right: var(--ribbon-w);
@@ -4799,10 +4695,9 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
   left: var(--rail-edge-gap); right: auto;
 }
 @media (max-width: 800px) {
-  /* Ribbon is horizontal at top on mobile, so toasts don't need a side
-     gutter to clear it -- 16px side, 4px bottom edge inset. xgame
-     stack collapses onto the same edge as the default stack since the
-     "moves-list side" distinction is desktop-only. */
+  /* The ribbon is horizontal at top on mobile, so toasts need no side gutter
+     to clear it -- 16px side, 4px bottom inset. The xgame stack collapses
+     onto the same edge, the "moves-list side" being desktop-only. */
   #toast-stack,
   #xgame-toast-stack {
     left: 16px; right: auto;
@@ -4813,9 +4708,9 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
   }
 }
 
-/* min-height guard: below it the mobile block flips the ribbon horizontal,
-   and these vertical-rail right-dock rules would fight that (collapsed
-   underline, stray border). 681px = one past the mobile height clause. */
+/* min-height guard: below it the mobile block flips the ribbon horizontal and
+   these vertical-rail right-dock rules would fight it (collapsed underline,
+   stray border). 681px = one past the mobile height clause. */
 @media (min-width: 801px) and (min-height: 681px) {
   body[data-ribbon-side="right"] .board-ribbon {
     left: auto;
@@ -4823,9 +4718,9 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
     border-right: 0;
     border-left: var(--ribbon-border-w) solid var(--border-subtle);
   }
-  /* Mirror only the board ribbon's vertical edge stripe. Scoping to
-     .board-ribbon keeps the top-edge accent on panel ribbons (engines,
-     tournaments, openings) intact. */
+  /* Mirror only the board ribbon's vertical edge stripe: the .board-ribbon
+     scope leaves the top-edge accent on panel ribbons (engines, tournaments,
+     openings) intact. */
   body[data-ribbon-side="right"] .board-ribbon .ribbon-btn::before {
     right: auto;
     left: -1px;
