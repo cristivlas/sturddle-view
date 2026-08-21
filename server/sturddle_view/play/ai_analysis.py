@@ -62,6 +62,8 @@ from ..llm.position_check import (
     has_position_flags,
     iter_false_bishop_color_refs,
     iter_false_claim_squares,
+    iter_false_file_claims,
+    iter_false_file_openness,
     handled_continuation_spans,
     iter_illegal_continuations,
     iter_illegal_moves,
@@ -667,13 +669,17 @@ class _PositionCheck:
     # carries (surface, label, fact); the fact is precomputed (square color is
     # invariant, so there's no square to describe later).
     bishop_triples: list[tuple[str, str, str]] = field(default_factory=list)
+    # '<piece> on the <x>-file' and open/semi-open/closed file claims that
+    # hold on no current/projected board. Same (surface, label, fact) shape
+    # as bishop refs: plain board truth with a precomputed corrective.
+    file_triples: list[tuple[str, str, str]] = field(default_factory=list)
 
     @property
     def hit(self) -> bool:
         return bool(
             self.move_pairs or self.claim_triples
             or self.line_pairs or self.tool_mentions
-            or self.bishop_triples
+            or self.bishop_triples or self.file_triples
         )
 
     @property
@@ -689,6 +695,10 @@ class _PositionCheck:
         return [label for _surface, label, _fact in self.bishop_triples]
 
     @property
+    def file_labels(self) -> list[str]:
+        return [label for _surface, label, _fact in self.file_triples]
+
+    @property
     def surfaces(self) -> list[str]:
         # Exact prose spans for the client to strike, longest first so a
         # span isn't half-matched by a shorter one nested inside it.
@@ -697,6 +707,7 @@ class _PositionCheck:
             + [s for s, _, _ in self.claim_triples]
             + [s for s, _ in self.line_pairs]
             + [s for s, _, _ in self.bishop_triples]
+            + [s for s, _, _ in self.file_triples]
         )
         return sorted(set(out), key=len, reverse=True)
 
@@ -704,9 +715,9 @@ class _PositionCheck:
     def board_labels(self) -> list[str]:
         """Every board-context flag's normalized label the judge may rule on
         (moves, lines, claims). Never included: tool mentions (board-
-        independent style violations) and bishop-color labels (precomputed
-        board facts the judge kept clearing wrongly -- regex verdict is
-        final for that class)."""
+        independent style violations) and bishop-color / file-claim labels
+        (precomputed board facts; the judge kept clearing the bishop class
+        wrongly, so the regex verdict is final for both)."""
         return (
             self.move_labels
             + self.line_labels
@@ -725,6 +736,7 @@ class _PositionCheck:
             [(s, l) for s, l in self.line_pairs if l not in cleared],
             self.tool_mentions,
             [(s, l, f) for s, l, f in self.bishop_triples if l not in cleared],
+            [(s, l, f) for s, l, f in self.file_triples if l not in cleared],
         )
 
 
@@ -1120,6 +1132,7 @@ class AIAnalysisCoordinator:
                     | {ln.lower() for ln in pc.line_labels}
                     | set(pc.tool_mentions)
                     | {b.lower() for b in pc.bishop_labels}
+                    | {f.lower() for f in pc.file_labels}
                 )
                 repeat = bool(hit_keys & corrected_items)
                 corrected_items |= hit_keys
@@ -1438,6 +1451,8 @@ class AIAnalysisCoordinator:
             line_pairs,
             tool_mentions,
             list(iter_false_bishop_color_refs(text, board)),
+            list(iter_false_file_claims(text, board))
+            + list(iter_false_file_openness(text, board)),
         )
 
     def _recommend_mismatch(
@@ -1522,13 +1537,15 @@ class AIAnalysisCoordinator:
         ]
         if move_facts:
             clauses.append(_POSITION_CHECK_MOVE_CLAUSE.format(facts="; ".join(move_facts)))
-        # Square-content claims and bishop-by-square-color refs are both plain
-        # board truth -- one "restate" clause, facts joined. Bishop facts are
-        # precomputed (no square to describe; square color is invariant).
-        claim_facts = [
-            describe_square(square, pc.board)
-            for _surface, _label, square in pc.claim_triples
-        ] + [fact for _surface, _label, fact in pc.bishop_triples]
+        # Square-content, bishop-by-square-color and file claims (piece-on-
+        # file, openness) are all plain board truth -- one "restate" clause,
+        # facts joined. Bishop and file facts are precomputed (see their
+        # recognizers).
+        claim_facts = (
+            [describe_square(square, pc.board) for _surface, _label, square in pc.claim_triples]
+            + [fact for _surface, _label, fact in pc.bishop_triples]
+            + [fact for _surface, _label, fact in pc.file_triples]
+        )
         if claim_facts:
             clauses.append(_POSITION_CHECK_CLAIM_CLAUSE.format(facts="; ".join(claim_facts)))
         if pc.tool_mentions:

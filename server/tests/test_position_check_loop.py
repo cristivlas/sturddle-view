@@ -253,3 +253,77 @@ async def test_no_board_provider_is_a_noop():
 
     assert not any(e.kind == EVT_AI_POSITION_NOTE for e in events)
     assert provider.stream_calls == 1
+
+
+# Black to move; the white queen is on b2 -- the reported "white queen on the
+# c-file" hallucination (see test_position_check._WILD_C_FILE_FEN).
+_C_FILE_FEN = "r2q1rk1/pp1bpp1p/2np1np1/1B6/P3P2P/5N2/1Q1N1PP1/R3R1K1 b - - 5 13"
+
+
+@pytest.mark.asyncio
+async def test_false_file_claim_emits_note_and_injects_corrective():
+    board = chess.Board(_C_FILE_FEN)
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="Rc8 faces the white queen on the c-file.")],
+        [ProviderChunk(kind="text", text="Corrected: the white queen is on b2.")],
+    ])
+    coord, bus = _coord(provider, board)
+    queue = await bus.subscribe()
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    notes = [e for e in events if e.kind == EVT_AI_POSITION_NOTE]
+    assert len(notes) == 1
+    assert notes[0].payload["surfaces"] == ["white queen on the c-file"]
+    injected = _last_user_texts(provider)
+    assert any(
+        t.startswith(_POSITION_CHECK_PREFIX)
+        and "no white queen on the c-file; the white queen is on b2" in t
+        for t in injected
+    )
+
+
+@pytest.mark.asyncio
+async def test_repeat_of_file_claim_escalates():
+    # The file label joins the repeat keys: re-asserting "white queen on the
+    # c-file" in round 2 draws the escalated corrective in round 3.
+    board = chess.Board(_C_FILE_FEN)
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="Rc8 faces the white queen on the c-file.")],
+        [ProviderChunk(kind="text", text="The white queen on the c-file is loose.")],
+        [ProviderChunk(kind="text", text="Fine, the white queen is on b2.")],
+    ])
+    coord, bus = _coord(provider, board)
+    queue = await bus.subscribe()
+
+    await coord.run(game_id="g")
+    await _drain_until_done(queue)
+
+    injected = _last_user_texts(provider)
+    assert any(_POSITION_CHECK_REPEAT_LEAD in t for t in injected)
+
+
+@pytest.mark.asyncio
+async def test_false_file_openness_emits_note_and_injects_corrective():
+    # Bare "a semi-open file" bound to 13...Rc8's c-file, which has no pawns.
+    board = chess.Board(_C_FILE_FEN)
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="13...Rc8 places the rook on a semi-open file.")],
+        [ProviderChunk(kind="text", text="Corrected: the c-file has no pawns.")],
+    ])
+    coord, bus = _coord(provider, board)
+    queue = await bus.subscribe()
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    notes = [e for e in events if e.kind == EVT_AI_POSITION_NOTE]
+    assert len(notes) == 1
+    assert notes[0].payload["surfaces"] == ["a semi-open file"]
+    injected = _last_user_texts(provider)
+    assert any(
+        t.startswith(_POSITION_CHECK_PREFIX)
+        and "the c-file is open: no pawns on it" in t
+        for t in injected
+    )
