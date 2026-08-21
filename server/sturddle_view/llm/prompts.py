@@ -7,10 +7,13 @@ annotations) a wider gate in `_ai_kick.py::_build_turn_inputs`.
 from __future__ import annotations
 
 import os
-from typing import Iterable, Literal
+from typing import TYPE_CHECKING, Iterable, Literal
 
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
 from .tools import ToolSpec
+
+if TYPE_CHECKING:
+    from ..play.opening_reply import OpeningReply
 
 
 # Appends a directive forcing the model to emit tool calls inline as
@@ -249,13 +252,32 @@ def _side_to_move_from_fen(fen: str) -> str:
     return SIDE_WHITE
 
 
+_BOOK_REPLY_LABEL = "Book reply here"
+_BOOK_REPLY_FILE_NOTE = "configured opening book"
+
+
+def _fullmove_from_fen(fen: str) -> str:
+    """FEN fullmove field; '1' when malformed."""
+    parts = fen.split()
+    return parts[5] if len(parts) >= 6 and parts[5].isdigit() else "1"
+
+
+def _move_prefix_from_fen(fen: str) -> str:
+    """SAN move-number prefix ("13." / "13...") for the side to move."""
+    dots = "..." if _side_to_move_from_fen(fen) == SIDE_BLACK else "."
+    return f"{_fullmove_from_fen(fen)}{dots}"
+
+
+def _render_book_reply(fen: str, reply: "OpeningReply") -> str:
+    origin = reply.line_name or _BOOK_REPLY_FILE_NOTE
+    return f"{_BOOK_REPLY_LABEL}: {_move_prefix_from_fen(fen)}{reply.san} ({origin})"
+
+
 def _position_under_review(fen: str) -> str:
     """'move 19 (Black to move)' from the FEN's fullmove + side, so the model
     knows which ply commentary is anchored at. Fullmove falls back to 1."""
     side = _side_to_move_from_fen(fen)
-    parts = fen.split()
-    fullmove = parts[5] if len(parts) >= 6 and parts[5].isdigit() else "1"
-    return f"move {fullmove} ({side.capitalize()} to move)"
+    return f"move {_fullmove_from_fen(fen)} ({side.capitalize()} to move)"
 
 
 # Appended to the user message when the position under review is still in
@@ -273,6 +295,33 @@ OPENING_PHASE_GUIDANCE = (
 )
 
 
+# Replaces OPENING_PHASE_GUIDANCE when the server found a book reply for
+# the position: favor known theory over engine exploration; a played move
+# that departs from theory still gets the normal comparison.
+BOOK_REPLY_GUIDANCE = (
+    "A known book reply for this position is given above -- real theory, "
+    "safe to name in prose. Favor it over engine exploration: when "
+    "recommending a move, submit that reply with `recommend_move` directly, "
+    "no `top_moves` comparison or `delegate` check first. When reviewing a "
+    "played move that matches it, do the same; one that departs gets the "
+    "normal comparison. Add one sentence naming the plan the reply carries. "
+    "Skip `related_openings`."
+)
+
+
+# Steers are narrator-only: they name tools and skips the verifier
+# registry lacks, so verifier sub-runs must not inherit them.
+_OPENING_STEERS = (OPENING_PHASE_GUIDANCE, BOOK_REPLY_GUIDANCE)
+
+
+def split_opening_steer(user_content: str) -> tuple[str, bool]:
+    """(content without any opening steer, whether one was present)."""
+    for steer in _OPENING_STEERS:
+        if steer in user_content:
+            return user_content.replace(steer, "").rstrip() + "\n", True
+    return user_content, False
+
+
 def build_initial_user_message(
     *,
     fen: str,
@@ -285,6 +334,7 @@ def build_initial_user_message(
     annotations: list[str | None] | None = None,
     root_annotation: str | None = None,
     in_opening: bool = False,
+    book_reply: "OpeningReply | None" = None,
 ) -> str:
     """Build the user message that opens an agent turn. Carries the FEN,
     the explicit side-to-move (so the model does not re-derive it), the
@@ -314,6 +364,10 @@ def build_initial_user_message(
     opening-theory aside (caller gates it on the position still being in
     book). Off by default.
 
+    `book_reply` is the theory reply the server found for the position
+    (opening_reply probe). It rides the message as its own line and, with
+    `in_opening`, swaps the theory steer for the favor-the-book one.
+
     Optional fields are omitted entirely when not provided."""
     lines: list[str] = []
     if engine_name:
@@ -327,6 +381,8 @@ def build_initial_user_message(
     lines.append(f"Game moves: {_render_san_pairs(san_history)}")
     if move_played:
         lines.append(f"Move played here: {move_played}")
+    if book_reply is not None:
+        lines.append(_render_book_reply(fen, book_reply))
     if result:
         lines.append(f"Game result: {result}")
     if root_annotation:
@@ -335,7 +391,9 @@ def build_initial_user_message(
     if annotations_line:
         lines.append(annotations_line)
     if in_opening:
-        lines.append(OPENING_PHASE_GUIDANCE)
+        lines.append(
+            BOOK_REPLY_GUIDANCE if book_reply is not None else OPENING_PHASE_GUIDANCE
+        )
     return "\n".join(lines) + "\n"
 
 

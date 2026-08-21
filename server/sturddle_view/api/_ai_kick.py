@@ -23,6 +23,7 @@ from ..env_utils import env_int
 from ..llm import PromptMode, build_initial_user_message
 from ..llm.ollama import DEFAULT_BASE_URL as _DEFAULT_OLLAMA_BASE_URL, OllamaProvider
 from ..play.mode import Mode
+from ..play.opening_reply import book_ref_from_settings, probe_opening_reply
 
 log = logging.getLogger(__name__)
 
@@ -141,7 +142,7 @@ def _prompt_mode_for(hve) -> PromptMode:
     return _COACH_MODE
 
 
-def _build_turn_inputs(hve) -> str | None:
+async def _build_turn_inputs(hve, settings, eco_book) -> str | None:
     """Build the user_message for one turn from a single SAN walk."""
     if hve is None:
         return None
@@ -177,6 +178,20 @@ def _build_turn_inputs(hve) -> str | None:
     in_opening = opening is not None and ply <= opening.ply + env_int(
         _OPENING_PHASE_SLACK_ENV, _OPENING_PHASE_SLACK_DEFAULT
     )
+    # Theory fast path: a known book reply rides the message and swaps the
+    # steer (see BOOK_REPLY_GUIDANCE). Off-loop -- the book file's first
+    # index build takes real time. Custom-FEN games have no book. The
+    # armed per-game ref wins: its anchor is the game-start cursor, so a
+    # sequential probe names the line the engine is actually following.
+    reply = None
+    if in_opening and hve.start_fen() is None:
+        reply = await asyncio.to_thread(
+            probe_opening_reply,
+            eco_book,
+            hve.book_ref() or book_ref_from_settings(settings),
+            board.copy(),
+            opening,
+        )
     message = build_initial_user_message(
         fen=board.fen(),
         san_history=san_history,
@@ -188,6 +203,7 @@ def _build_turn_inputs(hve) -> str | None:
         annotations=annotations,
         root_annotation=root_annotation,
         in_opening=in_opening,
+        book_reply=reply,
     )
     return message
 
@@ -257,7 +273,9 @@ async def start_ai_turn(request: Request) -> None:
         await _evict_stale_ollama_models(base_url, s.ai_model or "")
     hve = request.app.state.hve
     game_id = getattr(hve, "game_id", None) if hve else None
-    user_message = _build_turn_inputs(hve)
+    user_message = await _build_turn_inputs(
+        hve, s, getattr(request.app.state, "openings", None)
+    )
     mode = _prompt_mode_for(hve)
     # Latest-start-wins: hard-stop any in-flight turn first. run() holds a
     # single lock for the whole turn, so without this the new turn queues

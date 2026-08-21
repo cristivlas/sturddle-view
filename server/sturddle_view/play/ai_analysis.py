@@ -43,7 +43,6 @@ from ..events import (
 from ..llm import (
     LLMProvider,
     Message,
-    OPENING_PHASE_GUIDANCE,
     PromptMode,
     ProviderChunk,
     ProviderUsage,
@@ -53,6 +52,7 @@ from ..llm import (
     UnknownToolError,
     assemble_system_prompt,
     open_transcript,
+    split_opening_steer,
     strip_markdown_stream,
 )
 from ..llm.cancel import CancelToken
@@ -832,16 +832,13 @@ class AIAnalysisCoordinator:
             self._task = asyncio.current_task()
             self._cancel_token = CancelToken()
             self._active_provider = active
-            # turn_context grounds verifier sub-runs. Strip the narrator-only
-            # opening steer (it names related_openings, which the verifier
-            # registry lacks) so the sub-run isn't handed a dead instruction.
-            # Only opening turns carry it; others pass through untouched.
-            turn_context = opening_user_content
-            self._opening_turn = OPENING_PHASE_GUIDANCE in opening_user_content
-            if self._opening_turn:
-                turn_context = (
-                    turn_context.replace(OPENING_PHASE_GUIDANCE, "").rstrip() + "\n"
-                )
+            # turn_context grounds verifier sub-runs. Strip any narrator-only
+            # opening steer (they name tools the verifier registry lacks) so
+            # the sub-run isn't handed a dead instruction. Only opening turns
+            # carry one; others pass through untouched.
+            turn_context, self._opening_turn = split_opening_steer(
+                opening_user_content
+            )
             self._turn_context = turn_context
             self._turn_game_id = game_id
             self._verifier_max_rounds = verifier_max_rounds

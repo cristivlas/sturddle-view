@@ -6,13 +6,15 @@ from __future__ import annotations
 import chess
 
 from sturddle_view.api._ai_kick import (
-    _build_turn_inputs,
     _prompt_mode_for,
     _san_history_for,
 )
 from sturddle_view.chess.board import board_from
 from sturddle_view.openings import Opening
 from sturddle_view.play.mode import Mode
+from sturddle_view.play.opening_lines import BookRef
+
+from .ai_kick_helpers import FakeSettings, build_message as _build
 
 
 class _FakeHve:
@@ -26,6 +28,7 @@ class _FakeHve:
         engine_name: str | None = None,
         opening: Opening | None = None,
         viewed_pgn_result: str | None = None,
+        book_ref: BookRef | None = None,
     ):
         self._board = board
         self._start_fen = start_fen
@@ -34,12 +37,16 @@ class _FakeHve:
         self._engine_name = engine_name
         self._opening = opening
         self._viewed_pgn_result = viewed_pgn_result
+        self._book_ref = book_ref
 
     def current_board(self) -> chess.Board | None:
         return self._board
 
     def start_fen(self) -> str | None:
         return self._start_fen
+
+    def book_ref(self) -> BookRef | None:
+        return self._book_ref
 
     def pre_analysis_mode(self) -> Mode | None:
         return self._pre_analysis_mode
@@ -67,16 +74,16 @@ class _FakeHve:
 
 
 def test_build_user_message_handles_no_hve():
-    assert _build_turn_inputs(None) is None
+    assert _build(None) is None
 
 
 def test_build_user_message_handles_no_board():
-    assert _build_turn_inputs(_FakeHve(board=None)) is None
+    assert _build(_FakeHve(board=None)) is None
 
 
 def test_build_user_message_startpos_no_moves():
     board = chess.Board()
-    msg = _build_turn_inputs(_FakeHve(board=board))
+    msg = _build(_FakeHve(board=board))
     assert msg is not None
     assert board.fen() in msg
     assert "(none yet" in msg
@@ -88,7 +95,7 @@ def test_build_user_message_after_moves():
     board.push_san("e5")
     board.push_san("Nf3")
 
-    msg = _build_turn_inputs(_FakeHve(board=board))
+    msg = _build(_FakeHve(board=board))
     assert msg is not None
     assert board.fen() in msg
     assert "1. e4 e5 2. Nf3" in msg
@@ -102,7 +109,7 @@ def test_build_user_message_honors_start_fen():
     board = chess.Board(start_fen)
     board.push_san("e4")
 
-    msg = _build_turn_inputs(_FakeHve(board=board, start_fen=start_fen))
+    msg = _build(_FakeHve(board=board, start_fen=start_fen))
     assert msg is not None
     assert "1. e4" in msg
     assert board.fen() in msg
@@ -112,7 +119,7 @@ def test_build_user_message_includes_engine_name():
     # AI prompt path shortens to the first whitespace token to avoid
     # leaking full UCI ids ("MyEngine 2.5.1-rc9...") into model prose.
     h = _FakeHve(board=chess.Board(), engine_name="MyEngine 2.5.1-rc9")
-    msg = _build_turn_inputs(h)
+    msg = _build(h)
     assert msg is not None
     assert msg.startswith("Engine: MyEngine\n")
 
@@ -122,28 +129,28 @@ def test_build_user_message_includes_opening_when_book_hit():
         board=chess.Board(),
         opening=Opening(eco="C44", name="King's Pawn Game"),
     )
-    msg = _build_turn_inputs(h)
+    msg = _build(h)
     assert msg is not None
     assert "Opening: [C44] King's Pawn Game\n" in msg
 
 
 def test_build_user_message_omits_opening_when_book_misses():
     h = _FakeHve(board=chess.Board(), opening=None)
-    msg = _build_turn_inputs(h)
+    msg = _build(h)
     assert msg is not None
     assert "Opening:" not in msg
 
 
 def test_build_user_message_includes_view_pgn_result():
     h = _FakeHve(board=chess.Board(), viewed_pgn_result="0-1")
-    msg = _build_turn_inputs(h)
+    msg = _build(h)
     assert msg is not None
     assert "Game result: 0-1" in msg
 
 
 def test_build_user_message_omits_unknown_pgn_result():
     h = _FakeHve(board=chess.Board(), viewed_pgn_result="*")
-    msg = _build_turn_inputs(h)
+    msg = _build(h)
     assert msg is not None
     assert "Game result:" not in msg
 
@@ -214,7 +221,7 @@ def test_build_user_message_view_mode_includes_future_moves():
     cursor_board.push_san("e4")
 
     h = _FakeHve(board=cursor_board, view_full_moves=moves)
-    msg = _build_turn_inputs(h)
+    msg = _build(h)
     assert msg is not None
     assert cursor_board.fen() in msg          # FEN reflects the cursor
     assert "1. e4 e5 2. Nf3" in msg            # full game appears
@@ -234,7 +241,7 @@ def test_build_user_message_view_mode_includes_move_played_here():
     cursor_board.push_san("e5")
 
     h = _FakeHve(board=cursor_board, view_full_moves=moves)
-    msg = _build_turn_inputs(h)
+    msg = _build(h)
     assert msg is not None
     assert "Move played here: Nf3" in msg
 
@@ -252,6 +259,79 @@ def test_build_user_message_view_mode_omits_move_played_at_end_of_game():
     cursor_board.push_san("e5")
 
     h = _FakeHve(board=cursor_board, view_full_moves=moves)
-    msg = _build_turn_inputs(h)
+    msg = _build(h)
     assert msg is not None
     assert "Move played here:" not in msg
+
+
+# ---------- probe wiring: armed book, settings fallback, gates --------
+
+
+def _book_file(tmp_path, name: str, movetext: str) -> str:
+    path = tmp_path / name
+    path.write_text(f'[Event "?"]\n\n{movetext}\n', encoding="utf-8")
+    return str(path)
+
+
+def _book_settings(path: str) -> FakeSettings:
+    return FakeSettings(hve_use_opening_book=True, engine_default_book_path=path)
+
+
+def _e4_board() -> chess.Board:
+    board = chess.Board()
+    board.push_san("e4")
+    return board
+
+
+_E4_OPENING = Opening(eco="B00", name="King's Pawn")
+
+
+def test_probe_prefers_armed_book_over_settings(tmp_path):
+    armed = BookRef(
+        path=_book_file(tmp_path, "armed.pgn", "1. e4 e5 *"),
+        plies=None, order=None, anchor=0,
+    )
+    settings = _book_settings(_book_file(tmp_path, "configured.pgn", "1. e4 c5 *"))
+    h = _FakeHve(board=_e4_board(), opening=_E4_OPENING, book_ref=armed)
+    msg = _build(h, settings=settings)
+    assert msg is not None
+    assert "Book reply here: 1...e5 (configured opening book)" in msg
+
+
+def test_probe_falls_back_to_settings_book_when_none_armed(tmp_path):
+    settings = _book_settings(_book_file(tmp_path, "configured.pgn", "1. e4 c5 *"))
+    h = _FakeHve(board=_e4_board(), opening=_E4_OPENING)
+    msg = _build(h, settings=settings)
+    assert msg is not None
+    assert "Book reply here: 1...c5 (configured opening book)" in msg
+
+
+def test_probe_skipped_for_custom_start_fen(tmp_path):
+    # Armed book would answer 1...e5; a non-None start FEN must keep the
+    # probe off entirely.
+    armed = BookRef(
+        path=_book_file(tmp_path, "armed.pgn", "1. e4 e5 *"),
+        plies=None, order=None, anchor=0,
+    )
+    h = _FakeHve(
+        board=_e4_board(),
+        start_fen=chess.STARTING_FEN,
+        opening=_E4_OPENING,
+        book_ref=armed,
+    )
+    msg = _build(h)
+    assert msg is not None
+    assert "Book reply here:" not in msg
+
+
+def test_probe_skipped_outside_opening(tmp_path):
+    # No matched opening line => not in the opening phase => no probe,
+    # even with an armed book that would answer.
+    armed = BookRef(
+        path=_book_file(tmp_path, "armed.pgn", "1. e4 e5 *"),
+        plies=None, order=None, anchor=0,
+    )
+    h = _FakeHve(board=_e4_board(), opening=None, book_ref=armed)
+    msg = _build(h)
+    assert msg is not None
+    assert "Book reply here:" not in msg

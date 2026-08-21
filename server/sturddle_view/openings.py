@@ -141,6 +141,21 @@ class OpeningBook:
         )
         return ranked[:limit] if limit is not None else ranked
 
+    def continuations(
+        self, line_uci: Iterable[str], *, limit: int | None = None,
+    ) -> list[Opening]:
+        """Openings whose move list strictly extends `line_uci` -- named
+        theory continuing the position. Shortest (most fundamental) line
+        first, ties toward (eco, name); unlike `nearest`, lines that
+        branch before the position are excluded."""
+        line = tuple(line_uci)
+        n = len(line)
+        pool = [
+            o for o in self.all() if len(o.moves) > n and o.moves[:n] == line
+        ]
+        pool.sort(key=lambda o: (o.ply, o.eco, o.name))
+        return pool[:limit] if limit is not None else pool
+
     # Process-wide cache: parsing the TSVs takes ~3s and the data is static.
     # The cache is keyed by directory path only and is NOT invalidated on
     # file changes — callers that mutate the openings directory at runtime

@@ -12,10 +12,12 @@ from .canned import CannedProvider
 from .markdown_strip import strip_markdown_stream
 from .openai_compat import TOOL_SIGNATURE_KEY
 from .prompts import (
+    BOOK_REPLY_GUIDANCE,
     OPENING_PHASE_GUIDANCE,
     PromptMode,
     assemble_system_prompt,
     build_initial_user_message,
+    split_opening_steer,
 )
 from .scripted import ScriptedProvider
 from .tools import ToolRegistry, ToolSpec, UnknownToolError
@@ -32,6 +34,7 @@ __all__ = [
     "ProviderChunk",
     "ProviderUsage",
     "PromptMode",
+    "BOOK_REPLY_GUIDANCE",
     "OPENING_PHASE_GUIDANCE",
     "TOOL_SIGNATURE_KEY",
     "ToolWireSpec",
@@ -42,6 +45,7 @@ __all__ = [
     "UnknownToolError",
     "assemble_system_prompt",
     "build_initial_user_message",
+    "split_opening_steer",
     "strip_markdown_stream",
     "Transcript",
     "NullTranscript",
