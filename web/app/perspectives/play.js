@@ -70,6 +70,11 @@ let _cachedBoardUpdate = null;
 // let the next degraded move stack a duplicate.
 let _difficultyToastUp = false;
 
+// AI-error toast handle from the last finished round. Module scope: the
+// toast outlives a perspective remount (aiShared is rebuilt fresh per
+// mount), so a per-mount field would lose the handle and orphan the toast.
+let _dismissAiErrorToast = null;
+
 // Details popup body for the difficulty-unavailable toast: prose with
 // the UCI terms as code chips and "choose an engine" deep-linking to
 // Settings > Engines (resolving the popup first -- one modal at a time).
@@ -400,7 +405,7 @@ function dispatchAiEvent(aiCtx, evt) {
           // first sentence with a Details affordance for the rest. Sticky so
           // a quota/outage failure stays until the user reads it. Failures we
           // recognize by class name also carry the action that fixes them.
-          reportAiError(p.error, p.error_detail);
+          _dismissAiErrorToast = reportAiError(p.error, p.error_detail);
         }
         // End the AI turn on completion AND error (clears the pulse + toast).
         // Cancel is excluded: it self-resolves via stopAnalysisFromUi ->
@@ -1612,6 +1617,13 @@ function dismissAnalysisToast(aiShared) {
   aiShared.dismissAnalysisToast = null;
 }
 
+// Dismiss a prior round's AI-error toast and drop its handle. A new round
+// (local start or cross-client) supersedes any error the last one left up.
+function dismissAiErrorToast() {
+  _dismissAiErrorToast?.();
+  _dismissAiErrorToast = null;
+}
+
 function showAnalysisToastImpl(state) {
   dismissAnalysisToast(state.aiShared);
   const msg = document.createElement("span");
@@ -1662,6 +1674,7 @@ async function startAnalysisFromUiImpl(state) {
   // the close can't race the new analysis state.
   if (!state.aiEnabled && isAiOpen()) closeAi();
   state.aiShared.turnFinished = false;
+  dismissAiErrorToast();
   clearUciLog();
   // Build ALL start-state (toast + panel) synchronously BEFORE the POST.
   // An instant-fail turn's done/error event arrives during the await; with
@@ -1718,7 +1731,7 @@ async function onAnalyzeImpl(state) {
     await startAnalysisFromUiImpl(state);
   } catch (e) {
     teardownAiPanel(state.aiShared);
-    reportError(state.ctx, MSG.START_ANALYSIS_FAILED, e, { duration: 0 });
+    _dismissAiErrorToast = reportError(state.ctx, MSG.START_ANALYSIS_FAILED, e, { duration: 0 });
   } finally {
     state.analysisTransitionInFlight = false;
   }
@@ -1739,7 +1752,7 @@ async function onReanalyzeImpl(state) {
     await startAnalysisFromUiImpl(state);
   } catch (e) {
     teardownAiPanel(state.aiShared);
-    reportError(state.ctx, MSG.REANALYZE_FAILED, e, { duration: 0 });
+    _dismissAiErrorToast = reportError(state.ctx, MSG.REANALYZE_FAILED, e, { duration: 0 });
   } finally {
     state.analysisTransitionInFlight = false;
   }
@@ -2073,12 +2086,17 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         pushNavToUi(state);
         if (!state.analyzing) {
           dismissAnalysisToast(state.aiShared);
-        } else if (!state.aiShared.dismissAnalysisToast) {
-          // Server reports analysis active but no toast exists -- we
-          // were re-mounted (e.g. user navigated to another
-          // perspective and came back). Restore the toast so the
-          // user can still see and dismiss it.
-          showAnalysisToastImpl(state);
+        } else {
+          // A round just started (here or on another client): any error
+          // toast from the last round no longer applies.
+          dismissAiErrorToast();
+          if (!state.aiShared.dismissAnalysisToast) {
+            // Server reports analysis active but no toast exists -- we
+            // were re-mounted (e.g. user navigated to another
+            // perspective and came back). Restore the toast so the
+            // user can still see and dismiss it.
+            showAnalysisToastImpl(state);
+          }
         }
       }
       // Title the UCI Log with the engine whose traffic it shows. The
