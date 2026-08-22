@@ -21,6 +21,7 @@ dependencies = [
     "platformdirs>=4.0",
     "keyring>=25.0",
     "httpx>=0.27",
+    "segno>=1.6",
 ]
 
 [project.optional-dependencies]

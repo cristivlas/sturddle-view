@@ -256,7 +256,7 @@ api("GET", "/settings").then(s => {
 }).catch(() => {});
 
 document.getElementById("about-btn").addEventListener("click", () => {
-  openAboutDialog({ api });
+  openAboutDialog({ api, events });
 });
 // Remount of whatever is current, not a tab pick -- must not claim the
 // startup slot, which during a disconnect window still holds the pre-drop tab.

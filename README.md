@@ -55,14 +55,16 @@ The server binds to `127.0.0.1:8765` by default and prints the full
 startup URL (e.g. `http://127.0.0.1:8765/auth?token=...`). Open it once;
 the server sets an `HttpOnly` cookie and redirects to `/ui/`. To expose
 the server on the LAN/tailnet, pass `--host 0.0.0.0` (token still
-required, or add `--no-auth` if you trust the network). To serve over
-TLS, supply `--cert PATH --key PATH`.
+required, or add `--no-auth` if you trust the network). Desktop mode
+binds `0.0.0.0` out of the box; the About dialog shows a QR code that
+opens the app on a phone on the same network. To serve over TLS, supply
+`--cert PATH --key PATH`.
 
 ## Command-line flags
 
 | Flag | Effect |
 |---|---|
-| `--host HOST` | Bind address. Default `127.0.0.1`. |
+| `--host HOST` | Bind address. Default `127.0.0.1` (`0.0.0.0` with `--desktop`). |
 | `--port PORT` | Bind port. Default `8765`. |
 | `--engine PATH` | Fallback UCI engine when the registry has no selection. |
 | `--desktop` | Open in a native window instead of a browser tab. |
@@ -82,9 +84,11 @@ set.
 
 **Networking.** `--host` sets the bind address and `--port` the port (defaults
 `127.0.0.1:8765`). The loopback default keeps the server private; set
-`--host 0.0.0.0` to reach it from other machines on your LAN or tailnet. Token
-auth still applies on a non-loopback bind unless you also pass `--no-auth` --
-do that only on a network you trust, since it drops the only access control.
+`--host 0.0.0.0` to reach it from other machines on your LAN or tailnet. Desktop
+mode defaults to `0.0.0.0` so the About dialog's QR code works without flags.
+Token auth still applies on a non-loopback bind unless you also pass
+`--no-auth` -- do that only on a network you trust, since it drops the only
+access control.
 
 **TLS.** `--cert PATH` and `--key PATH` serve HTTPS from a PEM certificate and
 key. They must be supplied together, and are rejected together with `--desktop`

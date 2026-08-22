@@ -17,7 +17,8 @@ from platformdirs import user_data_dir
 from . import app_dir_name
 from ._uvicorn_signal import make_signalling_server
 from .app import create_app
-from .config import WEB_DIR, Settings
+from .config import LOOPBACK_HOST, WEB_DIR, WILDCARD_HOST, Settings
+from .netinfo import entry_url
 
 _SERVER_STARTUP_TIMEOUT = 5.0
 _SERVER_SHUTDOWN_TIMEOUT = 5.0
@@ -114,7 +115,7 @@ def _port_in_use(host: str, port: int) -> bool:
     SO_REUSEADDR matches uvicorn's listener so a port in TIME_WAIT isn't
     misread as in-use -- but only off Windows, where REUSEADDR instead lets
     a bind steal an actively-listening port (which would misread it free)."""
-    bind_host = "127.0.0.1" if host == "0.0.0.0" else host
+    bind_host = LOOPBACK_HOST if host == WILDCARD_HOST else host
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         if os.name != "nt":
@@ -294,10 +295,10 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
         )
         raise SystemExit(f"server startup failed: {signal.error!r}")
 
-    window_host = "127.0.0.1" if host == "0.0.0.0" else host
+    window_host = LOOPBACK_HOST if host == WILDCARD_HOST else host
     # Use the cookie handshake: /auth validates the token, sets an HttpOnly
     # cookie, then 303s to /ui/. The window's history never holds the token.
-    url = f"http://{window_host}:{port}/auth?token={settings.token}"
+    url = entry_url(settings, window_host)
     api = JsApi(save_dialog_kind=webview.FileDialog.SAVE)
     window = webview.create_window(
         "sturddle-view", url, width=width, height=height,

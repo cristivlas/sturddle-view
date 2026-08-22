@@ -10,7 +10,6 @@ from pathlib import Path
 
 import chess.engine
 import hmac
-import psutil
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from . import __version__
 from .auth import AUTH_COOKIE, origin_ok
 from .api import chess_utils as chess_api
+from .api import connect as connect_api
 from .api import engines as engines_api
 from .api import fs as fs_api
 from .api import game as game_api
@@ -26,16 +26,17 @@ from .api import openings as openings_api
 from .api import settings as settings_api
 from .api import tournaments as tournaments_api
 from .api import ws as ws_api
-from .config import Settings
+from .config import LOOPBACK_HOST, Settings
 from .engine_tmp import sweep_orphans
 from .engines import EngineRegistry, resolve_selected
-from .events import Event, EventBus
+from .events import EVT_REMOTE_CONNECTED, Event, EventBus
 from .llm import CannedProvider, LLMProvider, ToolRegistry
 from .llm.anthropic import AnthropicProvider
 from .llm import gemini as gemini_mod
 from .llm.gemini import GeminiProvider
 from .llm import ollama as ollama_mod
 from .llm.ollama import OllamaProvider
+from .netinfo import entry_url, is_loopback, reachable_hosts, url_scheme
 from .openings import OpeningBook
 from .play.ai_analysis import (
     AIAnalysisCoordinator,
@@ -362,6 +363,7 @@ def create_app(
     _setup_tournament(app, settings)
 
     app.include_router(chess_api.router)
+    app.include_router(connect_api.router)
     app.include_router(settings_api.router)
     app.include_router(engines_api.router)
     app.include_router(fs_api.router)
@@ -379,19 +381,31 @@ def create_app(
     def healthz() -> dict:
         return {"ok": True}
 
+    async def _announce_remote(request: Request) -> None:
+        """A phone scanned the About-dialog QR: let that dialog close itself."""
+        client = request.client
+        if client is not None and not is_loopback(client.host):
+            await app.state.event_bus.publish(
+                Event(kind=EVT_REMOTE_CONNECTED, payload={"host": client.host})
+            )
+
     @app.get("/", include_in_schema=False)
-    def root() -> RedirectResponse:
+    async def root(request: Request) -> RedirectResponse:
         # Token-less redirect; client carries the cookie set by /auth.
+        # With --no-auth this is the entry URL itself (netinfo.entry_url).
+        if settings.auth_disabled:
+            await _announce_remote(request)
         return RedirectResponse(url="/ui/")
 
     @app.get("/auth", include_in_schema=False)
-    def auth_handshake(request: Request, token: str = "") -> RedirectResponse:
+    async def auth_handshake(request: Request, token: str = "") -> RedirectResponse:
         """One-shot handshake: validate ?token=, set HttpOnly cookie, redirect
         to a token-less URL so the token never appears in history or Referer.
         """
         if not settings.auth_disabled:
             if not token or not hmac.compare_digest(token, settings.token):
                 return PlainTextResponse("invalid token", status_code=401)
+        await _announce_remote(request)
         resp = RedirectResponse(url="/ui/", status_code=303)
         if not settings.auth_disabled:
             secure = request.url.scheme == "https"
@@ -647,47 +661,18 @@ def _setup_tournament(app: FastAPI, settings: Settings) -> None:
 
     # Tell the orchestrator where the proxy should POST. The proxy runs as
     # a subprocess on this same host; loopback only.
-    proxy_scheme = "https" if settings.tls_cert else "http"
-    proxy_url = f"{proxy_scheme}://127.0.0.1:{settings.port}/internal/proxy"
+    proxy_url = f"{url_scheme(settings)}://{LOOPBACK_HOST}:{settings.port}/internal/proxy"
     app.state.tournament_orch.set_proxy_broadcast_url(proxy_url)
     # Live settings reference so each tournament start picks up the
     # current Defaults-tab values without needing a restart.
     app.state.tournament_orch.set_settings(settings)
 
 
-def _reachable_hosts(bind: str) -> list[str]:
-    """For wildcard binds, list non-loopback IPv4 addresses on up interfaces.
-    For specific binds, return just the bind address.
-    """
-    if bind not in ("0.0.0.0", "::", ""):
-        return [bind]
-
-    stats = psutil.net_if_stats()
-    candidates: list[str] = []
-    for name, addrs in psutil.net_if_addrs().items():
-        nic = stats.get(name)
-        if nic is None or not nic.isup:
-            continue
-        for a in addrs:
-            ip = a.address
-            if a.family.name != "AF_INET":
-                continue
-            if not ip or ip.startswith("127.") or ip.startswith("169.254."):
-                continue
-            if ip not in candidates:
-                candidates.append(ip)
-    candidates.append("127.0.0.1")
-    return candidates
-
-
 def _print_banner(settings: Settings) -> None:
-    hosts = _reachable_hosts(settings.host)
-    scheme = "https" if settings.tls_cert else "http"
     log.info("bound on %s:%d%s", settings.host, settings.port,
              " (auth DISABLED)" if settings.auth_disabled else "")
-    for h in hosts:
-        path = "/" if settings.auth_disabled else f"/auth?token={settings.token}"
-        log.info("  open: %s://%s:%d%s", scheme, h, settings.port, path)
+    for h in reachable_hosts(settings.host):
+        log.info("  open: %s", entry_url(settings, h))
 
 
 def _signal_ready_port() -> None:
@@ -707,6 +692,6 @@ def _signal_ready_port() -> None:
     except ValueError:
         return
     try:
-        socket.create_connection(("127.0.0.1", port), timeout=2.0).close()
+        socket.create_connection((LOOPBACK_HOST, port), timeout=2.0).close()
     except OSError:
         pass
