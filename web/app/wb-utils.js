@@ -260,8 +260,12 @@ function nextNavIndex(key, cur, len, step) {
   return target >= 0 && target < len ? target : cur;
 }
 
+// `lead` names the row arrows move from when it isn't the selected one (a
+// multi-selection walks a lead row); `extend` handles Shift+Arrow, which
+// grows a selection instead of moving it.
 export function wireArrowKeyNav(el, {
   rows, selected, select, cols = null, onEdge = null, scroll = scrollRowIntoView,
+  lead = null, extend = null,
 }) {
   // A list region's focus ring is suppressed, so keyboard focus would land
   // here with nothing to show for it -- highlight the first row instead.
@@ -280,7 +284,7 @@ export function wireArrowKeyNav(el, {
     // Claim the key even when the move is a no-op at an edge, so the region
     // doesn't scroll out from under a selection that stayed put.
     ev.preventDefault();
-    const cur = all.indexOf(el.querySelector(selected));
+    const cur = all.indexOf(lead?.() || el.querySelector(selected));
     const next = nextNavIndex(ev.key, cur, all.length, cols ? Math.max(1, cols()) : 1);
     // Blocked at an edge. Callers with no persistent selection ring use onEdge
     // to say "still here"; a plain list just stays put.
@@ -292,7 +296,8 @@ export function wireArrowKeyNav(el, {
     // row, and scrolling a detached node does nothing. The rebuilt row lands
     // at the same index, so the scroll still lines up.
     scroll(all[next]);
-    select(all[next], next);
+    const apply = ev.shiftKey && extend ? extend : select;
+    apply(all[next], next);
   });
 }
 
@@ -302,6 +307,17 @@ export function wireArrowKeyNav(el, {
 // multi-click text gesture; single-click, dblclick, and drag-select still work.
 export function suppressMultiClickSelect(el) {
   el.addEventListener("mousedown", (ev) => { if (ev.detail > 1) ev.preventDefault(); });
+}
+
+// A Shift/Ctrl+click otherwise paints a text selection across the region on
+// top of the row gesture it drives. Cancel the text-drag -- but preventDefault
+// also drops focus, so refocus the region or its keyboard nav goes dead.
+export function suppressModifierClickSelect(el) {
+  el.addEventListener("mousedown", (ev) => {
+    if (!ev.shiftKey && !ev.ctrlKey && !ev.metaKey) return;
+    ev.preventDefault();
+    el.focus();
+  });
 }
 
 const closestRegion = (node) => {

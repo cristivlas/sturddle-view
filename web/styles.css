@@ -3730,8 +3730,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .studio-tourney-row:hover, .studio-history-row:hover { background: var(--row-bg-hover); }
 .studio-history-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
-.studio-tourney-row.selected { background: var(--row-bg-selected); }
-.studio-tourney-row.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
+/* .marked: the extra rows of a multi-selection, styled like the selected one. */
+.studio-tourney-row.selected, .studio-tourney-row.marked { background: var(--row-bg-selected); }
+.studio-tourney-row.selected td:first-child,
+.studio-tourney-row.marked td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
 .studio-history-num, .studio-history-result { color: var(--muted); }
 .studio-history-result { font-family: var(--wa-font-family-code); }
 .studio-tourney-created { color: var(--muted); }
@@ -3756,7 +3758,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   min-width: 0;
 }
 .tournament-row:hover { background: linear-gradient(to right, var(--row-bg-hover), var(--bg) 75%); }
-.tournament-row.selected {
+/* .marked: the extra rows of a multi-selection, styled like the selected one. */
+.tournament-row.selected, .tournament-row.marked {
   background: linear-gradient(to right, var(--row-bg-selected), var(--bg) 75%);
   box-shadow: inset 3px 0 0 0 var(--accent-line);
 }

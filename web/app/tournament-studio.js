@@ -16,9 +16,10 @@ import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, nextDir, scrollSortedRowI
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { reportError, toast } from "./dialogs.js";
-import { debounce, escapeHtml, flashWindow, markSelectable, roveTabStop, syncRovingTabStop, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
+import { debounce, escapeHtml, flashWindow, markSelectable, roveTabStop, suppressModifierClickSelect, syncRovingTabStop, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
+import { createMultiSelect, selectionTargets } from "./multi-select.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
-import { newTournamentCta, ribbonHtml, setStartVerb, tournamentActions } from "./tournaments.js";
+import { newTournamentCta, removeSelected, ribbonHtml, setStartVerb, tournamentActions } from "./tournaments.js";
 import { RESULT, SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
 import { closeAllLiveGames, getLiveWindows, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow, replayTournamentGame, syncWaitingOverlays } from "./tournament-live-game.js";
@@ -241,8 +242,24 @@ function studioSelect(ctx, id) {
   paintWall(ctx);
 }
 
+// Bind the table to a single row: collapse any multi-selection onto it, then
+// rebind the panes. Re-syncs the ribbon when the row was already selected --
+// studioSelect skips that, but the collapse still changed the verbs.
+function studioSelectRow(ctx, id) {
+  const same = ctx.selectedId === id;
+  ctx.ms.collapseTo(id);
+  studioSelect(ctx, id);
+  if (same) syncRibbon(ctx);
+}
+
 function selectedTournament(ctx) {
   return ctx.tournaments.find((t) => t.id === ctx.selectedId) || null;
+}
+
+// Tournaments the ribbon acts on: the whole marked set, or just the selected
+// row when there is no multi-selection.
+function selectedTournaments(ctx) {
+  return selectionTargets(ctx.ms, ctx.tournaments, selectedTournament(ctx));
 }
 
 // Activate the bottom-right Standings tab; the wa-tab-show listener persists it.
@@ -289,10 +306,13 @@ function buildTourneyTable(ctx) {
   // Clicking a row focuses the table so the arrows continue from there.
   table.tabIndex = 0;
   table.addEventListener("click", () => table.focus({ preventScroll: true }));
+  suppressModifierClickSelect(table);
   wireArrowKeyNav(table, {
     rows: TOURNEY_ROW_SEL,
     selected: `${TOURNEY_ROW_SEL}.selected`,
-    select: (row) => studioSelect(ctx, row.dataset.id),
+    lead: () => table.querySelector(`${TOURNEY_ROW_SEL}[data-id="${ctx.ms.lead()}"]`),
+    select: (row) => studioSelectRow(ctx, row.dataset.id),
+    extend: (row) => ctx.ms.extendTo(row.dataset.id),
   });
   ctx.tourneyTbody = table.querySelector("tbody");
   ctx.tourneyStack = attachLayeredSort({
@@ -343,8 +363,8 @@ function studioTourneyRow(ctx, t) {
     `<td class="studio-tourney-created">${escapeHtml(formatCreated(t.created_at))}</td>` +
     `<td class="studio-tourney-name" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}</td>` +
     `<td class="studio-tourney-games">${gamesCell(t, played, total)}</td>`;
-  tr.addEventListener("click", () => studioSelect(ctx, t.id));
-  tr.addEventListener("dblclick", () => { studioSelect(ctx, t.id); ctx.actions?.info(t); });
+  tr.addEventListener("click", (ev) => ctx.ms.handleClick(ev, t.id));
+  tr.addEventListener("dblclick", () => { studioSelectRow(ctx, t.id); ctx.actions?.info(t); });
   return tr;
 }
 
@@ -354,11 +374,13 @@ function renderTourneys(ctx) {
   if (ctx.tournaments.length === 0) {
     // Empty state lives on the Boards wall (paintWall), not in this table.
     ctx.tourneyTbody.replaceChildren();
+    ctx.ms.prune();
     syncRibbon(ctx);
     paintWall(ctx);
     return;
   }
   ctx.tourneyTbody.replaceChildren(...sortedStudioTourneys(ctx).map((t) => studioTourneyRow(ctx, t)));
+  ctx.ms.prune();
   syncRibbon(ctx);
   paintWall(ctx);
 }
@@ -378,7 +400,7 @@ function wireRibbonActions(ctx) {
     getSettings: () => ctx.tournSettings,
     reload: () => studioLoadList(ctx),
     // Info dialog's Status link: select the tourney and reveal Standings.
-    onStatusClick: (t) => { studioSelect(ctx, t.id); showStandingsTab(ctx); },
+    onStatusClick: (t) => { studioSelectRow(ctx, t.id); showStandingsTab(ctx); },
   });
   const onSel = (fn) => () => { const t = selectedTournament(ctx); if (t) fn(t); };
   ctx.ribbonBtns.create.addEventListener("click", () => ctx.actions.create());
@@ -387,7 +409,9 @@ function wireRibbonActions(ctx) {
   ctx.ribbonBtns.info.addEventListener("click", onSel(ctx.actions.info));
   ctx.ribbonBtns.edit.addEventListener("click", onSel(ctx.actions.edit));
   ctx.ribbonBtns.duplicate.addEventListener("click", onSel(ctx.actions.duplicate));
-  ctx.ribbonBtns.remove.addEventListener("click", onSel(ctx.actions.remove));
+  ctx.ribbonBtns.remove.addEventListener("click", () => {
+    removeSelected(ctx.actions, selectedTournaments(ctx));
+  });
 }
 
 function syncRibbon(ctx) {
@@ -396,6 +420,13 @@ function syncRibbon(ctx) {
   const t = selectedTournament(ctx);
   if (!t) {
     for (const k of ["start", "stop", "info", "edit", "duplicate", "remove"]) b[k].disabled = true;
+    return;
+  }
+  // Multi-selection: Remove is the only verb with a sensible bulk meaning,
+  // and the server refuses to delete a running tournament.
+  if (ctx.ms.multi()) {
+    for (const k of ["start", "stop", "info", "edit", "duplicate"]) b[k].disabled = true;
+    b.remove.disabled = ctx.ms.ids().includes(ctx.activeId);
     return;
   }
   const isActive = t.id === ctx.activeId;
@@ -1348,6 +1379,12 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   ctx.logListEl = document.createElement("ul");
   ctx.logListEl.className = "wb-eventlog-list";
   ctx.logPaneEl?.appendChild(ctx.logListEl);
+  ctx.ms = createMultiSelect({
+    getRows: () => (ctx.tourneyTbody ? ctx.tourneyTbody.querySelectorAll(TOURNEY_ROW_SEL) : []),
+    getAnchorId: () => ctx.selectedId,
+    selectOne: (id) => studioSelectRow(ctx, id),
+    onChange: () => syncRibbon(ctx),
+  });
   ctx.refreshStandings = debounce(() => {
     if (!ctx.liveTid) return;
     ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${ctx.liveTid}`)
