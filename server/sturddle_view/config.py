@@ -98,9 +98,6 @@ def default_settings_file() -> Path:
 
 LOOPBACK_HOST = "127.0.0.1"
 WILDCARD_HOST = "0.0.0.0"
-# Desktop mode listens on every interface so phones on the LAN can
-# connect (see the About dialog QR code); token auth still applies.
-DESKTOP_DEFAULT_HOST = WILDCARD_HOST
 
 
 # Fields persisted to disk. Excludes secrets (token), bind config (host/port),

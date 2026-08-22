@@ -13,7 +13,8 @@ from platformdirs import user_config_dir
 from . import APP_NAME, app_dir_name
 from ._instance_lock import acquire as _acquire_lock
 from ._runtime import DESKTOP_FLAG, PROXY_SUBCOMMAND, is_frozen
-from .config import DESKTOP_DEFAULT_HOST, LOOPBACK_HOST, Settings
+from .auth import AUTH_DISABLED_LAN_WARNING
+from .config import LOOPBACK_HOST, Settings
 from .logging_setup import configure_logging
 from .tournament.proxy import main as _proxy_main
 
@@ -124,16 +125,10 @@ def main() -> None:
     settings = Settings()
     host = settings.host
     port = settings.port
-    # Desktop mode listens LAN-wide unless --host / SV_HOST says otherwise.
-    if args.desktop and "host" not in settings.model_fields_set:
-        host = DESKTOP_DEFAULT_HOST
 
     if args.no_auth and host != LOOPBACK_HOST:
         # Explicit, intentional combo: warn loudly but allow (tailscale / trusted LAN).
-        logging.getLogger(__name__).warning(
-            "AUTH DISABLED on non-loopback bind %s -- anyone reachable on the network "
-            "can control this server. Use only on a trusted network.", host,
-        )
+        logging.getLogger(__name__).warning(AUTH_DISABLED_LAN_WARNING, host)
 
     if args.desktop:
         from .desktop import run_desktop

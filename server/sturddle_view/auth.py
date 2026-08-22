@@ -12,6 +12,13 @@ from .config import Settings
 # the cookie reader, the /auth route, and tests.
 AUTH_COOKIE = "sv_auth"
 
+# Logged whenever an auth-less server becomes reachable beyond loopback:
+# at startup for a --host bind, or when desktop opens the LAN port.
+AUTH_DISABLED_LAN_WARNING = (
+    "AUTH DISABLED on non-loopback bind %s -- anyone reachable on the network "
+    "can control this server. Use only on a trusted network."
+)
+
 
 def _settings(request: Request) -> Settings:
     return request.app.state.settings

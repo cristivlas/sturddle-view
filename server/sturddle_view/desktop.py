@@ -18,6 +18,7 @@ from . import app_dir_name
 from ._uvicorn_signal import make_signalling_server
 from .app import create_app
 from .config import LOOPBACK_HOST, WEB_DIR, WILDCARD_HOST, Settings
+from .lan_listener import LanListener
 from .netinfo import entry_url
 
 _SERVER_STARTUP_TIMEOUT = 5.0
@@ -267,6 +268,7 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
     )
 
     server, signal = make_signalling_server(config)
+    app.state.lan_listener = LanListener(server, host)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
 

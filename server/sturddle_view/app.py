@@ -339,6 +339,8 @@ def create_app(
     app = FastAPI(title="sturddle-view", version=__version__, lifespan=_lifespan)
 
     app.state.settings = settings
+    # Desktop mode installs a LanListener; server mode has a fixed bind.
+    app.state.lan_listener = None
     app.state.event_bus = EventBus()
     app.state.hve = None  # lazy: HumanVsEngine, created on first /game/new
     app.state.ws_tasks = set()

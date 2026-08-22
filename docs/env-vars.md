@@ -13,7 +13,7 @@ by the CLI or by `desktop.py`.
 
 | Var | Source | Effect |
 |---|---|---|
-| `SV_HOST` | `--host` | Bind address. Default `127.0.0.1` (`0.0.0.0` with `--desktop`). |
+| `SV_HOST` | `--host` | Bind address. Default `127.0.0.1`. |
 | `SV_PORT` | `--port` | Bind port. Default `8765`. |
 | `SV_TOKEN` | random / `desktop.py` | Shared-secret auth token. |
 | `SV_AUTH_DISABLED` | `--no-auth` | Disable token auth. |
