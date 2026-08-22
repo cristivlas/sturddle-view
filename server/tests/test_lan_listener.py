@@ -31,7 +31,8 @@ def _free_port() -> int:
 def server():
     """Just enough of uvicorn.Server for LanListener: a loaded Config, the
     shared ServerState, lifespan state, and the servers list it appends to."""
-    config = uvicorn.Config(_app, host=LOOPBACK_HOST, port=_free_port(), log_config=None)
+    # ws="wsproto": the "auto" choice imports websockets.legacy, which warns.
+    config = uvicorn.Config(_app, host=LOOPBACK_HOST, port=_free_port(), log_config=None, ws="wsproto")
     config.load()
     srv = SimpleNamespace(
         config=config, server_state=ServerState(), lifespan=SimpleNamespace(state={}), servers=[],
