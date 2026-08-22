@@ -23,6 +23,14 @@ def test_is_loopback(host, expected):
     assert netinfo.is_loopback(host) is expected
 
 
+def test_is_this_machine_includes_own_interface_addresses(monkeypatch):
+    monkeypatch.setattr(netinfo, "reachable_hosts", lambda bind: [PRIMARY, LOOPBACK_HOST])
+    assert netinfo.is_this_machine(LOOPBACK_HOST)
+    assert netinfo.is_this_machine(PRIMARY)
+    assert netinfo.is_this_machine(f"::ffff:{PRIMARY}")  # as seen on a --host :: bind
+    assert not netinfo.is_this_machine("192.168.1.9")
+
+
 def test_reachable_hosts_specific_bind_is_itself():
     assert netinfo.reachable_hosts(PRIMARY) == [PRIMARY]
 

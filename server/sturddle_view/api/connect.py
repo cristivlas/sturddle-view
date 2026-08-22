@@ -1,7 +1,7 @@
-"""Connect-from-mobile: a QR code of the LAN entry URL, for loopback
-clients only (the desktop window or a local browser) so the token-bearing
-URL is never handed out over the network. Desktop mode opens the LAN port
-on the first request (see lan_listener)."""
+"""Connect-from-mobile: a QR code of the LAN entry URL, for clients on
+this machine only (the desktop window or a local browser) so the
+token-bearing URL is never handed out over the network. Desktop mode
+opens the LAN port on the first request (see lan_listener)."""
 from __future__ import annotations
 
 import logging
@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from ..auth import AUTH_DISABLED_LAN_WARNING, require_token
 from ..config import WILDCARD_HOST
-from ..netinfo import entry_url, is_loopback, lan_hosts
+from ..netinfo import entry_url, is_loopback, is_this_machine, lan_hosts
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ REASON_BIND_FAILED = "bind_failed"
 
 def _client_is_local(request: Request) -> bool:
     client = request.client
-    return client is not None and is_loopback(client.host)
+    return client is not None and is_this_machine(client.host)
 
 
 def _qr_data_uri(url: str) -> str:
@@ -56,7 +56,7 @@ async def enable_lan(request: Request) -> dict:
     """Make the server reachable from the LAN (desktop: bind on demand)
     and return the QR code for the entry URL."""
     if not _client_is_local(request):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="loopback clients only")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="local clients only")
     settings = request.app.state.settings
     listener = request.app.state.lan_listener
     if listener is not None:

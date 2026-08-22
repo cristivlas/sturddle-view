@@ -36,7 +36,7 @@ from .llm import gemini as gemini_mod
 from .llm.gemini import GeminiProvider
 from .llm import ollama as ollama_mod
 from .llm.ollama import OllamaProvider
-from .netinfo import entry_url, is_loopback, reachable_hosts, url_scheme
+from .netinfo import entry_url, is_this_machine, reachable_hosts, url_scheme
 from .openings import OpeningBook
 from .play.ai_analysis import (
     AIAnalysisCoordinator,
@@ -386,7 +386,7 @@ def create_app(
     async def _announce_remote(request: Request) -> None:
         """A phone scanned the About-dialog QR: let that dialog close itself."""
         client = request.client
-        if client is not None and not is_loopback(client.host):
+        if client is not None and not is_this_machine(client.host):
             await app.state.event_bus.publish(
                 Event(kind=EVT_REMOTE_CONNECTED, payload={"host": client.host})
             )

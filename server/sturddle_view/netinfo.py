@@ -21,16 +21,30 @@ _SCHEME_HTTPS = "https"
 _ENTRY_PATH_NO_AUTH = "/"
 
 
-def is_loopback(host: str) -> bool:
-    if host == _LOCALHOST:
-        return True
+def _canonical(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Parsed address with the IPv4-mapped form unwrapped (::ffff:a.b.c.d,
+    how a `--host ::` bind sees IPv4 peers); None for names."""
     try:
         addr = ipaddress.ip_address(host)
     except ValueError:
-        return False
-    # Unwrap ::ffff:127.0.0.1 (a `--host ::` bind); pre-3.13 is_loopback
-    # does not look through the IPv4 mapping itself.
-    return (getattr(addr, "ipv4_mapped", None) or addr).is_loopback
+        return None
+    return getattr(addr, "ipv4_mapped", None) or addr
+
+
+def is_loopback(host: str) -> bool:
+    if host == _LOCALHOST:
+        return True
+    addr = _canonical(host)
+    return addr is not None and addr.is_loopback
+
+
+def is_this_machine(host: str) -> bool:
+    """Loopback, or one of this machine's own interface addresses (a local
+    browser opened via the LAN IP or hostname)."""
+    if is_loopback(host):
+        return True
+    addr = _canonical(host)
+    return addr is not None and str(addr) in reachable_hosts(WILDCARD_HOST)
 
 
 def reachable_hosts(bind: str) -> list[str]:
