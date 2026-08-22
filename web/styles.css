@@ -557,6 +557,7 @@ wa-select::part(listbox) {
 .play-ai-tool-dot-delegate       { background: var(--wa-color-cyan-60, #0ea5b5); }
 .play-ai-tool-dot-report_line    { background: var(--wa-color-teal-60, #14b8a6); }
 .play-ai-tool-dot-related_openings { background: var(--wa-color-indigo-60, #6366f1); }
+.play-ai-tool-dot-position_judge { background: var(--wa-color-orange-60, #ea580c); }
 /* Verifier sub-run tool calls, nested under their "Verifying line" row.
    Full-width break (flex-wrap); a vertical spine runs through the child dot
    centers (8px dot -> center x=4px), tying the sub-calls into one timeline. */

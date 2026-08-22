@@ -327,6 +327,7 @@ const TOOL_FRIENDLY_LABELS = {
   delegate:       "Verifying line",
   report_line:    "Checking line",
   related_openings: "Comparing openings",
+  position_judge: "Checking position claims",
 };
 
 // Tools whose label shows the actual move under consideration ("Considering

@@ -73,7 +73,7 @@ from ..llm.position_check import (
     iter_stm_moves,
     truncate_at_future_line,
 )
-from ..llm.position_judge import clear_false_positives
+from ..llm.position_judge import POSITION_JUDGE_CALL_NAME, clear_false_positives
 from .tools_engine import (
     ANALYZE_TOOL_NAME,
     MATERIAL_TOOL_NAME,
@@ -740,6 +740,16 @@ class _PositionCheck:
         )
 
 
+def _judge_summary(labels: list[str], cleared: set[str]) -> str:
+    """Panel OUT text: 'cleared 1/2: rook on b1; kept: Nf5'."""
+    kept = [label for label in labels if label not in cleared]
+    dropped = [label for label in labels if label in cleared]
+    head = f"cleared {len(dropped)}/{len(labels)}"
+    if dropped:
+        head += ": " + ", ".join(dropped)
+    return head + (f"; kept: {', '.join(kept)}" if kept else "")
+
+
 class AIAnalysisCoordinator:
     def __init__(
         self,
@@ -1113,7 +1123,7 @@ class AIAnalysisCoordinator:
             pc = self._position_check(round_chunks)
             # Clear regex false positives (moves/claims the prose meant about
             # another position) before acting on the hit; only drops flags.
-            pc = await self._apply_semantic_check(pc, round_chunks, config)
+            pc = await self._apply_semantic_check(pc, round_chunks, config, round_index)
             if pc.hit:
                 # Tool-mention-only hits carry no surface to strike; skip the
                 # UI note (it would mark nothing) but still inject the
@@ -1488,19 +1498,42 @@ class AIAnalysisCoordinator:
         pc: _PositionCheck,
         chunks: list[ProviderChunk],
         config: _LoopConfig,
+        round_index: int,
     ) -> _PositionCheck:
         """Drop regex flags the model judges to be other-context references.
-        No-op (returns `pc`) when the flag is off, the check is clean, or there
-        are no board-context flags to rule on -- tool mentions are never
-        judged. The judge sees the full round prose for the most context, not
-        the future-line-truncated view the regex ran on."""
+        No-op when the flag is off or nothing is judgeable. The round trip
+        shows in the panel's tool list as a call/result pair."""
         if not SEMANTIC_CHECK_ENABLED or pc.board is None:
             return pc
         labels = pc.board_labels
         if not labels:
             return pc
         prose = "".join(c.text for c in chunks if c.kind == "text" and c.text)
+        # Delegate prefix keeps a verifier sub-run's id distinct from the
+        # narrator's for the same round index.
+        scope = f"{self._active_delegate_id}-" if self._active_delegate_id else ""
+        call_id = f"{scope}{POSITION_JUDGE_CALL_NAME}-{round_index}"
+        await config.emit(Event(
+            kind=EVT_AI_TOOL_CALL,
+            game_id=config.game_id,
+            payload={
+                "round": round_index,
+                "name": POSITION_JUDGE_CALL_NAME,
+                "input": {"labels": labels},
+                "tool_use_id": call_id,
+            },
+        ))
         cleared = await clear_false_positives(config.provider, pc.board, prose, labels)
+        await config.emit(Event(
+            kind=EVT_AI_TOOL_CALL_COMPLETE,
+            game_id=config.game_id,
+            payload={
+                "round": round_index,
+                "name": POSITION_JUDGE_CALL_NAME,
+                "tool_use_id": call_id,
+                "output": _judge_summary(labels, cleared),
+            },
+        ))
         return pc.without_labels(cleared)
 
     async def _emit_position_note(
