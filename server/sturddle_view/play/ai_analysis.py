@@ -1537,10 +1537,9 @@ class AIAnalysisCoordinator:
         ]
         if move_facts:
             clauses.append(_POSITION_CHECK_MOVE_CLAUSE.format(facts="; ".join(move_facts)))
-        # Square-content, bishop-by-square-color and file claims (piece-on-
-        # file, openness) are all plain board truth -- one "restate" clause,
-        # facts joined. Bishop and file facts are precomputed (see their
-        # recognizers).
+        # Square, bishop-color and file claims are all plain board truth --
+        # one "restate" clause, facts joined. Bishop and file facts are
+        # precomputed (see their recognizers).
         claim_facts = (
             [describe_square(square, pc.board) for _surface, _label, square in pc.claim_triples]
             + [fact for _surface, _label, fact in pc.bishop_triples]

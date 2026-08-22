@@ -202,11 +202,14 @@ def test_colorless_claim_about_non_moving_side_flagged():
     ]
 
 
-def test_colored_claim_about_non_moving_side_cleared():
-    # Same square, but "black knight on d3" names the color -> validated from
-    # Black, who can reach d3 -> cleared. The color word picks the POV.
+def test_colored_claim_about_non_moving_side_flagged():
+    # White to move: a black knight "on d3" is a hypothetical reply, not a
+    # position -- flagged until ...Nd3 is named (projection then clears it).
     board = _board(_POV_FEN)
-    assert find_false_piece_claims("a black knight on d3 is strong", board) == []
+    assert find_false_piece_claims("a black knight on d3 is strong", board) == [
+        "black knight on d3"
+    ]
+    assert find_false_piece_claims("After ...Nd3 a black knight on d3 is strong", board) == []
 
 
 def test_wrong_color_claim_flagged():
@@ -1206,3 +1209,41 @@ def test_sentence_ending_san_splits_clause_for_openness_binder():
     board = _board(_WILD_C_FILE_FEN)
     text = "Black replied 13...Rc8. The rook now sits on a semi-open file."
     assert find_false_file_openness(text, board) == []
+
+
+# --- piece-on-square claims: no reachability carve-out for the other side ---
+
+# From the wild (2026-08-21): "the white queen on c2" (twice) -- it is on b2.
+# Qb2-c2 being legal used to clear the claim via reachability.
+_WILD_C2_TEXT = (
+    "The c-file contains only your rook on c8, the black knight on c6, and the "
+    "white queen on c2, with no pawns remaining on the file. Your rook on c8 "
+    "now faces the white queen on c2 directly, creating potential tactical "
+    "alignments."
+)
+
+
+def test_wild_queen_on_c2_flagged_despite_being_reachable():
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_piece_claims(_WILD_C2_TEXT, board) == ["white queen on c2"]
+
+
+def test_own_side_claim_on_reachable_square_still_cleared():
+    # Black to move; the a8 rook can play Rc8, so an own-side "rook on c8"
+    # describes the recommended move -- not flagged.
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_piece_claims("the black rook on c8 is active", board) == []
+
+
+def test_opponent_cue_square_claim_checked_as_other_side():
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_piece_claims("your opponent's queen on c2", board) == ["white queen on c2"]
+    assert find_false_piece_claims("your opponent's queen on b2", board) == []
+
+
+def test_opponent_verb_gap_does_not_recolor_the_piece():
+    # "opponent attacks the knight" names the mover, not the knight's owner:
+    # the f6 / c6 knights are Black's and the bare claims hold.
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_piece_claims("Your opponent attacks the knight on f6", board) == []
+    assert find_false_file_claims("Your opponent targets the knight on the c-file", board) == []
