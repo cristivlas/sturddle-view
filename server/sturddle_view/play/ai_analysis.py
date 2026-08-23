@@ -629,6 +629,9 @@ class _LoopConfig:
     # Hold the first accepted recommend_move until a delegate verdict ran
     # this turn. Only set when `delegate` is actually registered.
     enforce_red_team: bool = False
+    # Theory reply for the turn (UCI). A recommend_move naming it skips the
+    # red-team hold -- the book vetted it, not `delegate`.
+    book_move_uci: str | None = None
     # Per-call thinking override passed to provider.stream(). None = use
     # the provider's setting (narrator); False = force off (verifier).
     thinking_override: bool | None = None
@@ -829,6 +832,7 @@ class AIAnalysisCoordinator:
         provider: LLMProvider | None = None,
         mode: PromptMode = "coach",
         user_message: str | None = None,
+        book_move_uci: str | None = None,
         max_tool_rounds: int = MAX_TOOL_ROUNDS,
         verifier_max_rounds: int = VERIFIER_MAX_ROUNDS,
     ) -> None:
@@ -846,6 +850,10 @@ class AIAnalysisCoordinator:
         (`api/ai.py` for live play) via `build_initial_user_message`.
         None falls back to an empty user message for tests that don't
         care about position context.
+
+        `book_move_uci` is the theory reply the caller found for the
+        position: a `recommend_move` of it is accepted without the
+        red-team hold.
         """
         active = provider or self._provider
         system_prompt = assemble_system_prompt(mode, tools=self._registry.specs())
@@ -909,6 +917,7 @@ class AIAnalysisCoordinator:
                     ),
                     track_recommend=has_recommend_move,
                     enforce_red_team=has_recommend_move and has_delegate,
+                    book_move_uci=book_move_uci,
                 )
                 recommended_uci: str | None = None
                 recommended_depth: int | None = None
@@ -1323,11 +1332,13 @@ class AIAnalysisCoordinator:
                 # Don't let a pick ship without an adversarial check. Hold
                 # the first un-red-teamed accept and ask for a delegate
                 # verdict. One-shot -- a stalled model still gets its pick.
+                # The book move is exempt: theory vetted it.
                 if (
                     accepted
                     and config.enforce_red_team
                     and not red_teamed
                     and not red_team_nudge_sent
+                    and tool_output["uci"] != config.book_move_uci
                 ):
                     accepted = False
                     red_team_nudge_sent = True
@@ -1342,6 +1353,8 @@ class AIAnalysisCoordinator:
                     recommended_uci = tool_output["uci"]
                     recommended_depth = tool_output.get("depth")
                     recommended_san = tool_output.get("san")
+                    if recommended_uci == config.book_move_uci:
+                        log.info("book move accepted (%s): %s", mode, recommended_uci)
                     # A conclusion alongside the accepting call counts -- no
                     # separate post-move round needed. Prose in a later round
                     # is handled at the natural-exit check.

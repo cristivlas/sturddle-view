@@ -425,6 +425,7 @@ def test_user_message_renders_eco_book_reply_with_black_prefix():
         san_history=["e4", "e5"],
         book_reply=OpeningReply(
             san="Nc6",
+            uci="b8c6",
             source=REPLY_SOURCE_ECO,
             line_name="B00 Nimzowitsch Defense",
         ),
@@ -437,10 +438,25 @@ def test_user_message_renders_file_book_reply_with_white_prefix():
         fen=_STARTPOS_FEN,
         san_history=[],
         book_reply=OpeningReply(
-            san="e4", source=REPLY_SOURCE_BOOK, line_name=None,
+            san="e4", uci="e2e4", source=REPLY_SOURCE_BOOK, line_name=None,
         ),
     )
     assert "Book reply here: 1.e4 (configured opening book)\n" in got
+
+
+def test_user_message_renders_book_reply_alternatives():
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN,
+        san_history=[],
+        book_reply=OpeningReply(
+            san="e4", uci="e2e4", source=REPLY_SOURCE_ECO, line_name="B00 King's Pawn",
+            alternatives=(("d4", "A40 Queen's Pawn"), ("c4", None)),
+        ),
+    )
+    assert (
+        "Book reply here: 1.e4 (B00 King's Pawn); also standard: "
+        "1.d4 (A40 Queen's Pawn), 1.c4\n"
+    ) in got
 
 
 def test_user_message_omits_book_reply_line_when_none():
@@ -456,7 +472,7 @@ def test_user_message_book_reply_swaps_opening_steer():
         san_history=[],
         in_opening=True,
         book_reply=OpeningReply(
-            san="e4", source=REPLY_SOURCE_BOOK, line_name=None,
+            san="e4", uci="e2e4", source=REPLY_SOURCE_BOOK, line_name=None,
         ),
     )
     assert BOOK_REPLY_GUIDANCE in got
@@ -471,17 +487,18 @@ def test_user_message_opening_steer_without_book_reply():
     assert BOOK_REPLY_GUIDANCE not in got
 
 
-def test_user_message_no_steer_outside_opening():
+def test_user_message_book_reply_steer_outside_opening():
+    # A book hit carries its steer even past the opening-phase gate.
     got = build_initial_user_message(
         fen=_STARTPOS_FEN,
         san_history=[],
         book_reply=OpeningReply(
-            san="e4", source=REPLY_SOURCE_BOOK, line_name=None,
+            san="e4", uci="e2e4", source=REPLY_SOURCE_BOOK, line_name=None,
         ),
     )
     assert "Book reply here:" in got
+    assert BOOK_REPLY_GUIDANCE in got
     assert OPENING_PHASE_GUIDANCE not in got
-    assert BOOK_REPLY_GUIDANCE not in got
 
 
 def test_split_opening_steer_strips_each_steer():

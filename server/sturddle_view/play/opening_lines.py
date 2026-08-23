@@ -253,21 +253,22 @@ def _line_matches(
     return True
 
 
-def book_reply(
-    book_path: str,
-    played_uci: list[str],
-    plies: int | None,
-    order: str | None,
-    anchor: int,
-) -> str | None:
-    """The engine's book move (UCI) for the position after ``played_uci``
-    (startpos games only), or None when out of book.
+@dataclass(slots=True, frozen=True)
+class _BookPool:
+    """PGN lines continuing the played prefix, and the board they continue
+    from; `k` is the ply of the continuation token."""
+    idx: _BookIndex
+    k: int
+    board: chess.Board
+    lines: list[int]
 
-    Pool = PGN lines whose tokens prefix-match the played moves. Order
-    ``random`` tries pool lines in random order (line-frequency weighted);
-    anything else tries them nearest at/after ``anchor`` (wrapping). Only
-    the tried candidates' next tokens are SAN-parsed, and an unparseable
-    or illegal token falls through to the next candidate."""
+
+def _match_pool(
+    book_path: str, played_uci: list[str], plies: int | None,
+) -> _BookPool | None:
+    """Lines whose tokens prefix-match the played moves, or None when the
+    book is missing, EPD, or empty, the depth cap is reached, the prefix
+    is malformed, or no line matches."""
     path = Path(book_path)
     if not path.is_file():
         return None
@@ -293,25 +294,95 @@ def book_reply(
         board.push(move)
     prefix = tuple(history)
     candidates = idx.buckets.get(played_uci[0], ()) if played_uci else range(len(idx.lines))
-    pool = [
+    lines = [
         i for i in candidates
         if _line_matches(idx.lines[i], k, prefix, moves, boards)
     ]
-    if not pool:
+    if not lines:
         log.debug(
             "opening book: no line matches [%s] in %s",
             " ".join(prefix), book_path,
         )
         return None
-    n = len(idx.lines)
-    if order == BOOK_ORDER_RANDOM:
-        ordered = random.sample(pool, len(pool))
-    else:
-        ordered = sorted(pool, key=lambda i: (i - anchor) % n)
-    for i in ordered:
-        tok = idx.lines[i][k]
+    return _BookPool(idx, k, board, lines)
+
+
+def _pool_next_moves(pool: _BookPool) -> list[chess.Move]:
+    """Distinct legal continuations across the pool, in line order. Each
+    distinct token is parsed once; over-disambiguated spellings ("Ngf3")
+    collapse onto the move they name; unparseable tokens are skipped."""
+    seen: set[str] = set()
+    out: list[chess.Move] = []
+    for i in pool.lines:
+        tok = pool.idx.lines[i][pool.k]
+        if tok in seen:
+            continue
+        seen.add(tok)
         try:
-            move = board.parse_san(tok)
+            move = pool.board.parse_san(tok)
+        except ValueError:
+            continue
+        if move not in out:
+            out.append(move)
+    return out
+
+
+def book_next_moves(
+    book_path: str, played_uci: list[str], plies: int | None,
+) -> list[str]:
+    """UCI of every distinct book continuation after ``played_uci``, in
+    line order; empty when out of book. The analysis probe's "what else
+    does the book hold here" question."""
+    pool = _match_pool(book_path, played_uci, plies)
+    return [m.uci() for m in _pool_next_moves(pool)] if pool else []
+
+
+def _pool_continues_with(pool: _BookPool, uci: str) -> bool:
+    """Does any pool line continue with `uci`? An unparseable or illegal
+    `uci` is simply not in the pool."""
+    try:
+        move = chess.Move.from_uci(uci)
+    except ValueError:
+        return False
+    return move in _pool_next_moves(pool)
+
+
+def book_reply(
+    book_path: str,
+    played_uci: list[str],
+    plies: int | None,
+    order: str | None,
+    anchor: int,
+    prefer: str | None = None,
+) -> str | None:
+    """The engine's book move (UCI) for the position after ``played_uci``
+    (startpos games only), or None when out of book.
+
+    Pool = PGN lines whose tokens prefix-match the played moves. Order
+    ``random`` tries pool lines in random order (line-frequency weighted);
+    anything else tries them nearest at/after ``anchor`` (wrapping). Only
+    the tried candidates' next tokens are SAN-parsed, and an unparseable
+    or illegal token falls through to the next candidate.
+
+    ``prefer`` (UCI) is the reply whenever a pool line continues with it
+    -- the analysis probe's "is the played move in book?" question; one
+    the pool lacks changes nothing."""
+    pool = _match_pool(book_path, played_uci, plies)
+    if pool is None:
+        return None
+    k = pool.k
+    if prefer is not None and _pool_continues_with(pool, prefer):
+        log.debug("opening book: %s is in book at ply %d in %s", prefer, k, book_path)
+        return prefer
+    n = len(pool.idx.lines)
+    if order == BOOK_ORDER_RANDOM:
+        ordered = random.sample(pool.lines, len(pool.lines))
+    else:
+        ordered = sorted(pool.lines, key=lambda i: (i - anchor) % n)
+    for i in ordered:
+        tok = pool.idx.lines[i][k]
+        try:
+            move = pool.board.parse_san(tok)
         except ValueError:
             continue
         log.debug(

@@ -1,6 +1,6 @@
 """Shared helpers for the _ai_kick user-message and opening-reply tests:
-a settings stub with the book fields the probe reads, and a sync wrapper
-around the async message builder."""
+a settings stub with the book fields the probe reads, and sync wrappers
+around the async turn-inputs builder."""
 from __future__ import annotations
 
 import asyncio
@@ -21,6 +21,12 @@ class FakeSettings:
         self.__dict__.update(kw)
 
 
-def build_message(hve, settings=None, eco_book=None):
+def build_inputs(hve, settings=None, eco_book=None):
     """Sync wrapper; defaults: no configured book, no ECO dataset."""
     return asyncio.run(_build_turn_inputs(hve, settings or FakeSettings(), eco_book))
+
+
+def build_message(hve, settings=None, eco_book=None):
+    """User message only; None when the turn has no inputs."""
+    inputs = build_inputs(hve, settings, eco_book)
+    return inputs.user_message if inputs is not None else None

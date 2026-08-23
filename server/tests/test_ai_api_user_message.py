@@ -14,7 +14,7 @@ from sturddle_view.openings import Opening
 from sturddle_view.play.mode import Mode
 from sturddle_view.play.opening_lines import BookRef
 
-from .ai_kick_helpers import FakeSettings, build_message as _build
+from .ai_kick_helpers import FakeSettings, build_inputs, build_message as _build
 
 
 class _FakeHve:
@@ -267,9 +267,10 @@ def test_build_user_message_view_mode_omits_move_played_at_end_of_game():
 # ---------- probe wiring: armed book, settings fallback, gates --------
 
 
-def _book_file(tmp_path, name: str, movetext: str) -> str:
+def _book_file(tmp_path, name: str, *movetexts: str) -> str:
     path = tmp_path / name
-    path.write_text(f'[Event "?"]\n\n{movetext}\n', encoding="utf-8")
+    games = "\n\n".join(f'[Event "?"]\n\n{m}' for m in movetexts)
+    path.write_text(games + "\n", encoding="utf-8")
     return str(path)
 
 
@@ -324,9 +325,44 @@ def test_probe_skipped_for_custom_start_fen(tmp_path):
     assert "Book reply here:" not in msg
 
 
-def test_probe_skipped_outside_opening(tmp_path):
-    # No matched opening line => not in the opening phase => no probe,
-    # even with an armed book that would answer.
+def test_turn_inputs_carry_book_move_uci(tmp_path):
+    # The hit rides out as UCI for the loop's red-team exemption.
+    settings = _book_settings(_book_file(tmp_path, "configured.pgn", "1. e4 c5 *"))
+    h = _FakeHve(board=_e4_board(), opening=_E4_OPENING)
+    inputs = build_inputs(h, settings=settings)
+    assert inputs is not None
+    assert inputs.book_move_uci == "c7c5"
+
+
+def test_view_mode_played_move_in_book_is_the_reply(tmp_path):
+    # Reviewing 1...c5 in a Sicilian game: the book also has 1...e5 first,
+    # but the played move is theory, so it is the reply.
+    settings = _book_settings(
+        _book_file(tmp_path, "configured.pgn", "1. e4 e5 *", "1. e4 c5 *")
+    )
+    h = _FakeHve(
+        board=_e4_board(),
+        view_full_moves=[chess.Move.from_uci(u) for u in ("e2e4", "c7c5", "g1f3")],
+        opening=_E4_OPENING,
+    )
+    inputs = build_inputs(h, settings=settings)
+    assert inputs is not None
+    assert "Move played here: c5" in inputs.user_message
+    assert (
+        "Book reply here: 1...c5 (configured opening book); also standard: 1...e5"
+    ) in inputs.user_message
+    assert inputs.book_move_uci == "c7c5"
+
+
+def test_turn_inputs_book_move_none_when_off_book():
+    inputs = build_inputs(_FakeHve(board=_e4_board(), opening=_E4_OPENING))
+    assert inputs is not None
+    assert inputs.book_move_uci is None
+
+
+def test_probe_runs_outside_opening(tmp_path):
+    # No matched ECO line doesn't gate the probe: the armed book file can
+    # still answer past the named theory.
     armed = BookRef(
         path=_book_file(tmp_path, "armed.pgn", "1. e4 e5 *"),
         plies=None, order=None, anchor=0,
@@ -334,4 +370,4 @@ def test_probe_skipped_outside_opening(tmp_path):
     h = _FakeHve(board=_e4_board(), opening=None, book_ref=armed)
     msg = _build(h)
     assert msg is not None
-    assert "Book reply here:" not in msg
+    assert "Book reply here: 1...e5 (configured opening book)" in msg

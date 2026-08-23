@@ -97,6 +97,9 @@ _REPORT_LINE_RULE = (
     "prose; a rejected line is fixed at the move it names or dropped, "
     "never re-sent unchanged. "
 )
+# Opens each addendum's engine workflow: a book turn (see
+# BOOK_REPLY_GUIDANCE) submits the given reply instead of weighing.
+_BOOK_REPLY_EXEMPTION = "Unless the user message gives a book reply, "
 
 
 COACH_ADDENDUM = (
@@ -106,7 +109,8 @@ COACH_ADDENDUM = (
     + _SILENT_TOOLS_PREFIX
     + "the player reads only chess -- the position, the plan, the move in SAN"
     + _SILENT_TOOLS_SUFFIX
-    + "Weigh your candidates with one `top_moves` call; red-team the "
+    + _BOOK_REPLY_EXEMPTION
+    + "weigh your candidates with one `top_moves` call; red-team the "
     "winner with `delegate` and pick differently if it is refuted. Then "
     "submit your move with a single `recommend_move`; if it names a "
     "stronger move, submit that one. "
@@ -133,7 +137,8 @@ COMMENTATOR_ADDENDUM = (
     + "the reader sees only the annotation -- positions, moves in SAN, plans"
     + _SILENT_TOOLS_SUFFIX
     + _REPORT_LINE_RULE
-    + "Treat the move played as a claim to test: compare it with the "
+    + _BOOK_REPLY_EXEMPTION
+    + "treat the move played as a claim to test: compare it with the "
     "alternatives in one `top_moves` call, red-team your verdict move with "
     "`delegate` (pick differently if refuted), then submit it with a single "
     "`recommend_move` -- if it names a stronger move, submit that one. Say "
@@ -254,6 +259,7 @@ def _side_to_move_from_fen(fen: str) -> str:
 
 _BOOK_REPLY_LABEL = "Book reply here"
 _BOOK_REPLY_FILE_NOTE = "configured opening book"
+_BOOK_REPLY_ALSO = "also standard"
 
 
 def _fullmove_from_fen(fen: str) -> str:
@@ -269,8 +275,16 @@ def _move_prefix_from_fen(fen: str) -> str:
 
 
 def _render_book_reply(fen: str, reply: "OpeningReply") -> str:
+    prefix = _move_prefix_from_fen(fen)
     origin = reply.line_name or _BOOK_REPLY_FILE_NOTE
-    return f"{_BOOK_REPLY_LABEL}: {_move_prefix_from_fen(fen)}{reply.san} ({origin})"
+    line = f"{_BOOK_REPLY_LABEL}: {prefix}{reply.san} ({origin})"
+    if reply.alternatives:
+        alts = ", ".join(
+            f"{prefix}{san}" + (f" ({name})" if name else "")
+            for san, name in reply.alternatives
+        )
+        line += f"; {_BOOK_REPLY_ALSO}: {alts}"
+    return line
 
 
 def _position_under_review(fen: str) -> str:
@@ -295,17 +309,19 @@ OPENING_PHASE_GUIDANCE = (
 )
 
 
-# Replaces OPENING_PHASE_GUIDANCE when the server found a book reply for
-# the position: favor known theory over engine exploration; a played move
-# that departs from theory still gets the normal comparison.
+# Sent whenever the server found a book reply for the position, in place
+# of OPENING_PHASE_GUIDANCE: favor known theory over engine exploration; a
+# played move that departs from theory still gets the normal comparison.
 BOOK_REPLY_GUIDANCE = (
     "A known book reply for this position is given above -- real theory, "
     "safe to name in prose. Favor it over engine exploration: when "
     "recommending a move, submit that reply with `recommend_move` directly, "
     "no `top_moves` comparison or `delegate` check first. When reviewing a "
     "played move that matches it, do the same; one that departs gets the "
-    "normal comparison. Add one sentence naming the plan the reply carries. "
-    "Skip `related_openings`."
+    "normal comparison. Say it is the book move, naming the line when one "
+    "is given, and add one sentence on the plan it carries; when moves are "
+    "listed as also standard, name them as equally valid choices in one "
+    "more sentence. Skip `related_openings`."
 )
 
 
@@ -365,8 +381,8 @@ def build_initial_user_message(
     book). Off by default.
 
     `book_reply` is the theory reply the server found for the position
-    (opening_reply probe). It rides the message as its own line and, with
-    `in_opening`, swaps the theory steer for the favor-the-book one.
+    (opening_reply probe). It rides the message as its own line and
+    carries the favor-the-book steer in place of the opening-phase one.
 
     Optional fields are omitted entirely when not provided."""
     lines: list[str] = []
@@ -390,10 +406,10 @@ def build_initial_user_message(
     annotations_line = _render_annotations(san_history, annotations)
     if annotations_line:
         lines.append(annotations_line)
-    if in_opening:
-        lines.append(
-            BOOK_REPLY_GUIDANCE if book_reply is not None else OPENING_PHASE_GUIDANCE
-        )
+    if book_reply is not None:
+        lines.append(BOOK_REPLY_GUIDANCE)
+    elif in_opening:
+        lines.append(OPENING_PHASE_GUIDANCE)
     return "\n".join(lines) + "\n"
 
 
