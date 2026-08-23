@@ -798,6 +798,7 @@ function applyEvent(ctx, evt) {
       if (!ctx.editing && evt.payload.uci && evt.payload.uci.length >= 4) {
         const u = evt.payload.uci;
         ctx.board.setRecommendArrow(u.slice(0, 2), u.slice(2, 4));
+        ctx.board.setAlternativeArrows(evt.payload.alternatives);
       }
       break;
     case KIND.GAME_RESULT:

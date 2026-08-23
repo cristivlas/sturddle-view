@@ -289,6 +289,18 @@ export function mountBoard({ element, onMove, styleId }) {
     }
   }
 
+  // Equally standard book alternatives beside the AI's pick; the vendored
+  // ARROW_TYPE.info style (blue, translucent) as shipped.
+  function setAlternativeArrows(ucis) {
+    if (typeof board.removeArrows === "function") {
+      board.removeArrows(ARROW_TYPE.info);
+    }
+    if (typeof board.addArrow !== "function") return;
+    for (const u of ucis || []) {
+      if (u && u.length >= 4) board.addArrow(ARROW_TYPE.info, u.slice(0, 2), u.slice(2, 4));
+    }
+  }
+
   function clearArrows() {
     if (typeof board.removeArrows === "function") board.removeArrows();
   }
@@ -397,7 +409,7 @@ export function mountBoard({ element, onMove, styleId }) {
   return {
     ready,
     setSide, setPosition, enableInput, isInputEnabled, forceResize, cancelAnimations, destroy,
-    setArrow, setOpponentArrow, setRecommendArrow, clearArrows,
+    setArrow, setOpponentArrow, setRecommendArrow, setAlternativeArrows, clearArrows,
     enterEditMode, exitEditMode, toggleCastlingRight, getCastlingRights, getPiecePlacement,
   };
 }

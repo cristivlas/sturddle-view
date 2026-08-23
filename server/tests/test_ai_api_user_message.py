@@ -352,12 +352,14 @@ def test_view_mode_played_move_in_book_is_the_reply(tmp_path):
         "Book reply here: 1...c5 (configured opening book); also standard: 1...e5"
     ) in inputs.user_message
     assert inputs.book_move_uci == "c7c5"
+    assert inputs.book_alternatives == ("e7e5",)
 
 
 def test_turn_inputs_book_move_none_when_off_book():
     inputs = build_inputs(_FakeHve(board=_e4_board(), opening=_E4_OPENING))
     assert inputs is not None
     assert inputs.book_move_uci is None
+    assert inputs.book_alternatives == ()
 
 
 def test_probe_runs_outside_opening(tmp_path):

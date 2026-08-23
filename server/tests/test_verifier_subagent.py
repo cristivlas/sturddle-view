@@ -719,7 +719,8 @@ async def test_accept_after_delegate_not_held():
 async def test_book_move_accepted_without_red_team():
     # A recommend_move naming the turn's book move ships on the first
     # accept -- theory vetted it -- with no red_team_first hold and no
-    # delegate round: two provider rounds, accept + conclusion.
+    # delegate round: two provider rounds, accept + conclusion. The
+    # sibling theory moves ride the recommendation for the board.
     provider = _RecordingScriptedProvider(rounds=[
         [ProviderChunk(kind="tool_use", tool_use_id="r0",
                        tool_name="recommend_move", tool_input={"move": "e4"})],
@@ -735,7 +736,7 @@ async def test_book_move_accepted_without_red_team():
 
     await coord.run(
         game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n",
-        book_move_uci="e2e4",
+        book_move_uci="e2e4", book_alternatives=("d2d4", "c2c4"),
     )
     events = await _drain_until_done(queue)
 
@@ -743,6 +744,7 @@ async def test_book_move_accepted_without_red_team():
     assert len(provider.calls) == 2
     recs = [e for e in events if e.kind == "ai_recommendation"]
     assert recs and recs[-1].payload.get("uci") == "e2e4"
+    assert recs[-1].payload.get("alternatives") == ["d2d4", "c2c4"]
 
 
 @pytest.mark.asyncio
@@ -769,13 +771,14 @@ async def test_departing_move_still_held_on_book_turn():
 
     await coord.run(
         game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n",
-        book_move_uci="e2e4",
+        book_move_uci="e2e4", book_alternatives=("c2c4",),
     )
     events = await _drain_until_done(queue)
 
     assert len(_red_team_holds(events)) == 1
     recs = [e for e in events if e.kind == "ai_recommendation"]
     assert recs and recs[-1].payload.get("uci") == "d2d4"
+    assert "alternatives" not in recs[-1].payload
 
 
 @pytest.mark.asyncio

@@ -833,6 +833,7 @@ class AIAnalysisCoordinator:
         mode: PromptMode = "coach",
         user_message: str | None = None,
         book_move_uci: str | None = None,
+        book_alternatives: tuple[str, ...] = (),
         max_tool_rounds: int = MAX_TOOL_ROUNDS,
         verifier_max_rounds: int = VERIFIER_MAX_ROUNDS,
     ) -> None:
@@ -853,7 +854,9 @@ class AIAnalysisCoordinator:
 
         `book_move_uci` is the theory reply the caller found for the
         position: a `recommend_move` of it is accepted without the
-        red-team hold.
+        red-team hold. `book_alternatives` (UCI) ride the
+        `ai_recommendation` payload when that move is the accepted pick,
+        for the board's secondary arrows.
         """
         active = provider or self._provider
         system_prompt = assemble_system_prompt(mode, tools=self._registry.specs())
@@ -972,6 +975,10 @@ class AIAnalysisCoordinator:
                                 move, recommended_depth, self._cancel_token
                             )
                             if payload is not None:
+                                # Siblings only beside the book move: arrows
+                                # for a pick the model rejected would mislead.
+                                if recommended_uci == book_move_uci and book_alternatives:
+                                    payload["alternatives"] = list(book_alternatives)
                                 await self._emit(
                                     Event(
                                         kind=EVT_AI_RECOMMENDATION,

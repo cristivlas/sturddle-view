@@ -37,8 +37,15 @@ _THEORY_MIN_SHARE_ENV = "SV_AI_OPENING_THEORY_MIN_SHARE"
 _ALTERNATIVES_MAX_DEFAULT = 3
 _ALTERNATIVES_MAX_ENV = "SV_AI_OPENING_ALTERNATIVES_MAX"
 
-# (san, line_name) -- line_name None for the book file, which has no names.
-Alternative = tuple[str, str | None]
+
+@dataclass(slots=True, frozen=True)
+class Alternative:
+    """An equally standard sibling move; `line_name` None for the book
+    file, which has no names."""
+
+    san: str
+    uci: str
+    line_name: str | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -123,7 +130,7 @@ def _eco_reply(
             alts = _alternatives(
                 board, _eco_candidates(eco_book, played, rows, weight, bar), uci,
             )
-            log.info("opening reply: %s entering %s; also %s", san, name, [a for a, _ in alts])
+            log.info("opening reply: %s entering %s; also %s", san, name, [a.san for a in alts])
             return OpeningReply(san, uci, REPLY_SOURCE_ECO, name, alts)
     return None
 
@@ -151,7 +158,7 @@ def _alternatives(
     board: chess.Board, candidates: Iterable[tuple[str, str | None]], chosen: str,
 ) -> tuple[Alternative, ...]:
     """Up to the cap of `candidates` (uci, line_name) that are legal and
-    not `chosen`, as (san, line_name)."""
+    not `chosen`."""
     cap = env_int(_ALTERNATIVES_MAX_ENV, _ALTERNATIVES_MAX_DEFAULT)
     out: list[Alternative] = []
     for uci, name in candidates:
@@ -161,7 +168,7 @@ def _alternatives(
             continue
         san = _san_for(board, uci)
         if san is not None:
-            out.append((san, name))
+            out.append(Alternative(san, uci, name))
     return tuple(out)
 
 
@@ -192,7 +199,7 @@ def _book_file_reply(
         ((u, None) for u in book_next_moves(book.path, played, book.plies)),
         uci,
     )
-    log.info("opening reply: %s from book %s; also %s", san, book.path, [a for a, _ in alts])
+    log.info("opening reply: %s from book %s; also %s", san, book.path, [a.san for a in alts])
     return OpeningReply(san, uci, REPLY_SOURCE_BOOK, None, alts)
 
 

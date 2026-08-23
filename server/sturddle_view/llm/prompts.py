@@ -280,8 +280,8 @@ def _render_book_reply(fen: str, reply: "OpeningReply") -> str:
     line = f"{_BOOK_REPLY_LABEL}: {prefix}{reply.san} ({origin})"
     if reply.alternatives:
         alts = ", ".join(
-            f"{prefix}{san}" + (f" ({name})" if name else "")
-            for san, name in reply.alternatives
+            f"{prefix}{a.san}" + (f" ({a.line_name})" if a.line_name else "")
+            for a in reply.alternatives
         )
         line += f"; {_BOOK_REPLY_ALSO}: {alts}"
     return line

@@ -33,6 +33,7 @@ from sturddle_view.play.ai_analysis import AIAnalysisCoordinator
 from sturddle_view.play.opening_reply import (
     REPLY_SOURCE_BOOK,
     REPLY_SOURCE_ECO,
+    Alternative,
     OpeningReply,
 )
 
@@ -450,7 +451,10 @@ def test_user_message_renders_book_reply_alternatives():
         san_history=[],
         book_reply=OpeningReply(
             san="e4", uci="e2e4", source=REPLY_SOURCE_ECO, line_name="B00 King's Pawn",
-            alternatives=(("d4", "A40 Queen's Pawn"), ("c4", None)),
+            alternatives=(
+                Alternative("d4", "d2d4", "A40 Queen's Pawn"),
+                Alternative("c4", "c2c4", None),
+            ),
         ),
     )
     assert (

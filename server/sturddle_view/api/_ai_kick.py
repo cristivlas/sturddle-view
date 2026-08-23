@@ -145,11 +145,13 @@ def _prompt_mode_for(hve) -> PromptMode:
 
 @dataclass(slots=True, frozen=True)
 class TurnInputs:
-    """What one AI turn is kicked with: the opening user message and the
-    book move (UCI) the loop accepts without a red-team hold, if any."""
+    """What one AI turn is kicked with: the opening user message, the
+    book move (UCI) the loop accepts without a red-team hold, if any,
+    and its sibling theory moves for the board's secondary arrows."""
 
     user_message: str
     book_move_uci: str | None
+    book_alternatives: tuple[str, ...]
 
 
 async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
@@ -219,7 +221,9 @@ async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
         in_opening=in_opening,
         book_reply=reply,
     )
-    return TurnInputs(message, reply.uci if reply is not None else None)
+    if reply is None:
+        return TurnInputs(message, None, ())
+    return TurnInputs(message, reply.uci, tuple(a.uci for a in reply.alternatives))
 
 
 async def _evict_stale_ollama_models(base_url: str, target_model: str) -> None:
@@ -313,6 +317,7 @@ async def start_ai_turn(request: Request) -> None:
             provider=provider,
             user_message=inputs.user_message if inputs else None,
             book_move_uci=inputs.book_move_uci if inputs else None,
+            book_alternatives=inputs.book_alternatives if inputs else (),
             mode=mode,
             max_tool_rounds=s.ai_max_tool_rounds,
             verifier_max_rounds=s.ai_verifier_max_rounds,

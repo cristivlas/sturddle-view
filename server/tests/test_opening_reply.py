@@ -11,6 +11,7 @@ from sturddle_view.play.opening_reply import (
     _THEORY_MIN_SHARE_ENV,
     REPLY_SOURCE_BOOK,
     REPLY_SOURCE_ECO,
+    Alternative,
     book_ref_from_settings,
     probe_opening_reply,
 )
@@ -114,7 +115,7 @@ def test_eco_reply_carries_sibling_theory_moves():
     reply = probe_opening_reply(_eco_book(), None, _board_after("e4"), _KINGS_PAWN)
     assert reply is not None
     assert reply.san == "e5"
-    assert reply.alternatives == (("c5", "B20 Sicilian Defense"),)
+    assert reply.alternatives == (Alternative("c5", "c7c5", "B20 Sicilian Defense"),)
 
 
 def test_eco_prefer_siblings_become_the_alternatives():
@@ -123,7 +124,7 @@ def test_eco_prefer_siblings_become_the_alternatives():
     )
     assert reply is not None
     assert reply.san == "c5"
-    assert reply.alternatives == (("e5", "C20 King's Pawn Game"),)
+    assert reply.alternatives == (Alternative("e5", "e7e5", "C20 King's Pawn Game"),)
 
 
 def test_eco_alternatives_respect_share_bar_and_cap(monkeypatch):
@@ -142,10 +143,10 @@ def test_book_file_reply_carries_other_continuations(tmp_path):
     board = _board_after("e4")
     first = probe_opening_reply(None, book, board, None)
     assert first is not None
-    assert (first.san, first.alternatives) == ("e5", (("c5", None),))
+    assert (first.san, first.alternatives) == ("e5", (Alternative("c5", "c7c5", None),))
     played = probe_opening_reply(None, book, board, None, "c7c5")
     assert played is not None
-    assert (played.san, played.alternatives) == ("c5", (("e5", None),))
+    assert (played.san, played.alternatives) == ("c5", (Alternative("e5", "e7e5", None),))
 
 
 def test_eco_names_unregistered_position_by_line_through_it():
