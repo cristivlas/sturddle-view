@@ -14,6 +14,8 @@ const HINT_BY_REASON = {
   [REASON_BIND_FAILED]: HINT_BIND_FAILED,
 };
 const WA_AFTER_SHOW = "wa-after-show";
+// Touch-only device = the phone itself; its own QR is useless.
+const TOUCH_ONLY_MQ = "(hover: none) and (pointer: coarse)";
 
 async function fetchOrNull(api, method, path) {
   try {
@@ -41,10 +43,9 @@ function renderConnectBody(info) {
   return textDiv("about-meta", HINT_BY_REASON[info?.reason] ?? HINT_OFFLINE);
 }
 
-// Loopback clients only (a phone that already reached us has no use for
-// its own QR). Opening the LAN port -- and with it the Windows Firewall
-// prompt, which can hold the request for a while -- waits for the first
-// expand, so it happens when the user asks.
+// Opening the LAN port -- and with it the Windows Firewall prompt, which
+// can hold the request for a while -- waits for the first expand, so it
+// happens when the user asks.
 function buildConnectSection(api) {
   const details = document.createElement("wa-details");
   details.summary = CONNECT_SUMMARY;
@@ -58,10 +59,7 @@ function buildConnectSection(api) {
 }
 
 export async function openAboutDialog({ api, events }) {
-  const [settings, connect] = await Promise.all([
-    fetchOrNull(api, "GET", "/settings"),
-    fetchOrNull(api, "GET", "/connect"),
-  ]);
+  const settings = await fetchOrNull(api, "GET", "/settings");
   const version = settings?.version || "";
   const copyright = settings?.copyright || "";
 
@@ -80,7 +78,7 @@ export async function openAboutDialog({ api, events }) {
         textDiv("about-meta", `Version ${version}`),
         textDiv("about-meta", `(c) ${copyright}`),
       );
-      if (connect?.local) wrap.append(buildConnectSection(api));
+      if (!window.matchMedia(TOUCH_ONLY_MQ).matches) wrap.append(buildConnectSection(api));
       dialog.append(wrap);
     },
   });

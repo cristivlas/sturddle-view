@@ -217,10 +217,9 @@ Single-user app. Two intended deployment modes:
    the same user, against which TLS and auth tokens are not defenses.
 2. **Trusted LAN / tailnet** (explicit `--host 0.0.0.0`, or desktop's
    About -> Connect from mobile, which opens the LAN port for the
-   session): the About dialog shows the entry URL as a QR
-   code, served to loopback clients only. The token must keep
-   unauthorized peers out; optionally TLS protects against on-wire
-   sniffing.
+   session): the About dialog shows the entry URL as a QR code to any
+   authenticated client. The token must keep unauthorized peers out;
+   optionally TLS protects against on-wire sniffing.
 
 Not in scope: public internet exposure, multi-user isolation, role-based
 access, rate limiting, audit logging.

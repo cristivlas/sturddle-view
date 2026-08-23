@@ -5,7 +5,6 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
-from sturddle_view import netinfo
 from sturddle_view.api import connect as connect_api
 from sturddle_view.app import create_app
 from sturddle_view.config import LOOPBACK_HOST, WILDCARD_HOST, Settings
@@ -13,7 +12,6 @@ from sturddle_view.engines import EngineRegistry
 
 TOKEN = "test-token"
 LOCAL = ("127.0.0.1", 50000)
-OWN_IP = ("192.168.1.5", 50000)  # this machine, reached via its LAN address
 REMOTE = ("192.168.1.9", 50000)
 LAN = ["192.168.1.5", "172.18.0.1"]
 QR_URI_PREFIX = "data:image/svg+xml"
@@ -38,8 +36,6 @@ class FakeListener:
 def make_client(tmp_path, monkeypatch):
     # The QR payload is opaque; capture the URL it would encode instead.
     monkeypatch.setattr(connect_api, "_qr_data_uri", lambda url: f"qr:{url}")
-    # Pin this machine's interface addresses so "local" is deterministic.
-    monkeypatch.setattr(netinfo, "reachable_hosts", lambda bind: [OWN_IP[0], LOOPBACK_HOST])
 
     def _make(client_addr, *, host=LOOPBACK_HOST, auth_disabled=False, listener=None):
         settings = Settings(token=TOKEN, host=host, auth_disabled=auth_disabled)
@@ -60,25 +56,16 @@ def test_qr_data_uri_is_inline_svg():
     assert connect_api._qr_data_uri("http://example").startswith(QR_URI_PREFIX)
 
 
-def test_get_connect_is_local_only_for_local_clients(make_client):
-    with make_client(LOCAL) as c:
-        assert c.get("/connect").json() == {"local": True}
-    with make_client(OWN_IP) as c:
-        assert c.get("/connect").json() == {"local": True}
-    with make_client(REMOTE) as c:
-        assert c.get("/connect").json() == {"local": False}
-
-
 def test_connect_requires_token(make_client):
     with make_client(LOCAL) as c:
         del c.headers["Authorization"]
-        assert c.get("/connect").status_code == 401
         assert c.post("/connect/lan").status_code == 401
 
 
-def test_enable_lan_rejects_remote_clients(make_client):
+def test_enable_lan_serves_remote_clients_too(make_client, monkeypatch):
+    monkeypatch.setattr(connect_api, "lan_hosts", lambda bind: LAN)
     with make_client(REMOTE, host=WILDCARD_HOST) as c:
-        assert c.post("/connect/lan").status_code == 403
+        assert c.post("/connect/lan").json() == {"qr": _qr_for(LAN[0]), "reason": None}
 
 
 def test_enable_lan_server_mode_loopback_bind(make_client):
