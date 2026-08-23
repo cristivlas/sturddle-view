@@ -27,6 +27,7 @@ import pytest
 
 from sturddle_view.events import EventBus
 from sturddle_view.llm.cancel import CancelToken
+from sturddle_view.play import tools_engine
 from sturddle_view.play.engine_supervisor import EngineSupervisor
 from sturddle_view.play.tools_engine import make_recommend_move_tool
 
@@ -153,8 +154,6 @@ async def test_within_margin_accepted(tmp_path: Path):
 async def test_shallow_request_floored_to_verification_depth(monkeypatch):
     # A model asking depth 5 must search at the verification floor, not 5 --
     # the dominance check can't confirm a move at a depth the model lowballed.
-    from sturddle_view.play import tools_engine
-
     seen_depths = []
 
     async def fake_search(engine_launcher, board, limit, **kw):
@@ -178,8 +177,6 @@ async def test_shared_cache_makes_free_best_stable_across_calls(monkeypatch):
     # fake free search would return a DIFFERENT best on a re-run (e2e4 then
     # g1f3); the cache must prevent that re-run, so best stays e2e4 and a
     # resubmit of e4 (the named best) accepts via the exact-match short-circuit.
-    from sturddle_view.play import tools_engine
-
     free_calls = {"n": 0}
     flipping_best = ["e2e4", "g1f3"]  # would flip if the free search re-ran
 
@@ -212,11 +209,34 @@ async def test_shared_cache_makes_free_best_stable_across_calls(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_book_move_accepted_without_search(monkeypatch):
+    # The turn's book move is theory: accepted as-is, neither dominance
+    # search runs. Any other move still gets both.
+    searches = []
+
+    async def fake_search(engine_launcher, board, limit, **kw):
+        searches.append(limit.depth)
+        return {"depth": limit.depth, "score": None, "pv": []}, False
+
+    monkeypatch.setattr(tools_engine, "_run_one_search", fake_search)
+    board = chess.Board()
+    tool = tools_engine.make_recommend_move_tool(
+        lambda: None, bus=EventBus(), board_provider=lambda: board,
+        book_move_provider=lambda: "e2e4",
+    )
+    out = await tool({"move": "e4"}, cancel_token=CancelToken())
+    assert out["ok"] is True and out["uci"] == "e2e4" and out["book"] is True
+    assert searches == []
+    out = await tool({"move": "d4"}, cancel_token=CancelToken())
+    assert out["ok"] is True and "book" not in out
+    assert len(searches) == 2
+
+
+@pytest.mark.asyncio
 async def test_illegal_move_returns_legal_moves_for_that_piece():
     # Screenshot regression: model kept guessing illegal knight moves (Nd7,
     # Ne7, Nd8...). An illegal recommend must hand back the legal moves for
     # the piece it meant, so the model picks a real one instead of guessing.
-    from sturddle_view.play import tools_engine
 
     # Black to move; the only black knight is on c3 -- Nd7 is illegal.
     board = chess.Board("r3r1k1/pp3pbp/1qp3p1/2B5/2BP2b1/Q1n2N2/P4PPP/3R1K1R b - - 3 17")
@@ -238,8 +258,6 @@ async def test_illegal_move_returns_legal_moves_for_that_piece():
 @pytest.mark.asyncio
 async def test_illegal_pawn_move_returns_pawn_moves():
     # A bare-square illegal pawn push reports pawn moves, not piece moves.
-    from sturddle_view.play import tools_engine
-
     board = chess.Board()  # white to move; e5 is illegal from startpos
     tool = tools_engine.make_recommend_move_tool(
         lambda: None, bus=EventBus(), board_provider=lambda: board,

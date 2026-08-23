@@ -800,6 +800,8 @@ class AIAnalysisCoordinator:
         # cite off-board sibling-variation moves, so board-legality checks
         # are skipped (see _position_check). False outside a turn.
         self._opening_turn: bool = False
+        # The turn's book move (UCI); recommend_move accepts it unsearched.
+        self._turn_book_move: str | None = None
         # tool_use_id of the in-flight delegate call; its verifier's
         # nested tool events stamp this so the client renders them under
         # the right "Verifying line" row. Late-bound. None when idle.
@@ -873,6 +875,7 @@ class AIAnalysisCoordinator:
                 opening_user_content
             )
             self._turn_context = turn_context
+            self._turn_book_move = book_move_uci
             self._turn_game_id = game_id
             self._verifier_max_rounds = verifier_max_rounds
             # OR'd true by any delegate whose verifier sub-run hits its round
@@ -970,15 +973,11 @@ class AIAnalysisCoordinator:
                         and self._cancel_token is not None
                     ):
                         try:
-                            move = chess.Move.from_uci(recommended_uci)
-                            payload = await self._recommend_verifier(
-                                move, recommended_depth, self._cancel_token
+                            payload = await self._recommendation_payload(
+                                recommended_uci, recommended_depth,
+                                book_move_uci, book_alternatives,
                             )
                             if payload is not None:
-                                # Siblings only beside the book move: arrows
-                                # for a pick the model rejected would mislead.
-                                if recommended_uci == book_move_uci and book_alternatives:
-                                    payload["alternatives"] = list(book_alternatives)
                                 await self._emit(
                                     Event(
                                         kind=EVT_AI_RECOMMENDATION,
@@ -1018,6 +1017,7 @@ class AIAnalysisCoordinator:
                     self._active_provider = None
                     self._turn_context = ""
                     self._opening_turn = False
+                    self._turn_book_move = None
                     self._turn_game_id = None
                     self._active_delegate_id = None
 
@@ -1631,6 +1631,33 @@ class AIAnalysisCoordinator:
                 return True
             return recommend_attempts > attempts_at_last_nudge
         return not nudge_sent and not any_tool_called
+
+    def turn_book_move(self) -> str | None:
+        """The in-flight turn's book move (UCI), for recommend_move's
+        book_move_provider; None between turns or off book."""
+        return self._turn_book_move
+
+    async def _recommendation_payload(
+        self,
+        uci: str,
+        depth: int | None,
+        book_move_uci: str | None,
+        book_alternatives: tuple[str, ...],
+    ) -> dict | None:
+        """The `ai_recommendation` payload for the turn's accepted pick. The
+        book move ships unsearched -- theory needs no engine check -- with
+        its siblings for the board (arrows for siblings of a pick the model
+        rejected would mislead); any other pick goes through the verifier."""
+        move = chess.Move.from_uci(uci)
+        if uci != book_move_uci:
+            return await self._recommend_verifier(move, depth, self._cancel_token)
+        board = self._board_provider() if self._board_provider else None
+        if board is None or move not in board.legal_moves:
+            return None
+        payload: dict = {"uci": uci, "san": board.san(move)}
+        if book_alternatives:
+            payload["alternatives"] = list(book_alternatives)
+        return payload
 
     def delegate_runner(self) -> VerifierRunner:
         """The verifier sub-run callable to hand `make_delegate_tool`.

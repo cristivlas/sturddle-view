@@ -464,6 +464,10 @@ def _setup_ai(app: FastAPI) -> None:
     def _ai_settings_provider():
         return app.state.settings
 
+    def _ai_book_move_provider():
+        coord = getattr(app.state, "ai_coordinator", None)
+        return coord.turn_book_move() if coord is not None else None
+
     # Shared across all engine-backed tools so a position searched once
     # this turn (analyze, top_moves, recommend_move, the verifier) isn't
     # re-searched. The coordinator clears it at turn start.
@@ -521,6 +525,7 @@ def _setup_ai(app: FastAPI) -> None:
             game_id_provider=_ai_game_id_provider,
             settings_provider=_ai_settings_provider,
             search_cache=ai_search_cache,
+            book_move_provider=_ai_book_move_provider,
         ),
     )
     # top_moves: the narrator's one-call way to rank its candidate moves

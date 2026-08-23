@@ -94,6 +94,8 @@ BoardProvider = Callable[[], chess.Board | None]
 # the throwaway analysis engine inherit Threads/Hash/Syzygy/etc. from
 # the same source HVE's analysis path uses.
 SettingsProvider = Callable[[], Any]
+# The current AI turn's book move (UCI), or None when the turn has none.
+BookMoveProvider = Callable[[], str | None]
 AnalyzeTool = Callable[..., Awaitable[dict[str, Any]]]
 
 
@@ -1049,6 +1051,7 @@ def make_recommend_move_tool(
     game_id_provider: GameIdProvider | None = None,
     settings_provider: SettingsProvider | None = None,
     search_cache: SearchCache | None = None,
+    book_move_provider: BookMoveProvider | None = None,
 ) -> AnalyzeTool:
     """Build the `recommend_move` async tool. Parses UCI/SAN, then runs
     two engine searches (candidate-restricted + free) at the requested
@@ -1056,6 +1059,8 @@ def make_recommend_move_tool(
     for the side to move, returns a structured error so the model can
     pivot. On acceptance returns `{ok, uci, san, post_move_fen,
     candidate_score, engine_best_move, engine_best_score, depth}`.
+    The turn's book move (`book_move_provider`) is accepted as-is, no
+    search: `{ok, uci, san, post_move_fen, book: True}`.
     `search_cache`: see make_analyze_tool."""
     cache = search_cache or SearchCache()
 
@@ -1080,6 +1085,12 @@ def make_recommend_move_tool(
         uci = parsed.uci()
         scratch = board.copy(stack=False)
         scratch.push(parsed)
+        # Theory needs no dominance check: the book move ships unsearched.
+        if book_move_provider is not None and uci == book_move_provider():
+            return {
+                "ok": True, "uci": uci, "san": san,
+                "post_move_fen": scratch.fen(), "book": True,
+            }
 
         # Floor recommend_move's two searches at the verification depth so
         # the dominance check can't confirm a move at a shallow depth the

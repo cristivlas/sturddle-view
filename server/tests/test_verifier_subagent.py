@@ -615,6 +615,18 @@ async def _echo_verifier(move, depth, cancel_token):
     return {"uci": move.uci(), "san": move.uci()}
 
 
+def _recording_verifier():
+    """(verifier, calls): like _echo_verifier, recording each move it was
+    asked to search -- a book pick must never reach it."""
+    calls: list[str] = []
+
+    async def verify(move, depth, cancel_token):
+        calls.append(move.uci())
+        return await _echo_verifier(move, depth, cancel_token)
+
+    return verify, calls
+
+
 async def _stub_recommend(_input, *, cancel_token):
     return {"ok": True, "uci": chess.Board().parse_san(_input["move"]).uci()}
 
@@ -720,7 +732,8 @@ async def test_book_move_accepted_without_red_team():
     # A recommend_move naming the turn's book move ships on the first
     # accept -- theory vetted it -- with no red_team_first hold and no
     # delegate round: two provider rounds, accept + conclusion. The
-    # sibling theory moves ride the recommendation for the board.
+    # sibling theory moves ride the recommendation for the board, and the
+    # end-of-turn verifier search is skipped -- theory needs no engine check.
     provider = _RecordingScriptedProvider(rounds=[
         [ProviderChunk(kind="tool_use", tool_use_id="r0",
                        tool_name="recommend_move", tool_input={"move": "e4"})],
@@ -728,10 +741,11 @@ async def test_book_move_accepted_without_red_team():
     ])
     bus = EventBus()
     queue = await bus.subscribe()
+    verifier, searched = _recording_verifier()
     coord = AIAnalysisCoordinator(
         bus, provider, registry=_narrator_registry("delegate"),
         board_provider=(lambda: chess.Board()),
-        recommend_verifier=_echo_verifier,
+        recommend_verifier=verifier,
     )
 
     await coord.run(
@@ -744,7 +758,9 @@ async def test_book_move_accepted_without_red_team():
     assert len(provider.calls) == 2
     recs = [e for e in events if e.kind == "ai_recommendation"]
     assert recs and recs[-1].payload.get("uci") == "e2e4"
+    assert recs[-1].payload.get("san") == "e4"
     assert recs[-1].payload.get("alternatives") == ["d2d4", "c2c4"]
+    assert searched == [], "the book move must not be engine-verified"
 
 
 @pytest.mark.asyncio
@@ -763,10 +779,11 @@ async def test_departing_move_still_held_on_book_turn():
     ])
     bus = EventBus()
     queue = await bus.subscribe()
+    verifier, searched = _recording_verifier()
     coord = AIAnalysisCoordinator(
         bus, provider, registry=_narrator_registry("delegate"),
         board_provider=(lambda: chess.Board()),
-        recommend_verifier=_echo_verifier,
+        recommend_verifier=verifier,
     )
 
     await coord.run(
@@ -779,6 +796,7 @@ async def test_departing_move_still_held_on_book_turn():
     recs = [e for e in events if e.kind == "ai_recommendation"]
     assert recs and recs[-1].payload.get("uci") == "d2d4"
     assert "alternatives" not in recs[-1].payload
+    assert searched == ["d2d4"], "a departing pick still gets the verifier search"
 
 
 @pytest.mark.asyncio
