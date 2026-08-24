@@ -25,6 +25,9 @@ from .base import LLMProvider, Message
 log = logging.getLogger(__name__)
 
 
+# Name the judge round trip is surfaced under in the panel's tool list.
+POSITION_JUDGE_CALL_NAME = "position_judge"
+
 # Sentinel the model wraps its verdict in, so a chatty model that adds prose
 # around the JSON still parses.
 _VERDICT_TAG = "VERDICT"

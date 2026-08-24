@@ -28,7 +28,8 @@ import { mountSprtButton } from "./tournament-sprt-button.js";
 import { formatType, formatResign, formatDraw } from "./tournament-format.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
-import { basename, cooldown, debounce, guard, isCtrlA, markSelectable, ribbonWidthPx, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
+import { applyListClick, createMultiSelect, selectionTargets } from "./multi-select.js";
+import { basename, cooldown, debounce, guard, isCtrlA, markSelectable, ribbonWidthPx, suppressModifierClickSelect, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
@@ -44,6 +45,9 @@ const EDIT_TOURNAMENT_LABEL = "Edit tournament";
 const COPY_TOURNAMENT_LABEL = "Copy tournament";
 const DELETE_TOURNAMENT_LABEL = "Delete tournament";
 const CREATE_ACTION_LABEL = "Create";
+const REMOVE_ACTION_LABEL = "Remove";
+const DELETE_WARNING = "All games and data will be permanently deleted.";
+const CONFIRM_MULTILINE_CLASS = "confirm-message--multiline";
 const COPY_SUFFIX = " (copy)";
 const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
 const EMPTY_CTA_SUFFIX = " to create one.";
@@ -242,6 +246,7 @@ function renderList(ctx) {
     ctx.emptyMsg.append(link, " to set the binary path.");
     ctx.newBtn.disabled = true;
     ctx.selectedId = null;
+    ctx.ms.prune();
     syncRibbon(ctx);
     return;
   }
@@ -251,6 +256,7 @@ function renderList(ctx) {
     ctx.emptyEl.classList.remove("hidden");
     ctx.emptyMsg.replaceChildren(...newTournamentCta(() => ctx.actions.create()));
     ctx.selectedId = null;
+    ctx.ms.prune();
     syncRibbon(ctx);
     return;
   }
@@ -263,6 +269,7 @@ function renderList(ctx) {
   for (const t of sorted) {
     ctx.listEl.appendChild(renderRow(ctx, t));
   }
+  ctx.ms.prune();
   syncRibbon(ctx);
   if (ctx.initialLoad) {
     ctx.initialLoad = false;
@@ -289,13 +296,20 @@ function sortedTournaments(ctx) {
 function renderRow(ctx, t) {
   return renderTournamentRow(t, {
     selected: t.id === ctx.selectedId,
-    onSelect: (t) => {
+    onSelect: (t, ev) => {
       ctx.listEl.focus({ preventScroll: true });
-      if (ctx.selectedId === t.id) return;
-      navigateTo(ctx, t.id);
+      ctx.ms.handleClick(ev, t.id);
     },
     onInfo: (t) => ctx.actions.info(t),
   });
+}
+
+// Bind the list to a single row: collapse any multi-selection onto it, then
+// rebind the panes (navigateTo repaints and syncs the ribbon itself).
+function selectRow(ctx, id) {
+  ctx.ms.collapseTo(id);
+  if (ctx.selectedId === id) syncRibbon(ctx);
+  else navigateTo(ctx, id);
 }
 
 function updateProgressInPlace(ctx, t) {
@@ -307,8 +321,31 @@ function selectedTournament(ctx) {
   return ctx.tournaments.find((t) => t.id === ctx.selectedId) || null;
 }
 
+// Tournaments the ribbon acts on: the whole marked set, or just the selected
+// row when there is no multi-selection.
+function selectedTournaments(ctx) {
+  return selectionTargets(ctx.ms, ctx.tournaments, selectedTournament(ctx));
+}
+
+// Multi-selection ribbon: Remove is the only verb with a sensible bulk
+// meaning. The server refuses to delete a running tournament, so a set
+// holding it has no valid action at all.
+function syncRibbonMulti(ctx) {
+  for (const btn of [
+    ctx.ribbonStartBtn, ctx.ribbonStopBtn, ctx.ribbonWorkspaceBtn,
+    ctx.ribbonInfoBtn, ctx.ribbonEditBtn, ctx.ribbonDuplicateBtn,
+  ]) {
+    btn.disabled = true;
+  }
+  ctx.ribbonRemoveBtn.disabled = ctx.ms.ids().includes(ctx.activeId);
+}
+
 function syncRibbon(ctx) {
   syncTidyBtn(ctx);
+  if (ctx.ms.multi()) {
+    syncRibbonMulti(ctx);
+    return;
+  }
   const t = selectedTournament(ctx);
   if (!t) {
     ctx.ribbonStartBtn.disabled = true;
@@ -472,7 +509,7 @@ async function stopOne(ctx, t) {
     message,
     okLabel: "Stop",
     destructive: true,
-    messageClass: "confirm-message--multiline",
+    messageClass: CONFIRM_MULTILINE_CLASS,
   });
   if (!ok) return;
   try {
@@ -483,24 +520,65 @@ async function stopOne(ctx, t) {
   await ctx.loadList();
 }
 
+async function deleteTournament(ctx, t) {
+  await ctx.api("DELETE", `/api/tournaments/${t.id}`);
+  if (getActiveWorkspace()?.tournamentId === t.id) getActiveWorkspace().close();
+  clearWorkspaceState(t.id);
+}
+
 async function removeOne(ctx, t) {
   const ok = await confirm({
-    message: `Remove "${t.name}"?\nAll games and data will be permanently deleted.`,
-    okLabel: "Remove",
+    message: `Remove "${t.name}"?\n${DELETE_WARNING}`,
+    okLabel: REMOVE_ACTION_LABEL,
     destructive: true,
-    messageClass: "confirm-message--multiline",
+    messageClass: CONFIRM_MULTILINE_CLASS,
   });
   if (!ok) return;
   try {
-    await ctx.api("DELETE", `/api/tournaments/${t.id}`);
-    if (getActiveWorkspace()?.tournamentId === t.id) getActiveWorkspace().close();
-    clearWorkspaceState(t.id);
+    await deleteTournament(ctx, t);
     toast(`Removed tournament "${t.name}"`, { variant: "success" });
   } catch (e) {
     reportError({ log: ctx.log }, `Removing "${t.name}" failed`, e);
     return;
   }
   await ctx.loadList();
+}
+
+// Bulk delete for a multi-selection (always 2+ rows -- the ribbon routes a
+// single selection to removeOne). Deletes are sequential so one failure
+// doesn't abort the rest; the survivors reappear on the reload.
+async function removeMany(ctx, list) {
+  const n = list.length;
+  const ok = await confirm({
+    message: `Remove ${n} tournaments?\n${DELETE_WARNING}`,
+    okLabel: `${REMOVE_ACTION_LABEL} ${n}`,
+    destructive: true,
+    messageClass: CONFIRM_MULTILINE_CLASS,
+  });
+  if (!ok) return;
+  const failed = [];
+  for (const t of list) {
+    try {
+      await deleteTournament(ctx, t);
+    } catch (e) {
+      failed.push({ t, e });
+    }
+  }
+  const removed = n - failed.length;
+  if (removed) toast(`Removed ${removed} tournaments`, { variant: "success" });
+  if (failed.length) {
+    const { t, e } = failed[0];
+    const more = failed.length > 1 ? ` (+${failed.length - 1} more)` : "";
+    reportError({ log: ctx.log }, `Removing "${t.name}"${more} failed`, e);
+  }
+  await ctx.loadList();
+}
+
+// Ribbon Remove for either perspective: a multi-selection deletes in bulk,
+// anything else falls through to the single-tournament confirm.
+export function removeSelected(actions, list) {
+  if (list.length > 1) actions.removeMany(list);
+  else if (list.length === 1) actions.remove(list[0]);
 }
 
 // Shared tournament verbs for other UIs (e.g. Studio). The action functions
@@ -526,6 +604,7 @@ function guardedVerbs(ctx) {
     start: guard((t) => startOne(ctx, t)),
     stop: guard((t) => stopOne(ctx, t)),
     remove: guard((t) => removeOne(ctx, t)),
+    removeMany: guard((list) => removeMany(ctx, list)),
   };
 }
 
@@ -1320,8 +1399,8 @@ function wireRibbon(ctx) {
     if (t && !ctx.ribbonDuplicateBtn.disabled) ctx.actions.duplicate(t);
   });
   ctx.ribbonRemoveBtn.addEventListener("click", () => {
-    const t = selectedTournament(ctx);
-    if (t && !ctx.ribbonRemoveBtn.disabled) ctx.actions.remove(t);
+    if (ctx.ribbonRemoveBtn.disabled) return;
+    removeSelected(ctx.actions, selectedTournaments(ctx));
   });
 }
 
@@ -1329,7 +1408,9 @@ function wireListKeyboard(ctx) {
   wireArrowKeyNav(ctx.listEl, {
     rows: ".tournament-row",
     selected: ".tournament-row.selected",
-    select: (row) => navigateTo(ctx, row.dataset.id),
+    lead: () => ctx.listEl.querySelector(`.tournament-row[data-id="${ctx.ms.lead()}"]`),
+    select: (row) => selectRow(ctx, row.dataset.id),
+    extend: (row) => ctx.ms.extendTo(row.dataset.id),
   });
 }
 
@@ -1454,6 +1535,13 @@ export function mountTournaments({ container, api, events, log, token }) {
   };
   markSelectable(ctx.listEl, { rows: ".tournament-row" });
   suppressMultiClickSelect(ctx.listEl);
+  suppressModifierClickSelect(ctx.listEl);
+  ctx.ms = createMultiSelect({
+    getRows: () => ctx.listEl.querySelectorAll(".tournament-row"),
+    getAnchorId: () => ctx.selectedId,
+    selectOne: (id) => selectRow(ctx, id),
+    onChange: () => syncRibbon(ctx),
+  });
 
   ctx.loadSettings = lastWriteWins(
     () => ctx.api("GET", "/api/tournament-settings"),
@@ -1615,30 +1703,6 @@ function mountEngineBuilder({ host, available, initial = [] }) {
     return available.filter((e) => !pickedIds.includes(e.id)).map((e) => e.id);
   }
 
-  function handleListClick(ev, id, selected, anchorRef, idsInOrder) {
-    if (ev.shiftKey && anchorRef.id != null) {
-      // Range select from anchor to id (inclusive), in display order.
-      const ids = idsInOrder();
-      const a = ids.indexOf(anchorRef.id);
-      const b = ids.indexOf(id);
-      if (a >= 0 && b >= 0) {
-        const [lo, hi] = a < b ? [a, b] : [b, a];
-        selected.clear();
-        for (let i = lo; i <= hi; i++) selected.add(ids[i]);
-      }
-    } else if (ev.ctrlKey || ev.metaKey) {
-      // Toggle this row in/out; keep anchor on the toggled row.
-      if (selected.has(id)) selected.delete(id);
-      else selected.add(id);
-      anchorRef.id = id;
-    } else {
-      // Plain click: collapse to just this row.
-      selected.clear();
-      selected.add(id);
-      anchorRef.id = id;
-    }
-  }
-
   function render() {
     availableList.innerHTML = "";
     for (const e of available) {
@@ -1649,7 +1713,7 @@ function mountEngineBuilder({ host, available, initial = [] }) {
       li.textContent = e.name;
       li.title = e.name;
       li.addEventListener("click", (ev) => {
-        handleListClick(ev, e.id, availableSelected, availableAnchor, visibleAvailableIds);
+        applyListClick(ev, e.id, availableSelected, availableAnchor, visibleAvailableIds);
         render();
       });
       li.addEventListener("dblclick", () => doAdd([e.id]));
@@ -1665,7 +1729,7 @@ function mountEngineBuilder({ host, available, initial = [] }) {
       li.dataset.id = id;
       li.textContent = e.name;
       li.addEventListener("click", (ev) => {
-        handleListClick(ev, id, pickedSelected, pickedAnchor, () => [...pickedIds]);
+        applyListClick(ev, id, pickedSelected, pickedAnchor, () => [...pickedIds]);
         render();
       });
       li.addEventListener("dblclick", () => doRemove([id]));
@@ -1742,16 +1806,7 @@ function mountEngineBuilder({ host, available, initial = [] }) {
       anchorRef.id = ids[ids.length - 1];
       render();
     });
-    // A Shift/Ctrl+click otherwise paints a text selection across the pane on
-    // top of toggling the row. Cancel the text-drag gesture so the click only
-    // drives row selection -- but preventDefault also drops focus, so refocus
-    // the pane explicitly or a following Ctrl+A keydown would never reach it.
-    list.addEventListener("mousedown", (ev) => {
-      if (ev.shiftKey || ev.ctrlKey || ev.metaKey) {
-        ev.preventDefault();
-        list.focus();
-      }
-    });
+    suppressModifierClickSelect(list);
   }
 
   addBtn.addEventListener("click", () => doAdd([...availableSelected]));

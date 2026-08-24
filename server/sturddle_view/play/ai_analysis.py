@@ -43,7 +43,6 @@ from ..events import (
 from ..llm import (
     LLMProvider,
     Message,
-    OPENING_PHASE_GUIDANCE,
     PromptMode,
     ProviderChunk,
     ProviderUsage,
@@ -53,6 +52,7 @@ from ..llm import (
     UnknownToolError,
     assemble_system_prompt,
     open_transcript,
+    split_opening_steer,
     strip_markdown_stream,
 )
 from ..llm.cancel import CancelToken
@@ -62,6 +62,8 @@ from ..llm.position_check import (
     has_position_flags,
     iter_false_bishop_color_refs,
     iter_false_claim_squares,
+    iter_false_file_claims,
+    iter_false_file_openness,
     handled_continuation_spans,
     iter_illegal_continuations,
     iter_illegal_moves,
@@ -71,7 +73,7 @@ from ..llm.position_check import (
     iter_stm_moves,
     truncate_at_future_line,
 )
-from ..llm.position_judge import clear_false_positives
+from ..llm.position_judge import POSITION_JUDGE_CALL_NAME, clear_false_positives
 from .tools_engine import (
     ANALYZE_TOOL_NAME,
     MATERIAL_TOOL_NAME,
@@ -627,6 +629,9 @@ class _LoopConfig:
     # Hold the first accepted recommend_move until a delegate verdict ran
     # this turn. Only set when `delegate` is actually registered.
     enforce_red_team: bool = False
+    # Theory reply for the turn (UCI). A recommend_move naming it skips the
+    # red-team hold -- the book vetted it, not `delegate`.
+    book_move_uci: str | None = None
     # Per-call thinking override passed to provider.stream(). None = use
     # the provider's setting (narrator); False = force off (verifier).
     thinking_override: bool | None = None
@@ -667,13 +672,17 @@ class _PositionCheck:
     # carries (surface, label, fact); the fact is precomputed (square color is
     # invariant, so there's no square to describe later).
     bishop_triples: list[tuple[str, str, str]] = field(default_factory=list)
+    # '<piece> on the <x>-file' and open/semi-open/closed file claims that
+    # hold on no current/projected board. Same (surface, label, fact) shape
+    # as bishop refs: plain board truth with a precomputed corrective.
+    file_triples: list[tuple[str, str, str]] = field(default_factory=list)
 
     @property
     def hit(self) -> bool:
         return bool(
             self.move_pairs or self.claim_triples
             or self.line_pairs or self.tool_mentions
-            or self.bishop_triples
+            or self.bishop_triples or self.file_triples
         )
 
     @property
@@ -689,6 +698,10 @@ class _PositionCheck:
         return [label for _surface, label, _fact in self.bishop_triples]
 
     @property
+    def file_labels(self) -> list[str]:
+        return [label for _surface, label, _fact in self.file_triples]
+
+    @property
     def surfaces(self) -> list[str]:
         # Exact prose spans for the client to strike, longest first so a
         # span isn't half-matched by a shorter one nested inside it.
@@ -697,6 +710,7 @@ class _PositionCheck:
             + [s for s, _, _ in self.claim_triples]
             + [s for s, _ in self.line_pairs]
             + [s for s, _, _ in self.bishop_triples]
+            + [s for s, _, _ in self.file_triples]
         )
         return sorted(set(out), key=len, reverse=True)
 
@@ -704,9 +718,9 @@ class _PositionCheck:
     def board_labels(self) -> list[str]:
         """Every board-context flag's normalized label the judge may rule on
         (moves, lines, claims). Never included: tool mentions (board-
-        independent style violations) and bishop-color labels (precomputed
-        board facts the judge kept clearing wrongly -- regex verdict is
-        final for that class)."""
+        independent style violations) and bishop-color / file-claim labels
+        (precomputed board facts; the judge kept clearing the bishop class
+        wrongly, so the regex verdict is final for both)."""
         return (
             self.move_labels
             + self.line_labels
@@ -725,7 +739,18 @@ class _PositionCheck:
             [(s, l) for s, l in self.line_pairs if l not in cleared],
             self.tool_mentions,
             [(s, l, f) for s, l, f in self.bishop_triples if l not in cleared],
+            [(s, l, f) for s, l, f in self.file_triples if l not in cleared],
         )
+
+
+def _judge_summary(labels: list[str], cleared: set[str]) -> str:
+    """Panel OUT text: 'cleared 1/2: rook on b1; kept: Nf5'."""
+    kept = [label for label in labels if label not in cleared]
+    dropped = [label for label in labels if label in cleared]
+    head = f"cleared {len(dropped)}/{len(labels)}"
+    if dropped:
+        head += ": " + ", ".join(dropped)
+    return head + (f"; kept: {', '.join(kept)}" if kept else "")
 
 
 class AIAnalysisCoordinator:
@@ -775,6 +800,8 @@ class AIAnalysisCoordinator:
         # cite off-board sibling-variation moves, so board-legality checks
         # are skipped (see _position_check). False outside a turn.
         self._opening_turn: bool = False
+        # The turn's book move (UCI); recommend_move accepts it unsearched.
+        self._turn_book_move: str | None = None
         # tool_use_id of the in-flight delegate call; its verifier's
         # nested tool events stamp this so the client renders them under
         # the right "Verifying line" row. Late-bound. None when idle.
@@ -807,6 +834,8 @@ class AIAnalysisCoordinator:
         provider: LLMProvider | None = None,
         mode: PromptMode = "coach",
         user_message: str | None = None,
+        book_move_uci: str | None = None,
+        book_alternatives: tuple[str, ...] = (),
         max_tool_rounds: int = MAX_TOOL_ROUNDS,
         verifier_max_rounds: int = VERIFIER_MAX_ROUNDS,
     ) -> None:
@@ -824,6 +853,12 @@ class AIAnalysisCoordinator:
         (`api/ai.py` for live play) via `build_initial_user_message`.
         None falls back to an empty user message for tests that don't
         care about position context.
+
+        `book_move_uci` is the theory reply the caller found for the
+        position: a `recommend_move` of it is accepted without the
+        red-team hold. `book_alternatives` (UCI) ride the
+        `ai_recommendation` payload when that move is the accepted pick,
+        for the board's secondary arrows.
         """
         active = provider or self._provider
         system_prompt = assemble_system_prompt(mode, tools=self._registry.specs())
@@ -832,17 +867,15 @@ class AIAnalysisCoordinator:
             self._task = asyncio.current_task()
             self._cancel_token = CancelToken()
             self._active_provider = active
-            # turn_context grounds verifier sub-runs. Strip the narrator-only
-            # opening steer (it names related_openings, which the verifier
-            # registry lacks) so the sub-run isn't handed a dead instruction.
-            # Only opening turns carry it; others pass through untouched.
-            turn_context = opening_user_content
-            self._opening_turn = OPENING_PHASE_GUIDANCE in opening_user_content
-            if self._opening_turn:
-                turn_context = (
-                    turn_context.replace(OPENING_PHASE_GUIDANCE, "").rstrip() + "\n"
-                )
+            # turn_context grounds verifier sub-runs. Strip any narrator-only
+            # opening steer (they name tools the verifier registry lacks) so
+            # the sub-run isn't handed a dead instruction. Only opening turns
+            # carry one; others pass through untouched.
+            turn_context, self._opening_turn = split_opening_steer(
+                opening_user_content
+            )
             self._turn_context = turn_context
+            self._turn_book_move = book_move_uci
             self._turn_game_id = game_id
             self._verifier_max_rounds = verifier_max_rounds
             # OR'd true by any delegate whose verifier sub-run hits its round
@@ -890,6 +923,7 @@ class AIAnalysisCoordinator:
                     ),
                     track_recommend=has_recommend_move,
                     enforce_red_team=has_recommend_move and has_delegate,
+                    book_move_uci=book_move_uci,
                 )
                 recommended_uci: str | None = None
                 recommended_depth: int | None = None
@@ -939,9 +973,9 @@ class AIAnalysisCoordinator:
                         and self._cancel_token is not None
                     ):
                         try:
-                            move = chess.Move.from_uci(recommended_uci)
-                            payload = await self._recommend_verifier(
-                                move, recommended_depth, self._cancel_token
+                            payload = await self._recommendation_payload(
+                                recommended_uci, recommended_depth,
+                                book_move_uci, book_alternatives,
                             )
                             if payload is not None:
                                 await self._emit(
@@ -983,6 +1017,7 @@ class AIAnalysisCoordinator:
                     self._active_provider = None
                     self._turn_context = ""
                     self._opening_turn = False
+                    self._turn_book_move = None
                     self._turn_game_id = None
                     self._active_delegate_id = None
 
@@ -1104,7 +1139,7 @@ class AIAnalysisCoordinator:
             pc = self._position_check(round_chunks)
             # Clear regex false positives (moves/claims the prose meant about
             # another position) before acting on the hit; only drops flags.
-            pc = await self._apply_semantic_check(pc, round_chunks, config)
+            pc = await self._apply_semantic_check(pc, round_chunks, config, round_index)
             if pc.hit:
                 # Tool-mention-only hits carry no surface to strike; skip the
                 # UI note (it would mark nothing) but still inject the
@@ -1123,6 +1158,7 @@ class AIAnalysisCoordinator:
                     | {ln.lower() for ln in pc.line_labels}
                     | set(pc.tool_mentions)
                     | {b.lower() for b in pc.bishop_labels}
+                    | {f.lower() for f in pc.file_labels}
                 )
                 repeat = bool(hit_keys & corrected_items)
                 corrected_items |= hit_keys
@@ -1303,11 +1339,13 @@ class AIAnalysisCoordinator:
                 # Don't let a pick ship without an adversarial check. Hold
                 # the first un-red-teamed accept and ask for a delegate
                 # verdict. One-shot -- a stalled model still gets its pick.
+                # The book move is exempt: theory vetted it.
                 if (
                     accepted
                     and config.enforce_red_team
                     and not red_teamed
                     and not red_team_nudge_sent
+                    and tool_output["uci"] != config.book_move_uci
                 ):
                     accepted = False
                     red_team_nudge_sent = True
@@ -1322,6 +1360,8 @@ class AIAnalysisCoordinator:
                     recommended_uci = tool_output["uci"]
                     recommended_depth = tool_output.get("depth")
                     recommended_san = tool_output.get("san")
+                    if recommended_uci == config.book_move_uci:
+                        log.info("book move accepted (%s): %s", mode, recommended_uci)
                     # A conclusion alongside the accepting call counts -- no
                     # separate post-move round needed. Prose in a later round
                     # is handled at the natural-exit check.
@@ -1441,6 +1481,8 @@ class AIAnalysisCoordinator:
             line_pairs,
             tool_mentions,
             list(iter_false_bishop_color_refs(text, board)),
+            list(iter_false_file_claims(text, board))
+            + list(iter_false_file_openness(text, board)),
         )
 
     def _recommend_mismatch(
@@ -1476,19 +1518,42 @@ class AIAnalysisCoordinator:
         pc: _PositionCheck,
         chunks: list[ProviderChunk],
         config: _LoopConfig,
+        round_index: int,
     ) -> _PositionCheck:
         """Drop regex flags the model judges to be other-context references.
-        No-op (returns `pc`) when the flag is off, the check is clean, or there
-        are no board-context flags to rule on -- tool mentions are never
-        judged. The judge sees the full round prose for the most context, not
-        the future-line-truncated view the regex ran on."""
+        No-op when the flag is off or nothing is judgeable. The round trip
+        shows in the panel's tool list as a call/result pair."""
         if not SEMANTIC_CHECK_ENABLED or pc.board is None:
             return pc
         labels = pc.board_labels
         if not labels:
             return pc
         prose = "".join(c.text for c in chunks if c.kind == "text" and c.text)
+        # Delegate prefix keeps a verifier sub-run's id distinct from the
+        # narrator's for the same round index.
+        scope = f"{self._active_delegate_id}-" if self._active_delegate_id else ""
+        call_id = f"{scope}{POSITION_JUDGE_CALL_NAME}-{round_index}"
+        await config.emit(Event(
+            kind=EVT_AI_TOOL_CALL,
+            game_id=config.game_id,
+            payload={
+                "round": round_index,
+                "name": POSITION_JUDGE_CALL_NAME,
+                "input": {"labels": labels},
+                "tool_use_id": call_id,
+            },
+        ))
         cleared = await clear_false_positives(config.provider, pc.board, prose, labels)
+        await config.emit(Event(
+            kind=EVT_AI_TOOL_CALL_COMPLETE,
+            game_id=config.game_id,
+            payload={
+                "round": round_index,
+                "name": POSITION_JUDGE_CALL_NAME,
+                "tool_use_id": call_id,
+                "output": _judge_summary(labels, cleared),
+            },
+        ))
         return pc.without_labels(cleared)
 
     async def _emit_position_note(
@@ -1525,13 +1590,14 @@ class AIAnalysisCoordinator:
         ]
         if move_facts:
             clauses.append(_POSITION_CHECK_MOVE_CLAUSE.format(facts="; ".join(move_facts)))
-        # Square-content claims and bishop-by-square-color refs are both plain
-        # board truth -- one "restate" clause, facts joined. Bishop facts are
-        # precomputed (no square to describe; square color is invariant).
-        claim_facts = [
-            describe_square(square, pc.board)
-            for _surface, _label, square in pc.claim_triples
-        ] + [fact for _surface, _label, fact in pc.bishop_triples]
+        # Square, bishop-color and file claims are all plain board truth --
+        # one "restate" clause, facts joined. Bishop and file facts are
+        # precomputed (see their recognizers).
+        claim_facts = (
+            [describe_square(square, pc.board) for _surface, _label, square in pc.claim_triples]
+            + [fact for _surface, _label, fact in pc.bishop_triples]
+            + [fact for _surface, _label, fact in pc.file_triples]
+        )
         if claim_facts:
             clauses.append(_POSITION_CHECK_CLAIM_CLAUSE.format(facts="; ".join(claim_facts)))
         if pc.tool_mentions:
@@ -1565,6 +1631,33 @@ class AIAnalysisCoordinator:
                 return True
             return recommend_attempts > attempts_at_last_nudge
         return not nudge_sent and not any_tool_called
+
+    def turn_book_move(self) -> str | None:
+        """The in-flight turn's book move (UCI), for recommend_move's
+        book_move_provider; None between turns or off book."""
+        return self._turn_book_move
+
+    async def _recommendation_payload(
+        self,
+        uci: str,
+        depth: int | None,
+        book_move_uci: str | None,
+        book_alternatives: tuple[str, ...],
+    ) -> dict | None:
+        """The `ai_recommendation` payload for the turn's accepted pick. The
+        book move ships unsearched -- theory needs no engine check -- with
+        its siblings for the board (arrows for siblings of a pick the model
+        rejected would mislead); any other pick goes through the verifier."""
+        move = chess.Move.from_uci(uci)
+        if uci != book_move_uci:
+            return await self._recommend_verifier(move, depth, self._cancel_token)
+        board = self._board_provider() if self._board_provider else None
+        if board is None or move not in board.legal_moves:
+            return None
+        payload: dict = {"uci": uci, "san": board.san(move)}
+        if book_alternatives:
+            payload["alternatives"] = list(book_alternatives)
+        return payload
 
     def delegate_runner(self) -> VerifierRunner:
         """The verifier sub-run callable to hand `make_delegate_tool`.

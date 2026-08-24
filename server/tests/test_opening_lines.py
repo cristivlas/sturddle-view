@@ -4,7 +4,12 @@ import pytest
 
 from sturddle_view.config import BOOK_ORDER_RANDOM, BOOK_ORDER_SEQUENTIAL
 from sturddle_view.play import opening_lines
-from sturddle_view.play.opening_lines import book_reply, is_epd_book, select_epd_seed
+from sturddle_view.play.opening_lines import (
+    book_next_moves,
+    book_reply,
+    is_epd_book,
+    select_epd_seed,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -119,6 +124,46 @@ def test_reply_strips_comments_nags_variations(tmp_path):
     # The (1... c5 ...) sideline is dropped; mainline survives intact.
     assert book_reply(path, ["e2e4"], None, None, 0) == "e7e5"
     assert book_reply(path, ["e2e4", "e7e5"], None, None, 0) == "g1f3"
+
+
+def test_reply_prefer_wins_when_a_line_continues_with_it(tmp_path):
+    path = _write(tmp_path, "book.pgn", _multigame("1. e4 e5 *", "1. e4 c5 *"))
+    assert book_reply(path, ["e2e4"], None, None, 0) == "e7e5"
+    assert book_reply(path, ["e2e4"], None, None, 0, prefer="c7c5") == "c7c5"
+
+
+def test_reply_prefer_matches_over_disambiguated_spelling(tmp_path):
+    games = _multigame("1. e4 e5 2. Nc3 *", "1. e4 e5 2. Ngf3 *")
+    path = _write(tmp_path, "book.pgn", games)
+    assert book_reply(path, ["e2e4", "e7e5"], None, None, 0, prefer="g1f3") == "g1f3"
+
+
+def test_reply_prefer_ignored_when_absent_or_illegal(tmp_path):
+    path = _write(tmp_path, "book.pgn", _multigame("1. e4 e5 *", "1. e4 c5 *"))
+    for prefer in ("h7h5", "e1e8", "zz"):
+        assert book_reply(path, ["e2e4"], None, None, 0, prefer=prefer) == "e7e5"
+
+
+# ----- book_next_moves -----
+
+def test_next_moves_lists_distinct_continuations_in_line_order(tmp_path):
+    games = _multigame("1. e4 e5 *", "1. e4 c5 *", "1. e4 e5 2. Nf3 *", "1. d4 d5 *")
+    path = _write(tmp_path, "book.pgn", games)
+    assert book_next_moves(path, [], None) == ["e2e4", "d2d4"]
+    assert book_next_moves(path, ["e2e4"], None) == ["e7e5", "c7c5"]
+    assert book_next_moves(path, ["e2e4", "c7c5"], None) == []
+
+
+def test_next_moves_collapses_spellings_and_skips_junk(tmp_path):
+    games = _multigame("1. e4 e5 2. Ngf3 *", "1. e4 e5 2. Nf3 *", "1. e4 e5 2. Zz9 *")
+    path = _write(tmp_path, "book.pgn", games)
+    assert book_next_moves(path, ["e2e4", "e7e5"], None) == ["g1f3"]
+
+
+def test_next_moves_empty_for_missing_or_epd(tmp_path):
+    assert book_next_moves(str(tmp_path / "nope.pgn"), [], None) == []
+    path = _write(tmp_path, "book.epd", "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -\n")
+    assert book_next_moves(path, [], None) == []
 
 
 def test_reply_none_when_no_first_move_match(tmp_path):

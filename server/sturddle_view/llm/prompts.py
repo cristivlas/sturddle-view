@@ -7,10 +7,13 @@ annotations) a wider gate in `_ai_kick.py::_build_turn_inputs`.
 from __future__ import annotations
 
 import os
-from typing import Iterable, Literal
+from typing import TYPE_CHECKING, Iterable, Literal
 
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
 from .tools import ToolSpec
+
+if TYPE_CHECKING:
+    from ..play.opening_reply import OpeningReply
 
 
 # Appends a directive forcing the model to emit tool calls inline as
@@ -53,7 +56,9 @@ winning, ~3+ decisive.
 whenever you name a specific past, current, or hypothetical move, so the \
 reader knows which ply you mean. The user message gives the side to move -- \
 trust it, don't re-derive from FEN.
-- Honesty: don't invent moves, lines, or pieces. Tool result fields \
+- Honesty: don't invent moves, lines, or pieces. Assert a geometric \
+relation -- shared file, rank, or diagonal, a pin, "opposing" a piece -- \
+only after confirming it on the board with `piece_at`. Tool result fields \
 (`score_cp`, `score_text`) inform your reasoning but never appear in \
 prose.
 - Board: read squares with `piece_at` rather than reconstructing the \
@@ -92,6 +97,9 @@ _REPORT_LINE_RULE = (
     "prose; a rejected line is fixed at the move it names or dropped, "
     "never re-sent unchanged. "
 )
+# Opens each addendum's engine workflow: a book turn (see
+# BOOK_REPLY_GUIDANCE) submits the given reply instead of weighing.
+_BOOK_REPLY_EXEMPTION = "Unless the user message gives a book reply, "
 
 
 COACH_ADDENDUM = (
@@ -101,7 +109,8 @@ COACH_ADDENDUM = (
     + _SILENT_TOOLS_PREFIX
     + "the player reads only chess -- the position, the plan, the move in SAN"
     + _SILENT_TOOLS_SUFFIX
-    + "Weigh your candidates with one `top_moves` call; red-team the "
+    + _BOOK_REPLY_EXEMPTION
+    + "weigh your candidates with one `top_moves` call; red-team the "
     "winner with `delegate` and pick differently if it is refuted. Then "
     "submit your move with a single `recommend_move`; if it names a "
     "stronger move, submit that one. "
@@ -128,7 +137,8 @@ COMMENTATOR_ADDENDUM = (
     + "the reader sees only the annotation -- positions, moves in SAN, plans"
     + _SILENT_TOOLS_SUFFIX
     + _REPORT_LINE_RULE
-    + "Treat the move played as a claim to test: compare it with the "
+    + _BOOK_REPLY_EXEMPTION
+    + "treat the move played as a claim to test: compare it with the "
     "alternatives in one `top_moves` call, red-team your verdict move with "
     "`delegate` (pick differently if refuted), then submit it with a single "
     "`recommend_move` -- if it names a stronger move, submit that one. Say "
@@ -247,13 +257,41 @@ def _side_to_move_from_fen(fen: str) -> str:
     return SIDE_WHITE
 
 
+_BOOK_REPLY_LABEL = "Book reply here"
+_BOOK_REPLY_FILE_NOTE = "configured opening book"
+_BOOK_REPLY_ALSO = "also standard"
+
+
+def _fullmove_from_fen(fen: str) -> str:
+    """FEN fullmove field; '1' when malformed."""
+    parts = fen.split()
+    return parts[5] if len(parts) >= 6 and parts[5].isdigit() else "1"
+
+
+def _move_prefix_from_fen(fen: str) -> str:
+    """SAN move-number prefix ("13." / "13...") for the side to move."""
+    dots = "..." if _side_to_move_from_fen(fen) == SIDE_BLACK else "."
+    return f"{_fullmove_from_fen(fen)}{dots}"
+
+
+def _render_book_reply(fen: str, reply: "OpeningReply") -> str:
+    prefix = _move_prefix_from_fen(fen)
+    origin = reply.line_name or _BOOK_REPLY_FILE_NOTE
+    line = f"{_BOOK_REPLY_LABEL}: {prefix}{reply.san} ({origin})"
+    if reply.alternatives:
+        alts = ", ".join(
+            f"{prefix}{a.san}" + (f" ({a.line_name})" if a.line_name else "")
+            for a in reply.alternatives
+        )
+        line += f"; {_BOOK_REPLY_ALSO}: {alts}"
+    return line
+
+
 def _position_under_review(fen: str) -> str:
     """'move 19 (Black to move)' from the FEN's fullmove + side, so the model
     knows which ply commentary is anchored at. Fullmove falls back to 1."""
     side = _side_to_move_from_fen(fen)
-    parts = fen.split()
-    fullmove = parts[5] if len(parts) >= 6 and parts[5].isdigit() else "1"
-    return f"move {fullmove} ({side.capitalize()} to move)"
+    return f"move {_fullmove_from_fen(fen)} ({side.capitalize()} to move)"
 
 
 # Appended to the user message when the position under review is still in
@@ -271,6 +309,35 @@ OPENING_PHASE_GUIDANCE = (
 )
 
 
+# Sent whenever the server found a book reply for the position, in place
+# of OPENING_PHASE_GUIDANCE: favor known theory over engine exploration; a
+# played move that departs from theory still gets the normal comparison.
+BOOK_REPLY_GUIDANCE = (
+    "A known book reply for this position is given above -- real theory, "
+    "safe to name in prose. Favor it over engine exploration: when "
+    "recommending a move, submit that reply with `recommend_move` directly, "
+    "no `top_moves` comparison or `delegate` check first. When reviewing a "
+    "played move that matches it, do the same; one that departs gets the "
+    "normal comparison. Say it is the book move, naming the line when one "
+    "is given, and add one sentence on the plan it carries; when moves are "
+    "listed as also standard, name them as equally valid choices in one "
+    "more sentence. Skip `related_openings`."
+)
+
+
+# Steers are narrator-only: they name tools and skips the verifier
+# registry lacks, so verifier sub-runs must not inherit them.
+_OPENING_STEERS = (OPENING_PHASE_GUIDANCE, BOOK_REPLY_GUIDANCE)
+
+
+def split_opening_steer(user_content: str) -> tuple[str, bool]:
+    """(content without any opening steer, whether one was present)."""
+    for steer in _OPENING_STEERS:
+        if steer in user_content:
+            return user_content.replace(steer, "").rstrip() + "\n", True
+    return user_content, False
+
+
 def build_initial_user_message(
     *,
     fen: str,
@@ -283,6 +350,7 @@ def build_initial_user_message(
     annotations: list[str | None] | None = None,
     root_annotation: str | None = None,
     in_opening: bool = False,
+    book_reply: "OpeningReply | None" = None,
 ) -> str:
     """Build the user message that opens an agent turn. Carries the FEN,
     the explicit side-to-move (so the model does not re-derive it), the
@@ -312,6 +380,10 @@ def build_initial_user_message(
     opening-theory aside (caller gates it on the position still being in
     book). Off by default.
 
+    `book_reply` is the theory reply the server found for the position
+    (opening_reply probe). It rides the message as its own line and
+    carries the favor-the-book steer in place of the opening-phase one.
+
     Optional fields are omitted entirely when not provided."""
     lines: list[str] = []
     if engine_name:
@@ -325,6 +397,8 @@ def build_initial_user_message(
     lines.append(f"Game moves: {_render_san_pairs(san_history)}")
     if move_played:
         lines.append(f"Move played here: {move_played}")
+    if book_reply is not None:
+        lines.append(_render_book_reply(fen, book_reply))
     if result:
         lines.append(f"Game result: {result}")
     if root_annotation:
@@ -332,7 +406,9 @@ def build_initial_user_message(
     annotations_line = _render_annotations(san_history, annotations)
     if annotations_line:
         lines.append(annotations_line)
-    if in_opening:
+    if book_reply is not None:
+        lines.append(BOOK_REPLY_GUIDANCE)
+    elif in_opening:
         lines.append(OPENING_PHASE_GUIDANCE)
     return "\n".join(lines) + "\n"
 

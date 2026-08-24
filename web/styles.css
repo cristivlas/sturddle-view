@@ -557,6 +557,7 @@ wa-select::part(listbox) {
 .play-ai-tool-dot-delegate       { background: var(--wa-color-cyan-60, #0ea5b5); }
 .play-ai-tool-dot-report_line    { background: var(--wa-color-teal-60, #14b8a6); }
 .play-ai-tool-dot-related_openings { background: var(--wa-color-indigo-60, #6366f1); }
+.play-ai-tool-dot-position_judge { background: var(--wa-color-orange-60, #ea580c); }
 /* Verifier sub-run tool calls, nested under their "Verifying line" row.
    Full-width break (flex-wrap); a vertical spine runs through the child dot
    centers (8px dot -> center x=4px), tying the sub-calls into one timeline. */
@@ -3244,6 +3245,16 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .about-dialog { text-align: center; padding: 8px 0 16px; }
 .about-name { font-size: 1.125rem; font-weight: 600; margin-bottom: 36px; }
 .about-meta { font-size: 0.8125rem; color: var(--muted); line-height: 1.6; }
+/* Connect-from-mobile disclosure: wa-details chrome stripped (as for the
+   template-form sections), header centered under the version lines. */
+.about-connect { margin-top: 24px; }
+.about-connect::part(base) { border: none; background: none; }
+.about-connect::part(header) {
+  padding: 0; justify-content: center; gap: 6px;
+  font-size: 0.8125rem; color: var(--muted);
+}
+.about-connect::part(content) { padding: 12px 0 0; }
+.about-qr { display: block; width: 176px; height: 176px; margin: 0 auto; }
 .tournaments-list {
   list-style: none; padding: 0; margin: 0;
   display: flex; flex-direction: column; gap: 8px;
@@ -3719,8 +3730,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .studio-tourney-row:hover, .studio-history-row:hover { background: var(--row-bg-hover); }
 .studio-history-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
-.studio-tourney-row.selected { background: var(--row-bg-selected); }
-.studio-tourney-row.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
+/* .marked: the extra rows of a multi-selection, styled like the selected one. */
+.studio-tourney-row.selected, .studio-tourney-row.marked { background: var(--row-bg-selected); }
+.studio-tourney-row.selected td:first-child,
+.studio-tourney-row.marked td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
 .studio-history-num, .studio-history-result { color: var(--muted); }
 .studio-history-result { font-family: var(--wa-font-family-code); }
 .studio-tourney-created { color: var(--muted); }
@@ -3745,7 +3758,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   min-width: 0;
 }
 .tournament-row:hover { background: linear-gradient(to right, var(--row-bg-hover), var(--bg) 75%); }
-.tournament-row.selected {
+/* .marked: the extra rows of a multi-selection, styled like the selected one. */
+.tournament-row.selected, .tournament-row.marked {
   background: linear-gradient(to right, var(--row-bg-selected), var(--bg) 75%);
   box-shadow: inset 3px 0 0 0 var(--accent-line);
 }

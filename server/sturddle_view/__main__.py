@@ -13,7 +13,8 @@ from platformdirs import user_config_dir
 from . import APP_NAME, app_dir_name
 from ._instance_lock import acquire as _acquire_lock
 from ._runtime import DESKTOP_FLAG, PROXY_SUBCOMMAND, is_frozen
-from .config import Settings
+from .auth import AUTH_DISABLED_LAN_WARNING
+from .config import LOOPBACK_HOST, Settings
 from .logging_setup import configure_logging
 from .tournament.proxy import main as _proxy_main
 
@@ -108,13 +109,6 @@ def main() -> None:
                 show_error(APP_NAME, msg, details=_ALREADY_RUNNING_DETAILS)
             sys.exit(1)
 
-    if args.no_auth and args.host and args.host != "127.0.0.1":
-        # Explicit, intentional combo: warn loudly but allow (tailscale / trusted LAN).
-        logging.getLogger(__name__).warning(
-            "AUTH DISABLED on non-loopback bind %s -- anyone reachable on the network "
-            "can control this server. Use only on a trusted network.", args.host,
-        )
-
     # Push CLI overrides into env so the worker process's Settings() picks them up.
     if args.engine:
         os.environ["SV_ENGINE_PATH"] = args.engine
@@ -131,6 +125,10 @@ def main() -> None:
     settings = Settings()
     host = settings.host
     port = settings.port
+
+    if args.no_auth and host != LOOPBACK_HOST:
+        # Explicit, intentional combo: warn loudly but allow (tailscale / trusted LAN).
+        logging.getLogger(__name__).warning(AUTH_DISABLED_LAN_WARNING, host)
 
     if args.desktop:
         from .desktop import run_desktop

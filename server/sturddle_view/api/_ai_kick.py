@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
 
@@ -23,6 +24,7 @@ from ..env_utils import env_int
 from ..llm import PromptMode, build_initial_user_message
 from ..llm.ollama import DEFAULT_BASE_URL as _DEFAULT_OLLAMA_BASE_URL, OllamaProvider
 from ..play.mode import Mode
+from ..play.opening_reply import book_ref_from_settings, probe_opening_reply
 
 log = logging.getLogger(__name__)
 
@@ -141,8 +143,20 @@ def _prompt_mode_for(hve) -> PromptMode:
     return _COACH_MODE
 
 
-def _build_turn_inputs(hve) -> str | None:
-    """Build the user_message for one turn from a single SAN walk."""
+@dataclass(slots=True, frozen=True)
+class TurnInputs:
+    """What one AI turn is kicked with: the opening user message, the
+    book move (UCI) the loop accepts without a red-team hold, if any,
+    and its sibling theory moves for the board's secondary arrows."""
+
+    user_message: str
+    book_move_uci: str | None
+    book_alternatives: tuple[str, ...]
+
+
+async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
+    """Build the user message (and book move, if any) for one turn from a
+    single SAN walk."""
     if hve is None:
         return None
     board = hve.current_board()
@@ -177,6 +191,23 @@ def _build_turn_inputs(hve) -> str | None:
     in_opening = opening is not None and ply <= opening.ply + env_int(
         _OPENING_PHASE_SLACK_ENV, _OPENING_PHASE_SLACK_DEFAULT
     )
+    # Theory fast path (see BOOK_REPLY_GUIDANCE): the reply rides the
+    # message and clears the loop's red-team hold. Off-loop: the book's
+    # first index build is slow. The armed ref's anchor is the game-start
+    # cursor, so it names the engine's own line. View mode: the move
+    # played here is the reply whenever theory knows it.
+    reply = None
+    if hve.start_fen() is None:
+        reply = await asyncio.to_thread(
+            probe_opening_reply,
+            eco_book,
+            hve.book_ref() or book_ref_from_settings(settings),
+            board.copy(),
+            opening,
+            board.parse_san(move_played).uci() if move_played else None,
+        )
+    else:
+        log.info("opening reply: probe skipped (custom start FEN)")
     message = build_initial_user_message(
         fen=board.fen(),
         san_history=san_history,
@@ -188,8 +219,11 @@ def _build_turn_inputs(hve) -> str | None:
         annotations=annotations,
         root_annotation=root_annotation,
         in_opening=in_opening,
+        book_reply=reply,
     )
-    return message
+    if reply is None:
+        return TurnInputs(message, None, ())
+    return TurnInputs(message, reply.uci, tuple(a.uci for a in reply.alternatives))
 
 
 async def _evict_stale_ollama_models(base_url: str, target_model: str) -> None:
@@ -257,7 +291,9 @@ async def start_ai_turn(request: Request) -> None:
         await _evict_stale_ollama_models(base_url, s.ai_model or "")
     hve = request.app.state.hve
     game_id = getattr(hve, "game_id", None) if hve else None
-    user_message = _build_turn_inputs(hve)
+    inputs = await _build_turn_inputs(
+        hve, s, getattr(request.app.state, "openings", None)
+    )
     mode = _prompt_mode_for(hve)
     # Latest-start-wins: hard-stop any in-flight turn first. run() holds a
     # single lock for the whole turn, so without this the new turn queues
@@ -279,7 +315,9 @@ async def start_ai_turn(request: Request) -> None:
         coord.run(
             game_id=game_id,
             provider=provider,
-            user_message=user_message,
+            user_message=inputs.user_message if inputs else None,
+            book_move_uci=inputs.book_move_uci if inputs else None,
+            book_alternatives=inputs.book_alternatives if inputs else (),
             mode=mode,
             max_tool_rounds=s.ai_max_tool_rounds,
             verifier_max_rounds=s.ai_verifier_max_rounds,

@@ -21,12 +21,21 @@ from sturddle_view.llm import (
     build_initial_user_message,
 )
 from sturddle_view.llm.prompts import (
+    BOOK_REPLY_GUIDANCE,
     COACH_ADDENDUM,
     COMMENTATOR_ADDENDUM,
+    OPENING_PHASE_GUIDANCE,
     SYSTEM_PROMPT_PREFACE,
     SYSTEM_PROMPT_RULES,
+    split_opening_steer,
 )
 from sturddle_view.play.ai_analysis import AIAnalysisCoordinator
+from sturddle_view.play.opening_reply import (
+    REPLY_SOURCE_BOOK,
+    REPLY_SOURCE_ECO,
+    Alternative,
+    OpeningReply,
+)
 
 
 _STARTPOS_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
@@ -404,3 +413,107 @@ async def test_coordinator_empty_when_no_user_message():
 
     assert provider.last_call is not None
     assert provider.last_call["messages"] == [{"role": "user", "content": ""}]
+
+
+# ---------- book reply line + opening steer selection -----------------
+
+_BLACK_FEN = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
+
+
+def test_user_message_renders_eco_book_reply_with_black_prefix():
+    got = build_initial_user_message(
+        fen=_BLACK_FEN,
+        san_history=["e4", "e5"],
+        book_reply=OpeningReply(
+            san="Nc6",
+            uci="b8c6",
+            source=REPLY_SOURCE_ECO,
+            line_name="B00 Nimzowitsch Defense",
+        ),
+    )
+    assert "Book reply here: 2...Nc6 (B00 Nimzowitsch Defense)\n" in got
+
+
+def test_user_message_renders_file_book_reply_with_white_prefix():
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN,
+        san_history=[],
+        book_reply=OpeningReply(
+            san="e4", uci="e2e4", source=REPLY_SOURCE_BOOK, line_name=None,
+        ),
+    )
+    assert "Book reply here: 1.e4 (configured opening book)\n" in got
+
+
+def test_user_message_renders_book_reply_alternatives():
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN,
+        san_history=[],
+        book_reply=OpeningReply(
+            san="e4", uci="e2e4", source=REPLY_SOURCE_ECO, line_name="B00 King's Pawn",
+            alternatives=(
+                Alternative("d4", "d2d4", "A40 Queen's Pawn"),
+                Alternative("c4", "c2c4", None),
+            ),
+        ),
+    )
+    assert (
+        "Book reply here: 1.e4 (B00 King's Pawn); also standard: "
+        "1.d4 (A40 Queen's Pawn), 1.c4\n"
+    ) in got
+
+
+def test_user_message_omits_book_reply_line_when_none():
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN, san_history=[], in_opening=True,
+    )
+    assert "Book reply here:" not in got
+
+
+def test_user_message_book_reply_swaps_opening_steer():
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN,
+        san_history=[],
+        in_opening=True,
+        book_reply=OpeningReply(
+            san="e4", uci="e2e4", source=REPLY_SOURCE_BOOK, line_name=None,
+        ),
+    )
+    assert BOOK_REPLY_GUIDANCE in got
+    assert OPENING_PHASE_GUIDANCE not in got
+
+
+def test_user_message_opening_steer_without_book_reply():
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN, san_history=[], in_opening=True,
+    )
+    assert OPENING_PHASE_GUIDANCE in got
+    assert BOOK_REPLY_GUIDANCE not in got
+
+
+def test_user_message_book_reply_steer_outside_opening():
+    # A book hit carries its steer even past the opening-phase gate.
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN,
+        san_history=[],
+        book_reply=OpeningReply(
+            san="e4", uci="e2e4", source=REPLY_SOURCE_BOOK, line_name=None,
+        ),
+    )
+    assert "Book reply here:" in got
+    assert BOOK_REPLY_GUIDANCE in got
+    assert OPENING_PHASE_GUIDANCE not in got
+
+
+def test_split_opening_steer_strips_each_steer():
+    for steer in (OPENING_PHASE_GUIDANCE, BOOK_REPLY_GUIDANCE):
+        stripped, present = split_opening_steer(f"Context line\n{steer}\n")
+        assert present is True
+        assert steer not in stripped
+        assert "Context line" in stripped
+
+
+def test_split_opening_steer_passes_through_without_steer():
+    stripped, present = split_opening_steer("Context line\n")
+    assert present is False
+    assert stripped == "Context line\n"

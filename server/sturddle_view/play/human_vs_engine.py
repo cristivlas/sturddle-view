@@ -391,6 +391,12 @@ class HumanVsEngine:
     def start_fen(self) -> str | None:
         return self._start_fen
 
+    def book_ref(self) -> BookRef | None:
+        """Per-game PGN book reference armed at new_game -- its anchor is
+        the game-start cursor, unlike the live settings cursor which has
+        already advanced. None in view mode or after rehydrate."""
+        return self._book
+
     def view_full_moves_san(self) -> list[str]:
         """Full game's moves when HVE is in view mode (or analyzing-from-
         view); empty in play mode."""

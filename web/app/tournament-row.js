@@ -89,8 +89,9 @@ export function progressLabelHtml(played, total) {
   return `<span class="tournament-progress-label">${progressLabelText(played, total)}</span>`;
 }
 
-// Build the <li> for one tournament. options: { selected, onSelect(t),
-// onInfo(t) }. onSelect fires on click, onInfo on double-click.
+// Build the <li> for one tournament. options: { selected, onSelect(t, ev),
+// onInfo(t) }. onSelect fires on click (the event carries the multi-select
+// modifiers), onInfo on double-click.
 export function renderTournamentRow(t, { selected = false, onSelect, onInfo } = {}) {
   const li = document.createElement("li");
   li.className = "tournament-row" + (selected ? " selected" : "");
@@ -118,7 +119,7 @@ export function renderTournamentRow(t, { selected = false, onSelect, onInfo } = 
     li.querySelector(".tournament-engines").textContent = engineNames;
   }
 
-  if (onSelect) li.addEventListener("click", () => onSelect(t));
+  if (onSelect) li.addEventListener("click", (ev) => onSelect(t, ev));
   if (onInfo) li.addEventListener("dblclick", () => onInfo(t));
   return li;
 }

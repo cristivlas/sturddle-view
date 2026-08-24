@@ -41,6 +41,8 @@ EVT_AI_RECOMMENDATION = "ai_recommendation"
 EVT_AI_POSITION_NOTE = "ai_position_note"
 EVT_AI_USAGE = "ai_usage"
 EVT_SYSTEM = "system"
+# A non-loopback client completed the /auth handshake (phone scanned the QR).
+EVT_REMOTE_CONNECTED = "remote_connected"
 
 
 EventKind = Literal[
@@ -61,6 +63,7 @@ EventKind = Literal[
     "ai_position_note",
     "ai_usage",
     "system",
+    "remote_connected",
 ]
 
 

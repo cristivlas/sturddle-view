@@ -689,10 +689,12 @@ function applyBoardUpdate(ctx, evt) {
     // jump by clicking a move in the list.
     let currentIdx = null;
     let clickHandler = null;
-    if (evt.payload.view && !ctx.editing) {
+    if (evt.payload.view) {
+      // The cursor ply stays highlighted through edit mode; only the
+      // click affordances drop out.
       currentIdx = (evt.payload.view.cursor ?? 0) - 1;
-      // No ply-jump (and no clickable cursor) while analyzing.
-      if (!ctx.analyzing) clickHandler = ctx.onMoveJump;
+      // No ply-jump (and no clickable cursor) while analyzing or editing.
+      if (!ctx.analyzing && !ctx.editing) clickHandler = ctx.onMoveJump;
     } else if (!ctx.editing && !ctx.analyzing && ctx.onPlayMoveClick) {
       // Play mode: clicking a past move flips into server view mode at
       // that ply (the handler ignores clicks on the live last move).
@@ -796,6 +798,7 @@ function applyEvent(ctx, evt) {
       if (!ctx.editing && evt.payload.uci && evt.payload.uci.length >= 4) {
         const u = evt.payload.uci;
         ctx.board.setRecommendArrow(u.slice(0, 2), u.slice(2, 4));
+        ctx.board.setAlternativeArrows(evt.payload.alternatives);
       }
       break;
     case KIND.GAME_RESULT:

@@ -96,6 +96,10 @@ def default_settings_file() -> Path:
     return Path(user_config_dir(app_dir_name(), appauthor=False)) / "settings.json"
 
 
+LOOPBACK_HOST = "127.0.0.1"
+WILDCARD_HOST = "0.0.0.0"
+
+
 # Fields persisted to disk. Excludes secrets (token), bind config (host/port),
 # auth_disabled (CLI flag), and web_dir (deployment).
 PERSISTED_FIELDS = (
@@ -154,7 +158,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    host: str = "127.0.0.1"
+    host: str = LOOPBACK_HOST
     port: int = 8765
     token: str = Field(default_factory=lambda: secrets.token_urlsafe(24))
     # Enables /_test/* endpoints (HVE install/state) used by the e2e

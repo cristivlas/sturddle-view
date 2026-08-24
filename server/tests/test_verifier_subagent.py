@@ -615,6 +615,18 @@ async def _echo_verifier(move, depth, cancel_token):
     return {"uci": move.uci(), "san": move.uci()}
 
 
+def _recording_verifier():
+    """(verifier, calls): like _echo_verifier, recording each move it was
+    asked to search -- a book pick must never reach it."""
+    calls: list[str] = []
+
+    async def verify(move, depth, cancel_token):
+        calls.append(move.uci())
+        return await _echo_verifier(move, depth, cancel_token)
+
+    return verify, calls
+
+
 async def _stub_recommend(_input, *, cancel_token):
     return {"ok": True, "uci": chess.Board().parse_san(_input["move"]).uci()}
 
@@ -645,6 +657,13 @@ def _narrator_registry(*extra_tools: str) -> ToolRegistry:
     return reg
 
 
+def _red_team_holds(events) -> list:
+    return [
+        e for e in events if e.kind == "ai_tool_call_failed"
+        and e.payload.get("error") == "red_team_first"
+    ]
+
+
 @pytest.mark.asyncio
 async def test_accept_without_red_team_is_held_once():
     # A pick must survive an adversarial check: the first accept with no
@@ -671,11 +690,9 @@ async def test_accept_without_red_team_is_held_once():
     await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
     events = await _drain_until_done(queue)
 
-    held = [
-        e for e in events if e.kind == "ai_tool_call_failed"
-        and e.payload.get("error") == "red_team_first"
-    ]
-    assert len(held) == 1, "first un-red-teamed accept should be held once"
+    assert len(_red_team_holds(events)) == 1, (
+        "first un-red-teamed accept should be held once"
+    )
     recs = [e for e in events if e.kind == "ai_recommendation"]
     assert recs and recs[-1].payload.get("uci") == "e2e4"
 
@@ -703,12 +720,83 @@ async def test_accept_after_delegate_not_held():
     await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
     events = await _drain_until_done(queue)
 
-    assert not [
-        e for e in events if e.kind == "ai_tool_call_failed"
-        and e.payload.get("error") == "red_team_first"
-    ], "a prior delegate verdict should satisfy the red-team hold"
+    assert not _red_team_holds(events), (
+        "a prior delegate verdict should satisfy the red-team hold"
+    )
     recs = [e for e in events if e.kind == "ai_recommendation"]
     assert recs and recs[-1].payload.get("uci") == "e2e4"
+
+
+@pytest.mark.asyncio
+async def test_book_move_accepted_without_red_team():
+    # A recommend_move naming the turn's book move ships on the first
+    # accept -- theory vetted it -- with no red_team_first hold and no
+    # delegate round: two provider rounds, accept + conclusion. The
+    # sibling theory moves ride the recommendation for the board, and the
+    # end-of-turn verifier search is skipped -- theory needs no engine check.
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="tool_use", tool_use_id="r0",
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="text", text="e4 is the book move.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    verifier, searched = _recording_verifier()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=_narrator_registry("delegate"),
+        board_provider=(lambda: chess.Board()),
+        recommend_verifier=verifier,
+    )
+
+    await coord.run(
+        game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n",
+        book_move_uci="e2e4", book_alternatives=("d2d4", "c2c4"),
+    )
+    events = await _drain_until_done(queue)
+
+    assert not _red_team_holds(events), "the book move must not be held"
+    assert len(provider.calls) == 2
+    recs = [e for e in events if e.kind == "ai_recommendation"]
+    assert recs and recs[-1].payload.get("uci") == "e2e4"
+    assert recs[-1].payload.get("san") == "e4"
+    assert recs[-1].payload.get("alternatives") == ["d2d4", "c2c4"]
+    assert searched == [], "the book move must not be engine-verified"
+
+
+@pytest.mark.asyncio
+async def test_departing_move_still_held_on_book_turn():
+    # The exemption is for the book move only: a different pick on a
+    # book turn gets the usual one-shot hold and delegate round.
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="tool_use", tool_use_id="r0",     # departs -> held
+                       tool_name="recommend_move", tool_input={"move": "d4"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="d0",     # comply: red-team
+                       tool_name="delegate",
+                       tool_input={"move": "d4", "question": "does it hold?"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="r1",     # resubmit -> accepted
+                       tool_name="recommend_move", tool_input={"move": "d4"})],
+        [ProviderChunk(kind="text", text="d4 on review.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    verifier, searched = _recording_verifier()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=_narrator_registry("delegate"),
+        board_provider=(lambda: chess.Board()),
+        recommend_verifier=verifier,
+    )
+
+    await coord.run(
+        game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n",
+        book_move_uci="e2e4", book_alternatives=("c2c4",),
+    )
+    events = await _drain_until_done(queue)
+
+    assert len(_red_team_holds(events)) == 1
+    recs = [e for e in events if e.kind == "ai_recommendation"]
+    assert recs and recs[-1].payload.get("uci") == "d2d4"
+    assert "alternatives" not in recs[-1].payload
+    assert searched == ["d2d4"], "a departing pick still gets the verifier search"
 
 
 @pytest.mark.asyncio
@@ -738,11 +826,9 @@ async def test_top_moves_does_not_satisfy_red_team():
     await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
     events = await _drain_until_done(queue)
 
-    held = [
-        e for e in events if e.kind == "ai_tool_call_failed"
-        and e.payload.get("error") == "red_team_first"
-    ]
-    assert len(held) == 1, "top_moves alone should not satisfy the red-team hold"
+    assert len(_red_team_holds(events)) == 1, (
+        "top_moves alone should not satisfy the red-team hold"
+    )
     recs = [e for e in events if e.kind == "ai_recommendation"]
     assert recs and recs[-1].payload.get("uci") == "e2e4"
 
@@ -767,10 +853,7 @@ async def test_accept_without_delegate_registered_not_held():
     await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
     events = await _drain_until_done(queue)
 
-    assert not [
-        e for e in events if e.kind == "ai_tool_call_failed"
-        and e.payload.get("error") == "red_team_first"
-    ]
+    assert not _red_team_holds(events)
     recs = [e for e in events if e.kind == "ai_recommendation"]
     assert recs and recs[-1].payload.get("uci") == "e2e4"
 

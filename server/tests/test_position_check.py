@@ -13,6 +13,8 @@ import pytest
 from sturddle_view.llm.position_check import (
     describe_square,
     find_false_bishop_color_refs,
+    find_false_file_claims,
+    find_false_file_openness,
     find_false_piece_claims,
     find_illegal_continuations,
     find_illegal_moves,
@@ -23,6 +25,8 @@ from sturddle_view.llm.position_check import (
     handled_continuation_spans,
     iter_false_bishop_color_refs,
     iter_false_claim_squares,
+    iter_false_file_claims,
+    iter_false_file_openness,
     iter_illegal_continuations,
     iter_illegal_moves,
     iter_illegal_piece_moves,
@@ -198,11 +202,14 @@ def test_colorless_claim_about_non_moving_side_flagged():
     ]
 
 
-def test_colored_claim_about_non_moving_side_cleared():
-    # Same square, but "black knight on d3" names the color -> validated from
-    # Black, who can reach d3 -> cleared. The color word picks the POV.
+def test_colored_claim_about_non_moving_side_flagged():
+    # White to move: a black knight "on d3" is a hypothetical reply, not a
+    # position -- flagged until ...Nd3 is named (projection then clears it).
     board = _board(_POV_FEN)
-    assert find_false_piece_claims("a black knight on d3 is strong", board) == []
+    assert find_false_piece_claims("a black knight on d3 is strong", board) == [
+        "black knight on d3"
+    ]
+    assert find_false_piece_claims("After ...Nd3 a black knight on d3 is strong", board) == []
 
 
 def test_wrong_color_claim_flagged():
@@ -941,3 +948,302 @@ def test_current_and_past_numbers_do_not_truncate():
     board = _board(_FUTURE_FEN)
     text = "After 18...Qxa1+ 19.Ke2 Black is winning."
     assert truncate_at_future_line(text, board) == text
+
+
+# --- find_false_file_claims ('<piece> on the <x>-file') --------------------
+
+# From the wild (2026-08-21): "places the rook opposite the white queen on the
+# c-file" -- the white queen is on b2. The prompt's board-confirmation rule
+# did not stop it; only a board check does. Black to move.
+_WILD_C_FILE_FEN = "r2q1rk1/pp1bpp1p/2np1np1/1B6/P3P2P/5N2/1Q1N1PP1/R3R1K1 b - - 5 13"
+_WILD_C_FILE_TEXT = (
+    "Playing 13...Rc8 places the rook opposite the white queen on the c-file "
+    "while preparing active queenside counterplay. The rook anchors the "
+    "c6-knight and increases pressure on the opponent's center."
+)
+
+
+def test_wild_queen_on_c_file_flagged():
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_file_claims(_WILD_C_FILE_TEXT, board) == ["white queen on the c-file"]
+
+
+def test_wild_queen_on_c_file_yields_surface_label_fact():
+    board = _board(_WILD_C_FILE_FEN)
+    rows = list(iter_false_file_claims(_WILD_C_FILE_TEXT, board))
+    # Surface starts at the color word: a "the" before it is not absorbed
+    # (same as piece claims -- the article binds only when it directly
+    # precedes the piece).
+    assert rows == [(
+        "white queen on the c-file",
+        "white queen on the c-file",
+        "no white queen on the c-file; the white queen is on b2",
+    )]
+
+
+def test_true_file_claims_not_flagged():
+    # Re1 really is on the e-file; Nc6 on the c-file.
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_file_claims("the white rook on the e-file", board) == []
+    assert find_false_file_claims("the black knight on the c-file", board) == []
+
+
+def test_bare_file_claim_holds_for_either_side():
+    # No color word: the black knight on c6 satisfies "the knight on the c-file".
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_file_claims("the knight on the c-file is solid", board) == []
+
+
+def test_bare_file_claim_cleared_when_side_to_move_can_reach_file():
+    # Black to move, no rook on the c-file, but ...Rc8 is legal: plan phrasing
+    # ("a rook on the c-file") is not a board error.
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_file_claims("a rook on the c-file would help", board) == []
+
+
+def test_named_color_file_claim_gets_no_reachability_carve_out():
+    # Qb2-c3 is legal, yet "the white queen on the c-file" stays flagged: a
+    # queen reaches nearly any file in one move, so reachability would clear
+    # every false colored claim.
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_file_claims("the white queen on the c-file", board) == [
+        "white queen on the c-file"
+    ]
+
+
+def test_file_claim_projected_through_named_move_holds():
+    # After 13...Rc8 the rook IS on the c-file; the SAN earlier in the prose
+    # projects the board, so the colored claim holds.
+    board = _board(_WILD_C_FILE_FEN)
+    text = "After 13...Rc8 the black rook on the c-file eyes c2."
+    assert find_false_file_claims(text, board) == []
+
+
+def test_captured_file_claim_not_flagged():
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_file_claims("White captured the queen on the c-file", board) == []
+
+
+def test_file_claim_space_form_matches_and_normalizes():
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_file_claims("the white queen on the c file", board) == [
+        "white queen on the c-file"
+    ]
+
+
+def test_file_claim_fact_pluralizes_and_names_absent_piece():
+    board = _board(_WILD_C_FILE_FEN)
+    rows = list(iter_false_file_claims("the white rook on the c-file", board))
+    assert rows[0][2] == "no white rook on the c-file; the white rooks are on a1 and e1"
+    rookless = _board("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1")
+    rows2 = list(iter_false_file_claims("the black rook on the a-file", rookless))
+    assert rows2[0][2] == "no black rook on the a-file; Black has no rook"
+
+
+def test_file_claim_dedups_repeated_claim():
+    board = _board(_WILD_C_FILE_FEN)
+    text = "the white queen on the c-file ... the white queen on the c-file again"
+    assert find_false_file_claims(text, board) == ["white queen on the c-file"]
+
+
+def test_bare_file_claim_absent_piece_fact_reads_neither_side():
+    # Both sides queenless: the corrective must not double-negate.
+    board = _board("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1")
+    rows = list(iter_false_file_claims("the queen on the d-file", board))
+    assert rows[0][2] == "no queen on the d-file; neither side has a queen"
+
+
+def test_opponent_cue_resolves_to_side_not_to_move():
+    # Black to move, so "your opponent's rook" is White's: no white rook on the
+    # c-file (a1, e1) -> checked as a named-side claim, no reachability out.
+    board = _board(_WILD_C_FILE_FEN)
+    rows = list(iter_false_file_claims("your opponent's rook on the c-file", board))
+    assert [(label, fact) for _surface, label, fact in rows] == [(
+        "white rook on the c-file",
+        "no white rook on the c-file; the white rooks are on a1 and e1",
+    )]
+    assert find_false_file_claims("your opponent's rook on the e-file", board) == []
+
+
+@pytest.mark.parametrize("phrase", [
+    "the white queen on the open c-file",
+    "the white queen on the half-open c-file",
+    "the white queen on the half open c file",
+    "the white queen on the semi-open c-file",
+])
+def test_file_adjective_forms_flagged(phrase):
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_file_claims(phrase, board) == ["white queen on the c-file"]
+
+
+# --- find_false_file_openness (open / semi-open / closed file) -------------
+
+# From the wild (2026-08-21): "13...Rc8 ... placing it on a semi-open file" --
+# the c-file has no pawns at all, so it is open. Bare form, clause-bound to
+# Rc8's destination file.
+_WILD_SEMI_OPEN_TEXT = (
+    "The move 13...Rc8 improves the position of your rook by placing it on a "
+    "semi-open file. This develops your minor pieces while keeping your king "
+    "position stable against the upcoming pressure on the kingside."
+)
+# After 1.e4 c5 2.Nf3 d6 3.d4 cxd4 4.Nxd4: c-file semi-open (c2 only), d-file
+# semi-open (d6 only), e-file closed (e4, e7). Black to move.
+_OPEN_SICILIAN_FEN = "rnbqkbnr/pp2pppp/3p4/8/3NP3/8/PPP2PPP/RNBQKB1R b KQkq - 0 4"
+# Same line one ply earlier (after 3.d4): c-file closed (c2, c5) until ...cxd4.
+_BEFORE_CXD4_FEN = "rnbqkbnr/pp2pppp/3p4/2p5/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq d3 0 3"
+
+
+def test_wild_semi_open_bare_claim_bound_to_rc8_flagged():
+    board = _board(_WILD_C_FILE_FEN)
+    rows = list(iter_false_file_openness(_WILD_SEMI_OPEN_TEXT, board))
+    assert rows == [(
+        "a semi-open file",
+        "semi-open c-file",
+        "the c-file is open: no pawns on it",
+    )]
+
+
+def test_open_file_bare_claim_holds_when_bound_file_is_open():
+    # The first wild sample's "an open file" after 13...Rc8 was correct.
+    board = _board(_WILD_C_FILE_FEN)
+    text = "You play 13...Rc8 to bring the rook to an open file."
+    assert find_false_file_openness(text, board) == []
+
+
+def test_named_openness_claims_checked_against_pawn_structure():
+    board = _board(_OPEN_SICILIAN_FEN)
+    assert find_false_file_openness("the semi-open c-file", board) == []
+    assert find_false_file_openness("the closed e-file", board) == []
+    assert find_false_file_openness("the open c-file", board) == ["open c-file"]
+    assert find_false_file_openness("the closed d-file", board) == ["closed d-file"]
+
+
+def test_half_open_and_semi_open_spellings_normalize():
+    board = _board(_OPEN_SICILIAN_FEN)
+    for phrase in ("the half-open e-file", "the half open e file", "the semi open e-file"):
+        rows = list(iter_false_file_openness(phrase, board))
+        assert [(label, fact) for _surface, label, fact in rows] == [(
+            "semi-open e-file",
+            "the e-file is closed: a white pawn on e4 and a black pawn on e7",
+        )], phrase
+
+
+def test_openness_fact_for_semi_open_file():
+    board = _board(_OPEN_SICILIAN_FEN)
+    rows = list(iter_false_file_openness("the open c-file", board))
+    assert rows[0][2] == "the c-file is semi-open: only a white pawn on c2"
+
+
+def test_openness_fact_pluralizes_doubled_pawns():
+    # White pawns doubled on c2/c3, no black c-pawn: semi-open with two pawns.
+    board = _board("4k3/8/8/8/8/2P5/2P5/4K3 w - - 0 1")
+    rows = list(iter_false_file_openness("the open c-file", board))
+    assert rows[0][2] == "the c-file is semi-open: only white pawns on c2 and c3"
+
+
+def test_bare_openness_claim_unbound_is_skipped():
+    # No SAN in the clause to bind the file: nothing to check, nothing flagged.
+    board = _board(_OPEN_SICILIAN_FEN)
+    assert find_false_file_openness("Pressure down a semi-open file grows.", board) == []
+
+
+def test_bare_openness_claim_binds_to_capture_destination():
+    # Nxd4's destination is d4 -> the d-file, which is semi-open, not open.
+    board = _board(_OPEN_SICILIAN_FEN)
+    text = "4.Nxd4 leaves the rook eyeing an open file."
+    assert find_false_file_openness(text, board) == ["open d-file"]
+
+
+def test_openness_claim_holds_on_projected_board():
+    # Before ...cxd4 the c-file is closed; the SAN earlier in the prose projects
+    # the capture, after which it is semi-open -- the claim holds.
+    board = _board(_BEFORE_CXD4_FEN)
+    text = "After 3...cxd4 the semi-open c-file favors Black."
+    assert find_false_file_openness(text, board) == []
+    assert find_false_file_openness("the semi-open c-file", board) == ["semi-open c-file"]
+
+
+def test_plural_open_files_not_a_claim():
+    board = _board(_OPEN_SICILIAN_FEN)
+    assert find_false_file_openness("4.Nxd4 eyes the open files.", board) == []
+
+
+def test_openness_claim_dedups_repeat():
+    board = _board(_OPEN_SICILIAN_FEN)
+    text = "the open c-file ... the open c-file again"
+    assert find_false_file_openness(text, board) == ["open c-file"]
+
+
+def test_bare_openness_claim_with_two_sans_in_clause_is_skipped():
+    # Two candidate files (c8, b3): binding to the nearest would be a guess
+    # and a wrong one yields a confident wrong corrective -- skip instead.
+    # "14." must not split the clause either, or Qb3 alone would bind.
+    board = _board(_WILD_C_FILE_FEN)
+    text = "After 13...Rc8 and 14.Qb3 the rook sits on a semi-open file."
+    assert find_false_file_openness(text, board) == []
+
+
+def test_bare_openness_claim_binds_within_its_own_clause():
+    # The comma starts a new clause holding only Qb3 -> the b-file (black b7
+    # pawn only, semi-open), so "a closed file" is flagged against it.
+    board = _board(_WILD_C_FILE_FEN)
+    text = "13...Rc8 is natural, and after 14.Qb3 the queen sits on a closed file."
+    assert find_false_file_openness(text, board) == ["closed b-file"]
+
+
+# --- clause binding: a sentence-ending square/SAN still ends the clause -----
+
+
+def test_sentence_ending_san_splits_clause_for_bishop_binder():
+    # "Bxe5." ends the sentence; the next clause holds no SAN, so the bare
+    # light-squared ref gets the lenient check (e6 is light) instead of being
+    # bound to the dark e5 and falsely struck.
+    board = _board(_BISHOP_HALLUCINATION_FEN)
+    text = "White played Bxe5. The light-squared bishop is strong."
+    assert find_false_bishop_color_refs(text, board) == []
+
+
+def test_sentence_ending_san_splits_clause_for_openness_binder():
+    # Same boundary rule for the bare openness form: no SAN in its clause, so
+    # the claim is skipped rather than bound to Rc8's c-file.
+    board = _board(_WILD_C_FILE_FEN)
+    text = "Black replied 13...Rc8. The rook now sits on a semi-open file."
+    assert find_false_file_openness(text, board) == []
+
+
+# --- piece-on-square claims: no reachability carve-out for the other side ---
+
+# From the wild (2026-08-21): "the white queen on c2" (twice) -- it is on b2.
+# Qb2-c2 being legal used to clear the claim via reachability.
+_WILD_C2_TEXT = (
+    "The c-file contains only your rook on c8, the black knight on c6, and the "
+    "white queen on c2, with no pawns remaining on the file. Your rook on c8 "
+    "now faces the white queen on c2 directly, creating potential tactical "
+    "alignments."
+)
+
+
+def test_wild_queen_on_c2_flagged_despite_being_reachable():
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_piece_claims(_WILD_C2_TEXT, board) == ["white queen on c2"]
+
+
+def test_own_side_claim_on_reachable_square_still_cleared():
+    # Black to move; the a8 rook can play Rc8, so an own-side "rook on c8"
+    # describes the recommended move -- not flagged.
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_piece_claims("the black rook on c8 is active", board) == []
+
+
+def test_opponent_cue_square_claim_checked_as_other_side():
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_piece_claims("your opponent's queen on c2", board) == ["white queen on c2"]
+    assert find_false_piece_claims("your opponent's queen on b2", board) == []
+
+
+def test_opponent_verb_gap_does_not_recolor_the_piece():
+    # "opponent attacks the knight" names the mover, not the knight's owner:
+    # the f6 / c6 knights are Black's and the bare claims hold.
+    board = _board(_WILD_C_FILE_FEN)
+    assert find_false_piece_claims("Your opponent attacks the knight on f6", board) == []
+    assert find_false_file_claims("Your opponent targets the knight on the c-file", board) == []

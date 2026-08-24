@@ -938,7 +938,8 @@ export function buildToastWithActions(text, actions) {
  *  inline buttons to the toast. Well-known server error codes (see
  *  ERROR_CODE_ACTIONS) attach their canonical action automatically.
  *  Optional `opts.duration` overrides the toast lifetime; a non-finite
- *  duration (0 / Infinity) makes it sticky with a dismiss button. */
+ *  duration (0 / Infinity) makes it sticky with a dismiss button.
+ *  Returns the sticky toast's dismiss fn, or null for a transient toast. */
 export function reportError(ctx, action, error, opts = {}) {
   const message = (error && error.message) || String(error);
   const detailText = apiErrorDetail(error);
@@ -951,12 +952,14 @@ export function reportError(ctx, action, error, opts = {}) {
   // A sticky toast (no auto-dismiss timer) gets the dismiss button so the
   // user can still close it; toast() alone would leave it button-less.
   const sticky = opts.duration !== undefined && !(opts.duration > 0 && Number.isFinite(opts.duration));
+  let dismiss = null;
   if (sticky) {
-    stickyToast(body, { variant: "danger" });
+    dismiss = stickyToast(body, { variant: "danger" });
   } else {
     toast(body, { variant: "danger", duration: opts.duration });
   }
   ctx?.log?.(`${action}: ${message}`);
+  return dismiss;
 }
 
 /** Transient toast. Pass duration: 0 (or Infinity) to keep it open until the

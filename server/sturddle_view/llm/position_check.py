@@ -534,6 +534,7 @@ _PIECE_WORDS = {
     "pawn":   chess.PAWN,
 }
 _COLOR_WORDS = {"white": chess.WHITE, "black": chess.BLACK}
+_COLOR_TO_WORD = {color: word for word, color in _COLOR_WORDS.items()}
 _PIECE_ALT = "|".join(_PIECE_WORDS)
 # Color cue before a piece: an explicit "white"/"black", or "(your) opponent"
 # which names the side NOT to move (the AI plays the side to move). The
@@ -542,7 +543,7 @@ _PIECE_ALT = "|".join(_PIECE_WORDS)
 # the piece. Each part is optional, as is a leading article.
 _OPP_GAP = r"(?:\w+\s+){0,3}"
 _COLOR_OPT = (
-    rf"(?:(?:your\s+)?(?P<opp>opponent)(?:'s)?\s+{_OPP_GAP})?"
+    rf"(?:(?:your\s+)?(?P<opp>opponent)(?:'s)?\s+(?P<gap>{_OPP_GAP}))?"
     r"(?:(?P<color>white|black)(?:'s)?\s+)?(?:the\s+)?"
 )
 # Optional capture verb before a claim ("captured the rook on a1"). A captured
@@ -577,17 +578,25 @@ _SQUARE_TO_SQUARE_RE = re.compile(
 )
 
 
+def _owns_piece(m: re.Match) -> bool:
+    """An opponent cue owns the piece only with nothing but the possessive
+    between them ("opponent's knight"); a verb gap names the mover."""
+    return bool(m.group("opp")) and not m.group("gap")
+
+
 def _iter_piece_claims(text: str):
-    """Yield (surface, color_word, piece_word, square_name) for every claim
-    matched by either phrasing. `surface` is the exact prose span (for the UI
-    to strike). A claim led by a capture verb ('captured the rook on a1')
-    describes a past event, not the live board, and is skipped."""
+    """Yield (surface, color_word, opponent, piece_word, square_name) per
+    claim; `opponent` marks an owning "opponent's" cue. Capture-led claims
+    ('captured the rook on a1') are past events and skipped."""
     for regex in (_PIECE_ON_SQUARE_RE, _SQUARE_PIECE_RE):
         for m in regex.finditer(text):
             if m.group("cap"):
                 continue
             color = (m.group("color") or "").lower()
-            yield m.group(0), color, m.group("piece").lower(), m.group("square").lower()
+            yield (
+                m.group(0), color, _owns_piece(m),
+                m.group("piece").lower(), m.group("square").lower(),
+            )
 
 
 _TYPE_TO_NAME = {t: n for n, t in _PIECE_WORDS.items()}
@@ -600,7 +609,7 @@ def describe_square(square_name: str, board: chess.Board) -> str:
     piece = board.piece_at(square)
     if piece is None:
         return f"{square_name} is empty"
-    color = "white" if piece.color == chess.WHITE else "black"
+    color = _COLOR_TO_WORD[piece.color]
     return f"{square_name} has a {color} {_TYPE_TO_NAME[piece.piece_type]}"
 
 
@@ -631,24 +640,29 @@ def _prose_pov(color_word: str, board: chess.Board, opponent: bool = False) -> c
 def _claim_reachable(
     board: chess.Board, square: int, piece_type: int, color_word: str,
 ) -> bool:
-    """True iff a legal move lands a piece of `piece_type` on `square`, from
-    the prose POV (named color, else STM). Clears a claim about a square a move
-    can reach this turn ('a knight on d3' when a knight can play there)."""
-    color = _prose_pov(color_word, board)
-    return _reaches_for_color(board, square, piece_type, color)
+    """Side-to-move reachability only: a bare or own-side claim ('a knight
+    on d3') may be the recommended move stated without SAN. The other side
+    reaching a square is a hypothetical reply -- it belongs in SAN."""
+    if color_word and _COLOR_WORDS[color_word] != board.turn:
+        return False
+    return _reaches_for_color(board, square, piece_type, board.turn)
+
+
+def _resolve_color_word(color_word: str, opponent: bool, board: chess.Board) -> str:
+    """Named color as written; an owning opponent cue names the other side."""
+    if color_word or not opponent:
+        return color_word
+    return _COLOR_TO_WORD[_prose_pov(color_word, board, opponent)]
 
 
 def iter_false_claim_squares(text: str, board: chess.Board):
-    """Yield (surface, label, square_name) for each false piece claim.
-    `surface` is the exact prose span ("White's knight on b1") for the UI to
-    strike; `label` is the normalized form for facts/keys. A claim holds when
-    the piece sits there now, OR a legal move can land it there this turn, OR
-    it sits there on a board reached by a move named earlier in the prose --
-    the last covers opponent continuations a single hop can't ('after ...Nd3
-    the knight hits f2', unreachable until ...Nd3 is played)."""
+    """Yield (surface, label, square_name) per false piece claim. Holds when
+    the piece is there now, on a board projected from an earlier SAN, or (own
+    side only) reachable this turn. An "opponent" cue resolves to a color."""
     boards = [board, *projected_boards(text, board)]
     seen: set[str] = set()
-    for surface, color_word, piece_word, square_name in _iter_piece_claims(text):
+    for surface, color_word, opponent, piece_word, square_name in _iter_piece_claims(text):
+        color_word = _resolve_color_word(color_word, opponent, board)
         key = f"{color_word}|{piece_word}|{square_name}"
         if key in seen:
             continue
@@ -665,9 +679,116 @@ def iter_false_claim_squares(text: str, board: chess.Board):
 
 def find_false_piece_claims(text: str, board: chess.Board) -> list[str]:
     """'piece on square' claims that hold on no current/reachable/projected
-    board. 'the bishop on g6' with no bishop there and none able to reach it is
-    flagged; 'a knight on d3' is cleared once a knight can play to d3."""
+    board; 'a knight on d3' clears once the side to move can play it."""
     return [label for _surface, label, _square in iter_false_claim_squares(text, board)]
+
+
+# Piece-on-file claim recognizer: "<color?> <piece> on the <x>-file" ("the
+# white queen on the c-file"). An open/half-open/semi-open adjective may
+# precede the file; hyphen or space may join the file letter.
+_FILE_ADJ_OPT = r"(?:(?:(?:half|semi)[-\s]?)?open\s+)?"
+_PIECE_ON_FILE_RE = re.compile(
+    rf"\b{_CAPTURE_OPT}{_COLOR_OPT}(?P<piece>{_PIECE_ALT})\s+on\s+(?:the\s+)?"
+    rf"{_FILE_ADJ_OPT}(?P<file>[a-h])[-\s]file\b",
+    re.IGNORECASE,
+)
+
+
+def _iter_file_claims(text: str):
+    """Yield (surface, color_word, opponent, piece_word, file_index) per
+    '<piece> on the <x>-file' claim; `opponent` marks an owning "opponent's"
+    cue. Capture-led claims are past events and skipped."""
+    for m in _PIECE_ON_FILE_RE.finditer(text):
+        if m.group("cap"):
+            continue
+        color = (m.group("color") or "").lower()
+        file_index = chess.FILE_NAMES.index(m.group("file").lower())
+        yield m.group(0), color, _owns_piece(m), m.group("piece").lower(), file_index
+
+
+def _claim_colors(color_word: str) -> list[chess.Color]:
+    """Sides a claim speaks for: the named one, else both."""
+    return [_COLOR_WORDS[color_word]] if color_word else [chess.WHITE, chess.BLACK]
+
+
+def _pieces_on_file(
+    board: chess.Board, file_index: int, piece_type: int, color_word: str,
+) -> chess.SquareSet:
+    found = chess.SquareSet()
+    for color in _claim_colors(color_word):
+        found |= board.pieces(piece_type, color) & chess.BB_FILES[file_index]
+    return found
+
+
+def _file_claim_reachable(
+    board: chess.Board, file_index: int, piece_type: int, color_word: str,
+) -> bool:
+    """True iff the prose POV side can land a piece of `piece_type` anywhere
+    on the file this turn."""
+    color = _prose_pov(color_word, board)
+    return any(
+        _reaches_for_color(board, square, piece_type, color)
+        for square in chess.SquareSet(chess.BB_FILES[file_index])
+    )
+
+
+def _join_squares(names: list[str]) -> str:
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def describe_file(
+    file_index: int, board: chess.Board, piece_type: int, color_word: str,
+) -> str:
+    """Ground truth for a file claim: 'no white queen on the c-file; the
+    white queen is on b2' (plural: 'the white rooks are on a1 and e1';
+    absent: 'White has no queen'). A bare claim lists both sides' pieces."""
+    piece_word = _TYPE_TO_NAME[piece_type]
+    name = f"{color_word} {piece_word}" if color_word else piece_word
+    file_name = chess.FILE_NAMES[file_index]
+    squares = sorted(
+        sq for color in _claim_colors(color_word)
+        for sq in board.pieces(piece_type, color)
+    )
+    lead = f"no {name} on the {file_name}-file"
+    if not squares:
+        if color_word:
+            return f"{lead}; {color_word.capitalize()} has no {piece_word}"
+        return f"{lead}; neither side has a {piece_word}"
+    names = [chess.square_name(sq) for sq in squares]
+    if len(names) == 1:
+        return f"{lead}; the {name} is on {names[0]}"
+    return f"{lead}; the {name}s are on {_join_squares(names)}"
+
+
+def iter_false_file_claims(text: str, board: chess.Board):
+    """Yield (surface, label, fact) per false '<piece> on the <x>-file' claim:
+    holds now or on a projected board, or (bare claims only) reachable by the
+    side to move -- a named color gets no out: a rook reaches any file."""
+    boards = [board, *projected_boards(text, board)]
+    seen: set[str] = set()
+    for surface, color_word, opponent, piece_word, file_index in _iter_file_claims(text):
+        color_word = _resolve_color_word(color_word, opponent, board)
+        key = f"{color_word}|{piece_word}|{file_index}"
+        if key in seen:
+            continue
+        seen.add(key)
+        piece_type = _PIECE_WORDS[piece_word]
+        if any(_pieces_on_file(b, file_index, piece_type, color_word) for b in boards):
+            continue
+        if not color_word and _file_claim_reachable(board, file_index, piece_type, color_word):
+            continue
+        prefix = f"{color_word} " if color_word else ""
+        label = f"{prefix}{piece_word} on the {chess.FILE_NAMES[file_index]}-file"
+        yield surface, label, describe_file(file_index, board, piece_type, color_word)
+
+
+def find_false_file_claims(text: str, board: chess.Board) -> list[str]:
+    """Normalized labels of '<piece> on the <x>-file' claims that hold on no
+    current/projected board (see iter_false_file_claims). 'the white queen
+    on the c-file' with the queen on b2 is flagged."""
+    return [label for _surface, label, _fact in iter_false_file_claims(text, board)]
 
 
 # A bishop named by the color of squares it travels on. True = light. Unlike a
@@ -691,9 +812,11 @@ _BISHOP_ON_COLOR_RE = re.compile(
     rf"(?P<sqcolor>{_SQUARE_COLOR_ALT})\s+squares?\b",
     re.IGNORECASE,
 )
-# Clause boundaries for SAN->bishop-claim binding: punctuation ending the
-# grammatical unit a SAN's verb governs.
+# Clause boundaries for SAN->claim binding: punctuation ending the
+# grammatical unit a SAN's verb governs. Move-number dots glued to their
+# move ("13...Rc8", "14.Qb3") are notation, not boundaries.
 _CLAUSE_SPLIT_RE = re.compile(r"[.,;:!?()]")
+_MOVE_NUMBER_DOT_RE = re.compile(r"\d\.*$")
 # Destination square at the end of a piece-move SAN (after glyph strip).
 _SAN_DEST_RE = re.compile(r"([a-h][1-8])[+#]?$")
 
@@ -786,6 +909,36 @@ def _iter_bishop_color_refs(text: str):
             yield m.group(0), m.span(), color_word, light, square_name
 
 
+def _is_notation_dot(text: str, pos: int) -> bool:
+    """A dot between a move number and its move ("14.Qb3", "13...Rc8"):
+    digits and dots before it, non-space after the dot run. A sentence-
+    ending "Bxe5." is a real boundary -- squares and SANs end in digits."""
+    if not _MOVE_NUMBER_DOT_RE.search(text, 0, pos):
+        return False
+    end = pos
+    while end < len(text) and text[end] == ".":
+        end += 1
+    return end < len(text) and not text[end].isspace()
+
+
+def _clause_sans(text: str, pos: int) -> list[re.Match]:
+    """SAN tokens before `pos` within its clause, in order. The clause is
+    punctuation-bounded (_CLAUSE_SPLIT_RE), except that move-number dots
+    glued to their move ("13...Rc8", "14.Qb3") do not split."""
+    clause_start = 0
+    for m_split in _CLAUSE_SPLIT_RE.finditer(text, 0, pos):
+        if m_split.group(0) == "." and _is_notation_dot(text, m_split.start()):
+            continue
+        clause_start = m_split.end()
+    return list(_SAN_TOKEN_RE.finditer(text, clause_start, pos))
+
+
+def _clause_last_san(text: str, pos: int) -> re.Match | None:
+    """Nearest SAN token before `pos` within its clause, or None."""
+    sans = _clause_sans(text, pos)
+    return sans[-1] if sans else None
+
+
 def _clause_bound_square(text: str, pos: int, board: chess.Board) -> int | None:
     """Square a bare color-bishop phrase at `pos` is bound to by the nearest
     preceding SAN in its clause, or None when unbound. A bishop SAN binds its
@@ -794,12 +947,7 @@ def _clause_bound_square(text: str, pos: int, board: chess.Board) -> int | None:
     holds on any board, so no parse is needed. Any other SAN binds only when
     it captures a bishop on `board` (the victim's square); a nearest SAN that
     is neither leaves the phrase unbound."""
-    clause_start = 0
-    for m_split in _CLAUSE_SPLIT_RE.finditer(text, 0, pos):
-        clause_start = m_split.end()
-    last = None
-    for m_san in _SAN_TOKEN_RE.finditer(text, clause_start, pos):
-        last = m_san
+    last = _clause_last_san(text, pos)
     if last is None:
         return None
     token = _strip_annotation_glyphs(last.group("token"))
@@ -882,6 +1030,112 @@ def find_false_bishop_color_refs(text: str, board: chess.Board) -> list[str]:
     bishop on the board (see iter_false_bishop_color_refs). 'Black's
     dark-squared bishop' when Black's only bishop is light-squared is flagged."""
     return [label for _surface, label, _fact in iter_false_bishop_color_refs(text, board)]
+
+
+# File-openness claims: "open / semi-open / half-open / closed <x>-file",
+# or the bare "a semi-open file" bound to its clause's only SAN. Pawn
+# structure only: open = no pawns, semi-open = one side's, closed = both.
+_OPEN = "open"
+_SEMI_OPEN = "semi-open"
+_CLOSED = "closed"
+_OPENNESS_KIND = r"(?P<kind>(?:(?:semi|half)[-\s]?)?open|closed)"
+_ARTICLE_OPT = r"(?:(?:a|an|the)\s+)?"
+_OPENNESS_FILE_RE = re.compile(
+    rf"\b{_ARTICLE_OPT}{_OPENNESS_KIND}\s+(?P<file>[a-h])[-\s]file\b",
+    re.IGNORECASE,
+)
+_OPENNESS_BARE_RE = re.compile(
+    rf"\b{_ARTICLE_OPT}{_OPENNESS_KIND}\s+file\b", re.IGNORECASE,
+)
+
+
+def _canon_openness(kind: str) -> str:
+    """'half-open' / 'semi open' -> 'semi-open'; 'open' and 'closed' as-is."""
+    k = kind.lower()
+    return _SEMI_OPEN if k.startswith(("semi", "half")) else k
+
+
+def _iter_openness_claims(text: str):
+    """Yield (surface, pos, kind, file_index) for every openness claim;
+    `file_index` is None for the bare form (bound later by clause)."""
+    for m in _OPENNESS_FILE_RE.finditer(text):
+        file_index = chess.FILE_NAMES.index(m.group("file").lower())
+        yield m.group(0), m.start(), _canon_openness(m.group("kind")), file_index
+    for m in _OPENNESS_BARE_RE.finditer(text):
+        yield m.group(0), m.start(), _canon_openness(m.group("kind")), None
+
+
+def _clause_bound_file(text: str, pos: int) -> int | None:
+    """File of the destination square of the clause's only SAN; None when
+    the clause holds none or several (binding would be a guess) or the
+    SAN has no destination (castling)."""
+    sans = _clause_sans(text, pos)
+    if len(sans) != 1:
+        return None
+    dest = _SAN_DEST_RE.search(_strip_annotation_glyphs(sans[0].group("token")))
+    return chess.square_file(chess.parse_square(dest.group(1))) if dest else None
+
+
+def _file_pawns(board: chess.Board, file_index: int, color: chess.Color) -> list[str]:
+    squares = board.pieces(chess.PAWN, color) & chess.BB_FILES[file_index]
+    return [chess.square_name(sq) for sq in sorted(squares)]
+
+
+def _file_openness(board: chess.Board, file_index: int) -> str:
+    sides = sum(1 for color in _COLOR_WORDS.values() if _file_pawns(board, file_index, color))
+    if sides == 0:
+        return _OPEN
+    return _SEMI_OPEN if sides == 1 else _CLOSED
+
+
+def describe_file_openness(file_index: int, board: chess.Board) -> str:
+    """Ground truth for an openness claim: 'the c-file is open: no pawns on
+    it' / 'the c-file is semi-open: only a black pawn on c7' / 'the e-file
+    is closed: a white pawn on e4 and a black pawn on e7'."""
+    file_name = chess.FILE_NAMES[file_index]
+    kind = _file_openness(board, file_index)
+    parts: list[str] = []
+    for color_word, color in _COLOR_WORDS.items():
+        names = _file_pawns(board, file_index, color)
+        if len(names) == 1:
+            parts.append(f"a {color_word} pawn on {names[0]}")
+        elif names:
+            parts.append(f"{color_word} pawns on {_join_squares(names)}")
+    if kind == _OPEN:
+        detail = "no pawns on it"
+    elif kind == _SEMI_OPEN:
+        detail = f"only {parts[0]}"
+    else:
+        detail = " and ".join(parts)
+    return f"the {file_name}-file is {kind}: {detail}"
+
+
+def iter_false_file_openness(text: str, board: chess.Board):
+    """Yield (surface, label, fact) per open/semi-open/closed claim the pawn
+    structure contradicts on every current/projected board. The bare form
+    binds to its clause's only SAN destination file, else is skipped."""
+    boards = [board, *projected_boards(text, board)]
+    seen: set[str] = set()
+    for surface, pos, kind, file_index in _iter_openness_claims(text):
+        if file_index is None:
+            file_index = _clause_bound_file(text, pos)
+            if file_index is None:
+                continue
+        key = f"{kind}|{file_index}"
+        if key in seen:
+            continue
+        seen.add(key)
+        if any(_file_openness(b, file_index) == kind for b in boards):
+            continue
+        label = f"{kind} {chess.FILE_NAMES[file_index]}-file"
+        yield surface, label, describe_file_openness(file_index, board)
+
+
+def find_false_file_openness(text: str, board: chess.Board) -> list[str]:
+    """Normalized labels of openness claims the pawn structure contradicts
+    (see iter_false_file_openness). 'a semi-open file' after 13...Rc8 with
+    no pawns on the c-file is flagged as 'semi-open c-file'."""
+    return [label for _surface, label, _fact in iter_false_file_openness(text, board)]
 
 
 def _reaches_for_color(
@@ -1026,10 +1280,11 @@ def find_tool_mentions(text: str) -> list[str]:
 
 def _flagged_surfaces(text: str, board: chess.Board) -> set[str]:
     """Exact prose spans a non-LLM board recognizer flags on `board`: illegal
-    moves/lines, false piece and bishop-color claims. Tool mentions are
-    board-independent and excluded here (see has_position_flags). Strict --
-    the whole text, no future-line truncation or opening carve-out. One shared
-    dedup set across the move recognizers, as the striking path uses."""
+    moves/lines, false piece, file, file-openness and bishop-color claims.
+    Tool mentions are board-independent and excluded here (see
+    has_position_flags). Strict -- the whole text, no future-line truncation
+    or opening carve-out. One shared dedup set across the move recognizers,
+    as the striking path uses."""
     handled_spans = handled_continuation_spans(text, board)
     seen_moves: set[str] = set()
     out: set[str] = set()
@@ -1046,6 +1301,10 @@ def _flagged_surfaces(text: str, board: chess.Board) -> set[str]:
     for surface, _label, _square in iter_false_claim_squares(text, board):
         out.add(surface)
     for surface, _label, _fact in iter_false_bishop_color_refs(text, board):
+        out.add(surface)
+    for surface, _label, _fact in iter_false_file_claims(text, board):
+        out.add(surface)
+    for surface, _label, _fact in iter_false_file_openness(text, board):
         out.add(surface)
     return out
 

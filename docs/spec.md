@@ -212,12 +212,14 @@ Client-side (localStorage, server-agnostic):
 
 Single-user app. Two intended deployment modes:
 
-1. **Local-only** (default and desktop): server bound to `127.0.0.1`. No
+1. **Local-only** (server default): server bound to `127.0.0.1`. No
    network surface; the only attacker model is local malware running as
    the same user, against which TLS and auth tokens are not defenses.
-2. **Trusted LAN / tailnet** (explicit opt-in): user passes `--host
-   0.0.0.0` to expose the port. The token must keep unauthorized peers
-   out; optionally TLS protects against on-wire sniffing.
+2. **Trusted LAN / tailnet** (explicit `--host 0.0.0.0`, or desktop's
+   About -> Connect from mobile, which opens the LAN port for the
+   session): the About dialog shows the entry URL as a QR code to any
+   authenticated client. The token must keep unauthorized peers out;
+   optionally TLS protects against on-wire sniffing.
 
 Not in scope: public internet exposure, multi-user isolation, role-based
 access, rate limiting, audit logging.
@@ -225,9 +227,11 @@ access, rate limiting, audit logging.
 ### Bind policy
 
 Default `--host` is `127.0.0.1`. `--no-auth` alone does **not** widen
-the bind. Opening the server to the network requires an explicit
-`--host` argument. The unsafe combo `--host 0.0.0.0 --no-auth` is
-permitted (the tailscale / trusted-LAN case) but logs a startup warning.
+the bind. Opening the server to the network requires an explicit `--host`
+argument, or in desktop mode the user's own Connect-from-mobile action
+(for that session only). The unsafe combo of a non-loopback bind
+with `--no-auth` is permitted (the tailscale / trusted-LAN case) but logs
+a startup warning.
 
 ### Authentication
 

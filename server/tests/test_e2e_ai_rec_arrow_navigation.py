@@ -31,6 +31,7 @@ from .conftest import make_searching_fake_uci, run_uvicorn_subprocess  # noqa: E
 
 PLAY_PERSP = "#play-perspective"
 ARROW_SEL = ".cm-chessboard .arrow-secondary"
+ALT_ARROW_SEL = ".cm-chessboard .arrow-info"
 PLAY_NAV_BTN = "#perspective-nav button[data-perspective='play']"
 OTHER_NAV_BTN = "#perspective-nav button[data-perspective='engines']"
 XGAME_BY_ID_ROUTE = "**/game/recent-imports/by-id/**"
@@ -61,12 +62,15 @@ def server(tmp_path):
         yield base
 
 
-def _seed_recommendation(base, gid) -> None:
+def _seed_recommendation(base, gid, alternatives=None) -> None:
+    rec = {"uci": "d2d4", "seq": 2}
+    if alternatives:
+        rec["alternatives"] = alternatives
     resp = httpx.post(f"{base}/_test/ai/seed_replay", json={"events": [
         {"kind": "ai_info", "game_id": gid,
          "payload": {"delta": "I recommend d4.", "round": 0, "seq": 1}},
         {"kind": "ai_recommendation", "game_id": gid,
-         "payload": {"uci": "d2d4", "seq": 2}},
+         "payload": rec},
         {"kind": "ai_info", "game_id": gid,
          "payload": {"done": True, "seq": 3}},
     ]})
@@ -137,3 +141,26 @@ async def test_play_mode_arrow_survives_navigation(server, make_page):
 
     await _navigate_away_and_back(page)
     await page.wait_for_selector(ARROW_SEL, state="attached")
+
+
+@pytest.mark.asyncio
+async def test_play_mode_alternative_arrows_drawn_and_survive_navigation(server, make_page):
+    # Book siblings ride the recommendation: one muted arrow each beside
+    # the pick, and the same replay re-apply keeps them across a remount.
+    base = server
+    r = httpx.post(f"{base}/game/new", json={})
+    r.raise_for_status()
+    gid = r.json().get("game_id")
+    httpx.post(f"{base}/game/pause").raise_for_status()
+    httpx.post(f"{base}/game/analysis/start").raise_for_status()
+    _seed_recommendation(base, gid, alternatives=["e2e4", "c2c4"])
+
+    _ctx, page = await make_page(viewport={"width": 1600, "height": 1000})
+    await page.goto(base + "/")
+    await page.wait_for_selector(PLAY_PERSP)
+    await page.wait_for_selector(ARROW_SEL, state="attached")
+    assert await page.locator(ALT_ARROW_SEL).count() == 2
+
+    await _navigate_away_and_back(page)
+    await page.wait_for_selector(ARROW_SEL, state="attached")
+    assert await page.locator(ALT_ARROW_SEL).count() == 2
