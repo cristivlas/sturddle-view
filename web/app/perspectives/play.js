@@ -1291,7 +1291,13 @@ function refreshButtons(state) {
   configureBtn(state.el.takebackBtn, {
     disabled: state.analyzing || state.gameOver || !state.allowTakeback || state.movesPlayed === 0,
   });
-  configureBtn(state.el.savePgnBtn, { disabled: state.analyzing || state.movesPlayed === 0 });
+  // Saving mid-game pauses first (see onSavePgnImpl), and pause needs the
+  // human's turn -- so gate on it whenever that pause would be required.
+  const savePauseBlocked =
+    state.resignAvailable && !state.paused && !state.gameOver && !humanIsToMove;
+  configureBtn(state.el.savePgnBtn, {
+    disabled: state.analyzing || state.movesPlayed === 0 || savePauseBlocked,
+  });
   configureBtn(state.el.switchSidesBtn, { disabled: state.analyzing || state.gameOver || !state.resignAvailable });
   configureBtn(state.el.resignBtn, { disabled: state.paused || state.analyzing || state.gameOver || !state.resignAvailable });
   // AI turn done but server still ANALYZING: show the button as normal
