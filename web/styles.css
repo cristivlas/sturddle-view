@@ -4363,6 +4363,15 @@ wa-dialog.tournament-info-dialog::part(body) {
 .h2h-tbl thead th:last-child:hover {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
 }
+/* Sortable first/last columns (Engine, Ordo) keep the accent-line bottom
+   edge from the .th-sortable:hover rule above -- the plain first/last-child
+   overrides otherwise clobber it at equal specificity. */
+.wb-standings-tbl thead th.th-sortable:first-child:hover {
+  box-shadow: inset -2px 0 0 var(--wa-color-border-loud, #353841), inset 0 -2px 0 var(--accent-line);
+}
+.wb-standings-tbl thead th.th-sortable:last-child:hover {
+  box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset 0 -2px 0 var(--accent-line);
+}
 .wb-sprt {
   background: var(--bg); border-bottom: 1px solid var(--border-subtle);
   padding: 6px 8px; margin-bottom: 0; font-size: 0.75rem;
