@@ -1650,16 +1650,25 @@ body .side-popover.popover-floating {
 .dock-slot-action:hover,
 .dock-slot-undock:hover,
 .dock-slot-close:hover { color: var(--fg); background: var(--nav-btn-bg-hover); }
-/* Floating-mode (WinBox title-bar control), mirroring wb-ribbon-rotate-ctrl.
-   The !important overrides WinBox vendor CSS's default background-image. */
+/* Shared base for custom WinBox title-bar control icons: a masked
+   FontAwesome svg standing in for WinBox's built-in icon. The !important on
+   background-image overrides WinBox vendor CSS's default. Each control below
+   only sets its own image, size, and background-color. */
+.play-ai-reanalyze-ctrl,
+.wb-dock-ctrl,
+.wb-ribbon-rotate-ctrl,
+.wb-log-copy-ctrl,
+.winbox.sturddle-wb-ribbon .wb-close {
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  background-image: none !important;
+}
+/* Floating-mode (WinBox title-bar control), mirroring wb-ribbon-rotate-ctrl. */
 .play-ai-reanalyze-ctrl {
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
   mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
-  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
-  -webkit-mask-position: center; mask-position: center;
   -webkit-mask-size: 11px; mask-size: 11px;
   background-color: rgba(255,255,255,0.85) !important;
-  background-image: none !important;
 }
 /* Docked mode uses the muted button theme: reset mask/background to the
    button's natural styling, then paint the icon via ::before so
@@ -1704,17 +1713,13 @@ body .side-popover.popover-floating {
   /* UCI log needs horizontal scroll; pvtable needs it too */
   overflow-x: auto;
 }
-.wb-dock-ctrl {
+.wb-dock-ctrl,
+.winbox.sturddle-wb-ribbon .wb-close {
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/down-left-and-up-right-to-center.svg);
   mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/down-left-and-up-right-to-center.svg);
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
   -webkit-mask-size: 12px;
   mask-size: 12px;
   background-color: rgba(255,255,255,0.9) !important;
-  background-image: none !important;
 }
 /* The board area inside the host gets all available height. */
 .play-board-host .game-view-board {
@@ -4273,14 +4278,9 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-ribbon-rotate-ctrl {
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-left.svg);
   mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-left.svg);
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
   -webkit-mask-size: 11px;
   mask-size: 11px;
   background-color: rgba(255,255,255,0.85) !important;
-  background-image: none !important;
 }
 /* Horizontal mode (default): vertical separators between buttons. */
 .winbox.sturddle-wb-ribbon.ribbon-horizontal .wb-body .ribbon-sep,
@@ -4396,14 +4396,9 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-log-copy-ctrl {
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
   mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
   -webkit-mask-size: 14px;
   mask-size: 14px;
   background-color: rgba(255,255,255,0.9) !important;
-  background-image: none !important;
 }
 .wb-sched-list li { padding: 3px 0; font-size: 0.8125rem; border-bottom: 1px solid var(--border-subtle); }
 .wb-sched-icon { display: inline-block; width: 18px; color: var(--accent); }
