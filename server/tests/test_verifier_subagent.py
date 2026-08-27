@@ -698,6 +698,75 @@ async def test_accept_without_red_team_is_held_once():
 
 
 @pytest.mark.asyncio
+async def test_red_team_hold_rewrites_complete_event_output():
+    # The UI's OUT block renders the complete event: a held accept must
+    # carry the hold (error + reason), not the engine's raw ok:true --
+    # else the panel strikes a row whose OUT reads as a success.
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="tool_use", tool_use_id="r0",     # held
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="d0",     # comply: red-team
+                       tool_name="delegate",
+                       tool_input={"move": "e4", "question": "does it hold?"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="r1",     # resubmit -> accepted
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="text", text="e4 is best on review.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=_narrator_registry("delegate"),
+        board_provider=(lambda: chess.Board()),
+        recommend_verifier=_echo_verifier,
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    completes = {
+        e.payload.get("tool_use_id"): e.payload.get("output")
+        for e in events if e.kind == "ai_tool_call_complete"
+    }
+    held = completes["r0"]
+    assert held.get("error") == "red_team_first"
+    assert held.get("reason"), "the hold must explain itself in OUT"
+    assert "ok" not in held, "a held accept must not read as a success"
+    # r1 is a dedup cache hit (delegate has no normalizer, so it didn't
+    # evict r0's slot): no events, but the raw cached accept ships.
+    assert "r1" not in completes
+    recs = [e for e in events if e.kind == "ai_recommendation"]
+    assert recs and recs[-1].payload.get("uci") == "e2e4"
+
+
+@pytest.mark.asyncio
+async def test_immediate_resubmit_after_hold_uses_raw_cached_accept():
+    # The hold is per-call policy, not a tool result: the dedup cache must
+    # keep the engine's raw accept. A model that resubmits the same move
+    # right away gets its pick via cache hit (the hold is one-shot).
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="tool_use", tool_use_id="r0",     # held
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="r1",     # identical -> cache hit
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="text", text="e4 stands.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=_narrator_registry("delegate"),
+        board_provider=(lambda: chess.Board()),
+        recommend_verifier=_echo_verifier,
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert len(_red_team_holds(events)) == 1
+    recs = [e for e in events if e.kind == "ai_recommendation"]
+    assert recs and recs[-1].payload.get("uci") == "e2e4"
+
+
+@pytest.mark.asyncio
 async def test_accept_after_delegate_not_held():
     # A delegate verdict before the accept satisfies the red-team check in
     # both modes: coach's recommend goes straight through, no hold.
