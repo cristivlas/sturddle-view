@@ -1656,14 +1656,19 @@ class AIAnalysisCoordinator:
         its siblings for the board (arrows for siblings of a pick the model
         rejected would mislead); any other pick goes through the verifier."""
         move = chess.Move.from_uci(uci)
-        if uci != book_move_uci:
-            return await self._recommend_verifier(move, depth, self._cancel_token)
         board = self._board_provider() if self._board_provider else None
-        if board is None or move not in board.legal_moves:
+        if uci != book_move_uci:
+            payload = await self._recommend_verifier(move, depth, self._cancel_token)
+        elif board is None or move not in board.legal_moves:
             return None
-        payload: dict = {"uci": uci, "san": board.san(move)}
-        if book_alternatives:
-            payload["alternatives"] = list(book_alternatives)
+        else:
+            payload = {"uci": uci, "san": board.san(move)}
+            if book_alternatives:
+                payload["alternatives"] = list(book_alternatives)
+        # The position the pick belongs to. The client's arrow re-apply
+        # guard keys on it -- its own board fen is unsynced mid-replay.
+        if payload is not None and board is not None:
+            payload["fen"] = board.fen()
         return payload
 
     def delegate_runner(self) -> VerifierRunner:

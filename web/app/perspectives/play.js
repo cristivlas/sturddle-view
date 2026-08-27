@@ -479,11 +479,12 @@ function dispatchAiEvent(aiCtx, evt) {
     }
     case KIND.AI_RECOMMENDATION: {
       // GameView owns the arrow (its own applyEvent draws it live); route
-      // through it so replay redraws identically. Stash the event + FEN so
-      // the resync board_update on remount, which clears arrows, can
-      // re-apply it (same-FEN guard in handleBusEvent).
+      // through it so replay redraws identically. Stash the event + the
+      // payload's FEN so the resync board_update, which clears arrows, can
+      // re-apply it (same-FEN guard in handleBusEvent). The server's FEN,
+      // not the view's: mid-replay the view is still unsynced.
       view.applyEvent(evt);
-      aiShared.recommendation = { evt, fen: view.getFen() };
+      aiShared.recommendation = { evt, fen: evt.payload.fen };
       return true;
     }
   }

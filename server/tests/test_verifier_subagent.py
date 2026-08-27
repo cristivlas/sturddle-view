@@ -794,6 +794,9 @@ async def test_accept_after_delegate_not_held():
     )
     recs = [e for e in events if e.kind == "ai_recommendation"]
     assert recs and recs[-1].payload.get("uci") == "e2e4"
+    # The position the pick belongs to rides the payload: the client's
+    # arrow re-apply guard keys on it (view fen is unsynced mid-replay).
+    assert recs[-1].payload.get("fen") == chess.Board().fen()
 
 
 @pytest.mark.asyncio
@@ -829,6 +832,7 @@ async def test_book_move_accepted_without_red_team():
     assert recs and recs[-1].payload.get("uci") == "e2e4"
     assert recs[-1].payload.get("san") == "e4"
     assert recs[-1].payload.get("alternatives") == ["d2d4", "c2c4"]
+    assert recs[-1].payload.get("fen") == chess.Board().fen()
     assert searched == [], "the book move must not be engine-verified"
 
 
