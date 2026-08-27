@@ -673,6 +673,15 @@ wa-select::part(listbox) {
 .play-ai-verdict > .play-ai-revision-summary {
   font-style: normal;
 }
+/* The verdict's own margin+padding indent the "Refuted"/"Holds" summary
+   under the tool-call tree; pull the visible prose box back out by that
+   same amount so its edges land on .play-ai-prose-final's 12px inset
+   instead of nesting one level deeper. */
+.play-ai-verdict .play-ai-revision-body > .play-ai-prose {
+  position: relative;
+  left: calc(-1 * (var(--tool-box-indent) / 2 + 8px));
+  width: calc(100% + var(--tool-box-indent) + 16px);
+}
 .play-ai-tool-label {
   /* Stay on one line; the head scrolls horizontally if needed. */
   white-space: nowrap;
