@@ -79,10 +79,14 @@ export function seedFromDetail(s, detail) {
 export function addLogEntry(s, evt) {
   if (evt.payload?.kind === KIND.GAME_RECONCILED) return false;
   const seq = evt.payload?._seq;
-  if (seq != null) {
-    if (s.seenSeqs.has(seq)) return false;
-    s.seenSeqs.add(seq);
+  if (seq != null && s.seenSeqs.has(seq)) return false;
+  // A run start (always the run's first event) obsoletes the previous
+  // run's chatter: restart wiped those games, so flush before appending.
+  if (evt.kind === EVT.STATUS && evt.payload?.status === STATUS.RUNNING) {
+    s.eventLog.length = 0;
+    s.seenSeqs.clear();
   }
+  if (seq != null) s.seenSeqs.add(seq);
   const tsRaw = evt.payload?._ts;
   const ts = (tsRaw ? new Date(tsRaw) : new Date())
     .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });

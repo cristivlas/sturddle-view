@@ -621,8 +621,8 @@ class Orchestrator:
         return list(self._event_history.get(tournament_id, []))
 
     def clear_event_history(self, tournament_id: str) -> None:
-        """Drop the buffered history for a tournament. Called by the
-        DELETE endpoint so torn-down tournaments don't leak history."""
+        """Drop the buffered history for a tournament. Called on
+        delete, edit, and restart-wipe so stale runs don't replay."""
         self._event_history.pop(tournament_id, None)
 
     # ---- live-observation pipeline -----------------------------------------
