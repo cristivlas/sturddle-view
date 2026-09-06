@@ -277,6 +277,9 @@ const MSG = {
   CONFIRM_EDIT_STOP_ANALYSIS: "Stop analysis and edit the position?",
   CONFIRM_MOVE_STOP_ANALYSIS: "Stop analysis and play this move?",
   CONFIRM_LEAVE_EDIT: "Leaving will cancel your position edit. Continue?",
+  CONFIRM_MOVE_RESUME: "The clock is stopped. Resume the game and play this move?",
+  RESUME_AND_PLAY: "Resume and play",
+  STAY_PAUSED: "Stay paused",
   KEEP_PLAYING: "Keep playing",
   KEEP_ANALYZING: "Keep analyzing",
   PLAY_MOVE: "Play move",
@@ -305,10 +308,6 @@ const MSG = {
 // Body class set while analysis is on; CSS greys + inert-ifies x-game
 // nav links so the user can't jump games mid-analysis.
 const XGAME_LOCK_CLASS = "xgame-nav-locked";
-
-// One-shot CSS animation class: pulses the Paused badge + Resume button when
-// the user clicks the inert paused board, hinting how to resume.
-const PAUSE_HINT_PULSE_CLASS = "pause-hint-pulse";
 
 // Edit-mode popover (side-to-move / castling) placement when the ribbon
 // floats: the WinBox body clips overflow, so the popover is portaled to
@@ -479,11 +478,12 @@ function dispatchAiEvent(aiCtx, evt) {
     }
     case KIND.AI_RECOMMENDATION: {
       // GameView owns the arrow (its own applyEvent draws it live); route
-      // through it so replay redraws identically. Stash the event + FEN so
-      // the resync board_update on remount, which clears arrows, can
-      // re-apply it (same-FEN guard in handleBusEvent).
+      // through it so replay redraws identically. Stash the event + the
+      // payload's FEN so the resync board_update, which clears arrows, can
+      // re-apply it (same-FEN guard in handleBusEvent). The server's FEN,
+      // not the view's: mid-replay the view is still unsynced.
       view.applyEvent(evt);
-      aiShared.recommendation = { evt, fen: view.getFen() };
+      aiShared.recommendation = { evt, fen: evt.payload.fen };
       return true;
     }
   }
@@ -1164,49 +1164,42 @@ async function refreshSettings(state, { notifyOnDrift = false } = {}) {
 
 // Ribbon button state, computed from the shared `state`.
 
-// Board input: on in live play, and during play-mode analysis (a drop
-// offers to stop analysis and play the move). Off while paused or viewing.
+// Board input: on in live play, while paused (a drop offers to resume), and
+// during play-mode analysis (a drop offers to stop analysis). Off while viewing.
 function syncBoardInputEnabled(state) {
   if (state.viewing) return;
-  state.view.setEnabled(state.analyzing || !state.paused);
+  state.view.setEnabled(true);
 }
 
-// Paused overlay + badge (hidden while analyzing, which has its own affordance).
+// Paused badge (hidden while analyzing, which has its own affordance).
 function syncPausedUi(state) {
-  const show = state.paused && !state.analyzing;
-  state.el.boardHost.classList.toggle("board-paused", show);
-  state.el.pausedBadge?.classList.toggle("hidden", !show);
-}
-
-// Restart the one-shot pulse on `el`: drop the class, force reflow, re-add so
-// rapid repeat clicks always replay the animation. Self-removes on end.
-function _pulseOnce(el) {
-  if (!el) return;
-  // No animation under reduced-motion -> animationend never fires; skip so the
-  // class + listener don't leak.
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  el.classList.remove(PAUSE_HINT_PULSE_CLASS);
-  void el.offsetWidth; // reflow so re-adding the class restarts the animation
-  el.classList.add(PAUSE_HINT_PULSE_CLASS);
-  el.addEventListener(
-    "animationend",
-    () => el.classList.remove(PAUSE_HINT_PULSE_CLASS),
-    { once: true },
-  );
-}
-
-// User clicked the inert paused board: pulse the Paused badge + Resume button
-// to point them at how to resume. No-op unless actually paused.
-function hintResumeFromPausedBoard(state) {
-  if (!state.paused || state.analyzing) return;
-  _pulseOnce(state.el.pausedBadge);
-  _pulseOnce(state.el.pauseBtn);
+  state.el.pausedBadge?.classList.toggle("hidden", !(state.paused && !state.analyzing));
 }
 
 function showFinishedBadge(state, text) {
   if (!state.el.finishedBadge) return;
   state.el.finishedBadge.textContent = text;
   state.el.finishedBadge.classList.toggle("hidden", !text);
+}
+
+// Bail out of a drop taken on a held board: let rendering resume and ask the
+// server to republish, snapping the piece back to where it came from.
+async function abortHeldDrop(view, snapBack) {
+  view.releaseBoard();
+  await snapBack();
+}
+
+// Resume the clock so the pending drop can be played. Aborts the drop and
+// returns false when the server refuses.
+async function resumeForDrop(ctx, view, snapBack) {
+  try {
+    await ctx.api("POST", "/game/resume", {});
+    return true;
+  } catch (e) {
+    reportError(ctx, MSG.RESUME_FAILED, e);
+    await abortHeldDrop(view, snapBack);
+    return false;
+  }
 }
 
 // A finished AI-analysis turn in play mode: board frozen in ANALYZING, reads as
@@ -1291,7 +1284,13 @@ function refreshButtons(state) {
   configureBtn(state.el.takebackBtn, {
     disabled: state.analyzing || state.gameOver || !state.allowTakeback || state.movesPlayed === 0,
   });
-  configureBtn(state.el.savePgnBtn, { disabled: state.analyzing || state.movesPlayed === 0 });
+  // Saving mid-game pauses first (see onSavePgnImpl), and pause needs the
+  // human's turn -- so gate on it whenever that pause would be required.
+  const savePauseBlocked =
+    state.resignAvailable && !state.paused && !state.gameOver && !humanIsToMove;
+  configureBtn(state.el.savePgnBtn, {
+    disabled: state.analyzing || state.movesPlayed === 0 || savePauseBlocked,
+  });
   configureBtn(state.el.switchSidesBtn, { disabled: state.analyzing || state.gameOver || !state.resignAvailable });
   configureBtn(state.el.resignBtn, { disabled: state.paused || state.analyzing || state.gameOver || !state.resignAvailable });
   // AI turn done but server still ANALYZING: show the button as normal
@@ -2328,17 +2327,18 @@ export const playPerspective = {
       onMove: async (uci) => {
         // Drop during analysis: exit analysis and play the move. A running
         // session asks first; a finished AI turn exits silently, matching
-        // the ribbon's one-click Resume (see onPauseImpl).
+        // the ribbon's one-click Resume (see onPauseImpl). Drop while paused:
+        // offer to restart the clock and play it.
+        // Hold piece rendering in both cases: stop_analysis / resume republish
+        // the pre-move FEN, which would snap the dropped piece back before the
+        // move's own update re-animates it (visible stutter). Release BEFORE
+        // snapBack so the sync echo still lands via the normal path.
         let held = false;
+        // Snap the optimistically-moved piece back on any bail-out.
+        const snapBack = () => ctx.api("POST", "/game/sync", {}).catch(() => {});
         if (state.analyzing) {
-          // Hold piece rendering: stop_analysis republishes the pre-move
-          // FEN, which would snap the dropped piece back before the move's
-          // own update re-animates it (visible stutter). Release BEFORE
-          // snapBack so the sync echo still lands via the normal path.
           view.holdBoard();
           held = true;
-          // Snap the optimistically-moved piece back on any bail-out.
-          const snapBack = () => ctx.api("POST", "/game/sync", {}).catch(() => {});
           if (!aiAnalysisDone(state)) {
             const ok = await confirm({
               message: MSG.CONFIRM_MOVE_STOP_ANALYSIS,
@@ -2347,24 +2347,28 @@ export const playPerspective = {
               destructive: true,
             });
             if (!ok) {
-              view.releaseBoard();
-              await snapBack();
+              await abortHeldDrop(view, snapBack);
               return;
             }
           }
           if (!await stopAnalysisFromUi(state)) {
-            view.releaseBoard();
-            await snapBack();
+            await abortHeldDrop(view, snapBack);
             return;
           }
-          try {
-            await ctx.api("POST", "/game/resume", {});
-          } catch (e) {
-            reportError(ctx, MSG.RESUME_FAILED, e);
-            view.releaseBoard();
-            await snapBack();
+          if (!await resumeForDrop(ctx, view, snapBack)) return;
+        } else if (state.paused) {
+          view.holdBoard();
+          held = true;
+          const ok = await confirm({
+            message: MSG.CONFIRM_MOVE_RESUME,
+            okLabel: MSG.RESUME_AND_PLAY,
+            cancelLabel: MSG.STAY_PAUSED,
+          });
+          if (!ok) {
+            await abortHeldDrop(view, snapBack);
             return;
           }
+          if (!await resumeForDrop(ctx, view, snapBack)) return;
         }
         try {
           await ctx.api("POST", "/game/move", { uci });
@@ -2583,8 +2587,6 @@ export const playPerspective = {
     switchSidesBtn.addEventListener("click", onSwitchSides);
     pauseBtn.addEventListener("click", onPause);
     pausedBadge?.addEventListener("click", onPause);
-    const onPausedBoardClick = () => hintResumeFromPausedBoard(state);
-    boardHost.addEventListener("click", onPausedBoardClick);
     analyzeBtn.addEventListener("click", onAnalyze);
     viewNewGameBtn.addEventListener("click", onNewGame);
     viewImportBtn.addEventListener("click", onImport);
@@ -2732,7 +2734,6 @@ export const playPerspective = {
         takebackBtn.removeEventListener("click", onTakeback);
         switchSidesBtn.removeEventListener("click", onSwitchSides);
         pauseBtn.removeEventListener("click", onPause);
-        boardHost.removeEventListener("click", onPausedBoardClick);
         analyzeBtn.removeEventListener("click", onAnalyze);
         viewNewGameBtn.removeEventListener("click", onNewGame);
         viewImportBtn.removeEventListener("click", onImport);

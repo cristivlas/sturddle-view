@@ -554,6 +554,15 @@ def _round_produced_output(chunks: list[ProviderChunk]) -> bool:
     return False
 
 
+def _is_accepted_recommend(output) -> bool:
+    """True when a recommend_move result is an accept (ok + a uci string)."""
+    return (
+        isinstance(output, dict)
+        and bool(output.get("ok"))
+        and isinstance(output.get("uci"), str)
+    )
+
+
 def _inject_nudge(
     messages: list[Message], round_chunks: list[ProviderChunk], content: str,
 ) -> None:
@@ -1291,9 +1300,30 @@ class AIAnalysisCoordinator:
                     if is_delegate:
                         self._active_delegate_id = None
                 if key is not None:
-                    # Cache success and error alike; deterministic
-                    # rejection is as redundant as deterministic success.
+                    # Cache success and error alike (deterministic rejection
+                    # is as redundant as success) -- and always the raw
+                    # result: the red-team hold below is per-call policy.
                     last_call = (key, tool_output)
+            # Hold the first un-red-teamed accept (one-shot; book move
+            # exempt) BEFORE any event/transcript sees the output, so the
+            # UI, the transcript, and the model all read the same result.
+            if (
+                config.track_recommend
+                and pending_tool.tool_name == RECOMMEND_MOVE_TOOL_NAME
+                and config.enforce_red_team
+                and not red_teamed
+                and not red_team_nudge_sent
+                and _is_accepted_recommend(tool_output)
+                and tool_output["uci"] != config.book_move_uci
+            ):
+                red_team_nudge_sent = True
+                tool_output = {
+                    k: v for k, v in tool_output.items() if k != "ok"
+                }
+                tool_output["error"] = _RED_TEAM_FIRST_ERROR
+                tool_output["reason"] = _RED_TEAM_FIRST_NUDGE
+                log.info("red-team nudge (%s): holding unchecked accept", mode)
+            if not cache_hit:
                 await emit(
                     Event(
                         kind=EVT_AI_TOOL_CALL_COMPLETE,
@@ -1331,30 +1361,7 @@ class AIAnalysisCoordinator:
             # cached result: the cached uci matches a fresh dispatch's.
             if config.track_recommend and pending_tool.tool_name == RECOMMEND_MOVE_TOOL_NAME:
                 recommend_attempts += 1
-                accepted = (
-                    isinstance(tool_output, dict)
-                    and tool_output.get("ok")
-                    and isinstance(tool_output.get("uci"), str)
-                )
-                # Don't let a pick ship without an adversarial check. Hold
-                # the first un-red-teamed accept and ask for a delegate
-                # verdict. One-shot -- a stalled model still gets its pick.
-                # The book move is exempt: theory vetted it.
-                if (
-                    accepted
-                    and config.enforce_red_team
-                    and not red_teamed
-                    and not red_team_nudge_sent
-                    and tool_output["uci"] != config.book_move_uci
-                ):
-                    accepted = False
-                    red_team_nudge_sent = True
-                    tool_output = {
-                        k: v for k, v in tool_output.items() if k != "ok"
-                    }
-                    tool_output["error"] = _RED_TEAM_FIRST_ERROR
-                    tool_output["reason"] = _RED_TEAM_FIRST_NUDGE
-                    log.info("red-team nudge (%s): holding unchecked accept", mode)
+                accepted = _is_accepted_recommend(tool_output)
                 if accepted:
                     consecutive_recommend_failures = 0
                     recommended_uci = tool_output["uci"]
@@ -1649,14 +1656,19 @@ class AIAnalysisCoordinator:
         its siblings for the board (arrows for siblings of a pick the model
         rejected would mislead); any other pick goes through the verifier."""
         move = chess.Move.from_uci(uci)
-        if uci != book_move_uci:
-            return await self._recommend_verifier(move, depth, self._cancel_token)
         board = self._board_provider() if self._board_provider else None
-        if board is None or move not in board.legal_moves:
+        if uci != book_move_uci:
+            payload = await self._recommend_verifier(move, depth, self._cancel_token)
+        elif board is None or move not in board.legal_moves:
             return None
-        payload: dict = {"uci": uci, "san": board.san(move)}
-        if book_alternatives:
-            payload["alternatives"] = list(book_alternatives)
+        else:
+            payload = {"uci": uci, "san": board.san(move)}
+            if book_alternatives:
+                payload["alternatives"] = list(book_alternatives)
+        # The position the pick belongs to. The client's arrow re-apply
+        # guard keys on it -- its own board fen is unsynced mid-replay.
+        if payload is not None and board is not None:
+            payload["fen"] = board.fen()
         return payload
 
     def delegate_runner(self) -> VerifierRunner:

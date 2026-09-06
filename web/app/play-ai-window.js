@@ -317,26 +317,48 @@ function formatToolArgs(input) {
   return pairs.join(", ");
 }
 
+// Each tool maps to a few interchangeable phrasings so the panel doesn't
+// repeat the same label on every call; pickVariant() rotates through them.
 const TOOL_FRIENDLY_LABELS = {
-  analyze:        "Analyzing position",
-  top_moves:      "Finding top moves",
-  piece_at:       "Checking piece",
-  validate_move:  "Validating move",
-  recommend_move: "Picking move",
-  material:       "Counting material",
-  delegate:       "Verifying line",
-  report_line:    "Checking line",
-  related_openings: "Comparing openings",
-  position_judge: "Checking position claims",
+  analyze:        ["Analyzing position", "Studying the position", "Weighing the position"],
+  top_moves:      ["Finding top moves", "Scanning candidates", "Surveying top moves"],
+  piece_at:       ["Checking piece", "Eyeing the square", "Scanning the square"],
+  validate_move:  ["Validating move", "Double-checking the move", "Confirming the move"],
+  recommend_move: ["Picking move", "Choosing a move", "Selecting a move"],
+  material:       ["Counting material", "Tallying material", "Weighing material"],
+  delegate:       ["Verifying line", "Double-checking the line", "Reviewing the line"],
+  report_line:    ["Checking line", "Reviewing the line", "Going over the line"],
+  related_openings: ["Comparing openings", "Cross-checking openings", "Matching openings"],
+  position_judge: ["Checking position claims", "Fact-checking the position", "Verifying the claims"],
 };
 
 // Tools whose label shows the actual move under consideration ("Considering
-// Nd3"). Maps the tool to the verb; the move SAN from input.move is appended.
+// Nd3"). Maps the tool to its verb variants; the move SAN from input.move is
+// appended.
 const MOVE_TOOL_VERBS = {
-  recommend_move: "Considering",
-  validate_move:  "Validating",
-  delegate:       "Verifying",
+  recommend_move: ["Considering", "Weighing", "Mulling"],
+  validate_move:  ["Validating", "Double-checking", "Confirming"],
+  delegate:       ["Verifying", "Double-checking", "Reviewing"],
 };
+
+// Last variant index handed out per variants array (keyed by array identity,
+// so TOOL_FRIENDLY_LABELS and MOVE_TOOL_VERBS entries for the same tool name
+// cycle independently). Cleared in resetAi() so a new analysis run doesn't
+// carry bias from the previous one.
+const toolLabelLastIndex = new Map();
+
+// Random pick that excludes the immediately-previous variant, so the same
+// label never shows twice in a row without falling into a predictable cycle.
+function pickVariant(variants) {
+  if (variants.length === 1) return variants[0];
+  const last = toolLabelLastIndex.get(variants);
+  let idx;
+  do {
+    idx = Math.floor(Math.random() * variants.length);
+  } while (idx === last);
+  toolLabelLastIndex.set(variants, idx);
+  return variants[idx];
+}
 
 const ANALYSIS_WINDOW_TITLE = "Analysis";
 
@@ -366,9 +388,10 @@ function formatToolOutput(output) {
 
 function friendlyToolLabel(name, input) {
   const move = input && typeof input.move === "string" ? input.move.trim() : "";
-  const verb = MOVE_TOOL_VERBS[name];
-  if (verb && move) return `${verb} ${move}`;
-  return TOOL_FRIENDLY_LABELS[name] || name;
+  const verbs = MOVE_TOOL_VERBS[name];
+  if (verbs && move) return `${pickVariant(verbs)} ${move}`;
+  const labels = TOOL_FRIENDLY_LABELS[name];
+  return labels ? pickVariant(labels) : name;
 }
 
 let userCloseHandler = null;
@@ -468,6 +491,7 @@ export function resetAi() {
   inst.body._roundPanels.clear();
   inst.body._toolCallNodes.clear();
   inst.body._currentRound = null;
+  toolLabelLastIndex.clear();
   setAiStatus("waiting");
 }
 

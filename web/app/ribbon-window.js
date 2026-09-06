@@ -182,6 +182,11 @@ export function openRibbonWindow(el) {
     rotateBtn.title = "Rotate orientation";
     rotateBtn.setAttribute("aria-label", "Rotate orientation");
   }
+  const closeBtn = wbOuter?.querySelector(".wb-close");
+  if (closeBtn) {
+    closeBtn.title = "Dock";
+    closeBtn.setAttribute("aria-label", "Dock");
+  }
   mountEl(el);
 }
 

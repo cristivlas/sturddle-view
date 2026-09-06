@@ -527,6 +527,8 @@ async def start_tournament(
         if not confirm_wipe:
             raise HTTPException(status_code=409, detail=_WIPE_REQUIRED_DETAIL)
         store.wipe_for_restart(tournament_id)
+        # The buffered chatter describes games the wipe just deleted.
+        orch.clear_event_history(tournament_id)
     try:
         t = await orch.start(tournament_id)
     except TournamentNotFoundError as e:

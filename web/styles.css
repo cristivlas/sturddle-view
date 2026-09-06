@@ -673,6 +673,15 @@ wa-select::part(listbox) {
 .play-ai-verdict > .play-ai-revision-summary {
   font-style: normal;
 }
+/* The verdict's own margin+padding indent the "Refuted"/"Holds" summary
+   under the tool-call tree; pull the visible prose box back out by that
+   same amount so its edges land on .play-ai-prose-final's 12px inset
+   instead of nesting one level deeper. */
+.play-ai-verdict .play-ai-revision-body > .play-ai-prose {
+  position: relative;
+  left: calc(-1 * (var(--tool-box-indent) / 2 + 8px));
+  width: calc(100% + var(--tool-box-indent) + 16px);
+}
 .play-ai-tool-label {
   /* Stay on one line; the head scrolls horizontally if needed. */
   white-space: nowrap;
@@ -1650,16 +1659,25 @@ body .side-popover.popover-floating {
 .dock-slot-action:hover,
 .dock-slot-undock:hover,
 .dock-slot-close:hover { color: var(--fg); background: var(--nav-btn-bg-hover); }
-/* Floating-mode (WinBox title-bar control), mirroring wb-ribbon-rotate-ctrl.
-   The !important overrides WinBox vendor CSS's default background-image. */
+/* Shared base for custom WinBox title-bar control icons: a masked
+   FontAwesome svg standing in for WinBox's built-in icon. The !important on
+   background-image overrides WinBox vendor CSS's default. Each control below
+   only sets its own image, size, and background-color. */
+.play-ai-reanalyze-ctrl,
+.wb-dock-ctrl,
+.wb-ribbon-rotate-ctrl,
+.wb-log-copy-ctrl,
+.winbox.sturddle-wb-ribbon .wb-close {
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  background-image: none !important;
+}
+/* Floating-mode (WinBox title-bar control), mirroring wb-ribbon-rotate-ctrl. */
 .play-ai-reanalyze-ctrl {
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
   mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
-  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
-  -webkit-mask-position: center; mask-position: center;
   -webkit-mask-size: 11px; mask-size: 11px;
   background-color: rgba(255,255,255,0.85) !important;
-  background-image: none !important;
 }
 /* Docked mode uses the muted button theme: reset mask/background to the
    button's natural styling, then paint the icon via ::before so
@@ -1704,17 +1722,13 @@ body .side-popover.popover-floating {
   /* UCI log needs horizontal scroll; pvtable needs it too */
   overflow-x: auto;
 }
-.wb-dock-ctrl {
+.wb-dock-ctrl,
+.winbox.sturddle-wb-ribbon .wb-close {
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/down-left-and-up-right-to-center.svg);
   mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/down-left-and-up-right-to-center.svg);
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
   -webkit-mask-size: 12px;
   mask-size: 12px;
   background-color: rgba(255,255,255,0.9) !important;
-  background-image: none !important;
 }
 /* The board area inside the host gets all available height. */
 .play-board-host .game-view-board {
@@ -1729,24 +1743,6 @@ body .side-popover.popover-floating {
   pointer-events: none;
   filter: grayscale(0.4);
 }
-/* Paused (not analyzing): block board interaction. No visual dim -- the
-   header badge alone signals the state. */
-.play-board-host.board-paused .board {
-  pointer-events: none;
-}
-/* One-shot attention pulse on the Paused badge + Resume button when the user
-   clicks the inert board, pointing at how to resume. INSET ring + brightness
-   flash (no outward box-shadow or scale) so it never clips against
-   edge-hugging ribbons or the float WinBox's contain. */
-@keyframes pause-hint-pulse {
-  0%, 100% { box-shadow: inset 0 0 0 0 rgba(var(--accent-rgb), 0); filter: brightness(0.5); }
-  50%      { box-shadow: inset 0 0 0 2px rgba(var(--accent-rgb), 0.85); filter: brightness(1); }
-}
-.pause-hint-pulse { animation: pause-hint-pulse 0.3s ease-in-out 2; }
-@media (prefers-reduced-motion: reduce) {
-  .pause-hint-pulse { animation: none; }
-}
-
 /* 800px = --bp-mobile, 680px = --bp-mobile-h-play. Media queries can't read
    custom props; keep these literals in sync with :root. */
 @media (max-width: 800px), (max-height: 680px) {
@@ -4273,14 +4269,9 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-ribbon-rotate-ctrl {
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-left.svg);
   mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-left.svg);
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
   -webkit-mask-size: 11px;
   mask-size: 11px;
   background-color: rgba(255,255,255,0.85) !important;
-  background-image: none !important;
 }
 /* Horizontal mode (default): vertical separators between buttons. */
 .winbox.sturddle-wb-ribbon.ribbon-horizontal .wb-body .ribbon-sep,
@@ -4363,6 +4354,15 @@ wa-dialog.tournament-info-dialog::part(body) {
 .h2h-tbl thead th:last-child:hover {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
 }
+/* Sortable first/last columns (Engine, Ordo) keep the accent-line bottom
+   edge from the .th-sortable:hover rule above -- the plain first/last-child
+   overrides otherwise clobber it at equal specificity. */
+.wb-standings-tbl thead th.th-sortable:first-child:hover {
+  box-shadow: inset -2px 0 0 var(--wa-color-border-loud, #353841), inset 0 -2px 0 var(--accent-line);
+}
+.wb-standings-tbl thead th.th-sortable:last-child:hover {
+  box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset 0 -2px 0 var(--accent-line);
+}
 .wb-sprt {
   background: var(--bg); border-bottom: 1px solid var(--border-subtle);
   padding: 6px 8px; margin-bottom: 0; font-size: 0.75rem;
@@ -4387,14 +4387,9 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-log-copy-ctrl {
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
   mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
   -webkit-mask-size: 14px;
   mask-size: 14px;
   background-color: rgba(255,255,255,0.9) !important;
-  background-image: none !important;
 }
 .wb-sched-list li { padding: 3px 0; font-size: 0.8125rem; border-bottom: 1px solid var(--border-subtle); }
 .wb-sched-icon { display: inline-block; width: 18px; color: var(--accent); }
