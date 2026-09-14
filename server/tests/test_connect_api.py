@@ -9,6 +9,7 @@ from sturddle_view.api import connect as connect_api
 from sturddle_view.app import create_app
 from sturddle_view.config import LOOPBACK_HOST, WILDCARD_HOST, Settings
 from sturddle_view.engines import EngineRegistry
+from .conftest import REGISTRY_FILE
 
 TOKEN = "test-token"
 LOCAL = ("127.0.0.1", 50000)
@@ -39,7 +40,7 @@ def make_client(tmp_path, monkeypatch):
 
     def _make(client_addr, *, host=LOOPBACK_HOST, auth_disabled=False, listener=None):
         settings = Settings(token=TOKEN, host=host, auth_disabled=auth_disabled)
-        registry = EngineRegistry(path=tmp_path / "engines.json")
+        registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
         app = create_app(settings=settings, engine_registry=registry)
         app.state.lan_listener = listener
         c = TestClient(app, client=client_addr)

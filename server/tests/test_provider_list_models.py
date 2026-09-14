@@ -19,6 +19,7 @@ from sturddle_view.llm import openai_compat as openai_compat_mod
 from sturddle_view.llm._errors import extract_error_message, is_thinking_unsupported
 from sturddle_view.llm.anthropic import AnthropicProvider
 from sturddle_view.llm.ollama import OllamaProvider
+from .conftest import REGISTRY_FILE
 
 
 # ---------- Test fakes for httpx -------------------------------------
@@ -262,7 +263,7 @@ def _client_for_provider(tmp_path, *, provider: str, api_key: str = "", base_url
     settings.ai_provider = provider
     settings.ai_api_key = api_key
     settings.ai_base_url = base_url
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     return TestClient(app)
 

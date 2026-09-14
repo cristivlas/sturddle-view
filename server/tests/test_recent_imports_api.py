@@ -9,6 +9,7 @@ from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.play.human_vs_engine import HumanVsEngine
 from sturddle_view.recent_imports import RecentImports
+from .conftest import REGISTRY_FILE
 
 
 # A minimal PGN that the parser accepts without complaint.
@@ -23,7 +24,7 @@ def _make_app(tmp_path):
     no_engine_configured. View-mode imports never actually launch the
     engine, so a stub path is fine."""
     settings = Settings(token="test-token")
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     e = registry.add(name="MyEngine", path=str(tmp_path / "fake-engine"))
     registry.select(e.id)
     app = create_app(settings=settings, engine_registry=registry)
@@ -216,7 +217,7 @@ def test_import_supplied_game_id_mismatch_409(client):
 def test_edit_commit_changed_position_mints_new_game_id(tmp_path):
     """commit_edit on changed FEN -> new game_id, stored on the row."""
     settings = Settings(token="test-token")
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     e = registry.add(name="MyEngine", path=str(tmp_path / "fake-engine"))
     registry.select(e.id)
     app = create_app(settings=settings, engine_registry=registry)
@@ -247,7 +248,7 @@ def test_edit_commit_changed_position_mints_new_game_id(tmp_path):
 def test_edit_commit_unchanged_position_keeps_game_id(tmp_path):
     """commit_edit on unchanged FEN -> same game_id; no new row."""
     settings = Settings(token="test-token")
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     e = registry.add(name="MyEngine", path=str(tmp_path / "fake-engine"))
     registry.select(e.id)
     app = create_app(settings=settings, engine_registry=registry)

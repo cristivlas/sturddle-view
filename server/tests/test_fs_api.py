@@ -9,12 +9,13 @@ from fastapi.testclient import TestClient
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
+from .conftest import REGISTRY_FILE
 
 
 @pytest.fixture
 def client(tmp_path):
     settings = Settings(token="test-token")
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     with TestClient(app) as c:
         c.headers["Authorization"] = "Bearer test-token"
@@ -79,7 +80,7 @@ def test_stat_404(client, tmp_path):
 
 def test_auth_required(tmp_path):
     settings = Settings(token="test-token")
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     with TestClient(app) as c:
         assert c.get(f"/fs?path={tmp_path}").status_code == 401

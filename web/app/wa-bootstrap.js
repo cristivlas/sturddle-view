@@ -27,3 +27,11 @@ import "../vendor/webawesome/components/tab-group/tab-group.js";
 import "../vendor/webawesome/components/tab/tab.js";
 import "../vendor/webawesome/components/tab-panel/tab-panel.js";
 import "../vendor/webawesome/components/details/details.js";
+
+// Chrome hands saved form state back to nameless form-associated custom
+// elements FIFO by tag, so a restore fills the wrong wa-input. App state
+// is server-driven: never let any element save restorable state.
+const setFormValue = ElementInternals.prototype.setFormValue;
+ElementInternals.prototype.setFormValue = function (value) {
+  return setFormValue.call(this, value, null);
+};

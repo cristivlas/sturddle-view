@@ -25,6 +25,7 @@ from sturddle_view.tournament import fastchess as fc_mod  # noqa: E402
 from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
 
 from .conftest import (  # noqa: E402
+    REGISTRY_FILE,
     free_port,
     pin_arena_tournament_ux,
     run_uvicorn,
@@ -61,7 +62,7 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
     s = Settings(token="test", auth_disabled=True, port=port)
     s.tournament_root = str(tmp_path / "tournaments")
     s.tournament_fastchess_path = sys.executable
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     registry.add(name="Engine A", path=sys.executable)
     registry.add(name="Engine B", path=sys.executable)
     app = create_app(settings=s, engine_registry=registry)

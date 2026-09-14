@@ -24,6 +24,7 @@ from sturddle_view.llm.anthropic import (
     _thinking_mode_from_capabilities,
 )
 from sturddle_view.llm.base import LLMProvider
+from .conftest import REGISTRY_FILE
 
 
 @pytest.fixture(autouse=True)
@@ -245,7 +246,7 @@ class _StubProvider(LLMProvider):
 
 def test_models_endpoint_includes_thinking_map(tmp_path):
     settings = Settings(token="t", auth_disabled=True)
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     app.state.ai_provider_factory = lambda: _StubProvider()
     with TestClient(app) as c:

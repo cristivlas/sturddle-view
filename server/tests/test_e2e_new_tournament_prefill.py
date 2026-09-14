@@ -23,6 +23,8 @@ pytestmark = pytest.mark.e2e
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
 from .conftest import (  # noqa: E402
+    REGISTRY_FILE,
+    e2e_env,
     pin_arena_tournament_ux,
     run_uvicorn_subprocess,
     wait_perspective_ready,
@@ -57,7 +59,7 @@ def _make_fake_uci(root: Path, id_name: str) -> str:
 
 @pytest.fixture
 def server(tmp_path):
-    registry_path = tmp_path / "engines.json"
+    registry_path = tmp_path / REGISTRY_FILE
     seed = EngineRegistry(path=registry_path)
     for n in ("alpha", "beta"):
         seed.add(name=n, path=_make_fake_uci(tmp_path, n))
@@ -70,13 +72,8 @@ def server(tmp_path):
         encoding="utf-8",
     )
     env = {
-        "SV_PGN_DIR": str(tmp_path / "pgn"),
-        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        **e2e_env(tmp_path),
         "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,
-        "SV_ENGINE_REGISTRY_PATH": str(registry_path),
-        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
-        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
-        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
     }
     with run_uvicorn_subprocess(env_overrides=env) as base:
         yield base

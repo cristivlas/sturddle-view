@@ -14,7 +14,7 @@ import chess
 import pytest
 
 from sturddle_view.events import EVT_AI_POSITION_NOTE, EventBus
-from sturddle_view.llm import ProviderChunk, ScriptedProvider, ToolRegistry
+from sturddle_view.llm import ProviderChunk, ToolRegistry
 from sturddle_view.llm.base import LLMProvider, Message, ToolWireSpec
 from sturddle_view.llm.position_judge import (
     _parse_clear_labels,

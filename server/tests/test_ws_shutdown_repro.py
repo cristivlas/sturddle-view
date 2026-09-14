@@ -42,6 +42,7 @@ pytest.importorskip("playwright.async_api")
 from sturddle_view.app import create_app  # noqa: E402
 from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
+from .conftest import REGISTRY_FILE  # noqa: E402
 
 
 ITERATIONS = int(os.environ.get("SV_WS_STRESS_ITERS", "20"))
@@ -60,7 +61,7 @@ def _start_server(tmp_path):
 
     settings = Settings(token="test-token", auth_disabled=True)
     settings.pgn_dir = tmp_path / "pgn"
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     port = _free_port()
     cfg = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="critical", ws="wsproto")

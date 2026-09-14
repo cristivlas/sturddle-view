@@ -10,11 +10,12 @@ from sturddle_view.engines import (
     EngineRegistry,
     resolve_analysis,
 )
+from .conftest import REGISTRY_FILE
 
 
 @pytest.fixture
 def registry(tmp_path):
-    return EngineRegistry(path=tmp_path / "engines.json")
+    return EngineRegistry(path=tmp_path / REGISTRY_FILE)
 
 
 class _FakeSettings:
@@ -99,7 +100,7 @@ def test_remove(registry):
 
 
 def test_atomic_write_no_partial_file_on_error(tmp_path, monkeypatch):
-    reg = EngineRegistry(path=tmp_path / "engines.json")
+    reg = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     reg.add(name="A", path="/p/a")
     original = reg.path.read_text()
 
@@ -144,7 +145,7 @@ def test_remove_clears_selection(registry):
 
 
 def test_stale_selection_in_file_is_ignored(tmp_path):
-    path = tmp_path / "engines.json"
+    path = tmp_path / REGISTRY_FILE
     path.write_text(
         json.dumps({"engines": [], "selected_id": "ghost-id"})
     )
@@ -166,7 +167,7 @@ def test_args_env_round_trip(registry):
 
 def test_args_env_default_empty_for_legacy_entries(tmp_path):
     """Engines persisted before args/env existed load with empty defaults."""
-    path = tmp_path / "engines.json"
+    path = tmp_path / REGISTRY_FILE
     path.write_text(
         json.dumps({"engines": [{"id": "a", "name": "Old", "path": "/p/old"}]})
     )
@@ -202,7 +203,7 @@ def test_rating_explicit_none_clears(registry):
 
 
 def test_rating_absent_in_legacy_entry_loads_as_none(tmp_path):
-    path = tmp_path / "engines.json"
+    path = tmp_path / REGISTRY_FILE
     path.write_text(
         json.dumps({"engines": [{"id": "a", "name": "Old", "path": "/p/old"}]})
     )
@@ -211,7 +212,7 @@ def test_rating_absent_in_legacy_entry_loads_as_none(tmp_path):
 
 
 def test_load_normalizes_duplicate_names(tmp_path):
-    path = tmp_path / "engines.json"
+    path = tmp_path / REGISTRY_FILE
     path.write_text(
         json.dumps(
             {
@@ -233,7 +234,7 @@ def test_load_normalizes_duplicate_names(tmp_path):
 
 
 def test_load_ignores_unknown_fields(tmp_path):
-    path = tmp_path / "engines.json"
+    path = tmp_path / REGISTRY_FILE
     path.write_text(
         json.dumps(
             {

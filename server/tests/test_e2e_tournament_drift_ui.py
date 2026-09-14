@@ -27,6 +27,8 @@ from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 
 from .conftest import (  # noqa: E402
+    REGISTRY_FILE,
+    e2e_env,
     pin_arena_tournament_ux,
     run_uvicorn_subprocess,
     wait_for_async_predicate,
@@ -39,13 +41,8 @@ _DRIFT_OPTIONS = {"Foo": "bar"}
 
 def _server_env(tmp_path):
     return {
-        "SV_PGN_DIR": str(tmp_path / "pgn"),
-        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        **e2e_env(tmp_path),
         "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,
-        "SV_ENGINE_REGISTRY_PATH": str(tmp_path / "engines.json"),
-        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
-        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
-        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
     }
 
 
@@ -53,7 +50,7 @@ def _seed(tmp_path, *, engine_options=None, ref_options=None):
     """Registry with two engines + one idle tournament whose frozen refs
     mirror the registry exactly, except ``engine_options`` (applied to the
     first registry entry) and ``ref_options`` (frozen into its ref)."""
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     a = registry.add(name="engine-A", path=sys.executable, options=engine_options)
     b = registry.add(name="engine-B", path=sys.executable)
     ref_a = {"id": a.id, "name": a.name, "cmd": a.path}

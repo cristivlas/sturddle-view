@@ -18,7 +18,7 @@ pytestmark = pytest.mark.e2e
 
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
-from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
+from .conftest import REGISTRY_FILE, e2e_env, run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
 
 # Black to move, only White-kingside + Black-queenside castling rights.
 # Asymmetric on every axis so a default-init wouldn't accidentally pass.
@@ -30,18 +30,11 @@ def server(tmp_path):
     # Register a fake engine so _get_hve doesn't reject API calls with
     # "no_engine_configured". The path doesn't have to launch -- edit mode
     # never spawns the engine.
-    registry_path = tmp_path / "engines.json"
+    registry_path = tmp_path / REGISTRY_FILE
     seed = EngineRegistry(path=registry_path)
     e = seed.add(name="MyEngine", path="/nonexistent/engine")
     seed.select(e.id)
-    env = {
-        "SV_PGN_DIR": str(tmp_path / "pgn"),
-        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
-        "SV_ENGINE_REGISTRY_PATH": str(registry_path),
-        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
-        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
-        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
-    }
+    env = e2e_env(tmp_path)
     with run_uvicorn_subprocess(env_overrides=env) as base:
         yield base
 

@@ -9,6 +9,7 @@ from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.play.human_vs_engine import HumanVsEngine
 from sturddle_view.recent_imports import RecentImports
+from .conftest import REGISTRY_FILE
 
 CARO_KANN_PGN = "1. e4 c6 2. d4 d5"
 CARO_KANN = {"eco": "B12", "name": "Caro-Kann Defense: Advance Variation"}
@@ -18,7 +19,7 @@ ENGINE_NAME = "MyEngine"
 def _make_app(tmp_path, human_side="white"):
     settings = Settings(token="test-token")
     settings.human_side = human_side
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     e = registry.add(name=ENGINE_NAME, path=str(tmp_path / "fake-engine"))
     registry.select(e.id)
     app = create_app(settings=settings, engine_registry=registry)

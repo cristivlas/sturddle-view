@@ -16,6 +16,7 @@ from sturddle_view.play.import_position import (
     parse_fen,
     parse_pgn,
 )
+from .conftest import REGISTRY_FILE
 
 
 # ---------- parse_fen ----------
@@ -274,7 +275,7 @@ def client(tmp_path):
     fake_engine.write_text("")
     settings = Settings(token="t", auth_disabled=True)
     settings.engine_path = fake_engine
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     with TestClient(app) as c:
         yield c, app, str(fake_engine)

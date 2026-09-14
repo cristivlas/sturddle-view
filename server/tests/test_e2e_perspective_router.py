@@ -32,6 +32,8 @@ pytestmark = pytest.mark.e2e
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
 from .conftest import (  # noqa: E402
+    REGISTRY_FILE,
+    e2e_env,
     run_uvicorn_subprocess,
     wait_perspective_ready,
     watch_page_errors,
@@ -39,16 +41,9 @@ from .conftest import (  # noqa: E402
 
 
 def _server_env(tmp_path):
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     registry.add(name="engine-A", path=sys.executable)
-    return {
-        "SV_PGN_DIR": str(tmp_path / "pgn"),
-        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
-        "SV_ENGINE_REGISTRY_PATH": str(tmp_path / "engines.json"),
-        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
-        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
-        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
-    }
+    return e2e_env(tmp_path)
 
 
 # Runs every scenario against its own router + detached root and returns a

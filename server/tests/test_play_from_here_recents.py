@@ -15,7 +15,7 @@ from sturddle_view.app import create_app
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.config import Settings
 
-from .conftest import _write_uci_stub
+from .conftest import REGISTRY_FILE, _write_uci_stub
 
 PARENT_PGN = (
     '[Event "?"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n'
@@ -48,7 +48,7 @@ def client(tmp_path):
     )
     settings = Settings(token="t", auth_disabled=True)
     settings.engine_path = engine
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     with TestClient(app) as c:
         yield c

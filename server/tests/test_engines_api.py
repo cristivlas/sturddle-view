@@ -18,6 +18,7 @@ from sturddle_view.tournament.store import (
     STATUS_STOPPED,
     TournamentStore,
 )
+from .conftest import REGISTRY_FILE
 
 
 def _make_exec(path):
@@ -107,7 +108,7 @@ def _make_fake_uci(path, id_name):
 @pytest.fixture
 def client(tmp_path):
     settings = Settings(token="test-token")
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     with TestClient(app) as c:
         c.headers["Authorization"] = "Bearer test-token"
@@ -386,7 +387,7 @@ def test_patch_path_change_invalidates_uci_name(client, exe_a, exe_b):
 
 def test_registry_loads_legacy_entry_without_uci_name(tmp_path):
     """Pre-uci_name registry files load with uci_name=None (client backfills)."""
-    p = tmp_path / "engines.json"
+    p = tmp_path / REGISTRY_FILE
     p.write_text(json.dumps({
         "engines": [{"id": "abc", "name": "A", "path": "/x"}],
         "selected_id": None,
@@ -553,7 +554,7 @@ async def test_probe_engine_classifies_non_uci_engine(monkeypatch, exe_a):
 def _make_client_with_tourney(tmp_path, exe_path, status):
     """Return (client, eid) with one tournament at `status` referencing engine E."""
     settings = Settings(token="test-token")
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     c = TestClient(app)
     c.headers["Authorization"] = "Bearer test-token"
@@ -772,7 +773,7 @@ def test_refresh_schema_uses_saved_args_and_env(client, tmp_path):
 
 def test_auth_required(tmp_path):
     settings = Settings(token="test-token")
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     with TestClient(app) as c:
         # No Authorization header.

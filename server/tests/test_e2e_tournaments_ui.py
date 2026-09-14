@@ -15,6 +15,8 @@ from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 
 from .conftest import (  # noqa: E402
+    REGISTRY_FILE,
+    e2e_env,
     pin_arena_tournament_ux,
     run_uvicorn_subprocess,
     wait_for_async_predicate,
@@ -26,17 +28,10 @@ def _server_env(tmp_path, *, fastchess_path=None):
     """Seed the engine registry on disk and return SV_* env for an
     out-of-process server. When fastchess_path is sys.executable it's a
     real file detect_binary echoes back; fastchess is never spawned."""
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     registry.add(name="engine-A", path=sys.executable)
     registry.add(name="engine-B", path=sys.executable)
-    env = {
-        "SV_PGN_DIR": str(tmp_path / "pgn"),
-        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
-        "SV_ENGINE_REGISTRY_PATH": str(tmp_path / "engines.json"),
-        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
-        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
-        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
-    }
+    env = e2e_env(tmp_path)
     if fastchess_path:
         env["SV_TOURNAMENT_FASTCHESS_PATH"] = fastchess_path
     return env

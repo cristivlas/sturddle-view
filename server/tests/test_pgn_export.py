@@ -13,6 +13,7 @@ from sturddle_view.engines import EngineRegistry
 from sturddle_view.events import EventBus
 from sturddle_view.play.human_vs_engine import HumanVsEngine, Mode, TimeControl, ViewModeParams
 from sturddle_view.play.import_position import parse_pgn
+from .conftest import REGISTRY_FILE
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -251,7 +252,7 @@ def api_client(tmp_path):
     fake_engine.write_text("")
     settings = Settings(token="t", auth_disabled=True)
     settings.engine_path = fake_engine
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
 
     hve = HumanVsEngine(
