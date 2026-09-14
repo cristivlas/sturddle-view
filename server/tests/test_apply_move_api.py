@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
+from .conftest import REGISTRY_FILE
 
 STARTPOS_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 AFTER_E4_FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
@@ -21,7 +22,7 @@ ENDPOINT = "/api/chess/apply-move"
 @pytest.fixture
 def client(tmp_path):
     settings = Settings(token="t", auth_disabled=True)
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     with TestClient(app) as c:
         yield c

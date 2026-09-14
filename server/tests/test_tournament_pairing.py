@@ -25,7 +25,7 @@ from sturddle_view.tournament.orchestrator import (
 from sturddle_view.tournament.runner import RunSpec
 from sturddle_view.tournament.store import TournamentStore
 
-from .conftest import run_uvicorn_subprocess
+from .conftest import e2e_env, run_uvicorn_subprocess
 
 
 # ---------------------------------------------------------------------------
@@ -638,13 +638,8 @@ def _write_fake_fastchess(tmp_path):
 def running_server(tmp_path):
     fake_fc = _write_fake_fastchess(tmp_path)
     env = {
-        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        **e2e_env(tmp_path),
         "SV_TOURNAMENT_FASTCHESS_PATH": fake_fc,
-        "SV_ENGINE_REGISTRY_PATH": str(tmp_path / "engines.json"),
-        "SV_PGN_DIR": str(tmp_path / "pgn"),
-        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
-        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
-        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
     }
     with run_uvicorn_subprocess(env_overrides=env) as base:
         c = httpx.Client(base_url=base)

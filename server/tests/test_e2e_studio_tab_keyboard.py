@@ -24,8 +24,10 @@ from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 
 from .conftest import (  # noqa: E402
+    REGISTRY_FILE,
     TOURNAMENT_UX_KEY,
     TOURNAMENT_UX_STUDIO,
+    e2e_env,
     run_uvicorn_subprocess,
     wait_perspective_ready,
     watch_page_errors,
@@ -66,16 +68,11 @@ SELECTION_REGION = """() => {
 def _server_env(tmp_path):
     """Engine registry + SV_* env for an out-of-process server (fastchess is
     never spawned -- we seed the PGN directly)."""
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     for name in ("engine-A", "engine-B"):
         registry.add(name=name, path=sys.executable)
     return {
-        "SV_PGN_DIR": str(tmp_path / "pgn"),
-        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
-        "SV_ENGINE_REGISTRY_PATH": str(tmp_path / "engines.json"),
-        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
-        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
-        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        **e2e_env(tmp_path),
         "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,
     }
 

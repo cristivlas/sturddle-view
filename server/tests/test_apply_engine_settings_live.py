@@ -17,6 +17,7 @@ from sturddle_view.engines import EngineRegistry
 from sturddle_view.events import EventBus
 from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
 from sturddle_view.play.mode import Mode
+from .conftest import REGISTRY_FILE
 
 
 class _StubEngine:
@@ -126,7 +127,7 @@ def api_client(tmp_path, monkeypatch):
     """FastAPI TestClient with a real registry on disk and a stub HvE
     pre-attached so the route handlers' getattr(s, "hve", None) returns it."""
     settings = Settings(token="test-token", auth_disabled=True)
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     hve_stub = MagicMock()
     hve_stub.apply_engine_settings_live = AsyncMock()

@@ -27,6 +27,8 @@ from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 
 from .conftest import (  # noqa: E402
+    REGISTRY_FILE,
+    e2e_env,
     pin_arena_tournament_ux,
     run_uvicorn_subprocess,
     wait_perspective_ready,
@@ -53,7 +55,7 @@ def server(tmp_path):
     # tournament_fastchess_path is sys.executable (a real file detect_binary
     # echoes back), but fastchess is never spawned -- this test only opens
     # and lays out workspace windows.
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     # Seed a non-empty option_schema so listing engines doesn't lazily
     # probe sys.executable (not a real UCI engine) and log a handshake
     # timeout. The schema content is irrelevant -- layout never reads it.
@@ -66,12 +68,7 @@ def server(tmp_path):
         engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
     )
     env = {
-        "SV_PGN_DIR": str(tmp_path / "pgn"),
-        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
-        "SV_ENGINE_REGISTRY_PATH": str(tmp_path / "engines.json"),
-        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
-        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
-        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        **e2e_env(tmp_path),
         "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,
     }
     with run_uvicorn_subprocess(env_overrides=env) as base:

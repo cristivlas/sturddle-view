@@ -14,6 +14,7 @@ from sturddle_view.events import EventBus
 from sturddle_view.play.game_store import GameState, GameStore
 from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
 from sturddle_view.play.mode import Mode
+from .conftest import REGISTRY_FILE
 
 
 # -------- GameStore: pure file I/O --------
@@ -438,7 +439,7 @@ def test_lifespan_restores_when_engine_resolvable(tmp_path):
 
     settings = Settings(token="t", auth_disabled=True)
     settings.engine_path = fake_engine
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry, game_store=store)
     with TestClient(app):
         assert app.state.hve is not None
@@ -452,7 +453,7 @@ def test_lifespan_skips_restore_when_no_engine(tmp_path):
 
     settings = Settings(token="t", auth_disabled=True)
     # No engine_path, no registry selection.
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry, game_store=store)
     with TestClient(app):
         assert app.state.hve is None

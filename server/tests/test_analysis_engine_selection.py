@@ -19,6 +19,7 @@ from sturddle_view.play import tools_engine
 from sturddle_view.play.engine_analysis import NoAnalysisEngine, make_analysis_supervisor
 from sturddle_view.play.human_vs_engine import HumanVsEngine
 from sturddle_view.play.mode import Mode
+from .conftest import REGISTRY_FILE
 
 
 def test_get_hve_wires_registry_on_every_call(tmp_path):
@@ -41,7 +42,7 @@ def test_get_hve_wires_registry_on_every_call(tmp_path):
 
 
 def test_make_analysis_supervisor_uses_pinned_analysis_engine(tmp_path):
-    reg = EngineRegistry(path=tmp_path / "engines.json")
+    reg = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     active = reg.add(name="Active", path="/p/active")
     pinned = reg.add(name="Pinned", path="/p/pinned")
     reg.select(active.id)
@@ -53,7 +54,7 @@ def test_make_analysis_supervisor_uses_pinned_analysis_engine(tmp_path):
 
 
 async def test_run_analysis_spawns_pinned_engine_and_surfaces_failure(tmp_path, monkeypatch):
-    reg = EngineRegistry(path=tmp_path / "engines.json")
+    reg = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     active = reg.add(name="Active", path="/p/active")
     pinned = reg.add(name="Pinned", path="/p/pinned")  # missing binary
     reg.select(active.id)

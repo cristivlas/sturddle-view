@@ -7,12 +7,13 @@ from fastapi.testclient import TestClient
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
+from .conftest import REGISTRY_FILE
 
 
 @pytest.fixture
 def client(tmp_path):
     settings = Settings(token="t", auth_disabled=True)
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     with TestClient(app) as c:
         yield c

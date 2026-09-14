@@ -19,8 +19,10 @@ from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 
 from .conftest import (  # noqa: E402
+    REGISTRY_FILE,
     TOURNAMENT_UX_KEY,
     TOURNAMENT_UX_STUDIO,
+    e2e_env,
     run_uvicorn_subprocess,
     wait_perspective_ready,
     watch_page_errors,
@@ -59,19 +61,12 @@ def _seed_tournament(tmp_path):
 
 @pytest.mark.asyncio
 async def test_studio_replay_confirms_without_play_mount(tmp_path, make_page):
-    registry_path = tmp_path / "engines.json"
+    registry_path = tmp_path / REGISTRY_FILE
     seed = EngineRegistry(path=registry_path)
     e = seed.add(name="MyEngine", path=FAKE_ENGINE_PATH)
     seed.select(e.id)
     _seed_tournament(tmp_path)
-    env = {
-        "SV_PGN_DIR": str(tmp_path / "pgn"),
-        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
-        "SV_ENGINE_REGISTRY_PATH": str(registry_path),
-        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
-        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
-        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
-    }
+    env = e2e_env(tmp_path)
     with run_uvicorn_subprocess(env_overrides=env) as base:
         # In-progress HVE game on the server (2 plies, human to move).
         httpx.post(

@@ -18,6 +18,7 @@ from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.play.human_vs_engine import HumanVsEngine
 from sturddle_view.recent_imports import RecentImports
+from .conftest import REGISTRY_FILE
 
 SAMPLE_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 # Edited position: black to move, distinct from the startpos so dedupe
@@ -27,7 +28,7 @@ EDITED_FEN = "r3kbnr/ppp1pppp/2n5/3p4/3P4/2N5/PPP1PPPP/R3KBNR b Kq - 0 1"
 
 def _make_app(tmp_path):
     settings = Settings(token="test-token")
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     e = registry.add(name="MyEngine", path=str(tmp_path / "fake-engine"))
     registry.select(e.id)
     app = create_app(settings=settings, engine_registry=registry)

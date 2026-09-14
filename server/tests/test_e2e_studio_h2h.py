@@ -26,8 +26,10 @@ from sturddle_view.tournament.pgn_stats import (  # noqa: E402
 )
 
 from .conftest import (  # noqa: E402
+    REGISTRY_FILE,
     TOURNAMENT_UX_KEY,
     TOURNAMENT_UX_STUDIO,
+    e2e_env,
     run_uvicorn_subprocess,
     wait_perspective_ready,
     watch_page_errors,
@@ -44,16 +46,11 @@ LOS_TOL = 0.2
 def _server_env(tmp_path):
     """Engine registry + SV_* env for an out-of-process server (fastchess is
     never spawned -- we seed the PGN directly)."""
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     for name in ("engine-A", "engine-B", "engine-C"):
         registry.add(name=name, path=sys.executable)
     return {
-        "SV_PGN_DIR": str(tmp_path / "pgn"),
-        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
-        "SV_ENGINE_REGISTRY_PATH": str(tmp_path / "engines.json"),
-        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
-        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
-        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        **e2e_env(tmp_path),
         "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,
     }
 
@@ -106,22 +103,23 @@ def _split(games, name):
 def _los(rec):
     """LOS = P(true Elo > 0) from the same SE that yields the CI -- mirrors
     the client's los(). None when n<2; 100/0 for a perfect score."""
-    w, l, d = rec["w"], rec["l"], rec["d"]
-    n = w + l + d
+    wins, losses, draws = rec["w"], rec["l"], rec["d"]
+    n = wins + losses + draws
     if n == 0:
         return None
-    elo = elo_from_score((w + 0.5 * d) / n)
+    elo = elo_from_score((wins + 0.5 * draws) / n)
     if elo is None:
-        return 100.0 if w > l else 0.0
-    margin = elo_margin_from_wld(w, l, d)
+        return 100.0 if wins > losses else 0.0
+    margin = elo_margin_from_wld(wins, losses, draws)
     if margin is None or margin <= 0:
         return None
     return 0.5 * (1 + math.erf((elo / (margin / 1.96)) / math.sqrt(2))) * 100
 
 
 def _expect_elo(rec):
-    w, l, d = rec["w"], rec["l"], rec["d"]
-    return elo_from_score((w + 0.5 * d) / (w + l + d)), elo_margin_from_wld(w, l, d)
+    wins, losses, draws = rec["w"], rec["l"], rec["d"]
+    n = wins + losses + draws
+    return elo_from_score((wins + 0.5 * draws) / n), elo_margin_from_wld(wins, losses, draws)
 
 
 # Margin glyph is U+00B1 since 18065e8; keep +/- accepted for safety.

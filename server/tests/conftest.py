@@ -336,6 +336,23 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+# Registry file under tmp_path; tests seed it before the server starts.
+REGISTRY_FILE = "engines.json"
+
+
+def e2e_env(tmp_path: Path) -> dict[str, str]:
+    """Per-test ``SV_*`` overrides rooting every server store under
+    ``tmp_path``. Seed the registry at ``tmp_path / REGISTRY_FILE``."""
+    return {
+        "SV_PGN_DIR": str(tmp_path / "pgn"),
+        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        "SV_ENGINE_REGISTRY_PATH": str(tmp_path / REGISTRY_FILE),
+        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+    }
+
+
 @contextlib.contextmanager
 def run_uvicorn_subprocess(
     *,
@@ -779,7 +796,7 @@ def game_api_client(tmp_path):
     fake_engine.write_text("")
     settings = Settings(token="t", auth_disabled=True)
     settings.engine_path = fake_engine
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     with TestClient(app) as c:
         yield c, app, str(fake_engine)
@@ -831,7 +848,7 @@ def _isolate_user_config(tmp_path, monkeypatch):
         cfg, "default_settings_file", lambda: tmp_path / "settings.json"
     )
     monkeypatch.setattr(
-        engines_mod, "default_registry_path", lambda: tmp_path / "engines.json"
+        engines_mod, "default_registry_path", lambda: tmp_path / REGISTRY_FILE
     )
     monkeypatch.setattr(
         ri_mod, "default_imports_dir", lambda: tmp_path / "imports"

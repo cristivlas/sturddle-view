@@ -6,7 +6,6 @@ exit (quit / throwaway cleanup / respawn) and by a startup orphan sweep.
 """
 from __future__ import annotations
 
-import asyncio
 import os
 from pathlib import Path
 
@@ -23,6 +22,7 @@ from sturddle_view.engine_tmp import (
 from sturddle_view.engines import _popen_kwargs, probe_engine
 from sturddle_view.events import EventBus
 from sturddle_view.play.engine_supervisor import EngineSupervisor
+from .conftest import REGISTRY_FILE
 
 
 @pytest.fixture
@@ -276,7 +276,7 @@ def test_lifespan_sweeps_orphans(tmp_root, tmp_path):
     (orphan / "book.bin").write_bytes(b"x")
 
     settings = Settings(token="t", auth_disabled=True)
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     with TestClient(app):
         assert not orphan.exists()

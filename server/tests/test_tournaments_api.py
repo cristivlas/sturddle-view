@@ -28,6 +28,8 @@ from sturddle_view.tournament.store import (
     TournamentStore,
 )
 
+from .conftest import REGISTRY_FILE
+
 
 FAKE_FASTCHESS = r"""
 import sys, time
@@ -66,7 +68,7 @@ def client(settings, monkeypatch, tmp_path):
     )
     # Isolated registry: rating resolution reads it during standings
     # serialization; the default would lazily load the user's real file.
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     with TestClient(app) as c:
         yield c

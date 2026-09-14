@@ -22,6 +22,7 @@ from sturddle_view.engines import EngineRegistry
 from sturddle_view.play.chess_clock import ChessClock, TimeControl
 from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
 from sturddle_view.play.mode import Mode
+from .conftest import REGISTRY_FILE
 
 
 def _install_hve(app, *, engine_path) -> HumanVsEngine:
@@ -49,7 +50,7 @@ def _build_client(tmp_path, *, ai_enabled: bool):
     settings = Settings(token="t", auth_disabled=True)
     settings.engine_path = fake_engine
     settings.ai_enabled = ai_enabled
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     return app, TestClient(app)
 
