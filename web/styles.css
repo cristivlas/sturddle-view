@@ -4673,7 +4673,7 @@ wa-dialog.tournament-info-dialog::part(body) {
    border-bottom -- collapsed borders detach from a sticky header. */
 .wb-pvtable-tbl { table-layout: fixed; font-size: 0.75rem; border-collapse: separate; border-spacing: 0; }
 .wb-pvtable-tbl thead th {
-  position: sticky; top: 0; z-index: 1; background: var(--panel);
+  position: sticky; top: 0; z-index: 1; background: var(--wa-color-surface-raised);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis; user-select: none;
 }
 .wb-pvtable-tbl thead th:hover {
