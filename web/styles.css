@@ -141,6 +141,10 @@ body { -webkit-user-select: none; user-select: none; }
 *::-webkit-scrollbar-thumb:hover { background: var(--wa-color-focus); }
 *::-webkit-scrollbar-corner { background: transparent; }
 /* *::-webkit-scrollbar-button { display: none; } */
+/* Arena only: its page panel plus its body-mounted workspace and board windows. */
+:is(.tournaments-panel, .winbox.sturddle-wb-arena, .winbox.sturddle-wb-live) *::-webkit-scrollbar {
+  width: 8px; height: 8px;
+}
 /* `*` doesn't pierce shadow DOM, so wa-select's listbox keeps the chunky
    default; reach into its part. (Firefox honors scrollbar-* there too.) */
 wa-select::part(listbox) {
