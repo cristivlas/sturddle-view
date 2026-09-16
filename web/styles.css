@@ -135,8 +135,13 @@ body { -webkit-user-select: none; user-select: none; }
 *::-webkit-scrollbar { width: 5px; height: 5px; }
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18);
   border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:vertical {
+  background: linear-gradient(to top, var(--bg), rgba(255, 255, 255, 0.18));
+}
+*::-webkit-scrollbar-thumb:horizontal {
+  background: linear-gradient(to left, var(--bg), rgba(255, 255, 255, 0.18));
 }
 *::-webkit-scrollbar-thumb:hover { background: var(--wa-color-focus); }
 *::-webkit-scrollbar-corner { background: transparent; }
@@ -1627,7 +1632,7 @@ body .side-popover.popover-floating {
   background: transparent;
   z-index: 1;
 }
-.dock-grip:hover, .dock-grip.dragging { background: var(--nav-btn-bg-active); }
+.dock-grip:hover, .dock-grip.dragging { background: var(--accent-line); }
 .dock-slot-header {
   display: flex;
   align-items: center;
