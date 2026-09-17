@@ -55,15 +55,28 @@ the tooltip "Double-click to play line"; other rows get neither. The
 second press of a double-click is `preventDefault`ed so no SAN token
 gets word-selected.
 
-Refused while the board is in edit mode, or while an analysis engine is
-streaming (`canPlayLine` on the view: `!analyzing && !editing`). A row
+Refused while the board is in edit mode, or while a search is in flight
+on either side -- the play engine's move search, or analysis (engine-only,
+or the AI and its tool searches) -- since the table is mutating under
+the row. `canPlayLine` on the view: `!analyzing && !editing &&
+!engineToMove`, where `engineToMove` = `!viewing && clock running &&
+side to move is not the human's`, mirroring the server's own engine-kick
+gate (`_clock_running && turn == engine_color`; clock-running is live
+PLAY mode with a game on, timed or not; pause is human-turn-only). A row
 whose line would be refused isn't showable in the first place -- no
 hover, no tooltip, double-click inert -- so the refusal is felt before
 the click, not after. `canPlayLine`'s answer can flip without a new PV
-write (entering/leaving edit or analysis), so the Search Lines table
-re-derives showability for every row on each `board_update`
-(`refreshShowability`, fed by `canPlay` in the table's construction
-options). A double-click that still slips through refused (a race
+write (a turn change, entering/leaving edit or analysis), so the
+interactive game-view announces every flip of it as a window event
+(`APP_EVT.PLAY_LINE_GATE_CHANGED`, fired at the end of its `board_update`
+handling and after each `clock_tick` -- turn flips arrive there -- and
+once on the first event after a mount) and the Search Lines table
+re-derives showability for every row on it (`refreshShowability`, fed
+by `canPlay` in the table's construction options). A window event, not
+a bus subscription: the
+table's body outlives a perspective nav, so its bus slot can predate
+the remounted view's handler and would read the previous update's
+gate. A double-click that still slips through refused (a race
 between the check and the click) reports it back through `onActivate`'s
 return value, and the row's playing state is unwound immediately --
 nothing else would ever do it.
@@ -296,7 +309,7 @@ truncated line is shown as far as it makes sense, never as ghosts.
   release() }`, keyed to the snapshot, not the `tr`. Showable requires
   a playable line and `canPlay()` (when given); `refreshShowability()`
   re-derives it for every row without a new write, for `canPlay`
-  answers that change on their own (board_update's analyzing/editing).
+  answers that change on their own (`PLAY_LINE_GATE_CHANGED`).
   A single click on a row other than the one playing cancels via
   `cancelLine`, held for a grace window in case a following
   double-click on the same row claims it as a retarget instead; a

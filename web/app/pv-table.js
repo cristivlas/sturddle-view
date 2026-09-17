@@ -34,8 +34,11 @@ const MIN_SHOWABLE_FRAMES = 2;
 // A single click on a different row cancels the running show; a double-click
 // retargets to it instead. A lone click can't tell which one it's part of
 // yet, so the cancel is held for this long in case a second click (the
-// dblclick event, which fires within this window) claims it first.
-const DBLCLICK_GRACE_MS = 400;
+// dblclick event, which fires within this window) claims it first. Must not
+// undercut the platform's own double-click window (Windows default 500ms),
+// or a slow-but-valid double-click cancels first and then retargets: a
+// jump, not a rewind.
+const DBLCLICK_GRACE_MS = 500;
 
 // Splits pvText into whitespace/move-number/move-token spans. Every SAN (or
 // UCI) move token gets `data-ply` so a running show can highlight and scroll

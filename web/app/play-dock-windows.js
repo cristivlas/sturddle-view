@@ -1262,12 +1262,19 @@ function buildPvTableBody(events, { setOff }) {
     canPlay: () => !!pvLineBoard?.canPlayLine(),
   });
   const off = events.on((evt) => {
-    // analyzing/editing flip on board_update; re-gate the affordance then.
-    if (evt.kind === KIND.BOARD_UPDATE) { pvt.refreshShowability(); return; }
     if (evt.kind !== KIND.ENGINE_INFO) return;
     pvt.update(evt.payload, evt.payload.pv?.[0], pvLineBoard?.currentPlacement());
   });
-  setOff(() => { off(); pvt.dispose(); });
+  // Re-gate on game-view's own announcement rather than on the bus's
+  // board_update: this body survives a perspective nav, so its bus slot can
+  // predate the remounted view's handler and would read the stale gate.
+  const onGate = () => pvt.refreshShowability();
+  window.addEventListener(APP_EVT.PLAY_LINE_GATE_CHANGED, onGate);
+  setOff(() => {
+    window.removeEventListener(APP_EVT.PLAY_LINE_GATE_CHANGED, onGate);
+    off();
+    pvt.dispose();
+  });
   return pvt.el;
 }
 
