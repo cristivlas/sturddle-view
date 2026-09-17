@@ -4702,6 +4702,9 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-pvtable-col-pv { min-width: 200px; }
 .wb-pvtable-pv { white-space: nowrap; }
 .wb-pv-movenum { color: var(--muted, #888); font-weight: 600; }
+.wb-pvtable-tbl tr.wb-pv-showable:hover { cursor: pointer; background: var(--wa-color-surface-raised); }
+.wb-pvtable-tbl tr.wb-pv-row-playing { background: var(--wa-color-surface-raised); }
+.wb-pvtable-tbl .wb-pv-move-current { background: var(--wa-color-focus, var(--wa-color-brand-60)); border-radius: 2px; }
 
 /* ------------------------------------------------------------------
    Ribbon-side mirror: on body[data-ribbon-side="right"], flip the ribbon,

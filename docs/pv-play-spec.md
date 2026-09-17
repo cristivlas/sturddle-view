@@ -55,7 +55,24 @@ the tooltip "Double-click to play line"; other rows get neither. The
 second press of a double-click is `preventDefault`ed so no SAN token
 gets word-selected.
 
-Refused while the board is in edit mode.
+Refused while the board is in edit mode, or while an analysis engine is
+streaming (`canPlayLine` on the view: `!analyzing && !editing`). A row
+whose line would be refused isn't showable in the first place -- no
+hover, no tooltip, double-click inert -- so the refusal is felt before
+the click, not after. `canPlayLine`'s answer can flip without a new PV
+write (entering/leaving edit or analysis), so the Search Lines table
+re-derives showability for every row on each `board_update`
+(`refreshShowability`, fed by `canPlay` in the table's construction
+options). A double-click that still slips through refused (a race
+between the check and the click) reports it back through `onActivate`'s
+return value, and the row's playing state is unwound immediately --
+nothing else would ever do it.
+
+A single click on a row other than the one playing cancels the running
+show, exactly as if Esc had been pressed. Because a lone click is
+indistinguishable from the first half of a double-click when it fires,
+the cancel is held for a short grace window; a following double-click on
+that row clears it and retargets instead (Cancel, below).
 
 ## Show
 
@@ -272,21 +289,34 @@ truncated line is shown as far as it makes sense, never as ghosts.
   animated branch of `enqueuePositionChange` (Queue reset above). The
   internal position helper returns the animation promise, which the
   public `setPosition` swallows today.
-- `pv-table.js`: `update(info, pvText, placement)` writes the triple
+- `pv-table.js`: `createPvTable({ colWidthsKey, onActivate, cancelLine,
+  canPlay })`; `update(info, pvText, placement)` writes the triple
   on PV-carrying infos only; double-click on a showable row calls
-  `onActivate(handle)` with `handle = { frames, setPly(i),
-  release() }`, keyed to the snapshot, not the `tr`. Drop pv-less
-  infos for the playing row; unkey-and-pin on a PV-carrying conflict
-  or clear; remove on release unless re-activated. `renderPvInto`
-  wraps each SAN token in a span. Hover highlight, tooltip and
-  double-click exist only on tables created with `onActivate`, and
-  only on showable rows; showability is re-evaluated on every triple
-  write. `dispose` cancels a running show.
+  `onActivate(handle)` with `handle = { frames, pvUci, setPly(i),
+  release() }`, keyed to the snapshot, not the `tr`. Showable requires
+  a playable line and `canPlay()` (when given); `refreshShowability()`
+  re-derives it for every row without a new write, for `canPlay`
+  answers that change on their own (board_update's analyzing/editing).
+  A single click on a row other than the one playing cancels via
+  `cancelLine`, held for a grace window in case a following
+  double-click on the same row claims it as a retarget instead; a
+  double-click with nothing playable there leaves that cancel alone
+  rather than eating it. Drop pv-less infos for the playing row;
+  unkey-and-pin on a PV-carrying conflict or clear; remove on release
+  unless re-activated. `renderPvInto` wraps each SAN token in a span.
+  Hover highlight, tooltip and double-click exist only on tables
+  created with `onActivate`, and only on showable rows. `dispose`
+  cancels a running show.
 - `game-view.js`: passthroughs `playLine`, `cancelLine`,
-  `currentPlacement`.
+  `currentPlacement`, `canPlayLine` (`!analyzing && !editing`, shared
+  by `canPlayLine` and `playLine`'s own refusal so the two can't
+  drift). `playLine`/`canPlayLine` are handed out as bare function
+  references, so they close over the view's own state rather than
+  reading `this`.
 - `play-dock-windows.js`: `setPvLineBoard({ currentPlacement,
-  playLine, cancelLine })`; supplies `isExempt(target)` = target is
-  inside `inst.wb`'s root, `inst.slot`, or `inst.inlineSlot`.
+  canPlayLine, playLine, cancelLine })`; supplies `isExempt(target)` =
+  target is inside `inst.wb`'s root, `inst.slot`, or `inst.inlineSlot`,
+  and `canPlay` = `pvLineBoard.canPlayLine()` for the table.
 - `play.js`: wires `setPvLineBoard` before `restoreDebugWindows`
   (play.js:2581; the `/game/sync` right after it replays board then
   last info, and in view mode that replay is the only row); clears

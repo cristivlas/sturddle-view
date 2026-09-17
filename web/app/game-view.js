@@ -914,6 +914,14 @@ function queryRefs(ctx, container, sideHost) {
   ctx.fenCopyBtn = container.querySelector(".fen-copy");
 }
 
+// A running PV show would fight a live analysis engine for the board (frames
+// landing mid-search, arrows/markers racing applyEngineInfo's own), and edit
+// mode owns the board outright -- shared by canPlayLine and playLine so the
+// refusal condition can't drift between the two.
+function canPlayLineNow(ctx) {
+  return !ctx.analyzing && !ctx.editing;
+}
+
 function buildViewApi(ctx) {
   return {
     ready: ctx.ready,
@@ -962,6 +970,12 @@ function buildViewApi(ctx) {
       }
     },
     clearArrows() { ctx.board.clearArrows(); },
+    // Both handed out as bare function references (setPvLineBoard), so they
+    // close over ctx via canPlayLineNow rather than using `this`.
+    canPlayLine() { return canPlayLineNow(ctx); },
+    playLine(frames, opts) { return canPlayLineNow(ctx) && ctx.board.playLine(frames, opts); },
+    cancelLine() { ctx.board.cancelLine(); },
+    currentPlacement() { return ctx.board.currentPlacement(); },
     clearEngineInfo() {
       clearEngineInfoFields(ctx);
       setEngineSectionEmpty(ctx, true);
