@@ -320,13 +320,13 @@ function formatToolArgs(input) {
 // Each tool maps to a few interchangeable phrasings so the panel doesn't
 // repeat the same label on every call; pickVariant() rotates through them.
 const TOOL_FRIENDLY_LABELS = {
-  analyze:        ["Analyzing position", "Studying the position", "Weighing the position", "Assessing", "Grasping the situation"],
-  top_moves:      ["Finding copacetic moves", "Triangulating", "Scoping top moves", "Brainstorming"],
-  piece_at:       ["Checking piece", "Eyeing the square", "Zooming in"],
+  analyze:        ["Analyzing position", "Studying the position", "Weighing the position", "Assessing", "Grasping the situation", "Navel-gazing", "Dubitate ergo cogitate"],
+  top_moves:      ["Finding copacetic moves", "Triangulating", "Scoping top moves", "Brainstorming", "Smelling own ideas"],
+  piece_at:       ["Checking", "Eyeing", "Zooming in on"],
   validate_move:  ["Validating move", "Double-checking the move", "Confirming the move"],
   recommend_move: ["Picking move", "Choosing a move", "Selecting a move", "Sussing out"],
   material:       ["Counting material", "Tallying material", "Weighing material"],
-  delegate:       ["Verifying line", "Double-checking the play", "Reviewing the plan", "Simulating", "Fathoming"],
+  delegate:       ["Verifying line", "Double-checking the play", "Reviewing the plan", "Simulating", "Fathoming", "Coreographing"],
   report_line:    ["Checking line", "Reviewing the line", "Going over the idea", "Ascertaining"],
   related_openings: ["Comparing openings", "Cross-checking openings", "Matching openings"],
   position_judge: ["Checking position claims", "Fact-checking the position", "Verifying the claims"],
@@ -391,6 +391,10 @@ function friendlyToolLabel(name, input) {
   const verbs = MOVE_TOOL_VERBS[name];
   if (verbs && move) return `${pickVariant(verbs)} ${move}`;
   const labels = TOOL_FRIENDLY_LABELS[name];
+  if (name === "piece_at") {
+    const square = input && typeof input.square === "string" ? input.square.trim() : "";
+    if (square) return `${pickVariant(labels)} ${square}`;
+  }
   return labels ? pickVariant(labels) : name;
 }
 
