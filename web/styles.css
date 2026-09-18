@@ -234,9 +234,10 @@ wa-select::part(listbox) {
   gap: 8px;
   color: var(--accent-line);
   font-style: italic;
-  /* Tight line: a folded summary is only as tall as its text, and a hair
-     smaller than the prose it introduces. */
-  font-size: 0.85em;
+  /* Same size as a tool-name label (.play-ai-tool-label, 0.85em flat): divide
+     out .play-ai-revision's 0.9em first so the two read at one consistent
+     size instead of compounding to ~0.76em. */
+  font-size: calc(0.85em / 0.9);
   line-height: 1.2;
 }
 .play-ai-revision-summary::-webkit-details-marker { display: none; }
@@ -255,7 +256,9 @@ wa-select::part(listbox) {
 }
 .play-ai-revision-body { margin-top: 4px; }
 /* Warm off-white "marked-up draft" panel so the black text reads against the
-   dark UI; only the flagged tokens are struck. */
+   dark UI; only the flagged tokens are struck. Pull the box back out of
+   .play-ai-revision's indent/padding (15px left margin + 8px each side) so it
+   lands at the same position and width as .play-ai-prose-final's 12px inset. */
 .play-ai-revision-body > .play-ai-prose {
   color: #000;
   margin: 0;
@@ -263,6 +266,9 @@ wa-select::part(listbox) {
   border: none;
   border-radius: 3px;
   background: #e8e6e0;
+  position: relative;
+  left: -11px;
+  width: calc(100% + 19px);
 }
 /* Flagged tokens crossed out where the AI corrects itself. Scoped under the
    prose so its (0,2,0) beats the body's color:#000; accent-colored so the
