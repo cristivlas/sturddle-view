@@ -321,7 +321,7 @@ function formatToolArgs(input) {
 // repeat the same label on every call; pickVariant() rotates through them.
 const TOOL_FRIENDLY_LABELS = {
   analyze:        ["Analyzing position", "Studying the position", "Weighing the position", "Assessing", "Grasping the situation", "Navel-gazing", "Dubitate ergo cogitate"],
-  top_moves:      ["Finding copacetic moves", "Triangulating", "Scoping top moves", "Brainstorming", "Smelling own ideas"],
+  top_moves:      ["Finding copacetic moves", "Triangulating", "Scoping top moves", "Brainstorming", "Smelling own ideas", "Scheming", "Conjuring power moves"],
   piece_at:       ["Checking", "Eyeing", "Zooming in on"],
   validate_move:  ["Validating move", "Double-checking the move", "Confirming the move"],
   recommend_move: ["Picking move", "Choosing a move", "Selecting a move", "Sussing out"],
@@ -338,7 +338,7 @@ const TOOL_FRIENDLY_LABELS = {
 const MOVE_TOOL_VERBS = {
   recommend_move: ["Considering", "Weighing", "Contemplating", "Ratiocinating over", "Projecting"],
   validate_move:  ["Validating", "Double-checking", "Confirming", "Vetting"],
-  delegate:       ["Verifying", "Double-checking", "Reviewing", "War gaming"],
+  delegate:       ["Verifying", "Double-checking", "Reviewing", "War-gaming"],
 };
 
 // Last variant index handed out per variants array (keyed by array identity,
