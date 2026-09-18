@@ -57,6 +57,8 @@ function minimizeFooterH() {
 // Visual gap between tiled/snapped windows; also absorbs WinBox rounding.
 const TILE_MARGIN = 0;
 const TIDY_GAP = 0;
+// Bare `sturddle-wb` is shared with Play's dock windows; this one is Arena-only.
+const ARENA_WINDOW_CLASS = "sturddle-wb-arena";
 
 // ---- Window body builders (pure DOM; no workspace state) ----------------
 
@@ -521,7 +523,7 @@ function makeBox(ctx, key, title, body, { min = false, max = false } = {}) {
   const wb = new WinBox({
     title, mount: body, top: ctx.top, left: ctx.left, right: ctx.getRightInset(), min, max,
     ...(cfg ? { x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height } : {}),
-    class: `sturddle-wb no-full${extra}`,
+    class: `sturddle-wb ${ARENA_WINDOW_CLASS} no-full${extra}`,
     ...sizes,
   });
   // Stash so tile()/snap() can read the effective min size from the

@@ -4,7 +4,7 @@ import {
   INPUT_EVENT_TYPE,
   FEN,
 } from "../vendor/cm-chessboard/src/Chessboard.js";
-import { PositionAnimationsQueue } from "../vendor/cm-chessboard/src/view/PositionAnimationsQueue.js";
+import { PositionAnimationsQueue, PositionsAnimation } from "../vendor/cm-chessboard/src/view/PositionAnimationsQueue.js";
 import { Svg } from "../vendor/cm-chessboard/src/lib/Svg.js";
 import { MARKER_TYPE, Markers } from "../vendor/cm-chessboard/src/extensions/markers/Markers.js";
 import { ARROW_TYPE, Arrows } from "../vendor/cm-chessboard/src/extensions/arrows/Arrows.js";
@@ -15,6 +15,7 @@ import {
 import { PositionEditor } from "../vendor/cm-chessboard-position-editor/src/PositionEditor.js";
 import { resolveBoardStyle } from "./board-styles.js";
 import { SIDE } from "./chess-consts.js";
+import { createLineShow } from "./line-show.js";
 
 // Pinned cm-chessboard version this patch was verified against. On upgrade,
 // re-verify the queue methods still match the expected shape (see
@@ -59,9 +60,27 @@ function _patchAnimationsQueue(board) {
         resolve();
       }));
     }
-    return PositionAnimationsQueue.prototype.enqueuePositionChange.call(
-      this, positionFrom, positionTo, animated,
-    );
+    // Same duration formula as the vendored PositionAnimationsQueue, but keeps
+    // a reference to the running PositionsAnimation on the queue so
+    // cancelAnimations can complete it in place instead of leaving an orphan
+    // rAF loop to repaint a stale target later (see Queue reset, board.js
+    // cancelAnimations below).
+    return this.enqueue(() => new Promise((resolve) => {
+      let duration = this.chessboard.props.style.animationDuration;
+      if (this.queue.length > 0) {
+        duration = duration / (1 + Math.pow(this.queue.length / 5, 2));
+      }
+      this._runningAnimation = new PositionsAnimation(this.chessboard.view,
+        positionFrom, positionTo, duration,
+        () => {
+          this._runningAnimation = null;
+          if (this.chessboard.view) {
+            this.chessboard.view.redrawPieces(positionTo.squares);
+          }
+          resolve();
+        },
+      );
+    }));
   };
   q.enqueueTurnBoard = function (position, color, animated) {
     if (!animated) {
@@ -172,6 +191,7 @@ export function mountBoard({ element, onMove, styleId }) {
 
   let myColor = COLOR.white;
   let inputEnabled = false;
+  let lastMoveUci = null;
 
   function setSide(side) {
     const next = side === SIDE.BLACK ? COLOR.black : COLOR.white;
@@ -191,23 +211,52 @@ export function mountBoard({ element, onMove, styleId }) {
   let resolveReady;
   const ready = new Promise((r) => { resolveReady = r; });
   function reveal() { if (!settled) { settled = true; resolveReady(); } }
-  function setPosition(fen, lastMoveUci, animate = true) {
+  function setPosition(fen, moveUci, animate = true) {
     const wasFirst = !settled;
+    // A position set from outside owns the board's visuals from here on: the
+    // line show cancels (before it applies) so there is exactly one flight
+    // to the new position. Notify with the incoming placement (the FEN's
+    // first field) before applying -- getPiecePlacement() still reads the
+    // old position at this point.
+    lineShow.onOutsidePosition(fen.split(" ")[0], moveUci);
+    lastMoveUci = moveUci;
     const done = board.setPosition(fen, animate && !wasFirst);
+    lineShow.onOutsideFlight(done);
     if (wasFirst) {
       settled = true;
       Promise.all([Promise.resolve(done), spriteReady]).catch(() => {}).then(() => resolveReady());
     }
     board.removeMarkers();
-    if (lastMoveUci && lastMoveUci.length >= 4) {
-      const from = lastMoveUci.slice(0, 2);
-      const to = lastMoveUci.slice(2, 4);
+    if (moveUci && moveUci.length >= 4) {
+      const from = moveUci.slice(0, 2);
+      const to = moveUci.slice(2, 4);
       board.addMarker(MARKER_TYPE.frame, from);
       board.addMarker(MARKER_TYPE.frame, to);
     }
   }
 
+  // Internal: moves the board without touching markers or the line-show
+  // record, and returns the animation promise the public setPosition
+  // swallows above. Used by the line show itself to step through PV frames
+  // and to return to the recorded position.
+  function setPlacement(placement, animate) {
+    return board.setPosition(placement, animate);
+  }
+
+  function markMove(uci) {
+    board.removeMarkers();
+    if (uci && uci.length >= 4) {
+      board.addMarker(MARKER_TYPE.frame, uci.slice(0, 2));
+      board.addMarker(MARKER_TYPE.frame, uci.slice(2, 4));
+    }
+  }
+
   function enableInput(yes) {
+    if (lineShow.isRecordLive()) { lineShow.onOutsideInput(yes); return; }
+    rawEnableInput(yes);
+  }
+
+  function rawEnableInput(yes) {
     if (yes === inputEnabled) return;
     inputEnabled = yes;
     if (yes) {
@@ -257,6 +306,10 @@ export function mountBoard({ element, onMove, styleId }) {
   // (paired). Same color: arrows already differ by origin square; a
   // distinct color (esp. danger/red) would falsely read as an error.
   function setArrow(fromUci, toUci) {
+    if (lineShow.shouldRedirectArrows()) {
+      lineShow.onOutsideArrows(ARROW_TYPE.default, fromUci && toUci ? [{ from: fromUci, to: toUci }] : []);
+      return;
+    }
     if (typeof board.removeArrows === "function") {
       board.removeArrows(ARROW_TYPE.default);
     }
@@ -267,6 +320,10 @@ export function mountBoard({ element, onMove, styleId }) {
   }
 
   function setOpponentArrow(fromUci, toUci) {
+    if (lineShow.shouldRedirectArrows()) {
+      lineShow.onOutsideArrows(ARROW_TYPE.success, fromUci && toUci ? [{ from: fromUci, to: toUci }] : []);
+      return;
+    }
     if (typeof board.removeArrows === "function") {
       board.removeArrows(ARROW_TYPE.success);
     }
@@ -280,6 +337,10 @@ export function mountBoard({ element, onMove, styleId }) {
   // local purple override in styles.css so it reads distinctly from
   // the navy default/PV arrow.
   function setRecommendArrow(fromUci, toUci) {
+    if (lineShow.shouldRedirectArrows()) {
+      lineShow.onOutsideArrows(ARROW_TYPE.secondary, fromUci && toUci ? [{ from: fromUci, to: toUci }] : []);
+      return;
+    }
     if (typeof board.removeArrows === "function") {
       board.removeArrows(ARROW_TYPE.secondary);
     }
@@ -292,6 +353,13 @@ export function mountBoard({ element, onMove, styleId }) {
   // Equally standard book alternatives beside the AI's pick; the vendored
   // ARROW_TYPE.info style (blue, translucent) as shipped.
   function setAlternativeArrows(ucis) {
+    if (lineShow.shouldRedirectArrows()) {
+      const pairs = (ucis || [])
+        .filter((u) => u && u.length >= 4)
+        .map((u) => ({ from: u.slice(0, 2), to: u.slice(2, 4) }));
+      lineShow.onOutsideArrows(ARROW_TYPE.info, pairs);
+      return;
+    }
     if (typeof board.removeArrows === "function") {
       board.removeArrows(ARROW_TYPE.info);
     }
@@ -302,6 +370,7 @@ export function mountBoard({ element, onMove, styleId }) {
   }
 
   function clearArrows() {
+    if (lineShow.shouldRedirectArrows()) { lineShow.onOutsideArrowsClear(); return; }
     if (typeof board.removeArrows === "function") board.removeArrows();
   }
 
@@ -381,13 +450,21 @@ export function mountBoard({ element, onMove, styleId }) {
   }
 
   function cancelAnimations() {
+    // Complete any running animation in place (the library's own end path --
+    // target pieces drawn, positionsAnimationTask resolved, entry resolved)
+    // before tearing down its queue, so no orphan rAF loop survives to
+    // repaint a stale target over the fresh queue's first paint.
+    const running = board.positionAnimationsQueue._runningAnimation;
+    if (running) running.animationStep(Infinity);
     board.positionAnimationsQueue.destroy();
     board.positionAnimationsQueue = new PositionAnimationsQueue(board);
     _patchAnimationsQueue(board);
     board.setPosition(board.getPosition(), false);
+    lineShow.onOutsideQueueReset();
   }
 
   function destroy() {
+    lineShow.destroy();
     board.positionAnimationsQueue.destroy();
     board.destroy();
   }
@@ -404,12 +481,35 @@ export function mountBoard({ element, onMove, styleId }) {
     }
   }
 
-  function isInputEnabled() { return inputEnabled; }
+  // While the line-show record is live, reads report the recorded state, not
+  // the lock -- the AI preview snapshots this to restore after the tool
+  // completes, and must not snapshot the show's artificial lock.
+  function isInputEnabled() {
+    const recorded = lineShow.getRecordedInput();
+    return recorded !== null ? recorded : inputEnabled;
+  }
+
+  const lineShow = createLineShow({
+    setPositionAnimated: setPlacement,
+    markMove,
+    getArrows: () => (typeof board.getArrows === "function" ? board.getArrows() : []),
+    addArrow: (type, from, to) => { if (typeof board.addArrow === "function") board.addArrow(type, from, to); },
+    clearArrows: () => { if (typeof board.removeArrows === "function") board.removeArrows(); },
+    enableInputRaw: rawEnableInput,
+    isInputEnabledRaw: () => inputEnabled,
+    currentPlacement: getPiecePlacement,
+    lastMoveUci: () => lastMoveUci,
+    isEditing: () => editMode,
+  });
+
+  function playLine(frames, opts) { return lineShow.playLine(frames, opts); }
+  function cancelLine() { lineShow.cancelLine(); }
 
   return {
     ready,
     setSide, setPosition, enableInput, isInputEnabled, forceResize, cancelAnimations, destroy,
     setArrow, setOpponentArrow, setRecommendArrow, setAlternativeArrows, clearArrows,
     enterEditMode, exitEditMode, toggleCastlingRight, getCastlingRights, getPiecePlacement,
+    currentPlacement: getPiecePlacement, playLine, cancelLine,
   };
 }

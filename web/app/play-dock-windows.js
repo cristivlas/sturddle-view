@@ -1229,13 +1229,52 @@ const PV_WIN_STATE_KEY = STORAGE_KEY.PVTABLE_WIN_STATE;
 const PV_DOCKED_KEY    = STORAGE_KEY.PVTABLE_DOCKED;
 const PV_OPEN_KEY      = STORAGE_KEY.PVTABLE_OPEN;
 
+// Set by play.js on mount, cleared on unmount: the live board's line-show
+// primitives, so this module can sample placement per engine_info and drive
+// a play on double-click without importing game-view.js directly.
+let pvLineBoard = null;
+export function setPvLineBoard(api) { pvLineBoard = api; }
+
+// A pointerdown inside the Search Lines window's current chrome (its WinBox
+// root, dock slot, or inline slot) never cancels a running show -- decided
+// per event from the instance's live getters so it tracks float/dock/inline.
+function pvTableIsExempt(target) {
+  const wbRoot = pvTable.wb?.body?.parentElement;
+  return !!(
+    (wbRoot && wbRoot.contains(target)) ||
+    (pvTable.slot && pvTable.slot.contains(target)) ||
+    (pvTable.inlineSlot && pvTable.inlineSlot.contains(target))
+  );
+}
+
 function buildPvTableBody(events, { setOff }) {
-  const pvt = createPvTable({ colWidthsKey: STORAGE_KEY.PVTABLE_COL_WIDTHS });
+  const pvt = createPvTable({
+    colWidthsKey: STORAGE_KEY.PVTABLE_COL_WIDTHS,
+    onActivate(handle) {
+      return !!pvLineBoard?.playLine(handle.frames, {
+        pvUci: handle.pvUci,
+        onStep: handle.setPly,
+        onEnd: handle.release,
+        isExempt: pvTableIsExempt,
+      });
+    },
+    cancelLine: () => pvLineBoard?.cancelLine(),
+    canPlay: () => !!pvLineBoard?.canPlayLine(),
+  });
   const off = events.on((evt) => {
     if (evt.kind !== KIND.ENGINE_INFO) return;
-    pvt.update(evt.payload, evt.payload.pv?.[0]);
+    pvt.update(evt.payload, evt.payload.pv?.[0], pvLineBoard?.currentPlacement());
   });
-  setOff(() => { off(); pvt.dispose(); });
+  // Re-gate on game-view's own announcement rather than on the bus's
+  // board_update: this body survives a perspective nav, so its bus slot can
+  // predate the remounted view's handler and would read the stale gate.
+  const onGate = () => pvt.refreshShowability();
+  window.addEventListener(APP_EVT.PLAY_LINE_GATE_CHANGED, onGate);
+  setOff(() => {
+    window.removeEventListener(APP_EVT.PLAY_LINE_GATE_CHANGED, onGate);
+    off();
+    pvt.dispose();
+  });
   return pvt.el;
 }
 

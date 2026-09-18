@@ -298,9 +298,10 @@ function applyClockColors(ctx) {
 
 // `viewing` here is the event's clock flag, distinct from ctx.viewing.
 function setClock(ctx, { white_time, black_time, turn, running, viewing }) {
-  if (!ctx.showClocks) return;
+  // Model state first: engineToMove reads these whether or not clocks show.
   ctx.lastTurn = turn || SIDE.WHITE;
   ctx.lastClockRunning = running || !!viewing;
+  if (!ctx.showClocks) return;
   const bottomWhite = bottomIsWhite(ctx);
   const bottomTime = bottomWhite ? white_time : black_time;
   const topTime = bottomWhite ? black_time : white_time;
@@ -716,6 +717,7 @@ function applyBoardUpdate(ctx, evt) {
   setTablebase(ctx, evt.payload.tablebase);
   if (ctx.showEngineInfo && evt.payload.view) applyViewEval(ctx, evt);
   if (ctx.interactive && !ctx.editing) board.enableInput(true);
+  announcePlayLineGate(ctx);
 }
 
 // View mode: surface PGN-derived eval (white POV) in the engine info
@@ -787,6 +789,7 @@ function applyEvent(ctx, evt) {
       break;
     case KIND.CLOCK_TICK:
       setClock(ctx, evt.payload);
+      announcePlayLineGate(ctx);
       break;
     case KIND.ENGINE_SEARCH_START:
       if (ctx.showEngineInfo) clearEngineInfoFields(ctx);
@@ -914,6 +917,40 @@ function queryRefs(ctx, container, sideHost) {
   ctx.fenCopyBtn = container.querySelector(".fen-copy");
 }
 
+// The play engine is searching for its move: mirrors the server's own kick
+// gate (`_clock_running && turn == engine_color`), where clock-running means
+// live PLAY mode with a game on, timed or not. Pause is human-turn-only, so
+// it never hides a live search. Not view mode: setClock reports running
+// there for the clock styling, and the cursor's side to move is nobody's.
+function engineToMove(ctx) {
+  const humanSide = ctx.humanWhite ? SIDE.WHITE : SIDE.BLACK;
+  return !ctx.viewing && ctx.lastClockRunning && ctx.lastTurn !== humanSide;
+}
+
+// No PV show while a search is in flight on either side -- the play engine's
+// move search or analysis (engine-only, or the AI and its tool searches):
+// the Search Lines table is mutating under the row, and a show would fight
+// the search for the board (frames landing mid-search, arrows/markers racing
+// applyEngineInfo's own). Edit mode owns the board outright. Shared by
+// canPlayLine and playLine so the refusal condition can't drift.
+function canPlayLineNow(ctx) {
+  return !ctx.analyzing && !ctx.editing && !engineToMove(ctx);
+}
+
+// Announced as a window event, not left to bus subscribers: the Search Lines
+// body (and its bus subscription) outlives a perspective nav, so after a
+// round trip it sits BEFORE this view's handler in the bus and would read the
+// previous event's gate. Runs at the end of applyBoardUpdate and after each
+// clock_tick (turn flips arrive there). playLineGate starts null so the first
+// event after a (re)mount always re-gates rows left over from the last one.
+// Interactive only: observe views host no Search Lines play.
+function announcePlayLineGate(ctx) {
+  const gate = canPlayLineNow(ctx);
+  if (!ctx.interactive || ctx.playLineGate === gate) return;
+  ctx.playLineGate = gate;
+  window.dispatchEvent(new CustomEvent(APP_EVT.PLAY_LINE_GATE_CHANGED));
+}
+
 function buildViewApi(ctx) {
   return {
     ready: ctx.ready,
@@ -962,6 +999,12 @@ function buildViewApi(ctx) {
       }
     },
     clearArrows() { ctx.board.clearArrows(); },
+    // Both handed out as bare function references (setPvLineBoard), so they
+    // close over ctx via canPlayLineNow rather than using `this`.
+    canPlayLine() { return canPlayLineNow(ctx); },
+    playLine(frames, opts) { return canPlayLineNow(ctx) && ctx.board.playLine(frames, opts); },
+    cancelLine() { ctx.board.cancelLine(); },
+    currentPlacement() { return ctx.board.currentPlacement(); },
     clearEngineInfo() {
       clearEngineInfoFields(ctx);
       setEngineSectionEmpty(ctx, true);
@@ -1074,6 +1117,8 @@ export function mountGameView(container, opts = {}) {
     editStm: FEN_STM.WHITE,
     // Analysis mode: streams PV from a dedicated engine even while viewing.
     analyzing: false,
+    // Last announced canPlayLineNow() value; see announcePlayLineGate.
+    playLineGate: null,
     // Cached PGN names so flipping the board in view mode can re-swap
     // top/bottom without waiting for a fresh board_update.
     viewWhiteName: null,

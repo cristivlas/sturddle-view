@@ -9,7 +9,7 @@ import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
 import { alert as showAlert, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportAiError, reportError, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, clearUciLog, isMobileLayout } from "../play-dock-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, clearUciLog, isMobileLayout, setPvLineBoard } from "../play-dock-windows.js";
 import {
   commentaryWindow,
   openCommentary,
@@ -2578,6 +2578,12 @@ export const playPerspective = {
     const onPvTable = () => togglePvTableWindow(ctx.events);
     uciLogBtn?.addEventListener("click", onUciLog);
     pvTableBtn?.addEventListener("click", onPvTable);
+    setPvLineBoard({
+      currentPlacement: view.currentPlacement,
+      canPlayLine: () => view.canPlayLine(),
+      playLine: view.playLine,
+      cancelLine: view.cancelLine,
+    });
     restoreDebugWindows(ctx.events);
     // After restoreDebugWindows: sync makes the server re-emit board state and
     // the last engine_info, and only a panel that already exists can catch it.
@@ -2696,6 +2702,7 @@ export const playPerspective = {
         // dock, whose teardown would drop its slot out from under it.
         closeCommentary();
         setDockContainer(null);
+        setPvLineBoard(null);
         setRailDockContainer(null);
         setEvalBarCallbacks(null);
         evalBar.setOnUserClose(null);

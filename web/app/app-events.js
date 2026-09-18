@@ -30,4 +30,9 @@ export const APP_EVT = {
   OPEN_SETTINGS: "sturddle:open-settings",
   // Application log line appended; detail = formatted string.
   LOG: "sturddle:log",
+  // Whether the play board will accept a PV-line show flipped (a search in
+  // flight on either side, or editing); Search Lines re-gates its rows.
+  // Fired by the interactive game-view at the end of its board_update and
+  // clock_tick handling, so listeners never race the bus order.
+  PLAY_LINE_GATE_CHANGED: "sturddle:play-line-gate-changed",
 };

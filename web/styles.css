@@ -123,20 +123,33 @@ body { -webkit-user-select: none; user-select: none; }
 :is(div, ul, ol, table, pre, section):not([tabindex]):focus,
 :is(div, ul, ol, table, pre, section):not([tabindex]):focus-visible { outline: none; }
 
-/* Thin, macOS-style scrollbars. Firefox honors scrollbar-width;
-   WebKit/Chromium the ::-webkit-scrollbar pseudo-elements. */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+/* Thin, macOS-style scrollbars. Chromium ignores ::-webkit-scrollbar-* on any
+   element that also sets scrollbar-width/color, so the standard properties
+   are Firefox-only; WebKit/Chromium take the pseudo-elements. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  }
 }
-*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar { width: 5px; height: 5px; }
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18);
   border-radius: 4px;
 }
-*::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.32); }
+*::-webkit-scrollbar-thumb:vertical {
+  background: linear-gradient(to top, var(--bg), rgba(255, 255, 255, 0.18));
+}
+*::-webkit-scrollbar-thumb:horizontal {
+  background: linear-gradient(to left, var(--bg), rgba(255, 255, 255, 0.18));
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--wa-color-focus); }
 *::-webkit-scrollbar-corner { background: transparent; }
+/* *::-webkit-scrollbar-button { display: none; } */
+/* Arena only: its page panel plus its body-mounted workspace and board windows. */
+:is(.tournaments-panel, .winbox.sturddle-wb-arena, .winbox.sturddle-wb-live) *::-webkit-scrollbar {
+  width: 8px; height: 8px;
+}
 /* `*` doesn't pierce shadow DOM, so wa-select's listbox keeps the chunky
    default; reach into its part. (Firefox honors scrollbar-* there too.) */
 wa-select::part(listbox) {
@@ -537,7 +550,6 @@ wa-select::part(listbox) {
   align-items: center;
   gap: 8px;
   overflow-x: auto;
-  scrollbar-width: thin;
 }
 .play-ai-tool-dot {
   width: 8px;
@@ -1620,7 +1632,7 @@ body .side-popover.popover-floating {
   background: transparent;
   z-index: 1;
 }
-.dock-grip:hover, .dock-grip.dragging { background: var(--nav-btn-bg-active); }
+.dock-grip:hover, .dock-grip.dragging { background: var(--accent-line); }
 .dock-slot-header {
   display: flex;
   align-items: center;
@@ -3613,10 +3625,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 /* Resizer grips: invisible until hovered/dragged, then tinted like a
    selected row. */
 .studio-grip-row {
-  flex: 0 0 5px; cursor: row-resize; background: transparent; z-index: 1;
+  flex: 0 0 4px; cursor: row-resize; background: transparent; z-index: 1;
 }
 .studio-grip-col {
-  flex: 0 0 5px; cursor: col-resize; background: transparent; z-index: 1;
+  flex: 0 0 4px; cursor: col-resize; background: transparent; z-index: 1;
 }
 .studio-grip-row:hover, .studio-grip-row.dragging,
 .studio-grip-col:hover, .studio-grip-col.dragging {
@@ -4661,7 +4673,7 @@ wa-dialog.tournament-info-dialog::part(body) {
    border-bottom -- collapsed borders detach from a sticky header. */
 .wb-pvtable-tbl { table-layout: fixed; font-size: 0.75rem; border-collapse: separate; border-spacing: 0; }
 .wb-pvtable-tbl thead th {
-  position: sticky; top: 0; z-index: 1; background: var(--panel);
+  position: sticky; top: 0; z-index: 1; background: var(--wa-color-surface-raised);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis; user-select: none;
 }
 .wb-pvtable-tbl thead th:hover {
@@ -4690,6 +4702,9 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-pvtable-col-pv { min-width: 200px; }
 .wb-pvtable-pv { white-space: nowrap; }
 .wb-pv-movenum { color: var(--muted, #888); font-weight: 600; }
+.wb-pvtable-tbl tr.wb-pv-showable:hover { cursor: pointer; background: var(--wa-color-surface-raised); }
+.wb-pvtable-tbl tr.wb-pv-row-playing { background: var(--wa-color-surface-raised); }
+.wb-pvtable-tbl .wb-pv-move-current { background: var(--wa-color-focus, var(--wa-color-brand-60)); border-radius: 2px; }
 
 /* ------------------------------------------------------------------
    Ribbon-side mirror: on body[data-ribbon-side="right"], flip the ribbon,

@@ -320,14 +320,14 @@ function formatToolArgs(input) {
 // Each tool maps to a few interchangeable phrasings so the panel doesn't
 // repeat the same label on every call; pickVariant() rotates through them.
 const TOOL_FRIENDLY_LABELS = {
-  analyze:        ["Analyzing position", "Studying the position", "Weighing the position"],
-  top_moves:      ["Finding top moves", "Scanning candidates", "Surveying top moves"],
-  piece_at:       ["Checking piece", "Eyeing the square", "Scanning the square"],
+  analyze:        ["Analyzing position", "Studying the position", "Weighing the position", "Assessing", "Grasping the situation", "Navel-gazing", "Dubitate ergo cogitate"],
+  top_moves:      ["Finding copacetic moves", "Triangulating", "Scoping top moves", "Brainstorming", "Smelling own ideas", "Scheming", "Conjuring power moves"],
+  piece_at:       ["Checking", "Eyeing", "Zooming in on"],
   validate_move:  ["Validating move", "Double-checking the move", "Confirming the move"],
-  recommend_move: ["Picking move", "Choosing a move", "Selecting a move"],
+  recommend_move: ["Picking move", "Choosing a move", "Selecting a move", "Sussing out"],
   material:       ["Counting material", "Tallying material", "Weighing material"],
-  delegate:       ["Verifying line", "Double-checking the line", "Reviewing the line"],
-  report_line:    ["Checking line", "Reviewing the line", "Going over the line"],
+  delegate:       ["Verifying line", "Double-checking the play", "Reviewing the plan", "Simulating", "Fathoming", "Coreographing"],
+  report_line:    ["Checking line", "Reviewing the line", "Going over the idea", "Ascertaining"],
   related_openings: ["Comparing openings", "Cross-checking openings", "Matching openings"],
   position_judge: ["Checking position claims", "Fact-checking the position", "Verifying the claims"],
 };
@@ -336,9 +336,9 @@ const TOOL_FRIENDLY_LABELS = {
 // Nd3"). Maps the tool to its verb variants; the move SAN from input.move is
 // appended.
 const MOVE_TOOL_VERBS = {
-  recommend_move: ["Considering", "Weighing", "Mulling"],
-  validate_move:  ["Validating", "Double-checking", "Confirming"],
-  delegate:       ["Verifying", "Double-checking", "Reviewing"],
+  recommend_move: ["Considering", "Weighing", "Contemplating", "Ratiocinating over", "Projecting"],
+  validate_move:  ["Validating", "Double-checking", "Confirming", "Vetting"],
+  delegate:       ["Verifying", "Double-checking", "Reviewing", "War-gaming"],
 };
 
 // Last variant index handed out per variants array (keyed by array identity,
@@ -391,6 +391,10 @@ function friendlyToolLabel(name, input) {
   const verbs = MOVE_TOOL_VERBS[name];
   if (verbs && move) return `${pickVariant(verbs)} ${move}`;
   const labels = TOOL_FRIENDLY_LABELS[name];
+  if (name === "piece_at") {
+    const square = input && typeof input.square === "string" ? input.square.trim() : "";
+    if (square) return `${pickVariant(labels)} ${square}`;
+  }
   return labels ? pickVariant(labels) : name;
 }
 
