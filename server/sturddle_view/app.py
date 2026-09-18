@@ -470,6 +470,13 @@ def _setup_ai(app: FastAPI) -> None:
         coord = getattr(app.state, "ai_coordinator", None)
         return coord.turn_book_move() if coord is not None else None
 
+    # Side-to-move Situation for the recommend_move gate: the pick under
+    # check is the mover's, whichever persona asked for it.
+    def _ai_situation_provider():
+        hve = getattr(app.state, "hve", None)
+        board = hve.current_board() if hve else None
+        return hve.situation(board.turn) if board is not None else None
+
     # Shared across all engine-backed tools so a position searched once
     # this turn (analyze, top_moves, recommend_move, the verifier) isn't
     # re-searched. The coordinator clears it at turn start.
@@ -532,6 +539,7 @@ def _setup_ai(app: FastAPI) -> None:
             settings_provider=_ai_settings_provider,
             search_cache=ai_search_cache,
             book_move_provider=_ai_book_move_provider,
+            situation_provider=_ai_situation_provider,
         ),
     )
     # top_moves: the narrator's one-call way to rank its candidate moves

@@ -170,17 +170,23 @@ JSON -> json-repair dependency). Prose avoids it.
 gate on its pick is `recommend_move`'s A/B dominance check; it does not
 separately validate the line behind the move. The dominance check rejects a
 move the engine's best beats by margin -- the guard that matters; deeper
-line-validation is the model's job via `delegate`.
+line-validation is the model's job via `delegate`. The margin is plan-aware
+(docs/ai-playbook-spec.md §Gate): tight when the side to move is ahead,
+wide when behind, so a practical try the plan calls for is not vetoed as
+"weaker"; a side ahead cannot submit a repetition.
 
-**Settling on a move.** The narrator weighs its candidates with one
-`top_moves` call (all candidates ranked best-first for the side to move),
-red-teams the winner via `delegate`, then submits with a single
-`recommend_move`. When the submitted move is
-meaningfully weaker than the best, `recommend_move` rejects it and names
-the stronger move in the reason -- the narrator resubmits *that* move, so
-a rejection resolves in one step rather than open-ended probing. The last
-accepted `recommend_move` is the turn's pick and drives the on-board
-arrow (via the end-of-turn `ai_recommendation` verifier search).
+**Settling on a move.** The `Plan:` line of the user message (the
+playbook) decides the pick: the narrator chooses candidates that carry it
+out, weighs them with one `top_moves` call (all candidates ranked
+best-first for the side to move), red-teams the winner via `delegate`,
+then submits with a single `recommend_move` -- among the moves the check
+accepts, the one that serves the plan, not the top score. When the
+submitted move is meaningfully weaker than the best, `recommend_move`
+rejects it and names the stronger move in the reason -- the narrator
+resubmits *that* move, so a rejection resolves in one step rather than
+open-ended probing. The last accepted `recommend_move` is the turn's pick
+and drives the on-board arrow (via the end-of-turn `ai_recommendation`
+verifier search).
 
 ### Tools (v1)
 

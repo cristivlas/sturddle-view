@@ -115,7 +115,18 @@ source; check the file when a precise value matters.
 | `SV_AI_MAX_RECOMMEND_FAILURES` | `2` | Consecutive failed `recommend_move` calls before the loop nudges the model to `top_moves`. | `server/sturddle_view/play/ai_analysis.py` |
 | `SV_AI_ANALYZE_MAX_DEPTH` | `30` | `analyze`/`top_moves` per-call depth cap; caller's `depth` clamped down. Searches are depth-only (no time limit) for determinism. | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_MIN_DEPTH` | `10` | `analyze`/`top_moves` per-call depth floor; caller's `depth` clamped up (then capped at `SV_AI_ANALYZE_MAX_DEPTH` if lower). Shallow searches rank candidates poorly. | `server/sturddle_view/play/tools_engine.py` |
-| `SV_AI_RECOMMEND_MARGIN` | `50` | Centipawn dominance margin for `recommend_move` to accept the model's pick over the engine's top line. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_RECOMMEND_MARGIN_MIN` | `20` | `recommend_move` dominance margin (cp) when the side to move is ahead; the engine's best must beat the pick by more than this to reject it. Even/unclassified positions use the MIN/MAX midpoint. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_RECOMMEND_MARGIN_MAX` | `80` | `recommend_move` dominance margin (cp) when the side to move is behind -- room for the plan's practical try. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_PLAYBOOK_EDGE_CP` | `100` | Playbook margin bucket: `better`/`worse` at this many cp (our POV). | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_DECISIVE_CP` | `300` | Playbook margin bucket: `winning`/`losing`. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_RESIGN_CP` | `900` | Playbook margin bucket: `crushing`/`lost`; mate scores map here. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_OPENING_MIN_PAWNS` | `13` | Playbook phase: pawns on board at or above this -> `opening`. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_MIDDLEGAME_MIN_PAWNS` | `9` | Playbook phase: lower pawn bound of `middlegame`. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_LATE_MIN_PAWNS` | `5` | Playbook phase: lower pawn bound of `late`; fewer -> `endgame`. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_CLOSED_MIN_LOCKED` | `3` | Playbook structure: locked pawn pairs needed for `closed`. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_CLOSED_MAX_OPEN_FILES` | `1` | Playbook structure: most open files a `closed` position may have. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_OPEN_MIN_FILES` | `4` | Playbook structure: open + half-open files needed for `open`. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_MAX_FRAGMENTS` | `3` | Cap on plan fragments per turn (the repetition note rides outside it). | `server/sturddle_view/llm/playbook.py` |
 | `SV_AI_VERIFICATION_DEPTH` | `25` | Floor depth for the end-of-turn recommendation check; searches at least this deep (deeper if the model asked for more). | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_TOP_MOVES_MAX_N` | `5` | Hard cap on `top_moves` candidate count; over-large `n` clamped. | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_REPORT_LINE_MAX_PLIES` | `40` | Hard cap on `report_line` continuation length; bounds payload size (no engine search). | `server/sturddle_view/play/tools_engine.py` |

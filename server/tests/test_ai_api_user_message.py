@@ -13,6 +13,7 @@ from sturddle_view.chess.board import board_from
 from sturddle_view.openings import Opening
 from sturddle_view.play.mode import Mode
 from sturddle_view.play.opening_lines import BookRef
+from sturddle_view.play.playbook import Situation, classify
 
 from .ai_kick_helpers import FakeSettings, build_inputs, build_message as _build
 
@@ -45,8 +46,8 @@ class _FakeHve:
     def human_color(self) -> chess.Color:
         return chess.WHITE
 
-    def position_eval(self):
-        return None
+    def situation(self, our_color: chess.Color) -> Situation:
+        return classify(self._board, score_white=None, our_color=our_color)
 
     def start_fen(self) -> str | None:
         return self._start_fen

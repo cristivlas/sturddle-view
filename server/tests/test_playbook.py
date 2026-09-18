@@ -14,6 +14,8 @@ from sturddle_view.llm.playbook import (
     _LOST_NOTE,
     _MARGIN_FRAGMENTS,
     _PHASE_FRAGMENTS,
+    _REPEAT_AHEAD_NOTE,
+    _REPEAT_BEHIND_NOTE,
     _STRUCTURE_FRAGMENTS,
     render_playbook,
 )
@@ -40,6 +42,7 @@ from sturddle_view.play.playbook import (
     Situation,
     classify,
     phase_tag,
+    repeating_moves,
     structure_tag,
 )
 
@@ -64,6 +67,14 @@ def _situation(**overrides) -> Situation:
     )
     base.update(overrides)
     return Situation(**base)
+
+
+def _shuffled_knights() -> chess.Board:
+    """1.Nf3 Nf6 2.Ng1 Ng8: 3.Nf3 repeats the position after 1.Nf3."""
+    board = chess.Board()
+    for uci in ("g1f3", "g8f6", "f3g1", "f6g8"):
+        board.push_uci(uci)
+    return board
 
 
 # --- classifier ------------------------------------------------------------
@@ -136,6 +147,20 @@ def test_phase_by_pawn_buckets(fen, expected):
 ])
 def test_structure_tag(fen, expected):
     assert structure_tag(chess.Board(fen)) == expected
+
+
+def test_repeating_moves_need_the_move_stack():
+    assert repeating_moves(chess.Board()) == ()
+    assert repeating_moves(chess.Board(_shuffled_knights().fen())) == ()
+
+
+def test_repeating_moves_lists_the_repeating_san():
+    board = _shuffled_knights()
+    assert repeating_moves(board) == ("Nf3",)
+    # The caller's board is left untouched.
+    assert len(board.move_stack) == 4
+    got = classify(board, score_white=None, our_color=chess.WHITE)
+    assert got.repeats == ("Nf3",)
 
 
 def test_structure_never_tagged_in_endgame():
@@ -243,6 +268,26 @@ def test_render_caps_fragment_count(monkeypatch):
 
 def test_render_is_one_line():
     line = render_playbook(
-        _situation(margin=MARGIN_LOST, structure=STRUCTURE_CLOSED), COACH_MODE, chess.WHITE,
+        _situation(margin=MARGIN_LOST, structure=STRUCTURE_CLOSED, repeats=("Nf3",)),
+        COACH_MODE, chess.WHITE,
     )
     assert "\n" not in line
+
+
+def test_render_repetition_note_by_margin():
+    repeats = ("Nf3", "Nh3")
+    behind = render_playbook(_situation(margin=MARGIN_LOSING, repeats=repeats), COACH_MODE, chess.WHITE)
+    assert behind.endswith(_REPEAT_BEHIND_NOTE.format(moves="Nf3, Nh3"))
+    ahead = render_playbook(_situation(margin=MARGIN_BETTER, repeats=repeats), COACH_MODE, chess.WHITE)
+    assert ahead.endswith(_REPEAT_AHEAD_NOTE.format(moves="Nf3, Nh3"))
+    even = render_playbook(_situation(repeats=repeats), COACH_MODE, chess.WHITE)
+    assert "Nf3" not in even
+
+
+def test_render_repetition_note_survives_the_fragment_cap(monkeypatch):
+    monkeypatch.setattr(playbook_prompts, "MAX_FRAGMENTS", 1)
+    line = render_playbook(
+        _situation(margin=MARGIN_LOST, structure=STRUCTURE_CLOSED, repeats=("Nf3",)),
+        COACH_MODE, chess.WHITE,
+    )
+    assert line.endswith(_REPEAT_BEHIND_NOTE.format(moves="Nf3"))

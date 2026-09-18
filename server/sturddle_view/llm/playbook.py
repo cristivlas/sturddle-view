@@ -1,6 +1,7 @@
-"""Playbook fragments: chess-theory advice keyed on Situation tags, rendered
-as one narrator-only steer line on the initial user message
-(docs/ai-playbook-spec.md). Fragments name plans, never board tactics.
+"""Playbook fragments: chess-theory plans keyed on Situation tags, rendered
+as the one `Plan:` line on the initial user message that decides the
+narrator's pick (docs/ai-playbook-spec.md). Fragments name plans, never
+board tactics; the verifier never sees the line.
 """
 from __future__ import annotations
 
@@ -9,6 +10,8 @@ import chess
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
 from ..env_utils import env_int
 from ..play.playbook import (
+    AHEAD_MARGINS,
+    BEHIND_MARGINS,
     MARGIN_BETTER,
     MARGIN_CRUSHING,
     MARGIN_EVEN,
@@ -47,8 +50,9 @@ _MARGIN_FRAGMENTS = {
         "queens if under attack."
     ),
     MARGIN_LOSING: (
-        "complicate, seek counterplay and practical chances; passive "
-        "defense loses slowly."
+        "seek counterplay and practical chances; prolong the game: no "
+        "simplifying trades, keep pieces and tension on, make the opponent "
+        "prove the win."
     ),
 }
 _MARGIN_FRAGMENTS[MARGIN_CRUSHING] = _MARGIN_FRAGMENTS[MARGIN_WINNING]
@@ -140,6 +144,16 @@ _MARGIN_WORDS = {
 }
 _BY_MATERIAL = " by material"
 _YOU = "you"
+
+# Repetition notes ride outside the fragment cap: concrete moves, and the
+# margin decides the verdict (draw is the goal behind, the enemy ahead).
+_REPEAT_BEHIND_NOTE = (
+    "A repetition is available ({moves}): repeating is the drawing try; "
+    "take it unless a move clearly improves."
+)
+_REPEAT_AHEAD_NOTE = "Do not repeat the position ({moves}); make progress."
+_MOVES_JOIN = ", "
+_NOTE_SEP = " "
 _SIDE_WORDS = {chess.WHITE: SIDE_WHITE.capitalize(), chess.BLACK: SIDE_BLACK.capitalize()}
 
 
@@ -179,9 +193,22 @@ def _fragments(situation: Situation, mode: PromptMode) -> list[str]:
     return out[:MAX_FRAGMENTS]
 
 
+def _repeat_note(situation: Situation) -> str:
+    if not situation.repeats:
+        return ""
+    moves = _MOVES_JOIN.join(situation.repeats)
+    if situation.margin in BEHIND_MARGINS:
+        return _REPEAT_BEHIND_NOTE.format(moves=moves)
+    if situation.margin in AHEAD_MARGINS:
+        return _REPEAT_AHEAD_NOTE.format(moves=moves)
+    return ""
+
+
 def render_playbook(situation: Situation, mode: PromptMode, side_to_move: chess.Color) -> str:
-    """The steer line. Coach speaks to the player ('you'); the commentator
+    """The plan line. Coach speaks to the player ('you'); the commentator
     gets neutral third person for the side to move."""
     subject = _YOU if mode == COACH_MODE else _SIDE_WORDS[side_to_move]
-    body = " ".join(_fragments(situation, mode))
-    return f"{PLAYBOOK_LEAD}{_standing(situation, subject)}; {body}"
+    body = _NOTE_SEP.join(_fragments(situation, mode))
+    note = _repeat_note(situation)
+    line = f"{PLAYBOOK_LEAD}{_standing(situation, subject)}; {body}"
+    return f"{line}{_NOTE_SEP}{note}" if note else line

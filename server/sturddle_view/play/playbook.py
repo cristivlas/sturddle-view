@@ -1,7 +1,9 @@
 """Situation classifier for the AI playbook (docs/ai-playbook-spec.md).
 
 Pure function of (board, eval, our side) -> Situation tags. No engine,
-no LLM. Thresholds are named constants with SV_ env overrides.
+no LLM. Thresholds are named constants with SV_ env overrides. The tags
+drive the pick: the plan steer the narrator reads, the recommend_move
+gate's margin and its repetition veto.
 """
 from __future__ import annotations
 
@@ -54,6 +56,8 @@ MARGIN_EVEN = "even"
 MARGIN_BETTER = "better"
 MARGIN_WINNING = "winning"
 MARGIN_CRUSHING = "crushing"
+AHEAD_MARGINS = frozenset({MARGIN_BETTER, MARGIN_WINNING, MARGIN_CRUSHING})
+BEHIND_MARGINS = frozenset({MARGIN_WORSE, MARGIN_LOSING, MARGIN_LOST})
 
 PHASE_OPENING = "opening"
 PHASE_MIDDLEGAME = "middlegame"
@@ -77,6 +81,8 @@ class Situation:
     margin_source: str
     phase: str
     structure: str | None
+    # SAN of the legal moves that repeat an earlier position of the game.
+    repeats: tuple[str, ...] = ()
 
 
 def _material_cp_white(board: chess.Board) -> int:
@@ -160,12 +166,29 @@ def structure_tag(board: chess.Board) -> str | None:
     return None
 
 
+def repeating_moves(board: chess.Board) -> tuple[str, ...]:
+    """SAN of the legal moves after which the position has occurred before
+    in the game. Needs the move stack; a bare FEN yields none."""
+    if not board.move_stack:
+        return ()
+    scratch = board.copy()
+    out: list[str] = []
+    for move in scratch.legal_moves:
+        san = scratch.san(move)
+        scratch.push(move)
+        if scratch.is_repetition(2):
+            out.append(san)
+        scratch.pop()
+    return tuple(out)
+
+
 def classify(
     board: chess.Board, *, score_white: dict | None, our_color: chess.Color,
 ) -> Situation:
     """Tags for `board` from `our_color`'s point of view. `score_white` is
     an engine/PGN eval dict ({cp} or {mate}, white POV); None or unusable
-    falls back to the material balance."""
+    falls back to the material balance. Repetitions come from the board's
+    move stack."""
     cp_white = _score_cp_white(score_white)
     source = SOURCE_EVAL
     if cp_white is None:
@@ -180,4 +203,5 @@ def classify(
         margin_source=source,
         phase=phase,
         structure=structure,
+        repeats=repeating_moves(board),
     )

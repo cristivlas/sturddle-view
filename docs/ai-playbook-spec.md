@@ -1,16 +1,19 @@
 # AI Playbook - Spec
 
-Situation-dependent strategy prompts for the AI analysis agent.
+Situation-dependent strategy for the AI analysis agent's pick.
 Companion to `docs/ai-analysis-spec.md` (§Future skills points here).
 Shipped: classifier `play/playbook.py`, fragments `llm/playbook.py`,
-wired in `_ai_kick._playbook_for`.
+plan line wired in `_ai_kick._playbook_for`, gate in
+`tools_engine.make_recommend_move_tool` (`app._ai_situation_provider`).
 
 ## Goal
 
-Steer the narrator with chess-theory advice that fits the position at
-hand: winning big plays differently from losing big, an endgame from an
-opening, a closed structure from an open one. The server decides which
-advice applies; the model only reads it.
+The playbook drives the move the agent settles on; the narration follows
+from that move. Winning big plays differently from losing big, an endgame
+from an opening, a closed structure from an open one: the server
+classifies the position, hands the model the plan that fits, and tunes
+the engine gate so a plan-fitting move survives it. The model chooses
+candidates that carry the plan out; the engine only vetoes blunders.
 
 ## Vocabulary
 
@@ -30,18 +33,41 @@ advice applies; the model only reads it.
 - Thresholds are named module constants with `SV_` env overrides (project
   rule), never literals.
 
-### Injection: a narrator steer on the initial user message
+### Injection: the `Plan:` line on the initial user message
 
-- Fragments ride the initial user message, after the position context,
-  exactly like the existing opening steers (`OPENING_PHASE_GUIDANCE`,
+- Fragments ride the initial user message as one `Plan:` line
+  (`PLAYBOOK_LEAD`), after the position context, exactly like the
+  existing opening steers (`OPENING_PHASE_GUIDANCE`,
   `BOOK_REPLY_GUIDANCE` in `llm/prompts.py`).
+- Both persona addenda carry `_PLAN_RULE`: the plan decides the pick --
+  candidates for `top_moves` carry it out, and among moves the check
+  accepts the model submits the one that serves the plan, not the
+  highest-scoring one. The closing prose names how the move serves it.
 - Not the system prompt: the situation changes every ply; the cold prompt
   stays stable / cacheable.
-- Narrator-only. `split_narrator_steers` strips the playbook line (by its
-  `PLAYBOOK_LEAD`) for verifier sub-runs too (verifier is an engine-driven
-  adversary; strategy prose would only bias it).
+- Narrator-only. `split_narrator_steers` strips the plan line for
+  verifier sub-runs (the verifier judges soundness, not the plan).
 - Wire-in point: `_ai_kick._build_turn_inputs` -> classify ->
   `build_initial_user_message(playbook=...)`.
+
+### Gate: `recommend_move` is plan-aware
+
+The engine check would otherwise veto the plan: a complicating or
+delaying try scores below the top line by design. Two rules, both from
+the side to move's Situation (`app._ai_situation_provider` ->
+`HumanVsEngine.situation(board.turn)`):
+
+- Dominance margin by margin bucket (`recommend_margin_cp`): ahead
+  (`better`+) -> `RECOMMEND_MARGIN_MIN_CP` (convert cleanly, the engine
+  line rules); behind (`worse`-) -> `RECOMMEND_MARGIN_MAX_CP` (practical
+  chances beat the top line); even or unclassified -> the midpoint.
+  Mate scores ignore the margin as before.
+- Repetition veto: a side ahead that submits a move in `repeats` is
+  rejected before any search (`recommendation_rejected`, reason names
+  the move). Behind, a repeating move goes through the normal margin.
+
+The end-of-turn verifier search (`ai_recommendation`) is unchanged: it
+reports the engine's view of the accepted pick, it does not re-gate it.
 
 ### Mode scoping
 
@@ -55,10 +81,10 @@ advice applies; the model only reads it.
 
 ### Eval source for the margin tag
 
-- Coach: the last engine info captured for the game (`_last_analysis_info`)
-  when present.
-- Commentator: the PGN eval history for the current ply
-  (`_view_eval_history`) when present.
+- One accessor, `HumanVsEngine.situation(our_color)`, classifies the
+  position under review; its eval is the viewed game's eval at the cursor
+  (PGN / recorded eval history) when a game is under review, else the
+  live game's latest recorded engine eval.
 - No eval at hand -> material balance as a coarse proxy, tagged
   `margin_source=material` so the fragment can hedge ("by material").
 - Raw eval numbers never enter the fragment; only the bucket. Keeps the
@@ -106,6 +132,13 @@ hold at once.
 - Never tagged in `phase=endgame`: few pawns make every file open and
   structure advice is middlegame talk.
 
+### `repeats` -- repetition available
+
+- SAN of every legal move after which the position has already occurred
+  in the game (`repeating_moves`, python-chess `is_repetition(2)` on the
+  board's move stack). Empty for a bare FEN.
+- Feeds both the plan line (repetition note) and the gate (veto ahead).
+
 ### Tags deferred (not v1)
 
 - `king_safety` (castled / open lines near king / pawn shield)
@@ -128,11 +161,22 @@ mode by a coach/commentator variant, not by string surgery.
   do not cash in the edge for a simplified but drawn position.
 - `worse`: solidify first; trade off the opponent's most active piece;
   trade queens if under attack.
-- `losing`: complicate, seek counterplay and practical chances; passive
-  defense loses slowly.
+- `losing`: seek counterplay and practical chances; prolong the game --
+  no simplifying trades, keep pieces and tension on, make the opponent
+  prove the win. (Complicating is the `losing` + `open` combo; in a
+  closed position the same margin keeps it closed.)
 - `lost` (coach only, phase != opening): the position is objectively
   lost; name the resignation option once, without insisting, and still
   give the most stubborn try.
+
+### Repetition note
+
+Appended after the capped fragments whenever `repeats` is non-empty and
+the margin is not `even`, naming the moves:
+
+- behind: a repetition is available; repeating is the drawing try --
+  take it unless a move clearly improves.
+- ahead: do not repeat the position; make progress.
 
 ### Phase
 
@@ -191,17 +235,23 @@ own margin fragment (resign note / convert note) appended.
 
 ## Guardrails
 
-- Fragment count cap: PLAYBOOK_MAX_FRAGMENTS (3).
-- Fragments are advice, never instructions to skip tools or the red-team
-  hold (unlike `BOOK_REPLY_GUIDANCE`).
-- Verifier never sees them.
-- Total steer length stays small (target < 80 words) so it does not
+- Fragment count cap: PLAYBOOK_MAX_FRAGMENTS (3); the repetition note
+  rides outside it (concrete moves the gate also acts on).
+- Fragments steer the pick, never instruct the model to skip tools or the
+  red-team hold (unlike `BOOK_REPLY_GUIDANCE`).
+- Verifier never sees them; the gate's margin never widens past
+  `RECOMMEND_MARGIN_MAX_CP`, and mate scores ignore it.
+- Total plan length stays small (target < 80 words) so it does not
   crowd out the position itself.
 
 ## Testing
 
-- Classifier: table-driven FEN -> tags tests (pure function).
-- Prompt assembly: fragment presence per tag; verifier split strips them.
+- Classifier: table-driven FEN -> tags tests (pure function); `repeats`
+  from a move stack.
+- Prompt assembly: fragment presence per tag; verifier split strips the
+  plan line.
+- Gate: margin per bucket (`recommend_margin_cp`), the tool accepting a
+  behind-margin move it rejects when even, the repetition veto ahead.
 - No byte-stable prompt tests (project rule); assert on tag -> fragment
   identity, not exact text.
 

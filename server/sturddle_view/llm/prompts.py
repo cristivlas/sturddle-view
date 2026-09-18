@@ -102,6 +102,14 @@ _REPORT_LINE_RULE = (
     "prose; a rejected line is fixed at the move it names or dropped, "
     "never re-sent unchanged. "
 )
+# The plan line (llm/playbook.py) decides the pick, both personas; the
+# engine check only vetoes, it never chooses.
+_PLAN_RULE = (
+    "The `Plan:` line in the user message is the strategy for the side to "
+    "move and decides the pick: choose candidates that carry it out, and "
+    "among moves the check accepts submit the one that serves the plan, "
+    "not the highest-scoring one. "
+)
 # Opens each addendum's engine workflow: a book turn (see
 # BOOK_REPLY_GUIDANCE) submits the given reply instead of weighing.
 _BOOK_REPLY_EXEMPTION = "Unless the user message gives a book reply, "
@@ -114,6 +122,7 @@ COACH_ADDENDUM = (
     + _SILENT_TOOLS_PREFIX
     + "the player reads only chess -- the position, the plan, the move in SAN"
     + _SILENT_TOOLS_SUFFIX
+    + _PLAN_RULE
     + _BOOK_REPLY_EXEMPTION
     + "weigh your candidates with one `top_moves` call; red-team the "
     "winner with `delegate` and pick differently if it is refuted. Then "
@@ -142,6 +151,7 @@ COMMENTATOR_ADDENDUM = (
     + "the reader sees only the annotation -- positions, moves in SAN, plans"
     + _SILENT_TOOLS_SUFFIX
     + _REPORT_LINE_RULE
+    + _PLAN_RULE
     + _BOOK_REPLY_EXEMPTION
     + "treat the move played as a claim to test: compare it with the "
     "alternatives in one `top_moves` call, red-team your verdict move with "
@@ -160,9 +170,12 @@ Assume it is flawed and hunt the refutation with the engine (top_moves / \
 analyze): the opponent's strongest reply, the tactic it allows, the \
 material it loses. validate_move is for legality only, never the verdict. \
 Never conclude from intuition alone. The move holds only when the \
-strongest reply still fails to crack it. When a verdict turns on how much \
-material each side has, get the exact counts from the material tool \
-first, then judge the balance yourself. Report only your conclusion \
+strongest reply still fails to crack it. Refuted means a concrete reply \
+wins material, forces mate, or wrecks the position; a move that merely \
+scores below the engine's favorite is not refuted. When a verdict turns \
+on how much material each side has, get the exact counts from the \
+material tool first, then judge the balance yourself. Report only your \
+conclusion \
 about the live position: a verdict opening with "holds" or "refuted", \
 then a one-line reason. Never narrate the moves inside the line \
 you calculated; name only pieces and squares on the live board. One or \
@@ -334,9 +347,9 @@ BOOK_REPLY_GUIDANCE = (
 # registry lacks, so verifier sub-runs must not inherit them.
 _OPENING_STEERS = (OPENING_PHASE_GUIDANCE, BOOK_REPLY_GUIDANCE)
 
-# The playbook steer (llm/playbook.py) is one line opening with this lead;
-# strategy prose would only bias the verifier, so it is stripped too.
-PLAYBOOK_LEAD = "Strategy: "
+# The playbook plan (llm/playbook.py) is one line opening with this lead;
+# the verifier judges soundness, not the plan, so it is stripped too.
+PLAYBOOK_LEAD = "Plan: "
 _PLAYBOOK_LINE_RE = re.compile(rf"^{re.escape(PLAYBOOK_LEAD)}.*$\n?", re.MULTILINE)
 
 
@@ -398,8 +411,9 @@ def build_initial_user_message(
     (opening_reply probe). It rides the message as its own line and
     carries the favor-the-book steer in place of the opening-phase one.
 
-    `playbook` is the rendered strategy steer (`render_playbook`), one
-    line opening with PLAYBOOK_LEAD; narrator-only, last on the message.
+    `playbook` is the rendered plan line (`render_playbook`), opening
+    with PLAYBOOK_LEAD; it decides the pick. Narrator-only, last on the
+    message.
 
     Optional fields are omitted entirely when not provided."""
     lines: list[str] = []

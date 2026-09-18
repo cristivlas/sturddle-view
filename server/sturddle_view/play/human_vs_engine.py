@@ -75,6 +75,7 @@ from .game_store import DEFAULT_PLAYER_NAME, GameState, GameStore
 from .import_position import explain_invalid
 from .mode import Mode, ModeConflictError, Op
 from .opening_lines import BookRef, book_reply
+from .playbook import Situation, classify
 from .tablebase import TablebaseProber
 
 log = logging.getLogger(__name__)
@@ -414,7 +415,12 @@ class HumanVsEngine:
         """Side the human plays in the live game."""
         return chess.WHITE if self._human_white else chess.BLACK
 
-    def position_eval(self) -> dict | None:
+    def situation(self, our_color: chess.Color) -> Situation:
+        """Playbook tags for the position under review from `our_color`'s
+        point of view (docs/ai-playbook-spec.md)."""
+        return classify(self._board, score_white=self._position_eval(), our_color=our_color)
+
+    def _position_eval(self) -> dict | None:
         """White-POV eval dict ({cp} or {mate}) for the position under
         review: the viewed game's eval at the cursor, else the live game's
         latest engine eval. None when none is recorded."""

@@ -36,6 +36,7 @@ from .engine_analysis import (
 )
 from .engine_info_pump import pump_engine_info
 from .engine_supervisor import EngineSupervisor
+from .playbook import AHEAD_MARGINS, BEHIND_MARGINS, Situation
 from .tactics import all_forks, all_pins, piece_label
 
 
@@ -57,11 +58,21 @@ MAX_DEPTH = env_int("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_AI_ANALYZE_MAX_DEPTH)
 # (ai_verification_depth) override per call; env is the fallback.
 VERIFICATION_DEPTH = env_int("SV_AI_VERIFICATION_DEPTH", _DEFAULT_AI_VERIFICATION_DEPTH)
 
-# recommend_move dominance margin: rival must beat candidate by strictly
-# more than this many cp (STM POV) to reject. Filters cosmetic 1-30 cp
-# preferences while still catching real blunders. Mate scores ignore it.
-_DEFAULT_RECOMMEND_MARGIN_CP = 50
-RECOMMEND_MARGIN_CP = env_int("SV_AI_RECOMMEND_MARGIN", _DEFAULT_RECOMMEND_MARGIN_CP)
+# recommend_move dominance margin: the engine's best must beat the
+# candidate by strictly more than this many cp (STM POV) to reject. Plan-
+# aware: tight when the side to move is ahead (convert cleanly), wide when
+# behind (a practical try may score below the top line), the midpoint when
+# even or unclassified. Mate scores ignore it.
+_DEFAULT_RECOMMEND_MARGIN_MIN_CP = 20
+_DEFAULT_RECOMMEND_MARGIN_MAX_CP = 80
+RECOMMEND_MARGIN_MIN_CP = env_int("SV_AI_RECOMMEND_MARGIN_MIN", _DEFAULT_RECOMMEND_MARGIN_MIN_CP)
+RECOMMEND_MARGIN_MAX_CP = env_int("SV_AI_RECOMMEND_MARGIN_MAX", _DEFAULT_RECOMMEND_MARGIN_MAX_CP)
+
+# recommend_move rejection reason when the side ahead offers a repetition.
+_REPEAT_AHEAD_REASON = (
+    "{san} repeats the position; ahead, a repetition only offers the "
+    "draw. Submit a move that makes progress."
+)
 
 # Default search depth when the caller omits one. 20 plies gives reliable
 # tactical resolution; lower values surface noisy bestmoves. Model-supplied
@@ -97,6 +108,8 @@ BoardProvider = Callable[[], chess.Board | None]
 SettingsProvider = Callable[[], Any]
 # The current AI turn's book move (UCI), or None when the turn has none.
 BookMoveProvider = Callable[[], str | None]
+# Live-position Situation (play/playbook.py) for the plan-aware gate.
+SituationProvider = Callable[[], Situation | None]
 AnalyzeTool = Callable[..., Awaitable[dict[str, Any]]]
 
 
@@ -1072,14 +1085,26 @@ RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
 )
 
 
+def recommend_margin_cp(situation: Situation | None) -> int:
+    """Dominance margin for the side to move: MIN ahead, MAX behind, the
+    midpoint when even or unclassified."""
+    if situation is not None:
+        if situation.margin in AHEAD_MARGINS:
+            return RECOMMEND_MARGIN_MIN_CP
+        if situation.margin in BEHIND_MARGINS:
+            return RECOMMEND_MARGIN_MAX_CP
+    return (RECOMMEND_MARGIN_MIN_CP + RECOMMEND_MARGIN_MAX_CP) // 2
+
+
 def _better_for_stm(
     candidate: chess.engine.PovScore | None,
     rival: chess.engine.PovScore | None,
     turn: chess.Color,
+    margin_cp: int,
 ) -> bool:
     """True iff `rival` is strictly better than `candidate` from `turn`'s
-    perspective by more than RECOMMEND_MARGIN_CP. Mate always trumps cp
-    (margin doesn't apply); None falls back to conservative behavior."""
+    perspective by more than `margin_cp`. Mate always trumps cp (margin
+    doesn't apply); None falls back to conservative behavior."""
     if rival is None:
         return False
     if candidate is None:
@@ -1093,7 +1118,7 @@ def _better_for_stm(
     cand_cp = cand_score.score()
     if rival_cp is None or cand_cp is None:
         return rival_score > cand_score
-    return (rival_cp - cand_cp) > RECOMMEND_MARGIN_CP
+    return (rival_cp - cand_cp) > margin_cp
 
 
 def make_recommend_move_tool(
@@ -1104,13 +1129,17 @@ def make_recommend_move_tool(
     settings_provider: SettingsProvider | None = None,
     search_cache: SearchCache | None = None,
     book_move_provider: BookMoveProvider | None = None,
+    situation_provider: SituationProvider | None = None,
 ) -> AnalyzeTool:
     """Build the `recommend_move` async tool. Parses UCI/SAN, then runs
     two engine searches (candidate-restricted + free) at the requested
     depth on the live position; if the engine's bestmove scores better
-    for the side to move, returns a structured error so the model can
-    pivot. On acceptance returns `{ok, uci, san, post_move_fen,
-    candidate_score, engine_best_move, engine_best_score, depth}`.
+    for the side to move by more than the plan-aware margin
+    (`recommend_margin_cp` of the `situation_provider`'s Situation),
+    returns a structured error so the model can pivot. A side ahead
+    that submits a repeating move is rejected before any search. On
+    acceptance returns `{ok, uci, san, post_move_fen, candidate_score,
+    engine_best_move, engine_best_score, depth}`.
     The turn's book move (`book_move_provider`) is accepted as-is, no
     search: `{ok, uci, san, post_move_fen, book: True}`.
     `search_cache`: see make_analyze_tool."""
@@ -1143,6 +1172,19 @@ def make_recommend_move_tool(
                 "ok": True, "uci": uci, "san": san,
                 "post_move_fen": scratch.fen(), "book": True,
             }
+
+        situation = situation_provider() if situation_provider is not None else None
+        if (
+            situation is not None
+            and situation.margin in AHEAD_MARGINS
+            and san in situation.repeats
+        ):
+            return {
+                "error": "recommendation_rejected",
+                "reason": _REPEAT_AHEAD_REASON.format(san=san),
+                "uci": uci, "san": san,
+            }
+        margin_cp = recommend_margin_cp(situation)
 
         # Floor recommend_move's two searches at the verification depth so
         # the dominance check can't confirm a move at a shallow depth the
@@ -1221,7 +1263,7 @@ def make_recommend_move_tool(
             if cand_mate is not None and cand_mate > 0:
                 return {"ok": True, "post_move_fen": scratch.fen(), **result_common}
 
-        if _better_for_stm(cand_score, best_score, board.turn):
+        if _better_for_stm(cand_score, best_score, board.turn, margin_cp):
             best_san = result_common.get("engine_best_san") or "a stronger move"
             return {
                 "error": "recommendation_rejected",

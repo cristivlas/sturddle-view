@@ -32,7 +32,6 @@ from ..llm import (
 from ..llm.ollama import DEFAULT_BASE_URL as _DEFAULT_OLLAMA_BASE_URL, OllamaProvider
 from ..play.mode import Mode
 from ..play.opening_reply import book_ref_from_settings, probe_opening_reply
-from ..play.playbook import classify
 
 log = logging.getLogger(__name__)
 
@@ -148,11 +147,10 @@ def _prompt_mode_for(hve) -> PromptMode:
 
 
 def _playbook_for(hve, board: chess.Board, mode: PromptMode) -> str:
-    """Rendered strategy steer (docs/ai-playbook-spec.md). "Our side" is
-    the human for the coach, the side to move for the commentator."""
+    """Rendered plan line (docs/ai-playbook-spec.md). "Our side" is the
+    human for the coach, the side to move for the commentator."""
     our_color = board.turn if mode == COMMENTATOR_MODE else hve.human_color()
-    situation = classify(board, score_white=hve.position_eval(), our_color=our_color)
-    return render_playbook(situation, mode, board.turn)
+    return render_playbook(hve.situation(our_color), mode, board.turn)
 
 
 @dataclass(slots=True, frozen=True)
