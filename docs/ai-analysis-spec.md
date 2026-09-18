@@ -128,11 +128,41 @@ adds latency x fan-out and risks Ollama `<think>` leaking into the verdict).
 
 **Anti-hallucination.** Grounding is prompt-driven plus the tools the
 model can consult: `piece_at` settles a square, `report_line` replays a
-line's legality, `top_moves`/`recommend_move` score moves. Wrong tactical
+line's legality, `top_moves`/`recommend_move` score moves, `tactics`
+lists the pins and forks actually on the board. Wrong tactical
 judgment is caught by forcing a tool call before a verdict (the verifier
-must call a tool before concluding). There is no post-hoc prose validator
-layer (an earlier round-end legality/piece checker was removed -- see the
-branch history).
+must call a tool before concluding).
+
+A light post-hoc prose check (`llm/position_check.py`) runs over the
+single current board only: piece-on-square, file, bishop-color,
+file-openness and line claims, plus pin/fork claims (see §Tactical
+grounding). A flag becomes a clarifying question to the model ("do you
+mean a past or hypothetical position?"), never a rewrite demand. The
+earlier multi-board legality validator was removed (branch history).
+
+**Tactical grounding (pins and forks).** Models write "the knight is
+pinned" or "forks king and rook" from pattern memory, not the board.
+One shared core, `play/tactics.py`, pure functions over a board:
+
+- `absolute_pins(board, color)` -- pieces pinned to their king
+  (python-chess `is_pinned`).
+- `queen_pins(board, color)` -- slider ray hits a piece, the next piece
+  on the ray is that side's queen. King and queen shields only; no
+  rook/minor relative pins (simplicity).
+- `forks(board, color)` -- one piece attacks two or more targets; a
+  target is the king, queen, a rook, or any undefended piece.
+- Each hit carries attacker square, pinned/forked squares and the shield.
+- Skewers: out of scope (rare in model prose).
+
+Consumers:
+
+- `tactics` tool (board-read, no engine; both registries like `piece_at`).
+  FEN in, both colors' pins + forks out. Prompt rule: call it before
+  writing "pin", "pinned", "fork", "forks" about the current position.
+- `iter_false_tactic_claims(text, board)` in `position_check.py`:
+  pin/fork verb near a piece word or square; flagged when that piece or
+  square is not in the tactics result. A bare "pin" with no target is
+  ungroundable and is not flagged. Rides the existing judge flow.
 
 Rejected: structured JSON verdicts (small Ollama models emit malformed
 JSON -> json-repair dependency). Prose avoids it.
@@ -178,6 +208,11 @@ arrow (via the end-of-turn `ai_recommendation` verifier search).
   grounding variation contrast in real lines instead of model memory.
   Narrator-only, capped at `SV_AI_RELATED_OPENINGS_MAX_N`. SHIPPED.
   (Supersedes the originally planned `opening_lookup()`.)
+- `material(fen)` - per-color piece counts, no values assigned; grounds
+  material claims. SHIPPED.
+- `tactics(fen)` - pins (to king or queen) and forks for both colors;
+  pure board read, no engine. Grounds tactical vocabulary and feeds the
+  prose check. See §Tactical grounding. PENDING.
 - `tablebase_probe()` - wraps existing `TablebaseProber` (Syzygy WDL/DTZ);
   pending. Register conditionally on `engine_default_syzygy_path` being
   set so the tool never appears for users without tablebases.
@@ -260,12 +295,9 @@ cached system + initial-message prefix.
 
 #### Future skills (not v1)
 
-- **Position-type playbooks** -- procedural chess wisdom for known
-  position types (IQP middlegame, Lucena/Philidor endgame, typical
-  pawn structures), injected when a cheap server-side classifier
-  matches the live position. More valuable for weaker local models
-  (Ollama 7-14B) than Claude. Open cost: playbook content must be
-  hand-authored / curated from chess literature.
+- **Position-type playbooks** -- promoted to its own spec, see
+  `docs/ai-playbook-spec.md`. Named position types (IQP,
+  Lucena/Philidor) stay future work on top of it.
 - **Opening-repertoire hints** -- once a known opening is identified
   (we already pass `opening_name`/`opening_eco`), inject
   opening-specific motifs. Same authoring-cost caveat.
