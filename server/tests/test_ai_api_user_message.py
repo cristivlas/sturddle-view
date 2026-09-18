@@ -42,6 +42,12 @@ class _FakeHve:
     def current_board(self) -> chess.Board | None:
         return self._board
 
+    def human_color(self) -> chess.Color:
+        return chess.WHITE
+
+    def position_eval(self):
+        return None
+
     def start_fen(self) -> str | None:
         return self._start_fen
 

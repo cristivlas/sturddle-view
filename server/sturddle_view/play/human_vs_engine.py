@@ -410,6 +410,25 @@ class HumanVsEngine:
     def engine_display_name(self) -> str | None:
         return self._engine_name
 
+    def human_color(self) -> chess.Color:
+        """Side the human plays in the live game."""
+        return chess.WHITE if self._human_white else chess.BLACK
+
+    def position_eval(self) -> dict | None:
+        """White-POV eval dict ({cp} or {mate}) for the position under
+        review: the viewed game's eval at the cursor, else the live game's
+        latest engine eval. None when none is recorded."""
+        if self._view_full_moves:
+            history = self._view_eval_history
+            cursor = self._view_cursor
+            if history is not None and 0 < cursor <= len(history):
+                return history[cursor - 1]
+            return None
+        for entry in reversed(self._eval_history or ()):
+            if entry is not None:
+                return entry
+        return None
+
     def play_side_names(self, human_white: bool) -> tuple[str, str]:
         """(white, black) display names for a play game with the given side:
         configured player name on the human side, engine label on the other.

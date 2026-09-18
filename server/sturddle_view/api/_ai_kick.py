@@ -17,14 +17,22 @@ import logging
 import os
 from dataclasses import dataclass
 
+import chess
 from fastapi import HTTPException, Request
 
 from ..chess.board import moves_san
 from ..env_utils import env_int
-from ..llm import PromptMode, build_initial_user_message
+from ..llm import (
+    COACH_MODE,
+    COMMENTATOR_MODE,
+    PromptMode,
+    build_initial_user_message,
+    render_playbook,
+)
 from ..llm.ollama import DEFAULT_BASE_URL as _DEFAULT_OLLAMA_BASE_URL, OllamaProvider
 from ..play.mode import Mode
 from ..play.opening_reply import book_ref_from_settings, probe_opening_reply
+from ..play.playbook import classify
 
 log = logging.getLogger(__name__)
 
@@ -125,10 +133,6 @@ def _short_engine_name(full: str | None) -> str | None:
     return full.split()[0] or full
 
 
-_COMMENTATOR_MODE: PromptMode = "commentator"
-_COACH_MODE: PromptMode = "coach"
-
-
 def _prompt_mode_for(hve) -> PromptMode:
     """Pick the persona from where analysis was entered.
 
@@ -137,10 +141,18 @@ def _prompt_mode_for(hve) -> PromptMode:
     - Anywhere else (live play, paused) -> coach: second-person.
     """
     if hve is None:
-        return _COACH_MODE
+        return COACH_MODE
     if hve.pre_analysis_mode() is Mode.VIEWING:
-        return _COMMENTATOR_MODE
-    return _COACH_MODE
+        return COMMENTATOR_MODE
+    return COACH_MODE
+
+
+def _playbook_for(hve, board: chess.Board, mode: PromptMode) -> str:
+    """Rendered strategy steer (docs/ai-playbook-spec.md). "Our side" is
+    the human for the coach, the side to move for the commentator."""
+    our_color = board.turn if mode == COMMENTATOR_MODE else hve.human_color()
+    situation = classify(board, score_white=hve.position_eval(), our_color=our_color)
+    return render_playbook(situation, mode, board.turn)
 
 
 @dataclass(slots=True, frozen=True)
@@ -177,7 +189,7 @@ async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
     # Gate on the prompt persona, not Mode.VIEWING: keeps annotation
     # plumbing aligned with the commentator addendum that tells the
     # model how to weigh them.
-    if mode == _COMMENTATOR_MODE:
+    if mode == COMMENTATOR_MODE:
         raw_comments, raw_root = hve.view_game_comments()
         per_max = _int_env(_PER_COMMENT_MAX_ENV, _PER_COMMENT_MAX_DEFAULT)
         total_max = _int_env(_TOTAL_COMMENT_MAX_ENV, _TOTAL_COMMENT_MAX_DEFAULT)
@@ -220,6 +232,7 @@ async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
         root_annotation=root_annotation,
         in_opening=in_opening,
         book_reply=reply,
+        playbook=_playbook_for(hve, board, mode),
     )
     if reply is None:
         return TurnInputs(message, None, ())

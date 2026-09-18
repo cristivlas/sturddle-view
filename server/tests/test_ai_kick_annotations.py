@@ -188,20 +188,6 @@ def test_int_env_default_overrides_apply_via_caps(monkeypatch):
 # _build_turn_inputs: mode-gated annotation flow. The fake HVE captures
 # whether view_game_comments was even consulted in each mode.
 
-class _FakeBoard:
-    def __init__(self, fen: str):
-        self._fen = fen
-        self.move_stack: list = []
-
-    def fen(self) -> str:
-        return self._fen
-
-    def parse_san(self, san: str):
-        # Delegate to a real board at this FEN so the played-move seed
-        # parse behaves; move_stack is empty, so ply 0 is the played move.
-        return chess.Board(self._fen).parse_san(san)
-
-
 class _FakeHVE:
     def __init__(
         self,
@@ -214,10 +200,18 @@ class _FakeHVE:
         self._view_comments = view_comments
         self._view_root = view_root
         self.view_game_comments_calls = 0
-        self._board = _FakeBoard(_STARTPOS_FEN)
+        # A real board at the start position: move_stack is empty, so ply 0
+        # is the played move; the playbook classifier reads it directly.
+        self._board = chess.Board(_STARTPOS_FEN)
 
     def current_board(self):
         return self._board
+
+    def human_color(self) -> chess.Color:
+        return chess.WHITE
+
+    def position_eval(self):
+        return None
 
     def start_fen(self) -> str:
         return _STARTPOS_FEN

@@ -1,8 +1,9 @@
 # AI Playbook - Spec
 
-Situation-dependent strategy prompts for the AI analysis agent. First
-draft; companion to `docs/ai-analysis-spec.md` (§Future skills points
-here).
+Situation-dependent strategy prompts for the AI analysis agent.
+Companion to `docs/ai-analysis-spec.md` (§Future skills points here).
+Shipped: classifier `play/playbook.py`, fragments `llm/playbook.py`,
+wired in `_ai_kick._playbook_for`.
 
 ## Goal
 
@@ -36,8 +37,8 @@ advice applies; the model only reads it.
   `BOOK_REPLY_GUIDANCE` in `llm/prompts.py`).
 - Not the system prompt: the situation changes every ply; the cold prompt
   stays stable / cacheable.
-- Narrator-only. `split_opening_steer` generalizes to strip playbook
-  fragments for verifier sub-runs too (verifier is an engine-driven
+- Narrator-only. `split_narrator_steers` strips the playbook line (by its
+  `PLAYBOOK_LEAD`) for verifier sub-runs too (verifier is an engine-driven
   adversary; strategy prose would only bias it).
 - Wire-in point: `_ai_kick._build_turn_inputs` -> classify ->
   `build_initial_user_message(playbook=...)`.
@@ -102,6 +103,8 @@ hold at once.
   CLOSED_MAX_OPEN_FILES.
 - `open`: open + half-open files >= OPEN_MIN_FILES.
 - Neither -> no structure tag (no fragment).
+- Never tagged in `phase=endgame`: few pawns make every file open and
+  structure advice is middlegame talk.
 
 ### Tags deferred (not v1)
 

@@ -104,6 +104,33 @@ async def test_false_claim_emits_note_and_injects_corrective():
     assert any("h6 is empty" in t for t in injected)
 
 
+@pytest.mark.asyncio
+async def test_false_pin_claim_emits_note_and_injects_tactics_fact():
+    # Bb5 pins the c6 knight; the f3 knight is not pinned.
+    board = chess.Board("r1bqkbnr/ppp2ppp/2np4/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4")
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="The knight on f3 is pinned, so Nd4 fails.")],
+        [ProviderChunk(kind="text", text="Corrected: the c6 knight is the pinned one.")],
+    ])
+    coord, bus = _coord(provider, board)
+    queue = await bus.subscribe()
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    notes = [e for e in events if e.kind == EVT_AI_POSITION_NOTE]
+    assert len(notes) == 1
+    # The whole clause is struck.
+    assert notes[0].payload["surfaces"] == ["The knight on f3 is pinned"]
+    assert provider.stream_calls == 2
+    injected = _last_user_texts(provider)
+    assert any(t.startswith(_POSITION_CHECK_PREFIX) for t in injected)
+    assert any(
+        "black knight on c6 pinned to black king on e8 by white bishop on b5" in t
+        for t in injected
+    )
+
+
 # White to move; both bishops (d3, e6) are light-squared, so a "dark-squared
 # bishop" reference matches nothing -- the reported hallucination.
 _BISHOP_FEN = "2n1rk2/p1R2p2/2NRb1p1/1P5p/4P2P/3B1PP1/5K2/2r5 w - - 3 41"
@@ -115,7 +142,7 @@ def test_board_labels_exclude_bishop_flags():
     # bishop label ever reaches the judge.
     pc = _PositionCheck(
         chess.Board(), [], [], [],
-        bishop_triples=[
+        fact_triples=[
             ("the light-squared bishop", "light-squared bishop on d6",
              "d6 is dark-squared"),
             ("the dark-squared bishop", "dark-squared bishop",

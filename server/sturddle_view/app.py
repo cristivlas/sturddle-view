@@ -53,6 +53,7 @@ from .play.tools_engine import (
     PIECE_AT_TOOL_SPEC,
     RECOMMEND_MOVE_TOOL_SPEC,
     REPORT_LINE_TOOL_SPEC,
+    TACTICS_TOOL_SPEC,
     TOP_MOVES_TOOL_SPEC,
     VALIDATE_MOVE_TOOL_SPEC,
     SearchCache,
@@ -62,6 +63,7 @@ from .play.tools_engine import (
     make_recommend_move_tool,
     make_recommend_verifier,
     make_report_line_tool,
+    make_tactics_tool,
     make_top_moves_tool,
     make_validate_move_tool,
 )
@@ -502,6 +504,10 @@ def _setup_ai(app: FastAPI) -> None:
         make_material_tool(),
     )
     ai_verifier_registry.register(
+        TACTICS_TOOL_SPEC,
+        make_tactics_tool(),
+    )
+    ai_verifier_registry.register(
         TOP_MOVES_TOOL_SPEC,
         make_top_moves_tool(
             _ai_engine_launcher,
@@ -558,6 +564,12 @@ def _setup_ai(app: FastAPI) -> None:
     ai_registry.register(
         VALIDATE_MOVE_TOOL_SPEC,
         make_validate_move_tool(board_provider=_ai_board_provider),
+    )
+    # Pins and forks the prose may name (docs/ai-analysis-spec.md,
+    # Tactical grounding); board read only.
+    ai_registry.register(
+        TACTICS_TOOL_SPEC,
+        make_tactics_tool(),
     )
     # Opening-context grounding (no engine, no eval): real sibling lines from
     # the vendored dataset so a variation contrast cites the book, not memory.

@@ -7,6 +7,7 @@ annotations) a wider gate in `_ai_kick.py::_build_turn_inputs`.
 from __future__ import annotations
 
 import os
+import re
 from typing import TYPE_CHECKING, Iterable, Literal
 
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
@@ -28,6 +29,9 @@ _FORCE_INLINE_DIRECTIVE = (
 
 
 PromptMode = Literal["coach", "commentator", "verifier"]
+COACH_MODE: PromptMode = "coach"
+COMMENTATOR_MODE: PromptMode = "commentator"
+VERIFIER_MODE: PromptMode = "verifier"
 
 
 SYSTEM_PROMPT_PREFACE = """\
@@ -57,10 +61,11 @@ whenever you name a specific past, current, or hypothetical move, so the \
 reader knows which ply you mean. The user message gives the side to move -- \
 trust it, don't re-derive from FEN.
 - Honesty: don't invent moves, lines, or pieces. Assert a geometric \
-relation -- shared file, rank, or diagonal, a pin, "opposing" a piece -- \
-only after confirming it on the board with `piece_at`. Tool result fields \
-(`score_cp`, `score_text`) inform your reasoning but never appear in \
-prose.
+relation -- shared file, rank, or diagonal, "opposing" a piece -- \
+only after confirming it on the board with `piece_at`. Name a pin or a \
+fork only if `tactics` lists it for the position; when it lists none, \
+name none. Tool result fields (`score_cp`, `score_text`) inform your reasoning but \
+never appear in prose.
 - Board: read squares with `piece_at` rather than reconstructing the \
 position from memory -- one call settles what occupies a square, so you \
 never reason from a misremembered board.
@@ -166,9 +171,9 @@ two sentences, no audience, no voice.\
 
 
 _ADDENDA: dict[PromptMode, str] = {
-    "coach": COACH_ADDENDUM,
-    "commentator": COMMENTATOR_ADDENDUM,
-    "verifier": VERIFIER_ADDENDUM,
+    COACH_MODE: COACH_ADDENDUM,
+    COMMENTATOR_MODE: COMMENTATOR_ADDENDUM,
+    VERIFIER_MODE: VERIFIER_ADDENDUM,
 }
 
 _SEPARATOR = "\n\n"
@@ -329,13 +334,21 @@ BOOK_REPLY_GUIDANCE = (
 # registry lacks, so verifier sub-runs must not inherit them.
 _OPENING_STEERS = (OPENING_PHASE_GUIDANCE, BOOK_REPLY_GUIDANCE)
 
+# The playbook steer (llm/playbook.py) is one line opening with this lead;
+# strategy prose would only bias the verifier, so it is stripped too.
+PLAYBOOK_LEAD = "Strategy: "
+_PLAYBOOK_LINE_RE = re.compile(rf"^{re.escape(PLAYBOOK_LEAD)}.*$\n?", re.MULTILINE)
 
-def split_opening_steer(user_content: str) -> tuple[str, bool]:
-    """(content without any opening steer, whether one was present)."""
+
+def split_narrator_steers(user_content: str) -> tuple[str, bool]:
+    """(content without any narrator-only steer, whether an opening steer
+    was present). The playbook line is stripped silently: it does not
+    make the turn an opening turn."""
+    content = _PLAYBOOK_LINE_RE.sub("", user_content)
     for steer in _OPENING_STEERS:
-        if steer in user_content:
-            return user_content.replace(steer, "").rstrip() + "\n", True
-    return user_content, False
+        if steer in content:
+            return content.replace(steer, "").rstrip() + "\n", True
+    return content, False
 
 
 def build_initial_user_message(
@@ -351,6 +364,7 @@ def build_initial_user_message(
     root_annotation: str | None = None,
     in_opening: bool = False,
     book_reply: "OpeningReply | None" = None,
+    playbook: str | None = None,
 ) -> str:
     """Build the user message that opens an agent turn. Carries the FEN,
     the explicit side-to-move (so the model does not re-derive it), the
@@ -384,6 +398,9 @@ def build_initial_user_message(
     (opening_reply probe). It rides the message as its own line and
     carries the favor-the-book steer in place of the opening-phase one.
 
+    `playbook` is the rendered strategy steer (`render_playbook`), one
+    line opening with PLAYBOOK_LEAD; narrator-only, last on the message.
+
     Optional fields are omitted entirely when not provided."""
     lines: list[str] = []
     if engine_name:
@@ -410,6 +427,8 @@ def build_initial_user_message(
         lines.append(BOOK_REPLY_GUIDANCE)
     elif in_opening:
         lines.append(OPENING_PHASE_GUIDANCE)
+    if playbook:
+        lines.append(playbook)
     return "\n".join(lines) + "\n"
 
 

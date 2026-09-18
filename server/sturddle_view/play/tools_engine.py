@@ -36,6 +36,7 @@ from .engine_analysis import (
 )
 from .engine_info_pump import pump_engine_info
 from .engine_supervisor import EngineSupervisor
+from .tactics import all_forks, all_pins, piece_label
 
 
 log = logging.getLogger(__name__)
@@ -135,6 +136,7 @@ _MOVE_NOTATION_CONSTRAINT = (
 # the coordinator imports them rather than hardcoding string literals).
 ANALYZE_TOOL_NAME = "analyze"
 MATERIAL_TOOL_NAME = "material"
+TACTICS_TOOL_NAME = "tactics"
 TOP_MOVES_TOOL_NAME = "top_moves"
 PIECE_AT_TOOL_NAME = "piece_at"
 VALIDATE_MOVE_TOOL_NAME = "validate_move"
@@ -297,6 +299,27 @@ MATERIAL_TOOL_SPEC = ToolSpec(
         "it. Returns per-color counts keyed by piece name (pawn, knight, "
         "bishop, rook, queen); kings are omitted. Pass a FEN. Raw counts "
         "only -- no values assigned: you judge the balance yourself."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "fen": {
+                "type": "string",
+                "description": _FEN_ARG_DESCRIPTION,
+            },
+        },
+        "required": ["fen"],
+    },
+)
+
+
+TACTICS_TOOL_SPEC = ToolSpec(
+    name=TACTICS_TOOL_NAME,
+    description=(
+        "Pins and forks actually on the board, both colors. Pins are to "
+        "the king or queen only. Call before writing 'pin', 'pinned', "
+        "'fork' or 'forks' about a position; an empty list means there is "
+        "none to name. Pass a FEN."
     ),
     input_schema={
         "type": "object",
@@ -859,6 +882,35 @@ def make_material_tool() -> AnalyzeTool:
         return {"white": counts(chess.WHITE), "black": counts(chess.BLACK)}
 
     return material
+
+
+def make_tactics_tool() -> AnalyzeTool:
+    """Build the `tactics` async tool. Pure function of the supplied FEN
+    (no engine): lists every pin (king/queen shield) and fork on the
+    board, each entry naming its pieces by color and square."""
+    async def tactics(input_: dict, *, cancel_token: CancelToken) -> dict:
+        board, err = _parse_fen_arg(input_)
+        if err is not None:
+            return err
+        return {
+            "pins": [
+                {
+                    "pinned": piece_label(board, pin.pinned),
+                    "by": piece_label(board, pin.attacker),
+                    "to": piece_label(board, pin.shield),
+                }
+                for pin in all_pins(board)
+            ],
+            "forks": [
+                {
+                    "by": piece_label(board, fork.attacker),
+                    "targets": [piece_label(board, sq) for sq in fork.targets],
+                }
+                for fork in all_forks(board)
+            ],
+        }
+
+    return tactics
 
 
 def make_validate_move_tool(board_provider: BoardProvider) -> AnalyzeTool:

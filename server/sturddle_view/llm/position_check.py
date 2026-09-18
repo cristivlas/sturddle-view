@@ -14,6 +14,8 @@ import re
 
 import chess
 
+from ..play.tactics import Fork, Pin, all_forks, all_pins, piece_label
+
 
 # Shared SAN sub-patterns, factored so the per-token and continuation
 # recognizers can't drift. All groups non-capturing so finditer/findall
@@ -1138,6 +1140,119 @@ def find_false_file_openness(text: str, board: chess.Board) -> list[str]:
     return [label for _surface, label, _fact in iter_false_file_openness(text, board)]
 
 
+# Pin / fork claims: a tactic word in a clause that also names a piece or a
+# square. Held against the pins/forks actually on the board (or one SAN hop
+# away). Negated, modal or conditional clauses describe a possibility, not
+# the board, and are skipped -- the check is conservative by design.
+_TACTIC_PIN = "pin"
+_TACTIC_FORK = "fork"
+_TACTIC_WORD_RE = re.compile(
+    rf"\b(?P<kind>{_TACTIC_PIN}|{_TACTIC_FORK})(?:s|ned|ning|ed|ing)?\b",
+    re.IGNORECASE,
+)
+_TACTIC_SKIP_RE = re.compile(
+    r"\b(?:no|not|never|without|unpin\w*|avoid\w*|prevent\w*|break\w*|escap\w*|"
+    r"would|could|can|may|might|will|threat\w*|potential\w*|possib\w*|"
+    r"allow\w*|risk\w*|if|after|before|then|next|unless)\b|n't",
+    re.IGNORECASE,
+)
+_BARE_SQUARE_RE = re.compile(r"\b([a-h][1-8])\b")
+_PIECE_WORD_RE = re.compile(rf"\b({_PIECE_ALT})s?\b", re.IGNORECASE)
+
+
+def _clause_bounds(text: str, pos: int) -> tuple[int, int]:
+    """[start, end) of the punctuation-bounded clause holding `pos`; move-
+    number dots ("14.Qb3") do not split, as in `_clause_sans`."""
+    start = 0
+    for m in _CLAUSE_SPLIT_RE.finditer(text, 0, pos):
+        if m.group(0) == "." and _is_notation_dot(text, m.start()):
+            continue
+        start = m.end()
+    end = len(text)
+    for m in _CLAUSE_SPLIT_RE.finditer(text, pos):
+        if m.group(0) == "." and _is_notation_dot(text, m.start()):
+            continue
+        end = m.start()
+        break
+    return start, end
+
+
+def _tactic_squares(tactic: Pin | Fork) -> set[int]:
+    if isinstance(tactic, Pin):
+        return {tactic.attacker, tactic.pinned, tactic.shield}
+    return {tactic.attacker, *tactic.targets}
+
+
+def _tactic_holds(
+    board: chess.Board, kind: str, piece_types: set[int], squares: set[int],
+) -> bool:
+    """True iff some pin/fork on `board` involves every named piece type
+    and every named square."""
+    tactics = all_pins(board) if kind == _TACTIC_PIN else all_forks(board)
+    for tactic in tactics:
+        involved = _tactic_squares(tactic)
+        types = {board.piece_type_at(sq) for sq in involved}
+        if squares <= involved and piece_types <= types:
+            return True
+    return False
+
+
+def describe_tactics(board: chess.Board, kind: str) -> str:
+    """Ground truth for a tactic claim: 'no pins on the board' or the
+    list of pins/forks present, pieces named by color and square."""
+    if kind == _TACTIC_PIN:
+        parts = [
+            f"{piece_label(board, p.pinned)} pinned to {piece_label(board, p.shield)} "
+            f"by {piece_label(board, p.attacker)}"
+            for p in all_pins(board)
+        ]
+    else:
+        parts = [
+            f"{piece_label(board, f.attacker)} forks "
+            + " and ".join(piece_label(board, sq) for sq in f.targets)
+            for f in all_forks(board)
+        ]
+    if not parts:
+        return f"no {kind}s on the board"
+    return f"{kind}s on the board: " + "; ".join(parts)
+
+
+def iter_false_tactic_claims(text: str, board: chess.Board):
+    """Yield (surface, label, fact) per pin/fork clause the board contradicts
+    on every current/projected board. The surface is the whole clause. A
+    clause naming no piece and no square is ungroundable and skipped, as
+    is one hedged by negation, a modal, or a condition."""
+    boards = [board, *projected_boards(text, board)]
+    seen: set[str] = set()
+    for m in _TACTIC_WORD_RE.finditer(text):
+        start, end = _clause_bounds(text, m.start())
+        clause = text[start:end]
+        if _TACTIC_SKIP_RE.search(clause):
+            continue
+        kind = m.group("kind").lower()
+        piece_words = sorted({w.lower() for w in _PIECE_WORD_RE.findall(clause)})
+        square_names = sorted({s.lower() for s in _BARE_SQUARE_RE.findall(clause)})
+        if not piece_words and not square_names:
+            continue
+        key = f"{kind}|{','.join(piece_words)}|{','.join(square_names)}"
+        if key in seen:
+            continue
+        seen.add(key)
+        piece_types = {_PIECE_WORDS[w] for w in piece_words}
+        squares = {chess.parse_square(s) for s in square_names}
+        if any(_tactic_holds(b, kind, piece_types, squares) for b in boards):
+            continue
+        label = f"{kind}: {', '.join(piece_words + square_names)}"
+        yield clause.strip(), label, describe_tactics(board, kind)
+
+
+def find_false_tactic_claims(text: str, board: chess.Board) -> list[str]:
+    """Normalized labels of pin/fork clauses no board tactic supports (see
+    iter_false_tactic_claims). 'the knight on f3 is pinned' with no pin on
+    the board is flagged as 'pin: knight, f3'."""
+    return [label for _surface, label, _fact in iter_false_tactic_claims(text, board)]
+
+
 def _reaches_for_color(
     board: chess.Board, square: int, piece_type: int, color: chess.Color,
 ) -> bool:
@@ -1305,6 +1420,8 @@ def _flagged_surfaces(text: str, board: chess.Board) -> set[str]:
     for surface, _label, _fact in iter_false_file_claims(text, board):
         out.add(surface)
     for surface, _label, _fact in iter_false_file_openness(text, board):
+        out.add(surface)
+    for surface, _label, _fact in iter_false_tactic_claims(text, board):
         out.add(surface)
     return out
 

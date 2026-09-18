@@ -226,7 +226,7 @@ async def test_analysis_stop_cancels_ai_turn(tmp_path):
 # -- without it the call returns unknown_tool.
 _EXPECTED_NARRATOR_TOOLS = {
     "recommend_move", "top_moves", "report_line", "delegate",
-    "piece_at", "validate_move", "related_openings",
+    "piece_at", "validate_move", "tactics", "related_openings",
 }
 
 

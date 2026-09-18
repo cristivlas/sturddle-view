@@ -144,13 +144,12 @@ earlier multi-board legality validator was removed (branch history).
 pinned" or "forks king and rook" from pattern memory, not the board.
 One shared core, `play/tactics.py`, pure functions over a board:
 
-- `absolute_pins(board, color)` -- pieces pinned to their king
-  (python-chess `is_pinned`).
-- `queen_pins(board, color)` -- slider ray hits a piece, the next piece
-  on the ray is that side's queen. King and queen shields only; no
-  rook/minor relative pins (simplicity).
+- `pins(board, color)` -- one ray walk per enemy slider: the first piece
+  met is `color`'s, the next is that side's king or queen. King and
+  queen shields only; no rook/minor relative pins (simplicity).
 - `forks(board, color)` -- one piece attacks two or more targets; a
-  target is the king, queen, a rook, or any undefended piece.
+  target is the king, queen, a rook, or any undefended piece. A king
+  attacker counts undefended targets only.
 - Each hit carries attacker square, pinned/forked squares and the shield.
 - Skewers: out of scope (rare in model prose).
 
@@ -212,7 +211,7 @@ arrow (via the end-of-turn `ai_recommendation` verifier search).
   material claims. SHIPPED.
 - `tactics(fen)` - pins (to king or queen) and forks for both colors;
   pure board read, no engine. Grounds tactical vocabulary and feeds the
-  prose check. See §Tactical grounding. PENDING.
+  prose check. See §Tactical grounding. SHIPPED.
 - `tablebase_probe()` - wraps existing `TablebaseProber` (Syzygy WDL/DTZ);
   pending. Register conditionally on `engine_default_syzygy_path` being
   set so the tool never appears for users without tablebases.
