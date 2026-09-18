@@ -66,7 +66,7 @@ def _seed_view_mode(base) -> tuple[str, dict]:
     # total_plies and defaults the rest. n_plies/move stack come from
     # the imported game so the synthetic board_update stays consistent.
     view = {"cursor": state["n_plies"], "total_plies": state["n_plies"]}
-    return game_id, view
+    return game_id, view, state["board_fen"]
 
 
 def _publish(base, kind, *, game_id, payload):
@@ -99,13 +99,14 @@ async def _wait_btn_active(page, expected: bool, timeout_ms=3000):
 @pytest.mark.asyncio
 async def test_ai_done_clears_active_ribbon(server, make_page):
     base = server
-    game_id, view = _seed_view_mode(base)
+    game_id, view, board_fen = _seed_view_mode(base)
     _ctx, page, errors = await _new_page(make_page)
     await _goto_view_mode(page, base)
 
     # Analysis on: ribbon analyze button shows active ("Stop analysis").
     _publish(base, "board_update", game_id=game_id, payload={
         "analyzing": True, "editing": False, "view": view, "human_white": None,
+        "fen": board_fen,
     })
     await _wait_btn_active(page, True)
 
