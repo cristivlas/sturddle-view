@@ -326,6 +326,7 @@ const TOOL_FRIENDLY_LABELS = {
   validate_move:  ["Validating move", "Double-checking the move", "Confirming the move"],
   recommend_move: ["Picking move", "Choosing a move", "Selecting a move", "Sussing out"],
   material:       ["Counting material", "Tallying material", "Weighing material"],
+  tactics:        ["Spotting pins and forks", "Eyeing pins and forks", "Sniffing out tactics"],
   delegate:       ["Verifying line", "Double-checking the play", "Reviewing the plan", "Simulating", "Fathoming", "Coreographing"],
   report_line:    ["Checking line", "Reviewing the line", "Going over the idea", "Ascertaining"],
   related_openings: ["Comparing openings", "Cross-checking openings", "Matching openings"],

@@ -572,6 +572,7 @@ wa-select::part(listbox) {
 .play-ai-tool-dot-top_moves      { background: var(--wa-color-primary-60, #4a90e2); }
 .play-ai-tool-dot-recommend_move { background: #7c3aed; }
 .play-ai-tool-dot-material       { background: forestgreen; }
+.play-ai-tool-dot-tactics        { background: var(--wa-color-red-60, #dc2626); }
 .play-ai-tool-dot-delegate       { background: var(--wa-color-cyan-60, #0ea5b5); }
 .play-ai-tool-dot-report_line    { background: var(--wa-color-teal-60, #14b8a6); }
 .play-ai-tool-dot-related_openings { background: var(--wa-color-indigo-60, #6366f1); }
