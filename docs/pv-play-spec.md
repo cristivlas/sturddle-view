@@ -62,7 +62,11 @@ the row. `canPlayLine` on the view: `!analyzing && !editing &&
 !engineToMove`, where `engineToMove` = `!viewing && clock running &&
 side to move is not the human's`, mirroring the server's own engine-kick
 gate (`_clock_running && turn == engine_color`; clock-running is live
-PLAY mode with a game on, timed or not; pause is human-turn-only). A row
+PLAY mode with a game on, timed or not; pause is human-turn-only). A
+finished AI turn is not a search in flight: the server stays in
+ANALYZING (the ribbon reads it as paused) with nothing searching, so
+`analyzing` alone does not refuse -- play.js pushes its turn-finished
+latch to the view as `setAnalysisIdle`, which re-announces the gate. A row
 whose line would be refused isn't showable in the first place -- no
 hover, no tooltip, double-click inert -- so the refusal is felt before
 the click, not after. `canPlayLine`'s answer can flip without a new PV
@@ -255,7 +259,11 @@ A row's position is sampled at `engine_info` arrival from the board:
 its last externally set placement, never a show frame. Placement is
 all `pvFrames` needs. Rows keep `{ placement, pv_uci, frames }`
 beside the rendered text, written together and only by PV-carrying
-infos.
+infos. A row that arrived with no board to sample (the view
+unmounted; the body and its bus slot outlive a perspective nav) has
+no placement and no frames; the next gate announcement (the remount's
+first) resamples it against the live board, and `pvFrames`' truncation
+covers a position that has moved on.
 
 `pvFrames` never throws. No placement (the board source not wired
 yet, or the view unmounted) yields no frames. It truncates at the
@@ -303,8 +311,10 @@ truncated line is shown as far as it makes sense, never as ghosts.
   internal position helper returns the animation promise, which the
   public `setPosition` swallows today.
 - `pv-table.js`: `createPvTable({ colWidthsKey, onActivate, cancelLine,
-  canPlay })`; `update(info, pvText, placement)` writes the triple
-  on PV-carrying infos only; double-click on a showable row calls
+  canPlay, currentPlacement })`; `update(info, pvText)` samples
+  `currentPlacement()` and writes the triple on PV-carrying infos
+  only; `refreshShowability()` first resamples rows that were written
+  with no placement; double-click on a showable row calls
   `onActivate(handle)` with `handle = { frames, pvUci, setPly(i),
   release() }`, keyed to the snapshot, not the `tr`. Showable requires
   a playable line and `canPlay()` (when given); `refreshShowability()`
@@ -321,15 +331,19 @@ truncated line is shown as far as it makes sense, never as ghosts.
   created with `onActivate`, and only on showable rows. `dispose`
   cancels a running show.
 - `game-view.js`: passthroughs `playLine`, `cancelLine`,
-  `currentPlacement`, `canPlayLine` (`!analyzing && !editing`, shared
-  by `canPlayLine` and `playLine`'s own refusal so the two can't
-  drift). `playLine`/`canPlayLine` are handed out as bare function
+  `currentPlacement`, `canPlayLine` (`!(analyzing && !analysisIdle)
+  && !editing && !engineToMove`, shared by `canPlayLine` and
+  `playLine`'s own refusal so the two can't drift), and
+  `setAnalysisIdle(idle)`, the AI-turn-finished latch pushed in by
+  play.js. `playLine`/`canPlayLine` are handed out as bare function
   references, so they close over the view's own state rather than
   reading `this`.
 - `play-dock-windows.js`: `setPvLineBoard({ currentPlacement,
   canPlayLine, playLine, cancelLine })`; supplies `isExempt(target)` =
   target is inside `inst.wb`'s root, `inst.slot`, or `inst.inlineSlot`,
-  and `canPlay` = `pvLineBoard.canPlayLine()` for the table.
+  `canPlay` = `pvLineBoard.canPlayLine()` and `currentPlacement` =
+  `pvLineBoard.currentPlacement()` for the table (both null-safe, so
+  the detached body keeps taking infos with no board).
 - `play.js`: wires `setPvLineBoard` as soon as the view is mounted,
   before any `board_update` reaches it -- the Search Lines body and
   its gate listener survive a perspective nav, so the remount's first

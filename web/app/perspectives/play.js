@@ -410,7 +410,7 @@ function dispatchAiEvent(aiCtx, evt) {
         // Cancel is excluded: it self-resolves via stopAnalysisFromUi ->
         // analyzing=false. Without this, an error left the button pulsing.
         if (!p.cancelled) {
-          aiShared.turnFinished = true;
+          setAiTurnFinished(aiShared, view, true);
           dismissAnalysisToast(aiShared);
           refreshButtons();
         }
@@ -965,6 +965,14 @@ async function doViewNav(state, endpoint, payload = {}) {
 
 // Analysis state setter + stop flow operating on shared `state`.
 
+// Single sync point for the AI-finished latch: the game-view's line-play
+// gate reads it (no search runs once the turn is done), and it flips
+// without a board_update, so every write pushes it there.
+function setAiTurnFinished(aiShared, view, v) {
+  aiShared.turnFinished = v;
+  view.setAnalysisIdle(v);
+}
+
 // Single sync point: every analyzing write goes through this setter so the
 // AI-finished latch and the x-game lock class stay consistent.
 // Direct `state.analyzing = ...` writes will drift -- always call setAnalyzing.
@@ -973,7 +981,7 @@ function setAnalyzing(state, v) {
   state.analyzing = !!v;
   // Server flipped out of ANALYSIS -- clear the AI-finished latch
   // so the ribbon can re-enable when the game is paused again.
-  if (!state.analyzing) state.aiShared.turnFinished = false;
+  if (!state.analyzing) setAiTurnFinished(state.aiShared, state.view, false);
   document.body.classList.toggle(XGAME_LOCK_CLASS, state.analyzing);
   // The session is server-owned: whoever ended it, every client drops the
   // panel -- its replay buffer is gone, so it can't be restored anyway.
@@ -1010,7 +1018,7 @@ async function stopAnalysisFromUi(state) {
   } finally {
     state.analysisTransitionInFlight = false;
   }
-  state.aiShared.turnFinished = false;
+  setAiTurnFinished(state.aiShared, state.view, false);
   // The AI window's lifecycle is tied to the analysis session, so it
   // always closes on stop. PV/UCI close only if analysis opened them.
   teardownAiPanel(state.aiShared);
@@ -1672,7 +1680,7 @@ async function startAnalysisFromUiImpl(state) {
   // before starting, so the dock shows engine-only output. Done first so
   // the close can't race the new analysis state.
   if (!state.aiEnabled && isAiOpen()) closeAi();
-  state.aiShared.turnFinished = false;
+  setAiTurnFinished(state.aiShared, state.view, false);
   dismissAiErrorToast();
   clearUciLog();
   // Build ALL start-state (toast + panel) synchronously BEFORE the POST.

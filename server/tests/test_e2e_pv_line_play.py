@@ -42,6 +42,9 @@ VIEWPORT = {"width": 1600, "height": 1000}
 # Minimal view-mode board_update at the start position; analyzing/editing
 # vary per test.
 _VIEW_AT_START = {"cursor": 0, "total_plies": 0}
+# 1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6, white (human) to move.
+_ITALIAN_MOVES = ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6"]
+_ITALIAN_FEN = "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"
 
 _ROW_STATE = f"""() => {{
   const tr = document.querySelector('{PV_ROW}');
@@ -79,11 +82,12 @@ def _publish(base, kind, *, game_id, payload):
     resp.raise_for_status()
 
 
-def _publish_pv(base, game_id, depth=5):
+def _publish_pv(base, game_id, depth=5, *, pv="1. e4 e5 2. Nf3",
+                pv_uci=("e2e4", "e7e5", "g1f3")):
     _publish(base, "engine_info", game_id=game_id, payload={
         "depth": depth, "seldepth": depth, "score": {"cp": 20},
         "nodes": 1000, "nps": 1000,
-        "pv": ["1. e4 e5 2. Nf3"], "pv_uci": ["e2e4", "e7e5", "g1f3"],
+        "pv": [pv], "pv_uci": list(pv_uci),
     })
 
 
@@ -94,7 +98,7 @@ def _publish_view_board(base, game_id, *, analyzing=False, editing=False):
     })
 
 
-async def _open_search_lines(page, base):
+async def _open_search_lines(page, base, fen=STARTPOS_FEN):
     # The ribbon's Search Lines button is hidden in view mode; the open flag
     # makes restoreDebugWindows mount the window on either mode's mount.
     await page.add_init_script(f"localStorage.setItem('{PV_OPEN_KEY}', '1')")
@@ -106,7 +110,7 @@ async def _open_search_lines(page, base):
     httpx.post(f"{base}/game/sync", json={}).raise_for_status()
     await page.wait_for_function(
         "(fen) => document.querySelector('.fen-text')?.textContent?.startsWith(fen.split(' ')[0])",
-        arg=STARTPOS_FEN,
+        arg=fen,
     )
 
 
@@ -179,6 +183,30 @@ async def test_board_gate_blocks_row_and_regates_on_clear(server, make_page, gat
 
 
 @pytest.mark.asyncio
+async def test_ai_turn_finished_regates_row_showable(server, make_page):
+    """A finished AI turn leaves the server in ANALYZING with nothing
+    searching: the row must become showable again on the ai_info done
+    alone (no board_update follows), and a double-click must play it."""
+    base = server
+    game_id = _install(base, view_mode=True, view_moves_uci=[])["game_id"]
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_search_lines(page, base)
+    _publish_pv(base, game_id)
+    await _wait_row(page, showable=True)
+
+    _publish_view_board(base, game_id, analyzing=True)
+    await _wait_row(page, showable=False)
+
+    _publish(base, "ai_info", game_id=game_id, payload={"done": True})
+    st = await _wait_row(page, showable=True)
+    assert st["title"] == SHOWABLE_TOOLTIP, st
+    await page.dblclick(PV_ROW)
+    await page.wait_for_function(f"() => ({_ROW_STATE})()?.playing === true")
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
 async def test_paused_row_stays_showable_across_perspective_nav(server, make_page):
     """A showable row must still be showable and playable after leaving Play
     and coming back: the Search Lines body survives the nav with its rows.
@@ -195,6 +223,35 @@ async def test_paused_row_stays_showable_across_perspective_nav(server, make_pag
 
     await page.click('button[data-perspective="engines"]')
     await page.wait_for_function("() => !document.querySelector('#play-perspective')")
+    await page.click('button[data-perspective="play"]')
+    await page.wait_for_selector(PLAY_PERSP)
+    await wait_perspective_ready(page)
+    await page.wait_for_selector(PV_ROW)
+
+    st = await _wait_row(page, showable=True)
+    assert st["title"] == SHOWABLE_TOOLTIP, st
+    await page.dblclick(PV_ROW)
+    await page.wait_for_function(f"() => ({_ROW_STATE})()?.playing === true")
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_row_written_while_unmounted_is_showable_on_return(server, make_page):
+    """A PV that streams in while another perspective is up lands in the
+    detached Search Lines body with no board to sample; on return the row
+    must be resampled against the live board and become playable. A played
+    position whose PV starts from a square empty at startpos, so a resample
+    against a default (startpos) board would truncate and fail."""
+    base = server
+    game_id = _install(base, human_white=True, moves_uci=_ITALIAN_MOVES)["game_id"]
+    httpx.post(f"{base}/game/pause", json={}).raise_for_status()
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_search_lines(page, base, fen=_ITALIAN_FEN)
+
+    await page.click('button[data-perspective="engines"]')
+    await page.wait_for_function("() => !document.querySelector('#play-perspective')")
+    _publish_pv(base, game_id, pv="4. Ng5 d5 5. exd5", pv_uci=("f3g5", "d7d5", "e4d5"))
     await page.click('button[data-perspective="play"]')
     await page.wait_for_selector(PLAY_PERSP)
     await wait_perspective_ready(page)

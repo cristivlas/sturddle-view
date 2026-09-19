@@ -931,10 +931,13 @@ function engineToMove(ctx) {
 // move search or analysis (engine-only, or the AI and its tool searches):
 // the Search Lines table is mutating under the row, and a show would fight
 // the search for the board (frames landing mid-search, arrows/markers racing
-// applyEngineInfo's own). Edit mode owns the board outright. Shared by
-// canPlayLine and playLine so the refusal condition can't drift.
+// applyEngineInfo's own). A finished AI turn leaves the server in ANALYZING
+// with nothing searching (analysisIdle, set by play.js), so that state is
+// not a refusal. Edit mode owns the board outright. Shared by canPlayLine
+// and playLine so the refusal condition can't drift.
 function canPlayLineNow(ctx) {
-  return !ctx.analyzing && !ctx.editing && !engineToMove(ctx);
+  const searching = ctx.analyzing && !ctx.analysisIdle;
+  return !searching && !ctx.editing && !engineToMove(ctx);
 }
 
 // Announced as a window event, not left to bus subscribers: the Search Lines
@@ -1003,6 +1006,12 @@ function buildViewApi(ctx) {
     // close over ctx via canPlayLineNow rather than using `this`.
     canPlayLine() { return canPlayLineNow(ctx); },
     playLine(frames, opts) { return canPlayLineNow(ctx) && ctx.board.playLine(frames, opts); },
+    // The AI-turn-finished latch lives in play.js; it flips without a
+    // board_update, so the gate is re-announced here.
+    setAnalysisIdle(idle) {
+      ctx.analysisIdle = !!idle;
+      announcePlayLineGate(ctx);
+    },
     cancelLine() { ctx.board.cancelLine(); },
     currentPlacement() { return ctx.board.currentPlacement(); },
     clearEngineInfo() {
@@ -1117,6 +1126,8 @@ export function mountGameView(container, opts = {}) {
     editStm: FEN_STM.WHITE,
     // Analysis mode: streams PV from a dedicated engine even while viewing.
     analyzing: false,
+    // Analysis session on but its AI turn finished: no search in flight.
+    analysisIdle: false,
     // Last announced canPlayLineNow() value; see announcePlayLineGate.
     playLineGate: null,
     // Cached PGN names so flipping the board in view mode can re-swap
