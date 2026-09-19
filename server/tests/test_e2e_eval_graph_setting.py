@@ -20,7 +20,7 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from .conftest import e2e_env, run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
+from .conftest import assert_no_page_errors, e2e_env, run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
 
 
 PLAY_PERSP = "#play-perspective"
@@ -51,12 +51,6 @@ async def _new_page(make_page):
     page.on("console", lambda msg: errors.append(f"console.{msg.type}: {msg.text}")
             if msg.type == "error" else None)
     return ctx, page, errors
-
-
-def _assert_no_errors(errors):
-    benign = ("Failed to load resource",)
-    real = [e for e in errors if not any(b in e for b in benign)]
-    assert real == [], "JS errors:\n" + "\n".join(real)
 
 
 def _get_setting(base):
@@ -98,7 +92,7 @@ async def test_eval_graph_docks_by_default(server, make_page):
     await page.wait_for_function(f"() => !!document.querySelector({RAIL_SLOT!r})")
     assert await _eval_placed(page)
     assert _get_setting(server) is True
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
@@ -108,7 +102,7 @@ async def test_setting_off_keeps_eval_graph_closed(server, make_page):
     _ctx, page, errors = await _new_page(make_page)
     await _open_play(page, server)
     assert not await _eval_placed(page)
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
@@ -125,7 +119,7 @@ async def test_slot_close_clears_server_setting(server, make_page):
     )
     assert not await _eval_placed(page)
     assert _get_setting(server) is False
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
@@ -145,8 +139,8 @@ async def test_closed_state_carries_to_a_fresh_profile(server, make_page):
     _ctx2, page2, errors2 = await _new_page(make_page)
     await _open_play(page2, server)
     assert not await _eval_placed(page2), "closed state did not follow the user"
-    _assert_no_errors(errors)
-    _assert_no_errors(errors2)
+    assert_no_page_errors(errors)
+    assert_no_page_errors(errors2)
 
 
 @pytest.mark.asyncio
@@ -169,4 +163,4 @@ async def test_display_switch_reopens_eval_graph(server, make_page):
         f"async () => (await (await fetch('/settings')).json()).{SETTING} === true"
     )
     assert _get_setting(server) is True
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)

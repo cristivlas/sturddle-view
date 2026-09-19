@@ -2426,6 +2426,15 @@ export const playPerspective = {
       },
     });
     state.view = view;
+    // Before any board_update reaches the view: its gate announcement makes
+    // the Search Lines body (alive across a nav) re-derive showability, and
+    // with no board wired every row would go inert and stay that way.
+    setPvLineBoard({
+      currentPlacement: view.currentPlacement,
+      canPlayLine: () => view.canPlayLine(),
+      playLine: view.playLine,
+      cancelLine: view.cancelLine,
+    });
 
     // Rail dock: capacity-one dock destination in the band under the moves
     // list (positioned by positionSideRail). Default home of the Engine Eval
@@ -2578,12 +2587,6 @@ export const playPerspective = {
     const onPvTable = () => togglePvTableWindow(ctx.events);
     uciLogBtn?.addEventListener("click", onUciLog);
     pvTableBtn?.addEventListener("click", onPvTable);
-    setPvLineBoard({
-      currentPlacement: view.currentPlacement,
-      canPlayLine: () => view.canPlayLine(),
-      playLine: view.playLine,
-      cancelLine: view.cancelLine,
-    });
     restoreDebugWindows(ctx.events);
     // After restoreDebugWindows: sync makes the server re-emit board state and
     // the last engine_info, and only a panel that already exists can catch it.

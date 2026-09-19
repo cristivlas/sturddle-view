@@ -330,11 +330,15 @@ truncated line is shown as far as it makes sense, never as ghosts.
   canPlayLine, playLine, cancelLine })`; supplies `isExempt(target)` =
   target is inside `inst.wb`'s root, `inst.slot`, or `inst.inlineSlot`,
   and `canPlay` = `pvLineBoard.canPlayLine()` for the table.
-- `play.js`: wires `setPvLineBoard` before `restoreDebugWindows`
-  (play.js:2581; the `/game/sync` right after it replays board then
-  last info, and in view mode that replay is the only row); clears
-  it on unmount after `setDockContainer(null)` (play.js:2698) so
-  `dispose`'s `cancelLine` still reaches a live board.
+- `play.js`: wires `setPvLineBoard` as soon as the view is mounted,
+  before any `board_update` reaches it -- the Search Lines body and
+  its gate listener survive a perspective nav, so the remount's first
+  gate announcement (the cached board_update, applied before
+  `restoreDebugWindows` and `/game/sync`) would otherwise re-derive
+  every surviving row against no board and leave them inert until the
+  next gate flip, which a paused game never produces. Clears it on
+  unmount after `setDockContainer(null)` so `dispose`'s `cancelLine`
+  still reaches a live board.
 
 ## Constants
 
