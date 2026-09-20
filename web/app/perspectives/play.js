@@ -513,6 +513,10 @@ async function rehydrateAiPanel(ai, aiCtx, { adopt = false } = {}) {
   let replayedThrough = 0;
   try {
     const r = await aiCtx.api("GET", "/game/analysis/replay");
+    // Unmounted mid-GET (nav away): unmount already closed the panel and
+    // dropped its hosts -- opening now would float it over the next
+    // perspective.
+    if (aiCtx.isUnmounted()) return;
     const events = Array.isArray(r?.events) ? r.events : [];
     if (adopt || events.length > 0) {
       openAi();
@@ -522,7 +526,7 @@ async function rehydrateAiPanel(ai, aiCtx, { adopt = false } = {}) {
     }
   } catch { /* */ } finally {
     ai.rehydrating = false;
-    const buffered = ai.liveBuffer;
+    const buffered = aiCtx.isUnmounted() ? [] : ai.liveBuffer;
     ai.liveBuffer = [];
     for (const evt of buffered) {
       // Already covered by the replay. The dispatcher's own seq dedupe can't
@@ -532,6 +536,7 @@ async function rehydrateAiPanel(ai, aiCtx, { adopt = false } = {}) {
       if (seq > 0 && seq <= replayedThrough) continue;
       dispatchAiEventOrdered(ai, aiCtx, evt);
     }
+    window.dispatchEvent(new CustomEvent(APP_EVT.AI_REHYDRATED));
   }
 }
 
@@ -709,12 +714,12 @@ function resetXgame(state) {
   state.xgame.childrenToastDismissed = false;
 }
 async function fetchXgameInfo(state, gameId) {
-  if (!gameId) {
-    resetXgame(state);
-    refreshXgameToasts(state);
-    return;
-  }
   try {
+    if (!gameId) {
+      resetXgame(state);
+      refreshXgameToasts(state);
+      return;
+    }
     const r = await state.api(
       "GET", `/game/recent-imports/by-id/${encodeURIComponent(gameId)}`,
     );
@@ -742,6 +747,8 @@ async function fetchXgameInfo(state, gameId) {
     // game with no moves yet). That's expected; just clear state.
     resetXgame(state);
     refreshXgameToasts(state);
+  } finally {
+    window.dispatchEvent(new CustomEvent(APP_EVT.XGAME_INFO_APPLIED));
   }
 }
 function buildParentToast(state) {
@@ -2520,7 +2527,10 @@ export const playPerspective = {
 
     // Private replay-buffer state + the deps the AI dispatch needs.
     const ai = { rehydrating: true, liveBuffer: [], maxSeq: 0 };
-    const aiCtx = { view, api: ctx.api, refreshButtons: () => refreshButtons(state), aiShared: state.aiShared };
+    const aiCtx = {
+      view, api: ctx.api, refreshButtons: () => refreshButtons(state), aiShared: state.aiShared,
+      isUnmounted: () => !!state.unmounted,
+    };
     rehydrateAiPanel(ai, aiCtx);
 
     // --- Hook events for control-bar state changes (board state changes
