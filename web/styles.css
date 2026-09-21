@@ -1217,7 +1217,7 @@ wa-dialog:has(.import-pos-form)::part(body) {
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  border-top: 1px solid #34373d;
+  border-top: 1px solid var(--border-subtle);
   font-size: 0.8125rem;
   padding-left: 5px;
 }
@@ -1226,7 +1226,7 @@ wa-dialog:has(.import-pos-form)::part(body) {
 .openings-list:focus { outline: none; }
 .openings-table { table-layout: fixed; width: 100%; border-collapse: separate; border-spacing: 0; }
 .openings-head-table th {
-  background: var(--bg);
+  background: var(--dialog-bg);
   padding: 6px 10px;
   text-align: left;
   font-size: 0.75rem;
@@ -1283,7 +1283,7 @@ wa-dialog:has(.import-pos-form)::part(body) {
   height: 48px; padding: 6px 10px;
   opacity: 0; visibility: hidden;
   pointer-events: none;
-  background: #253347;
+  background: var(--dialog-bg);
   border-top: 1px solid var(--wa-color-border-loud, #353841);
   box-sizing: border-box;
   transform: translateY(100%);
@@ -2510,7 +2510,7 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
 .engine-launch-section-divided {
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid var(--border, #34373d);
+  border-top: 1px solid var(--border-subtle);
 }
 .engine-launch-section-hdr-row {
   display: flex;
@@ -2561,7 +2561,7 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   position: relative;
   display: flex;
   flex-direction: column;
-  border-top: 1px solid #34373d;
+  border-top: 1px solid var(--border-subtle);
   min-height: 120px;
   font-size: 0.8125rem;
   padding-left: 5px;
@@ -2577,7 +2577,7 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
 }
 .engines-head-table th {
   position: relative;
-  background: var(--bg);
+  background: var(--dialog-bg);
   padding: 6px 10px;
   text-align: left;
   font-size: 0.75rem;
@@ -2762,11 +2762,26 @@ wa-dialog::part(body) { overflow: visible !important; }
    amber on open, since showModal focuses before any user gesture. */
 wa-dialog::part(body):focus-visible { outline: none; }
 wa-dialog {
-  --wa-color-neutral-fill-normal: #253347;
+  --dialog-bg: #253347;
+  /* Shared accent for anything that needs to read against --dialog-bg:
+     borders/dividers via --border-subtle, and non-border fills (e.g. the
+     slider track) that read --dialog-accent directly. */
+  --dialog-accent: #4a5b73;
+  --border-subtle: var(--dialog-accent);
+  --border-faint: #3a4a5f;
+}
+/* Scoped to the tab rail only (not the whole dialog): blends its track into
+   the dialog background (the active-tab indicator is the only wanted
+   affordance there) without dimming wa-button/wa-switch default fills
+   elsewhere in the dialog, which also read --wa-color-neutral-fill-normal.
+   Every settings border/divider uses --border-subtle/--border-faint above
+   instead, so narrowing this doesn't affect them. */
+wa-dialog wa-tab-group {
+  --wa-color-neutral-fill-normal: var(--dialog-bg);
 }
 wa-dialog::part(dialog) {
   overflow: visible !important;
-  background: #253347;
+  background: var(--dialog-bg);
 }
 /* Optional fixed height: callers set --dialog-height on the host (e.g.
    Settings, which wants a stable size). Unset, the panel sizes to content. */
@@ -2861,17 +2876,16 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   --settings-row-gap: 12px;
   --settings-section-pad: 14px;
 }
-/* Hairline between conceptual groups, matching the wa-tab-group rail (same
-   track-color and 0.125rem width) so the dialog reads as one system. */
+/* Hairline between conceptual groups. */
 .settings-divider {
   border: 0;
-  border-top: 1px solid var(--wa-color-neutral-fill-normal);
+  border-top: 1px solid var(--border-subtle);
   margin: var(--settings-group-gap) 0;
 }
 /* Bordered card around a related-controls group, legend inset on the top
-   border (fieldset-style). Same rail color as .settings-divider. */
+   border (fieldset-style). Same color as .settings-divider. */
 .settings-section {
-  border: 1px solid var(--wa-color-neutral-fill-normal);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--wa-border-radius-m, 4px);
   padding: var(--settings-section-pad);
   margin: 4px 0 8px;
@@ -2925,7 +2939,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   --wa-form-control-value-line-height: 1.4;
 }
 .settings-row wa-slider { width: 100%; }
-.settings-row wa-slider::part(track) { background: #4a5b73; }
+.settings-row wa-slider::part(track) { background: var(--dialog-accent); }
 /* Value + unit pair (e.g. time control); total width matches the other
    single-control rows (max-width 360px, from .settings-row). */
 .settings-duration {
@@ -2964,7 +2978,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .settings-threads-subgroup-inner {
   display: flex;
   gap: 8px;
-  border: 1px solid #4a5b73;
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
   padding: 6px 8px;
   flex: 1 1 auto;
@@ -2976,7 +2990,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 /* Matching border so Hash pairs with the threads box, without changing its
    label/input structure. */
 .settings-hash-boxed {
-  border: 1px solid #4a5b73;
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
   padding: 6px 8px;
 }
@@ -3004,7 +3018,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   position: relative;
   display: flex;
   flex-direction: column;
-  border: 1px solid #34373d;
+  border: 1px solid var(--border-subtle);
   border-radius: 4px;
   background: #15171b;
   height: 50vh;
@@ -3229,7 +3243,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   height: 48px; padding: 6px 10px;
   opacity: 0; visibility: hidden;
   pointer-events: none;
-  background: #253347;
+  background: var(--dialog-bg);
   border-top: 1px solid var(--wa-color-border-loud, #353841);
   box-sizing: border-box;
   transform: translateY(100%);
