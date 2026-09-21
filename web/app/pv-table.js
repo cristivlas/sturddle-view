@@ -14,6 +14,7 @@
 import { attachColumnResize } from "./col-resize.js";
 import { fmtCount, fmtScore, markSelectable, rafCoalesce } from "./wb-utils.js";
 import { pvFrames } from "./pv-walk.js";
+import { applySplitColWidths, wireSplitScroll } from "./split-table.js";
 
 const COL_MIN_PX = 30;
 const DEFAULT_COL_WIDTHS = [50, 50, 55, 45];
@@ -137,34 +138,54 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
     }
   }
 
+  // Split header/body table pattern -- see split-table.js.
   const el = document.createElement("div");
   el.className = "wb-pvtable";
   el.innerHTML = `
-    <table class="wb-table wb-pvtable-tbl">
-      <colgroup>
-        <col class="wb-pvtable-col-depth">
-        <col class="wb-pvtable-col-score">
-        <col class="wb-pvtable-col-nodes">
-        <col class="wb-pvtable-col-nps">
-        <col class="wb-pvtable-col-pv">
-      </colgroup>
-      <thead>
-        <tr>
-          <th>Depth<span class="th-grip"></span></th>
-          <th>Eval<span class="th-grip"></span></th>
-          <th>Nodes<span class="th-grip"></span></th>
-          <th>NPS<span class="th-grip"></span></th>
-          <th>PV</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+    <div class="wb-pvtable-head-scroll">
+      <table class="wb-table wb-pvtable-head-tbl">
+        <colgroup>
+          <col class="wb-pvtable-col-depth">
+          <col class="wb-pvtable-col-score">
+          <col class="wb-pvtable-col-nodes">
+          <col class="wb-pvtable-col-nps">
+          <col class="wb-pvtable-col-pv">
+        </colgroup>
+        <thead>
+          <tr>
+            <th>Depth<span class="th-grip"></span></th>
+            <th>Eval<span class="th-grip"></span></th>
+            <th>Nodes<span class="th-grip"></span></th>
+            <th>NPS<span class="th-grip"></span></th>
+            <th>PV</th>
+          </tr>
+        </thead>
+      </table>
+    </div>
+    <div class="wb-pvtable-scroll">
+      <table class="wb-table wb-pvtable-tbl">
+        <colgroup>
+          <col class="wb-pvtable-col-depth">
+          <col class="wb-pvtable-col-score">
+          <col class="wb-pvtable-col-nodes">
+          <col class="wb-pvtable-col-nps">
+          <col class="wb-pvtable-col-pv">
+        </colgroup>
+        <tbody></tbody>
+      </table>
+    </div>
   `;
 
   const tbody = el.querySelector("tbody");
+  const headScrollEl = el.querySelector(".wb-pvtable-head-scroll");
+  const headTableEl = el.querySelector(".wb-pvtable-head-tbl");
   const tableEl = el.querySelector(".wb-pvtable-tbl");
+  const scrollEl = el.querySelector(".wb-pvtable-scroll");
+  wireSplitScroll(headScrollEl, scrollEl);
   markSelectable(tableEl);
-  const colEls = Array.from(el.querySelectorAll("col"));
+  markSelectable(headTableEl);
+  const headColEls = Array.from(headTableEl.querySelectorAll("col"));
+  const colEls = Array.from(tableEl.querySelectorAll("col"));
   const grips = Array.from(el.querySelectorAll(".th-grip"));
   const colWidths = DEFAULT_COL_WIDTHS.slice();
 
@@ -182,11 +203,11 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
       }
     }
     // First 4 cols are fixed px; last col (PV) is auto to fill remaining space.
-    colEls.slice(0, 4).forEach((c, i) => { c.style.width = sizes[i] + "px"; });
-    colEls[4].style.width = "auto";
+    applySplitColWidths([headColEls.slice(0, 4), colEls.slice(0, 4)], sizes, "px");
+    headColEls[4].style.width = colEls[4].style.width = "auto";
     const fixedW = sizes.reduce((s, w) => s + w, 0);
-    tableEl.style.width = "100%";
-    tableEl.style.minWidth = fixedW + "px";
+    headTableEl.style.width = tableEl.style.width = "100%";
+    headTableEl.style.minWidth = tableEl.style.minWidth = fixedW + "px";
     fitTableToPvContent();
   }
 
@@ -201,7 +222,7 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
   siblings.add(syncEntry);
 
   const colResize = attachColumnResize({
-    table: tableEl,
+    table: headTableEl,
     grips,
     overlayHost: el,
     storageKey: colWidthsKey,
@@ -319,7 +340,7 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
       if (cell && cell.scrollWidth > pvMax) pvMax = cell.scrollWidth;
     }
     const fixedW = colWidths.reduce((s, w) => s + w, 0);
-    tableEl.style.minWidth = (fixedW + pvMax) + "px";
+    tableEl.style.minWidth = headTableEl.style.minWidth = (fixedW + pvMax) + "px";
   }
   // Coalesced: scrollWidth is a layout probe; per-info-event sync reads
   // would force a reflow on every engine info line.

@@ -167,7 +167,7 @@ async def test_fs_picker_header_click_selects_nothing(tmp_path, make_page):
             f"() => document.querySelectorAll('{PICKER_ROW}').length > 1"
         )
 
-        await page.click(f"{PICKER_TABLE} thead th:first-child")
+        await page.click(".fs-picker-head-table thead th:first-child")
         assert await page.evaluate(_row_text(PICKER_ROW, ".fs-name")) is None
         assert not errors, errors
 
@@ -191,7 +191,7 @@ async def test_studio_tourney_list_arrow_navigation(tmp_path, make_page):
         ), "Tab never reached the tourney list"
 
         assert await page.evaluate(
-            f"() => getComputedStyle(document.querySelector('{TOURNEY_TABLE}'))"
+            "() => getComputedStyle(document.querySelector('.studio-tourney-body-tbl'))"
             ".outlineStyle"
         ) == "none", "the focused list should not box itself in a focus ring"
 

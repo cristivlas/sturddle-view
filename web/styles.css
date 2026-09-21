@@ -1201,24 +1201,31 @@ wa-dialog:has(.import-pos-form)::part(body) {
 .import-pos-status.muted { background: transparent; color: var(--muted); }
 .import-pos-playas { display: flex; align-items: center; gap: 12px; }
 .import-pos-playas-label { font-size: 0.9rem; color: var(--wa-color-neutral-700, #555); }
-/* Openings tab: reuses the Engines list look (sticky resizable header, bottom
+/* Split header/body table pattern: every resizable list below (Openings,
+   Engines, file picker, Search Lines, Studio Tourneys/History, Standings,
+   H2H) pairs a fixed header table with a separately-scrolling body table
+   sharing its colgroup, so the body's scrollbar track starts below the
+   header instead of a sticky thead sharing the body's own scrollbar.
+   Column widths and horizontal scroll are kept in sync via split-table.js.
+
+   Openings tab: reuses the Engines list look (resizable header, bottom
    ribbon, slide-up search); shared .th-grip / .col-drag-line apply. */
 .openings-panel { position: relative; display: flex; flex-direction: column; height: 100%; flex: 1 1 auto; min-height: 0; }
 .openings-table-wrap {
   position: relative;
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
   border-top: 1px solid #34373d;
   font-size: 0.8125rem;
   padding-left: 5px;
 }
+.openings-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; }
+.openings-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
 .openings-list:focus { outline: none; }
 .openings-table { table-layout: fixed; width: 100%; border-collapse: separate; border-spacing: 0; }
-.openings-table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+.openings-head-table th {
   background: var(--bg);
   padding: 6px 10px;
   text-align: left;
@@ -1228,14 +1235,13 @@ wa-dialog:has(.import-pos-form)::part(body) {
   text-transform: uppercase;
   letter-spacing: 0.6px;
   border-bottom: 2px solid var(--accent-line);
-  /* border-bottom: 2px solid var(--wa-color-border-loud); */
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
   user-select: none;
 }
-.openings-table th { position: relative; }
-.openings-table thead th:hover {
+.openings-head-table th { position: relative; }
+.openings-head-table th:hover {
   background: #252830;
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
@@ -2550,27 +2556,27 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
 }
 .engine-launch-section-add { flex: 0 0 auto; }
 
+/* Split header/body table (see Openings above, engines-list-layout.js). */
 .engines-table-wrap {
   position: relative;
+  display: flex;
+  flex-direction: column;
   border-top: 1px solid #34373d;
   min-height: 120px;
-  overflow-y: auto;
   font-size: 0.8125rem;
   padding-left: 5px;
 }
+.engines-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; }
+.engines-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
 .engines-list:focus { outline: none; }
 .engines-table {
   table-layout: fixed;
   width: 100%;
   border-collapse: separate;
-  /* Non-zero border-spacing leaves a gap above the sticky thead that scrolls
-     with the content; td padding gives the rows their breathing room. */
   border-spacing: 0;
 }
-.engines-table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+.engines-head-table th {
+  position: relative;
   background: var(--bg);
   padding: 6px 10px;
   text-align: left;
@@ -2585,7 +2591,7 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   text-overflow: ellipsis;
   user-select: none;
 }
-.engines-table thead th:hover {
+.engines-head-table th:hover {
   background: #252830;
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
@@ -2992,18 +2998,22 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-picker-pathbar { display: flex; gap: 8px; align-items: center; }
 .fs-picker-pathbar wa-input { flex: 1; }
 .fs-exe-only-btn[aria-pressed="true"] { color: var(--accent); }
-/* Overlay host for the resize drag-lines, and the scroll container. */
+/* Overlay host for the resize drag-lines, and the scroll container. Split
+   header/body table (see Openings above, dialogs.js). */
 .fs-picker-table-wrap {
   position: relative;
+  display: flex;
+  flex-direction: column;
   border: 1px solid #34373d;
   border-radius: 4px;
   background: #15171b;
   height: 50vh;
   max-height: 480px;
-  overflow: auto;
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 0.875rem;
 }
+.fs-picker-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; }
+.fs-picker-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
 
 .fs-picker-table {
   table-layout: fixed;
@@ -3011,10 +3021,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   border-collapse: separate;
   border-spacing: 0;
 }
-.fs-picker-table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+.fs-picker-head-table th {
+  position: relative;
   background: #1b1e24;
   padding: 6px 8px;
   text-align: left;
@@ -3030,14 +3038,14 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   text-overflow: ellipsis;
   user-select: none;
 }
-.fs-picker-table thead th:hover {
+.fs-picker-head-table th:hover {
   background: #252830;
   box-shadow:
     inset 2px 0 0 var(--wa-color-border-loud, #353841),
     inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
 /* Size header sits over right-aligned values. */
-.fs-picker-table thead th:last-child { text-align: right; }
+.fs-picker-head-table th:last-child { text-align: right; }
 .th-sortable { cursor: pointer; }
 .th-sort-arrow {
   font-size: 0.7rem;
@@ -3670,6 +3678,17 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tabs wa-tab-panel { height: 100%; --padding: 0; }
 .studio-tabs wa-tab-panel::part(base) { height: 100%; box-sizing: border-box; }
 .studio-pane { height: 100%; overflow: auto; }
+/* Standings/Tourneys/History own their scroll internally (split-table
+   pattern above), so their pane must not also scroll or the header
+   scrolls out of view with it. */
+.studio-pane-standings, .studio-pane-tourneys, .studio-pane-history, .studio-pane-h2h {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.studio-pane-standings > *, .studio-pane-tourneys > *,
+.studio-pane-history > *, .studio-pane-h2h > * { min-height: 0; }
+.studio-tourney-wrap, .studio-history-wrap { height: 100%; }
 /* Selection-change loading state for the selDetail-fed panes (Standings,
    Head-to-Head, Games): dim the outgoing tourney's rows and spin, so stale
    numbers never read as current.
@@ -3710,13 +3729,16 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tabs wa-tab-panel[name="livegames"]::part(base) { padding-top: 8px; }
 /* Keep the watch buttons off the pane's right edge / scrollbar. */
 .studio-pane .wb-sched-attach-btn { margin-right: 8px; }
-/* Studio tourney table: sortable + resizable sticky header, flat rows (the
+/* Studio tourney table: sortable + resizable header, flat rows (the
    Settings engines look). The wrap hosts the resize overlay, mirroring the
-   file picker's tableWrap. */
-.studio-tourney-wrap, .studio-history-wrap { position: relative; }
+   file picker's tableWrap. Split header/body table (see Openings above,
+   tournament-studio.js). */
+.studio-tourney-wrap, .studio-history-wrap { position: relative; display: flex; flex-direction: column; min-height: 0; }
+.studio-tourney-head-scroll, .studio-history-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; }
+.studio-tourney-body-scroll, .studio-history-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
 .studio-tourney-tbl, .studio-history-tbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
-.studio-tourney-tbl thead th, .studio-history-tbl thead th {
-  position: sticky; top: 0; z-index: 1;
+.studio-tourney-head-tbl th, .studio-history-head-tbl th {
+  position: relative;
   text-align: left; font-weight: 600; font-size: 0.75rem; color: var(--muted);
   padding: 6px 8px; background: var(--bg);
   border-bottom: 1px solid var(--border-subtle);
@@ -3727,8 +3749,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 /* Sortable-header hover: highlight the cell and outline its extent (the
    column-size hint), like the file picker. */
-.studio-tourney-tbl thead th.th-sortable:hover, .studio-history-tbl thead th.th-sortable:hover,
-.wb-standings-tbl thead th.th-sortable:hover {
+.studio-tourney-head-tbl th.th-sortable:hover, .studio-history-head-tbl th.th-sortable:hover,
+.wb-standings-head-tbl th.th-sortable:hover {
   background: var(--row-bg-hover);
   box-shadow:
     inset 2px 0 0 var(--wa-color-border-loud, #353841),
@@ -3743,7 +3765,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 /* Being a tab stop opts the list out of the generic container-ring
    suppression above. Its selected row is the focus affordance, so drop the
    ring that would box the whole table (as in the fs picker's list). */
-.studio-tourney-tbl:focus, .studio-tourney-tbl:focus-visible { outline: none; }
+.studio-tourney-body-tbl:focus, .studio-tourney-body-tbl:focus-visible { outline: none; }
 .studio-tourney-row, .studio-history-row {
   cursor: pointer;
   user-select: none; -webkit-user-select: none;
@@ -3831,6 +3853,14 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   .studio-tabs wa-tab-panel::part(base) { height: auto; }
   .studio-tabs::part(body) { flex: 0 0 auto; min-height: auto; }
   .studio-pane { height: auto; overflow: visible; }
+  .studio-pane-standings, .studio-pane-tourneys, .studio-pane-history, .studio-pane-h2h {
+    display: block; height: auto; overflow: visible;
+  }
+  .wb-standings, .wb-h2h { height: auto; }
+  .studio-tourney-wrap, .studio-history-wrap { height: auto; }
+  .wb-standings-table-wrap, .h2h-table-wrap { display: block; }
+  .wb-standings-body-scroll, .h2h-body-scroll,
+  .studio-tourney-body-scroll, .studio-history-body-scroll { overflow: visible; }
   /* The page owns vertical scroll, so the loading host is content-height and
      its 50% lands mid-content -- below the fold on a long list. Fixed
      centering pins the spinner to the viewport instead. */
@@ -4352,39 +4382,45 @@ wa-dialog.tournament-info-dialog::part(body) {
 /* Reserve the scrollbar gutter so adding/removing rows doesn't shrink the
    inner width when overflow toggles. */
 .winbox.sturddle-wb-live-games .wb-body { scrollbar-gutter: stable; }
+/* Standings owns its scroll internally (split-table pattern above): the
+   WinBox body must not also scroll. */
+.winbox.sturddle-wb-standings .wb-body { overflow: hidden; }
+.wb-standings { height: 100%; display: flex; flex-direction: column; min-height: 0; }
 .wb-empty { color: var(--muted); padding: 12px; text-align: center; }
 .wb-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
 .wb-table th, .wb-table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; }
 .wb-table th { color: var(--muted); font-weight: normal; font-size: 0.6875rem; text-transform: uppercase; }
 .wb-table .wb-eng-name { font-weight: 500; }
 .wb-elo-ordo { color: var(--muted); font-size: 0.75rem; }
-.wb-standings-table-wrap { position: relative; }
+/* Split header/body table (see Openings above, tournament-standings.js /
+   tournament-h2h.js). */
+.wb-standings-table-wrap { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.wb-standings-head-scroll, .h2h-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; }
+.wb-standings-body-scroll, .h2h-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
 .wb-standings-tbl { table-layout: fixed; }
 .wb-standings-tbl th { position: relative; }
-/* Pin the column header while rows scroll (matches H2H). The th keeps its own
-   border-bottom + solid bg, so collapsed borders don't detach on scroll. */
-.wb-standings-tbl thead th { position: sticky; top: 0; z-index: 1; background: var(--bg); }
+.wb-standings-head-tbl th { background: var(--bg); }
 .wb-standings-tbl td { overflow: hidden; text-overflow: ellipsis; }
-.wb-standings-tbl thead th:hover,
-.h2h-tbl thead th:hover {
+.wb-standings-head-tbl th:hover,
+.h2h-head-tbl th:hover {
   background: #252830;
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
-.wb-standings-tbl thead th:first-child:hover,
-.h2h-tbl thead th:first-child:hover {
+.wb-standings-head-tbl th:first-child:hover,
+.h2h-head-tbl th:first-child:hover {
   box-shadow: inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
-.wb-standings-tbl thead th:last-child:hover,
-.h2h-tbl thead th:last-child:hover {
+.wb-standings-head-tbl th:last-child:hover,
+.h2h-head-tbl th:last-child:hover {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
 }
 /* Sortable first/last columns (Engine, Ordo) keep the accent-line bottom
    edge from the .th-sortable:hover rule above -- the plain first/last-child
    overrides otherwise clobber it at equal specificity. */
-.wb-standings-tbl thead th.th-sortable:first-child:hover {
+.wb-standings-head-tbl th.th-sortable:first-child:hover {
   box-shadow: inset -2px 0 0 var(--wa-color-border-loud, #353841), inset 0 -2px 0 var(--accent-line);
 }
-.wb-standings-tbl thead th.th-sortable:last-child:hover {
+.wb-standings-head-tbl th.th-sortable:last-child:hover {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset 0 -2px 0 var(--accent-line);
 }
 .wb-sprt {
@@ -4394,15 +4430,14 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-sprt--h1 { box-shadow: inset 3px 0 0 #2d6a3f; }
 .wb-sprt--h0 { box-shadow: inset 3px 0 0 #7a2222; }
 .wb-sprt--studio { background: var(--row-bg-selected); margin: 0 8px 10px; }
-/* Studio Head-to-Head: a fixed 2-engine banner + an internally scrolled table,
-   so banner and column header stay put while rows scroll. The wrap is both
-   scroll container and resize-overlay host; the sticky thead is positioned,
-   which also anchors the .th-grip handles. */
+/* Studio Head-to-Head: a fixed 2-engine banner + an internally scrolled
+   table (split-table pattern above, tournament-h2h.js); the head th is
+   positioned so it anchors the .th-grip handles. */
 .wb-h2h { height: 100%; display: flex; flex-direction: column; min-height: 0; }
 .h2h-banner { margin: 0 8px 10px; background: var(--row-bg-selected); }
-.h2h-table-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
+.h2h-table-wrap { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .h2h-tbl { table-layout: fixed; }
-.h2h-tbl thead th { position: sticky; top: 0; z-index: 1; background: var(--bg); }
+.h2h-head-tbl th { position: relative; background: var(--bg); }
 .h2h-tbl td { overflow: hidden; text-overflow: ellipsis; }
 .h2h-tbl .h2h-group td { font-weight: 600; color: var(--fg); }
 .h2h-tbl .h2h-side { color: var(--muted); padding-left: 16px; }
@@ -4654,14 +4689,20 @@ wa-dialog.tournament-info-dialog::part(body) {
    it collapses to a normal divider in every layout. */
 .ribbon-sep--push { flex: 0 0 auto; }
 
-/* UCI log window. The negative margin + sticky top:-8px cancel wb-body's
-   default 8px/12px padding, pinning the toolbar to the body edge while the
-   lines below keep that padding. */
+/* UCI log window. The toolbar is a fixed (non-scrolling) header above its own
+   scroll container, so the lines' scrollbar track starts below it instead of
+   a sticky header sharing the body's scrollbar. The negative margin cancels
+   wb-body's default 8px/12px padding so the toolbar spans edge-to-edge; the
+   scroll container keeps that padding for the lines below it. */
+.wb-uci-log { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.winbox.sturddle-wb-uci-log .wb-body,
+.dock-slot-body:has(> .wb-uci-log) { overflow: hidden; }
 .wb-uci-log-toolbar {
   display: flex; align-items: center; gap: 12px;
-  padding: 4px 8px; margin: -8px -12px 8px;
+  flex: 0 0 auto;
+  padding: 4px 8px; margin: -8px -12px 0;
   border-bottom: 1px solid var(--border-subtle); font-size: 0.8125rem;
-  position: sticky; top: -8px; background: var(--panel); z-index: 1;
+  background: var(--panel);
 }
 .wb-uci-log-toolbar button {
   background: var(--nav-btn-bg); color: var(--fg);
@@ -4669,7 +4710,11 @@ wa-dialog.tournament-info-dialog::part(body) {
   padding: 2px 8px; cursor: pointer; font-size: 0.75rem;
 }
 .wb-uci-log-toolbar button:hover { background: var(--nav-btn-bg-hover); }
-.sturddle-wb-uci-log .wb-body { overflow-x: auto; }
+.wb-uci-log-scroll {
+  flex: 1 1 auto; min-height: 0;
+  overflow: auto;
+  margin: 0 -12px -8px; padding: 8px 12px;
+}
 .wb-uci-log-line {
   font-family: var(--wa-font-family-code); font-size: 0.75rem; line-height: 1.5;
   white-space: pre; min-width: max-content;
@@ -4678,34 +4723,36 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-uci-log-line.uci-in  { color: #a8e6a3; }
 
 /* Search Lines window: fixed layout, user-resizable columns. The PV cell
-   scrolls horizontally so full variations are readable. */
-.wb-pvtable { position: relative; }
-.sturddle-wb-pvtable .wb-body { overflow-x: auto; }
-/* border-spacing:0 (not collapse) so the sticky thead keeps its
-   border-bottom -- collapsed borders detach from a sticky header. */
-.wb-pvtable-tbl { table-layout: fixed; font-size: 0.75rem; border-collapse: separate; border-spacing: 0; }
-.wb-pvtable-tbl thead th {
-  position: sticky; top: 0; z-index: 1; background: var(--wa-color-surface-raised);
+   scrolls horizontally so full variations are readable. Split header/body
+   table (see Openings above, pv-table.js). */
+.wb-pvtable { position: relative; display: flex; flex-direction: column; height: 100%; }
+.sturddle-wb-pvtable .wb-body { overflow: hidden; }
+.wb-pvtable-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; }
+.wb-pvtable-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
+.wb-pvtable-head-tbl, .wb-pvtable-tbl { table-layout: fixed; font-size: 0.75rem; border-collapse: separate; border-spacing: 0; }
+.wb-pvtable-head-tbl th {
+  position: relative;
+  background: var(--wa-color-surface-raised);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis; user-select: none;
 }
-.wb-pvtable-tbl thead th:hover {
+.wb-pvtable-head-tbl th:hover {
   background: #252830;
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
-.wb-pvtable-tbl thead th:first-child:hover {
+.wb-pvtable-head-tbl th:first-child:hover {
   box-shadow: inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
-.wb-pvtable-tbl thead th:last-child:hover {
+.wb-pvtable-head-tbl th:last-child:hover {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
 }
 .wb-pvtable-tbl td { overflow: hidden; text-overflow: ellipsis; text-align: right; border-right: 1px solid var(--border-subtle); }
 .wb-pvtable-tbl td:last-child { border-right: none; }
-.wb-pvtable-tbl th { text-align: center; }
+.wb-pvtable-head-tbl th { text-align: center; }
 .wb-pvtable-tbl td.wb-pvtable-pv,
-.wb-pvtable-tbl th:last-child { text-align: left; }
+.wb-pvtable-head-tbl th:last-child { text-align: left; }
 .wb-pvtable-tbl td.wb-pvtable-pv { overflow: visible; text-overflow: clip; }
 .winbox.sturddle-wb-pvtable .wb-body,
-.dock-slot-body:has(> .wb-pvtable) { padding: 0; }
+.dock-slot-body:has(> .wb-pvtable) { padding: 0; overflow: hidden; }
 .dock-slot-body:has(> .game-view-eval-bar) { padding: 0; overflow: hidden; }
 .sturddle-wb-evalbar .wb-body { overflow: hidden; }
 /* Auto-hide parity with docked slots: an empty strip hides the float too (e.g.

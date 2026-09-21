@@ -14,6 +14,7 @@ import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { escapeHtml, markSelectable } from "./wb-utils.js";
 import { fmtSignedElo, fmtMargin } from "./tournament-format.js";
+import { wireSplitScroll } from "./split-table.js";
 
 const NA = "--";
 // Banner segment separator, matching the SPRT line and progress label.
@@ -172,32 +173,45 @@ export function makeH2HBody() {
     <div class="h2h-banner-slot"></div>
     <div class="wb-empty h2h-empty">${NO_GAMES_MSG}</div>
     <div class="h2h-table-wrap" hidden>
-      <table class="wb-table h2h-tbl">
-        <colgroup><col><col><col><col><col><col></colgroup>
-        <thead><tr>
-          <th><span class="th-grip"></span></th>
-          <th>Score<span class="th-grip"></span></th>
-          <th>%<span class="th-grip"></span></th>
-          <th>W-D-L<span class="th-grip"></span></th>
-          <th>Elo<span class="th-grip"></span></th>
-          <th>LOS</th>
-        </tr></thead>
-        <tbody></tbody>
-      </table>
+      <div class="h2h-head-scroll">
+        <table class="wb-table h2h-tbl h2h-head-tbl">
+          <colgroup><col><col><col><col><col><col></colgroup>
+          <thead><tr>
+            <th><span class="th-grip"></span></th>
+            <th>Score<span class="th-grip"></span></th>
+            <th>%<span class="th-grip"></span></th>
+            <th>W-D-L<span class="th-grip"></span></th>
+            <th>Elo<span class="th-grip"></span></th>
+            <th>LOS</th>
+          </tr></thead>
+        </table>
+      </div>
+      <div class="h2h-body-scroll">
+        <table class="wb-table h2h-tbl h2h-body-tbl">
+          <colgroup><col><col><col><col><col><col></colgroup>
+          <tbody></tbody>
+        </table>
+      </div>
     </div>`;
   const wrapEl = el.querySelector(".h2h-table-wrap");
-  const tableEl = el.querySelector(".h2h-tbl");
-  markSelectable(tableEl);
-  const colEls = Array.from(el.querySelectorAll(".h2h-tbl col"));
+  const headTableEl = el.querySelector(".h2h-head-tbl");
+  const bodyTableEl = el.querySelector(".h2h-body-tbl");
+  const headScrollEl = el.querySelector(".h2h-head-scroll");
+  const bodyScrollEl = el.querySelector(".h2h-body-scroll");
+  markSelectable(headTableEl);
+  markSelectable(bodyTableEl);
+  wireSplitScroll(headScrollEl, bodyScrollEl);
+  const headColEls = Array.from(headTableEl.querySelectorAll("col"));
+  const bodyColEls = Array.from(bodyTableEl.querySelectorAll("col"));
   const colPcts = H2H_DEFAULT_PCTS.slice();
   attachColumnResize({
-    table: tableEl,
-    grips: Array.from(el.querySelectorAll(".h2h-tbl .th-grip")),
+    table: headTableEl,
+    grips: Array.from(headTableEl.querySelectorAll(".th-grip")),
     overlayHost: wrapEl,
     storageKey: STORAGE_KEY.STUDIO_H2H_COL_PCTS,
     sizes: colPcts,
     unit: "pct",
-    applySizes: makePctApplySizes(colEls, H2H_MIN_PCT),
+    applySizes: makePctApplySizes([headColEls, bodyColEls], H2H_MIN_PCT),
   });
   return el;
 }
@@ -209,7 +223,7 @@ export function renderH2H(el, detail) {
   const bannerSlot = el.querySelector(".h2h-banner-slot");
   const emptyEl = el.querySelector(".h2h-empty");
   const wrapEl = el.querySelector(".h2h-table-wrap");
-  const tbody = el.querySelector(".h2h-tbl tbody");
+  const tbody = el.querySelector(".h2h-body-tbl tbody");
   const engines = detail?.standings?.engines || [];
   const games = detail?.games || [];
   if (engines.length === 0 || games.length === 0) {

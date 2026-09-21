@@ -9,7 +9,8 @@
 import { apiErrorDetail, apiErrorObject, confirm, showDialog, toast } from "./dialogs.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
-import { attachColumnResize } from "./col-resize.js";
+import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
+import { wireSplitScroll } from "./split-table.js";
 import { attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { loadJson, saveJson } from "./storage.js";
 import { mqNarrowDialog } from "./breakpoints.js";
@@ -301,21 +302,32 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
   el.className = "openings-panel";
   el.innerHTML = `
     <div class="openings-table-wrap">
-      <table class="openings-table">
-        <colgroup>
-          <col class="openings-col-eco">
-          <col class="openings-col-name">
-          <col class="openings-col-moves">
-        </colgroup>
-        <thead>
-          <tr>
-            <th>ECO<span class="th-grip"></span></th>
-            <th>Name<span class="th-grip"></span></th>
-            <th>Moves</th>
-          </tr>
-        </thead>
-        <tbody class="openings-list" role="listbox" tabindex="0"></tbody>
-      </table>
+      <div class="openings-head-scroll">
+        <table class="openings-table openings-head-table">
+          <colgroup>
+            <col class="openings-col-eco">
+            <col class="openings-col-name">
+            <col class="openings-col-moves">
+          </colgroup>
+          <thead>
+            <tr>
+              <th>ECO<span class="th-grip"></span></th>
+              <th>Name<span class="th-grip"></span></th>
+              <th>Moves</th>
+            </tr>
+          </thead>
+        </table>
+      </div>
+      <div class="openings-body-scroll">
+        <table class="openings-table openings-body-table">
+          <colgroup>
+            <col class="openings-col-eco">
+            <col class="openings-col-name">
+            <col class="openings-col-moves">
+          </colgroup>
+          <tbody class="openings-list" role="listbox" tabindex="0"></tbody>
+        </table>
+      </div>
     </div>
     <div class="openings-ribbon" role="toolbar" aria-label="Opening actions">
       <button class="ribbon-btn openings-search-btn" type="button" aria-label="Search openings" title="Search openings">
@@ -334,9 +346,14 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
   `;
 
   const list = el.querySelector(".openings-list");
-  const openingsTable = el.querySelector(".openings-table");
-  markSelectable(openingsTable);
-  suppressMultiClickSelect(openingsTable);
+  const openingsHeadTable = el.querySelector(".openings-head-table");
+  const openingsBodyTable = el.querySelector(".openings-body-table");
+  const openingsHeadScroll = el.querySelector(".openings-head-scroll");
+  const openingsBodyScroll = el.querySelector(".openings-body-scroll");
+  markSelectable(openingsHeadTable);
+  markSelectable(openingsBodyTable);
+  suppressMultiClickSelect(openingsBodyTable);
+  wireSplitScroll(openingsHeadScroll, openingsBodyScroll);
 
   function filtered() {
     const needle = foldDiacritics(filterText.trim());
@@ -428,7 +445,7 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
   {
     let nameBtnSort;
     const sortCtrl = attachColumnSort({
-      table: openingsTable,
+      table: openingsHeadTable,
       columns: [
         { key: OPENINGS_COL_ECO, firstDir: "asc" },
         { key: OPENINGS_COL_NAME, firstDir: "asc" },
@@ -458,31 +475,19 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
 
   // Column resize over the three cols.
   {
-    const colEls = Array.from(el.querySelectorAll(".openings-table col"));
-    const tableEl = el.querySelector(".openings-table");
+    const headColEls = Array.from(openingsHeadTable.querySelectorAll("col"));
+    const bodyColEls = Array.from(openingsBodyTable.querySelectorAll("col"));
     const wrapEl = el.querySelector(".openings-table-wrap");
-    const grips = Array.from(el.querySelectorAll(".openings-table .th-grip"));
+    const grips = Array.from(openingsHeadTable.querySelectorAll(".th-grip"));
     const colPcts = OPENINGS_DEFAULT_PCTS.slice();
     attachColumnResize({
-      table: tableEl,
+      table: openingsHeadTable,
       grips,
       overlayHost: wrapEl,
       storageKey: STORAGE_KEY.OPENINGS_COL_PCTS,
       sizes: colPcts,
       unit: "pct",
-      applySizes(sizes, ctx) {
-        if (ctx) {
-          const { deltaFrac, startSizes, gripIdx } = ctx;
-          const dPct = deltaFrac * 100;
-          let a = startSizes[gripIdx] + dPct;
-          let b = startSizes[gripIdx + 1] - dPct;
-          if (a < OPENINGS_COL_MIN_PCT) { b -= OPENINGS_COL_MIN_PCT - a; a = OPENINGS_COL_MIN_PCT; }
-          if (b < OPENINGS_COL_MIN_PCT) { a -= OPENINGS_COL_MIN_PCT - b; b = OPENINGS_COL_MIN_PCT; }
-          sizes[gripIdx] = a;
-          sizes[gripIdx + 1] = b;
-        }
-        colEls.forEach((c, i) => { c.style.width = sizes[i] + "%"; });
-      },
+      applySizes: makePctApplySizes([headColEls, bodyColEls], OPENINGS_COL_MIN_PCT),
     });
   }
 

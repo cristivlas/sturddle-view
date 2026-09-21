@@ -2,7 +2,7 @@
 // state -- only measurement, column resize, and the ResizeObserver wiring.
 // Split out of mountEngineList so the controller core stays under the cap.
 
-import { attachColumnResize } from "./col-resize.js";
+import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { rafCoalesce } from "./wb-utils.js";
 
 const DEFAULT_PCTS = [20, 14, 66];
@@ -13,32 +13,22 @@ const MIN_WRAP_PX = 120;
 const WRAP_SLACK_PX = 8;
 
 export function attachEngineColResize(container, colPctsKey) {
-  const colEls = Array.from(container.querySelectorAll(".engines-table col"));
+  const headTableEl = container.querySelector(".engines-head-table");
+  const bodyTableEl = container.querySelector(".engines-body-table");
+  const headColEls = Array.from(headTableEl.querySelectorAll("col"));
+  const bodyColEls = Array.from(bodyTableEl.querySelectorAll("col"));
   const wrapEl = container.querySelector(".engines-table-wrap");
-  const tableEl = container.querySelector(".engines-table");
-  const grips = Array.from(container.querySelectorAll(".engines-table .th-grip"));
+  const grips = Array.from(headTableEl.querySelectorAll(".th-grip"));
   const colPcts = DEFAULT_PCTS.slice();
 
   attachColumnResize({
-    table: tableEl,
+    table: headTableEl,
     grips,
     overlayHost: wrapEl,
     storageKey: colPctsKey,
     sizes: colPcts,
     unit: "pct",
-    applySizes(sizes, ctx) {
-      if (ctx) {
-        const { deltaFrac, startSizes, gripIdx } = ctx;
-        const dPct = deltaFrac * 100;
-        let a = startSizes[gripIdx] + dPct;
-        let b = startSizes[gripIdx + 1] - dPct;
-        if (a < MIN_COL_PCT) { b -= MIN_COL_PCT - a; a = MIN_COL_PCT; }
-        if (b < MIN_COL_PCT) { a -= MIN_COL_PCT - b; b = MIN_COL_PCT; }
-        sizes[gripIdx] = a;
-        sizes[gripIdx + 1] = b;
-      }
-      colEls.forEach((c, i) => { c.style.width = sizes[i] + "%"; });
-    },
+    applySizes: makePctApplySizes([headColEls, bodyColEls], MIN_COL_PCT),
   });
 }
 

@@ -3,7 +3,8 @@
 // behind this seam so it can be swapped later.
 
 import { APP_EVT } from "./app-events.js";
-import { attachColumnResize } from "./col-resize.js";
+import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
+import { wireSplitScroll } from "./split-table.js";
 import { attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
@@ -305,17 +306,31 @@ export function pickFile({
         pathBar.append(exeOnlyBtn);
       }
 
-      // Real table so the shared column-resize helper (.th-grip / .col-drag-line)
+      // Real tables so the shared column-resize helper (.th-grip / .col-drag-line)
       // can size Name/Date the way the engines and openings tables do.
+      // Split header/body table pattern -- see split-table.js.
       const tableWrap = document.createElement("div");
       tableWrap.className = "fs-picker-table-wrap";
+      const headScroll = document.createElement("div");
+      headScroll.className = "fs-picker-head-scroll";
+      const headTable = document.createElement("table");
+      headTable.className = "fs-picker-table fs-picker-head-table";
+      markSelectable(headTable);
+      const bodyScroll = document.createElement("div");
+      bodyScroll.className = "fs-picker-body-scroll";
       const table = document.createElement("table");
-      table.className = "fs-picker-table";
+      table.className = "fs-picker-table fs-picker-body-table";
       table.tabIndex = 0;
       markSelectable(table);
       suppressMultiClickSelect(table);
-      const colgroup = document.createElement("colgroup");
-      for (let i = 0; i < 3; i++) colgroup.append(document.createElement("col"));
+
+      function makeColgroup() {
+        const colgroup = document.createElement("colgroup");
+        for (let i = 0; i < 3; i++) colgroup.append(document.createElement("col"));
+        return colgroup;
+      }
+      const headColgroup = makeColgroup();
+      const bodyColgroup = makeColgroup();
       const thead = document.createElement("thead");
       const headRow = document.createElement("tr");
       const HEADERS = ["Name", "Date modified", "Size"];
@@ -332,31 +347,24 @@ export function pickFile({
       });
       thead.append(headRow);
       const listing = document.createElement("tbody");
-      table.append(colgroup, thead, listing);
-      tableWrap.append(table);
+      headTable.append(headColgroup, thead);
+      table.append(bodyColgroup, listing);
+      headScroll.append(headTable);
+      bodyScroll.append(table);
+      tableWrap.append(headScroll, bodyScroll);
+      wireSplitScroll(headScroll, bodyScroll);
 
-      const colEls = Array.from(colgroup.querySelectorAll("col"));
+      const headColEls = Array.from(headColgroup.querySelectorAll("col"));
+      const bodyColEls = Array.from(bodyColgroup.querySelectorAll("col"));
       const fsColPcts = FS_COL_DEFAULT_PCTS.slice();
       attachColumnResize({
-        table,
+        table: headTable,
         grips: Array.from(thead.querySelectorAll(".th-grip")),
         overlayHost: tableWrap,
         storageKey: STORAGE_KEY.FS_PICKER_COL_PCTS,
         sizes: fsColPcts,
         unit: "pct",
-        applySizes(sizes, ctx) {
-          if (ctx) {
-            const { deltaFrac, startSizes, gripIdx } = ctx;
-            const dPct = deltaFrac * 100;
-            let a = startSizes[gripIdx] + dPct;
-            let b = startSizes[gripIdx + 1] - dPct;
-            if (a < FS_MIN_COL_PCT) { b -= FS_MIN_COL_PCT - a; a = FS_MIN_COL_PCT; }
-            if (b < FS_MIN_COL_PCT) { a -= FS_MIN_COL_PCT - b; b = FS_MIN_COL_PCT; }
-            sizes[gripIdx] = a;
-            sizes[gripIdx + 1] = b;
-          }
-          colEls.forEach((c, i) => { c.style.width = sizes[i] + "%"; });
-        },
+        applySizes: makePctApplySizes([headColEls, bodyColEls], FS_MIN_COL_PCT),
       });
 
       // Jump-to-prefix: type chars while the table has focus to select the
@@ -509,7 +517,7 @@ export function pickFile({
       }
 
       const sortCtrl = attachColumnSort({
-        table,
+        table: headTable,
         columns: [
           { key: FS_COL_NAME, firstDir: "asc" },
           { key: FS_COL_DATE, firstDir: "desc" },

@@ -15,6 +15,7 @@ import { ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow, progressBarHtml, progres
 import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, nextDir, scrollSortedRowIntoView } from "./col-sort.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
+import { wireSplitScroll } from "./split-table.js";
 import { reportError, toast } from "./dialogs.js";
 import { debounce, escapeHtml, flashWindow, markSelectable, roveTabStop, suppressModifierClickSelect, syncRovingTabStop, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
 import { createMultiSelect, selectionTargets } from "./multi-select.js";
@@ -284,24 +285,39 @@ function sortedStudioTourneys(ctx) {
   return arr;
 }
 
-// Build the tourney table once: a sticky sortable header + a tbody the row
-// renderer fills. Layered MRU sort + arrows/persistence come from attachLayeredSort.
+// Build the tourney table once: a sortable header + a tbody the row
+// renderer fills. Layered MRU sort + arrows/persistence come from
+// attachLayeredSort. Split header/body table pattern -- see split-table.js.
 function buildTourneyTable(ctx) {
   const pane = ctx.tourneysPaneEl;
   if (!pane) return;
   const wrap = document.createElement("div");
   wrap.className = "studio-tourney-wrap";
-  const table = document.createElement("table");
-  table.className = "wb-table studio-tourney-tbl";
-  table.innerHTML = `<colgroup><col><col><col><col></colgroup>
-    <thead><tr>
-      <th>Status<span class="th-grip"></span></th>
-      <th>Created<span class="th-grip"></span></th>
-      <th>Name<span class="th-grip"></span></th>
-      <th class="studio-tourney-games-col">Completed</th>
-    </tr></thead><tbody></tbody>`;
-  wrap.appendChild(table);
+  wrap.innerHTML = `
+    <div class="studio-tourney-head-scroll">
+      <table class="wb-table studio-tourney-tbl studio-tourney-head-tbl">
+        <colgroup><col><col><col><col></colgroup>
+        <thead><tr>
+          <th>Status<span class="th-grip"></span></th>
+          <th>Created<span class="th-grip"></span></th>
+          <th>Name<span class="th-grip"></span></th>
+          <th class="studio-tourney-games-col">Completed</th>
+        </tr></thead>
+      </table>
+    </div>
+    <div class="studio-tourney-body-scroll">
+      <table class="wb-table studio-tourney-tbl studio-tourney-body-tbl">
+        <colgroup><col><col><col><col></colgroup>
+        <tbody></tbody>
+      </table>
+    </div>
+  `;
   pane.replaceChildren(wrap);
+  const headTable = wrap.querySelector(".studio-tourney-head-tbl");
+  const table = wrap.querySelector(".studio-tourney-body-tbl");
+  const headScroll = wrap.querySelector(".studio-tourney-head-scroll");
+  const bodyScroll = wrap.querySelector(".studio-tourney-body-scroll");
+  wireSplitScroll(headScroll, bodyScroll);
   // One Tab stop for the whole list; arrows move the selection within it.
   // Clicking a row focuses the table so the arrows continue from there.
   table.tabIndex = 0;
@@ -316,22 +332,23 @@ function buildTourneyTable(ctx) {
   });
   ctx.tourneyTbody = table.querySelector("tbody");
   ctx.tourneyStack = attachLayeredSort({
-    table, columns: TOURNEY_SORT_COLS,
+    table: headTable, columns: TOURNEY_SORT_COLS,
     sortKey: STORAGE_KEY.STUDIO_TOURNEY_SORT, stackKey: STORAGE_KEY.STUDIO_TOURNEY_STACK,
     onChange: () => {
       renderTourneys(ctx);
       scrollSortedRowIntoView(ctx.tourneyTbody, "tr.selected");
     },
   }).get;
-  const colEls = Array.from(table.querySelectorAll("col"));
+  const headColEls = Array.from(headTable.querySelectorAll("col"));
+  const bodyColEls = Array.from(table.querySelectorAll("col"));
   attachColumnResize({
-    table,
-    grips: Array.from(table.querySelectorAll(".th-grip")),
+    table: headTable,
+    grips: Array.from(headTable.querySelectorAll(".th-grip")),
     overlayHost: wrap,
     storageKey: STORAGE_KEY.STUDIO_TOURNEY_COL_PCTS,
     sizes: STUDIO_TOURNEY_DEFAULT_PCTS.slice(),
     unit: "pct",
-    applySizes: makePctApplySizes(colEls, STUDIO_TOURNEY_MIN_PCT),
+    applySizes: makePctApplySizes([headColEls, bodyColEls], STUDIO_TOURNEY_MIN_PCT),
   });
 }
 
@@ -651,26 +668,41 @@ const HISTORY_SORT_COLS = [
   { key: HK.OPENING, firstDir: SORT_DIR.ASC },
 ];
 
-// Build the History table once: sticky sortable header + a tbody the row
-// renderer fills (mirrors buildTourneyTable). Result is the last column so it
-// carries no resize grip; it is still sortable.
+// Build the History table once: sortable header + a tbody the row renderer
+// fills (mirrors buildTourneyTable). Result is the last column so it carries
+// no resize grip; it is still sortable. Split header/body table pattern --
+// see split-table.js.
 function buildHistoryTable(ctx) {
   const pane = ctx.historyPaneEl;
   if (!pane) return;
   const wrap = document.createElement("div");
   wrap.className = "studio-history-wrap";
-  const table = document.createElement("table");
-  table.className = "wb-table studio-history-tbl";
-  table.innerHTML = `<colgroup><col><col><col><col><col></colgroup>
-    <thead><tr>
-      <th>#<span class="th-grip"></span></th>
-      <th>White<span class="th-grip"></span></th>
-      <th>Black<span class="th-grip"></span></th>
-      <th>Result<span class="th-grip"></span></th>
-      <th>Opening</th>
-    </tr></thead><tbody></tbody>`;
-  wrap.appendChild(table);
+  wrap.innerHTML = `
+    <div class="studio-history-head-scroll">
+      <table class="wb-table studio-history-tbl studio-history-head-tbl">
+        <colgroup><col><col><col><col><col></colgroup>
+        <thead><tr>
+          <th>#<span class="th-grip"></span></th>
+          <th>White<span class="th-grip"></span></th>
+          <th>Black<span class="th-grip"></span></th>
+          <th>Result<span class="th-grip"></span></th>
+          <th>Opening</th>
+        </tr></thead>
+      </table>
+    </div>
+    <div class="studio-history-body-scroll">
+      <table class="wb-table studio-history-tbl studio-history-body-tbl">
+        <colgroup><col><col><col><col><col></colgroup>
+        <tbody></tbody>
+      </table>
+    </div>
+  `;
   pane.replaceChildren(wrap);
+  const headTable = wrap.querySelector(".studio-history-head-tbl");
+  const table = wrap.querySelector(".studio-history-body-tbl");
+  const headScroll = wrap.querySelector(".studio-history-head-scroll");
+  const bodyScroll = wrap.querySelector(".studio-history-body-scroll");
+  wireSplitScroll(headScroll, bodyScroll);
   // Keep the roving stop on whatever the user actually focused (click or
   // arrow), so the next arrow press continues from there rather than row 0.
   table.addEventListener("focusin", (ev) => {
@@ -684,19 +716,20 @@ function buildHistoryTable(ctx) {
   });
   ctx.historyTbody = table.querySelector("tbody");
   ctx.historyStack = attachLayeredSort({
-    table, columns: HISTORY_SORT_COLS,
+    table: headTable, columns: HISTORY_SORT_COLS,
     sortKey: STORAGE_KEY.STUDIO_HISTORY_SORT, stackKey: STORAGE_KEY.STUDIO_HISTORY_STACK,
     onChange: () => renderHistory(ctx),
   }).get;
-  const colEls = Array.from(table.querySelectorAll("col"));
+  const headColEls = Array.from(headTable.querySelectorAll("col"));
+  const bodyColEls = Array.from(table.querySelectorAll("col"));
   attachColumnResize({
-    table,
-    grips: Array.from(table.querySelectorAll(".th-grip")),
+    table: headTable,
+    grips: Array.from(headTable.querySelectorAll(".th-grip")),
     overlayHost: wrap,
     storageKey: STORAGE_KEY.STUDIO_HISTORY_COL_PCTS,
     sizes: STUDIO_HISTORY_DEFAULT_PCTS.slice(),
     unit: "pct",
-    applySizes: makePctApplySizes(colEls, STUDIO_HISTORY_MIN_PCT),
+    applySizes: makePctApplySizes([headColEls, bodyColEls], STUDIO_HISTORY_MIN_PCT),
   });
 }
 
