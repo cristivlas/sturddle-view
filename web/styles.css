@@ -2779,6 +2779,9 @@ wa-dialog {
 wa-dialog wa-tab-group {
   --wa-color-neutral-fill-normal: var(--dialog-bg);
 }
+wa-dialog .settings-tabs {
+  --track-width: 0.1875rem;
+}
 wa-dialog::part(dialog) {
   overflow: visible !important;
   background: var(--dialog-bg);
