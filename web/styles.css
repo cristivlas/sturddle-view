@@ -212,7 +212,6 @@ wa-select::part(listbox) {
   background: transparent;
   font-size: 0.9em;
 }
-.play-ai-revision[hidden] { display: none; }
 /* Extra bottom padding when expanded, so the draft has room below it. */
 .play-ai-revision[open] { padding: 4px 8px 6px; }
 .play-ai-revision[open] > .play-ai-revision-summary {
@@ -303,7 +302,6 @@ wa-select::part(listbox) {
   background: var(--panel);
   border-bottom: 1px solid var(--border-subtle);
 }
-.play-ai-status[hidden] { display: none; }
 /* The AI window scrolls in its own inner wrapper: host bodies stop here. */
 .winbox.sturddle-wb-ai .wb-body,
 .dock-slot-body:has(> .play-ai-body) { overflow: hidden; padding: 0; }
@@ -739,9 +737,6 @@ wa-select::part(listbox) {
   width: calc(100% + var(--tool-nest-indent));
   max-width: none;
 }
-.play-ai-tool-io[hidden] {
-  display: none;
-}
 .play-ai-tool-io {
   display: flex;
   opacity: 0.7; /* dim the content, not the box border */
@@ -784,6 +779,10 @@ wa-select::part(listbox) {
   font-style: italic;
   opacity: 0.7;
 }
+
+/* WA native.css and various author display:flex/block rules can outrank the
+   UA [hidden] default (both are specificity (0,1,0)/(0,1,1)); force it. */
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -3367,7 +3366,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 /* Each row spans the wall so the splash fills the region. */
 .studio-boards-wall > * { width: 100%; }
-.studio-boards-wall[hidden] { display: none; }
 /* Empty state: the wall hosts a clickable New-tournament CTA (poster art
    suppressed), so undo the backdrop fade and re-enable pointer events. */
 .studio-boards-wall.is-empty { opacity: 1; pointer-events: auto; }
@@ -3596,7 +3594,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   padding: 4px 2px;
   overflow-x: auto; overflow-y: hidden;
 }
-.studio-boards-tray[hidden] { display: none; }
 /* Each chip is a minimized window's title bar: its board's header color (set
    inline) + the window outline, reusing winbox's X. Packed tight, adjacent
    borders collapsed into one seam. */
@@ -4595,15 +4592,12 @@ wa-dialog.tournament-info-dialog::part(body) {
   box-shadow: 0 0.125em 0.75em rgba(0, 0, 0, 0.6);
 }
 /* min-height divides by the scale because em resolves against this element's
-   own reduced font-size, not the banner's. The :not([hidden]) guard keeps
-   display:flex from defeating the hidden attribute. */
+   own reduced font-size, not the banner's. */
 .wb-livegame .lg-waiting-overlay {
   /* color: var(--accent); */
   color: var(--wa-color-brand-95);
   font-size: calc(1em * var(--lg-waiting-scale));
   min-height: calc(var(--lg-overlay-h) / var(--lg-waiting-scale));
-}
-.wb-livegame .lg-waiting-overlay:not([hidden]) {
   display: flex; align-items: center; justify-content: center;
 }
 .wb-livegame .lg-result-score {
