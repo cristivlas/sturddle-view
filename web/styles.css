@@ -1277,7 +1277,7 @@ wa-dialog:has(.import-pos-form)::part(body) {
   height: 48px; padding: 6px 10px;
   opacity: 0; visibility: hidden;
   pointer-events: none;
-  background: #1e2026;
+  background: #253347;
   border-top: 1px solid var(--wa-color-border-loud, #353841);
   box-sizing: border-box;
   transform: translateY(100%);
@@ -2755,8 +2755,12 @@ wa-dialog::part(body) { overflow: visible !important; }
 /* Suppress the focus-visible ring on the scrollable body div: it flashes
    amber on open, since showModal focuses before any user gesture. */
 wa-dialog::part(body):focus-visible { outline: none; }
+wa-dialog {
+  --wa-color-neutral-fill-normal: #253347;
+}
 wa-dialog::part(dialog) {
   overflow: visible !important;
+  background: #253347;
 }
 /* Optional fixed height: callers set --dialog-height on the host (e.g.
    Settings, which wants a stable size). Unset, the panel sizes to content. */
@@ -2915,6 +2919,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   --wa-form-control-value-line-height: 1.4;
 }
 .settings-row wa-slider { width: 100%; }
+.settings-row wa-slider::part(track) { background: #4a5b73; }
 /* Value + unit pair (e.g. time control); total width matches the other
    single-control rows (max-width 360px, from .settings-row). */
 .settings-duration {
@@ -2953,7 +2958,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .settings-threads-subgroup-inner {
   display: flex;
   gap: 8px;
-  border: 1px solid #34373d;
+  border: 1px solid #4a5b73;
   border-radius: 6px;
   padding: 6px 8px;
   flex: 1 1 auto;
@@ -2965,7 +2970,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 /* Matching border so Hash pairs with the threads box, without changing its
    label/input structure. */
 .settings-hash-boxed {
-  border: 1px solid #34373d;
+  border: 1px solid #4a5b73;
   border-radius: 6px;
   padding: 6px 8px;
 }
@@ -3216,7 +3221,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   height: 48px; padding: 6px 10px;
   opacity: 0; visibility: hidden;
   pointer-events: none;
-  background: #1e2026;
+  background: #253347;
   border-top: 1px solid var(--wa-color-border-loud, #353841);
   box-sizing: border-box;
   transform: translateY(100%);
