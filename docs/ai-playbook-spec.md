@@ -1,7 +1,7 @@
 # AI Playbook - Spec
 
 Situation-dependent strategy for the AI analysis agent's pick.
-Companion to `docs/ai-analysis-spec.md` (§Future skills points here).
+Companion to `docs/ai-analysis-spec.md` (section Future skills points here).
 Shipped: classifier `play/playbook.py`, fragments `llm/playbook.py`,
 plan line wired in `_ai_kick._playbook_for`, gate in
 `tools_engine.make_recommend_move_tool` (`app._ai_situation_provider`).
@@ -88,10 +88,10 @@ reports the engine's view of the accepted pick, it does not re-gate it.
 - No eval at hand -> material balance as a coarse proxy, tagged
   `margin_source=material` so the fragment can hedge ("by material").
 - Raw eval numbers never enter the fragment; only the bucket. Keeps the
-  narrator's raw-eval firewall intact (see ai-analysis-spec §Planner +
+  narrator's raw-eval firewall intact (see ai-analysis-spec section Planner +
   verifier subagents).
 
-## Tags (v1)
+## Tags
 
 ### `margin` -- from our side's point of view
 
@@ -139,13 +139,31 @@ hold at once.
   board's move stack). Empty for a bare FEN.
 - Feeds both the plan line (repetition note) and the gate (veto ahead).
 
-### Tags deferred (not v1)
+### Specific tags -- `imbalance`, `bishops`, `pawn`, `castling`
+
+Cheap board predicates (fixed chess geometry, no thresholds). Plan line
+only; the gate never reads them. Directional values (`_ours` /
+`_theirs`) take our side's point of view, like `margin`.
+
+| Tag | Values | Condition | Fires in |
+|-----|--------|-----------|----------|
+| `imbalance` | `iqp_ours` / `iqp_theirs` | one side: exactly one d-pawn, not passed, no c- or e-pawns; the other side: no d-pawn | not endgame |
+| `imbalance` | `minority_ours` / `minority_theirs` | Carlsbad: one side a+b pawns (none on c) vs a+b+c, d-pawns locked, equal pawn totals | not endgame |
+| `bishops` | `opposite_queens` / `opposite` | one bishop each, opposite-colored squares, no knights; `opposite_queens` while both sides have a queen | every phase |
+| `pawn` | `passed_outside_ours` / `passed_outside_theirs` | exactly one side has a passed pawn on the a-, b-, g- or h-file | every phase |
+| `castling` | `opposite` | kings on opposite wings (files a-c vs g-h), each on its own first two ranks; both queens on | not endgame |
+
+- IQP is checked before minority; they cannot co-occur (IQP needs an
+  empty enemy d-file).
+- `castling` reads king squares, not move history: an artificially
+  castled king plays the same race, and a bare FEN works.
+
+### Tags deferred
 
 - `king_safety` (castled / open lines near king / pawn shield)
-- `bishops=opposite` (opposite-colored bishops, no other minors)
-- `imbalance` (exchange up/down, minor vs pawns, queen vs pieces)
-- Named position types (IQP, Lucena, Philidor) -- the original
-  future-skills item; needs a pattern library.
+- `material` (exchange up/down, minor vs pawns, queen vs pieces)
+- Named endgame patterns (Lucena, Philidor, Vancura) -- need a pattern
+  library; if ever added, a tool call rather than a `Plan:` fragment.
 
 ## Fragment catalog (first draft)
 
@@ -180,8 +198,8 @@ the margin is not `even`, naming the moves:
 
 ### Phase
 
-- `opening`: development, center, king safety before adventures; no
-  early queen sorties.
+- `opening`: development, center, king safety before premature
+  attacks; no early queen sorties.
 - `middlegame`: pawn breaks, piece activity, weak squares, plan before
   tactics.
 - `late`: trade toward a favorable ending when ahead; keep tension when
@@ -196,14 +214,46 @@ the margin is not `even`, naming the moves:
 - `open`: bishops over knights, files and diagonals, initiative and
   tactics; tempo matters.
 
+### Specific tags
+
+Imperative, "enemy" marks the other side, no pronouns, so one text
+reads under both leads.
+
+About 15 words each, so the plan line stays near v1's worst case.
+
+- `iqp_ours`: control the stop square, play actively now, avoid endings
+  where the pawn is a target.
+- `iqp_theirs`: blockade the pawn with a knight, trade minor pieces, aim
+  for an ending.
+- `minority_ours`: advance the a- and b-pawns, trade one to leave a weak
+  pawn, target it.
+- `minority_theirs`: counter in the center or on the kingside; guard the
+  weakened queenside pawn.
+- `opposite_queens`: the attacker keeps queens on and attacks on its
+  bishop's color.
+- `opposite` (bishops): mass trades tend to draw; the side ahead needs a
+  second front or outside passer.
+- `passed_outside_ours`: push and support it; it ties enemy pieces down.
+- `passed_outside_theirs`: blockade it with a minor piece; keep the
+  other pieces free.
+- `opposite` (castling): pawn-storm the enemy king's wing without
+  loosening the king's shelter; tempo counts.
+
 ### Combination rules
 
-- One tag per axis (margin, phase, structure); axes are independent.
-- Default: additive, one fragment per axis, at most 3 in v1.
+- One tag per axis (margin, phase, structure, and each specific tag);
+  axes are independent.
+- Default: additive, one fragment per axis, at most 3.
 - Within an axis the stronger tag wins: `lost` over `losing`, `crushing`
   over `winning`.
 - Ordering: phase fragment first in `endgame`, margin first otherwise,
-  structure last.
+  structure last. Specific tags follow the combo / margin in the order
+  `imbalance`, `bishops`, `pawn`, `castling`; the cap drops from the
+  tail.
+- Outside the endgame the phase fragment is the generic fallback: any
+  specific tag replaces it (kept, it would starve them and sometimes
+  contradict them). In the endgame phase still leads and the specific
+  tags follow the margin. With no specific tag the output is v1's.
 
 ### Combo overrides
 
@@ -226,17 +276,23 @@ first, then per-axis fallback. First draft:
 `lost` and `crushing` take the `losing` / `winning` combo rows plus their
 own margin fragment (resign note / convert note) appended.
 
+No combo rows for the specific tags yet; pairs to watch live:
+`winning` + `endgame` vs `bishops=opposite`, `worse` + `opening` vs
+`castling=opposite`.
+
 ## Grounding
 
 - Fragments name plans, never concrete tactics on the board; the model
   must ground any "pin" / "fork" it writes with the `tactics` tool
-  (ai-analysis-spec §Tactical grounding). Same shared core
+  (ai-analysis-spec section Tactical grounding). Same shared core
   (`play/tactics.py`) is available to future tags such as `king_safety`.
 
 ## Guardrails
 
 - Fragment count cap: PLAYBOOK_MAX_FRAGMENTS (3); the repetition note
-  rides outside it (concrete moves the gate also acts on).
+  rides outside it (concrete moves the gate also acts on). The resign /
+  convert note counts against the cap but wins its slot: axis fragments
+  are cut first, so the advice never drops.
 - Fragments steer the pick, never instruct the model to skip tools or the
   red-team hold (unlike `BOOK_REPLY_GUIDANCE`).
 - Verifier never sees them; the gate's margin never widens past

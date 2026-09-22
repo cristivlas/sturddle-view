@@ -12,6 +12,13 @@ from ..env_utils import env_int
 from ..play.playbook import (
     AHEAD_MARGINS,
     BEHIND_MARGINS,
+    BISHOPS_OPPOSITE,
+    BISHOPS_OPPOSITE_QUEENS,
+    CASTLING_OPPOSITE,
+    IMBALANCE_IQP_OURS,
+    IMBALANCE_IQP_THEIRS,
+    IMBALANCE_MINORITY_OURS,
+    IMBALANCE_MINORITY_THEIRS,
     MARGIN_BETTER,
     MARGIN_CRUSHING,
     MARGIN_EVEN,
@@ -19,6 +26,8 @@ from ..play.playbook import (
     MARGIN_LOST,
     MARGIN_WINNING,
     MARGIN_WORSE,
+    PAWN_PASSED_OUTSIDE_OURS,
+    PAWN_PASSED_OUTSIDE_THEIRS,
     PHASE_ENDGAME,
     PHASE_LATE,
     PHASE_MIDDLEGAME,
@@ -31,7 +40,7 @@ from ..play.playbook import (
 from .prompts import COACH_MODE, PLAYBOOK_LEAD, PromptMode
 
 
-# Upper bound on fragments per turn (combo + third axis + margin note).
+# Upper bound on fragments per turn; the crushing / lost note wins a slot.
 _DEFAULT_MAX_FRAGMENTS = 3
 MAX_FRAGMENTS = env_int("SV_AI_PLAYBOOK_MAX_FRAGMENTS", _DEFAULT_MAX_FRAGMENTS)
 
@@ -67,8 +76,8 @@ _LOST_NOTE = (
 
 _PHASE_FRAGMENTS = {
     PHASE_OPENING: (
-        "development, the center and king safety before adventures; no "
-        "early queen sorties."
+        "development, the center and king safety before premature attacks; "
+        "no early queen sorties."
     ),
     PHASE_MIDDLEGAME: (
         "pawn breaks, piece activity, weak squares; a plan before tactics."
@@ -91,6 +100,54 @@ _STRUCTURE_FRAGMENTS = {
     STRUCTURE_OPEN: (
         "open structure: bishops over knights, files and diagonals, "
         "initiative and tactics; tempo matters."
+    ),
+}
+
+# Specific-tag fragments; outside the endgame they replace the phase one.
+_IMBALANCE_FRAGMENTS = {
+    IMBALANCE_IQP_OURS: (
+        "isolated d-pawn: control its stop square, play actively now, avoid "
+        "endings where it is a target."
+    ),
+    IMBALANCE_IQP_THEIRS: (
+        "enemy isolated d-pawn: blockade it with a knight, trade minor pieces, "
+        "aim for an ending."
+    ),
+    IMBALANCE_MINORITY_OURS: (
+        "minority attack: advance the a- and b-pawns, trade one to leave a "
+        "weak pawn, target it."
+    ),
+    IMBALANCE_MINORITY_THEIRS: (
+        "enemy minority attack: counter in the center or on the kingside; "
+        "guard the weakened queenside pawn."
+    ),
+}
+
+_BISHOPS_FRAGMENTS = {
+    BISHOPS_OPPOSITE_QUEENS: (
+        "opposite-colored bishops with queens on: the attacker keeps queens "
+        "on and attacks on its bishop's color."
+    ),
+    BISHOPS_OPPOSITE: (
+        "opposite-colored bishops: mass trades tend to draw; the side ahead "
+        "needs a second front or outside passer."
+    ),
+}
+
+_PAWN_FRAGMENTS = {
+    PAWN_PASSED_OUTSIDE_OURS: (
+        "outside passed pawn: push and support it; it ties enemy pieces down."
+    ),
+    PAWN_PASSED_OUTSIDE_THEIRS: (
+        "enemy outside passed pawn: blockade it with a minor piece; keep the "
+        "other pieces free."
+    ),
+}
+
+_CASTLING_FRAGMENTS = {
+    CASTLING_OPPOSITE: (
+        "opposite-side castling: pawn-storm the enemy king's wing without "
+        "loosening the king's shelter; tempo counts."
     ),
 }
 
@@ -164,33 +221,53 @@ def _standing(situation: Situation, subject: str) -> str:
     return f"{subject} {verb} {_MARGIN_WORDS[situation.margin]}{source}"
 
 
-def _fragments(situation: Situation, mode: PromptMode) -> list[str]:
+def _specific(situation: Situation) -> list[str]:
+    """Specific-tag fragments in precedence order."""
+    tagged = (
+        (_IMBALANCE_FRAGMENTS, situation.imbalance),
+        (_BISHOPS_FRAGMENTS, situation.bishops),
+        (_PAWN_FRAGMENTS, situation.pawn),
+        (_CASTLING_FRAGMENTS, situation.castling),
+    )
+    return [catalog[tag] for catalog, tag in tagged if tag is not None]
+
+
+def _axis_fragments(situation: Situation) -> list[str]:
     base = _BASE_MARGIN.get(situation.margin, situation.margin)
     combo = _COMBO_FRAGMENTS.get((base, situation.phase))
-    combo_axis = situation.phase
+    combo_on_phase = combo is not None
     if combo is None and situation.structure is not None:
         combo = _COMBO_FRAGMENTS.get((base, situation.structure))
-        combo_axis = situation.structure
-    out: list[str] = []
+    phase = _PHASE_FRAGMENTS[situation.phase]
+    structure = [] if situation.structure is None else [_STRUCTURE_FRAGMENTS[situation.structure]]
+    specific = _specific(situation)
+    # Outside the endgame, phase is the generic fallback: specific tags replace it.
+    phase_slot = specific or [phase]
+    if combo_on_phase:
+        return [combo, *specific, *structure]
     if combo is not None:
-        out.append(combo)
-        if combo_axis == situation.phase and situation.structure is not None:
-            out.append(_STRUCTURE_FRAGMENTS[situation.structure])
-        elif combo_axis != situation.phase:
-            out.append(_PHASE_FRAGMENTS[situation.phase])
-    else:
-        margin = _MARGIN_FRAGMENTS.get(situation.margin)
-        phase = _PHASE_FRAGMENTS[situation.phase]
-        # Phase leads in the endgame (promotion first), margin otherwise.
-        ordered = [phase, margin] if situation.phase == PHASE_ENDGAME else [margin, phase]
-        out.extend(f for f in ordered if f)
-        if situation.structure is not None:
-            out.append(_STRUCTURE_FRAGMENTS[situation.structure])
+        return [combo, *phase_slot]
+    margin = _MARGIN_FRAGMENTS.get(situation.margin)
+    margins = [margin] if margin else []
+    # Phase leads in the endgame (promotion first), margin otherwise.
+    if situation.phase == PHASE_ENDGAME:
+        return [phase, *margins, *specific, *structure]
+    return [*margins, *phase_slot, *structure]
+
+
+def _notes(situation: Situation, mode: PromptMode) -> list[str]:
     if situation.margin == MARGIN_CRUSHING:
-        out.append(_CRUSHING_NOTE)
-    elif situation.margin == MARGIN_LOST and mode == COACH_MODE and situation.phase != PHASE_OPENING:
-        out.append(_LOST_NOTE)
-    return out[:MAX_FRAGMENTS]
+        return [_CRUSHING_NOTE]
+    if situation.margin == MARGIN_LOST and mode == COACH_MODE and situation.phase != PHASE_OPENING:
+        return [_LOST_NOTE]
+    return []
+
+
+def _fragments(situation: Situation, mode: PromptMode) -> list[str]:
+    # The note counts against the cap and wins: resign / convert advice
+    # never loses its slot to an axis fragment.
+    notes = _notes(situation, mode)[:MAX_FRAGMENTS]
+    return _axis_fragments(situation)[:MAX_FRAGMENTS - len(notes)] + notes
 
 
 def _repeat_note(situation: Situation) -> str:

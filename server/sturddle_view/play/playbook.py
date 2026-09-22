@@ -36,7 +36,9 @@ _DEFAULT_CLOSED_MIN_LOCKED = 3
 _DEFAULT_CLOSED_MAX_OPEN_FILES = 1
 _DEFAULT_OPEN_MIN_FILES = 4
 CLOSED_MIN_LOCKED = env_int("SV_AI_PLAYBOOK_CLOSED_MIN_LOCKED", _DEFAULT_CLOSED_MIN_LOCKED)
-CLOSED_MAX_OPEN_FILES = env_int("SV_AI_PLAYBOOK_CLOSED_MAX_OPEN_FILES", _DEFAULT_CLOSED_MAX_OPEN_FILES)
+CLOSED_MAX_OPEN_FILES = env_int(
+    "SV_AI_PLAYBOOK_CLOSED_MAX_OPEN_FILES", _DEFAULT_CLOSED_MAX_OPEN_FILES,
+)
 OPEN_MIN_FILES = env_int("SV_AI_PLAYBOOK_OPEN_MIN_FILES", _DEFAULT_OPEN_MIN_FILES)
 
 # Material proxy when no eval is at hand (centipawns per piece type).
@@ -70,6 +72,28 @@ STRUCTURE_CLOSED = "closed"
 SOURCE_EVAL = "eval"
 SOURCE_MATERIAL = "material"
 
+# Specific tags. `_ours` / `_theirs` take our side's point of view.
+_OPPOSITE = "opposite"
+IMBALANCE_IQP_OURS = "iqp_ours"
+IMBALANCE_IQP_THEIRS = "iqp_theirs"
+IMBALANCE_MINORITY_OURS = "minority_ours"
+IMBALANCE_MINORITY_THEIRS = "minority_theirs"
+BISHOPS_OPPOSITE_QUEENS = "opposite_queens"
+BISHOPS_OPPOSITE = _OPPOSITE
+PAWN_PASSED_OUTSIDE_OURS = "passed_outside_ours"
+PAWN_PASSED_OUTSIDE_THEIRS = "passed_outside_theirs"
+CASTLING_OPPOSITE = _OPPOSITE
+
+# Board geometry for the specific-tag predicates.
+_IQP_NEIGHBOR_FILES = chess.BB_FILE_C | chess.BB_FILE_E
+_MINORITY_FILES = (chess.BB_FILE_A, chess.BB_FILE_B)
+_MAJORITY_FILES = (*_MINORITY_FILES, chess.BB_FILE_C)
+_OUTSIDE_FILES = chess.BB_FILE_A | chess.BB_FILE_B | chess.BB_FILE_G | chess.BB_FILE_H
+_QUEENSIDE_KING_FILES = chess.BB_FILE_A | chess.BB_FILE_B | chess.BB_FILE_C
+_KINGSIDE_KING_FILES = chess.BB_FILE_G | chess.BB_FILE_H
+_WHITE_SHELTER_RANKS = chess.BB_RANK_1 | chess.BB_RANK_2
+_BLACK_SHELTER_RANKS = chess.BB_RANK_7 | chess.BB_RANK_8
+
 # Eval dict keys, as the engine-info schema and PGN import write them.
 _SCORE_CP = "cp"
 _SCORE_MATE = "mate"
@@ -83,6 +107,10 @@ class Situation:
     structure: str | None
     # SAN of the legal moves that repeat an earlier position of the game.
     repeats: tuple[str, ...] = ()
+    imbalance: str | None = None
+    bishops: str | None = None
+    pawn: str | None = None
+    castling: str | None = None
 
 
 def _material_cp_white(board: chess.Board) -> int:
@@ -135,11 +163,15 @@ def phase_tag(board: chess.Board) -> str:
     return PHASE_ENDGAME
 
 
+def _locked(board: chess.Board) -> chess.Bitboard:
+    """Black pawns directly in front of a white pawn."""
+    white = board.pieces_mask(chess.PAWN, chess.WHITE)
+    black = board.pieces_mask(chess.PAWN, chess.BLACK)
+    return chess.shift_up(white) & black
+
+
 def _locked_pairs(board: chess.Board) -> int:
-    """White pawns with a black pawn directly in front of them."""
-    white = board.pieces(chess.PAWN, chess.WHITE)
-    black = board.pieces(chess.PAWN, chess.BLACK)
-    return sum(1 for sq in white if sq + 8 in black)
+    return chess.popcount(_locked(board))
 
 
 def _file_counts(board: chess.Board) -> tuple[int, int]:
@@ -163,6 +195,118 @@ def structure_tag(board: chess.Board) -> str | None:
         return STRUCTURE_CLOSED
     if open_files + half_open >= OPEN_MIN_FILES:
         return STRUCTURE_OPEN
+    return None
+
+
+def _single(bb: chess.Bitboard) -> bool:
+    """Exactly one square set."""
+    return bool(bb) and chess.lsb(bb) == chess.msb(bb)
+
+
+def _pov(side: chess.Color | None, our_color: chess.Color, ours: str, theirs: str) -> str | None:
+    if side is None:
+        return None
+    return ours if side == our_color else theirs
+
+
+def _front_span(square: chess.Square, color: chess.Color) -> chess.Bitboard:
+    """Squares ahead of `square` for `color` on its own and the adjacent files."""
+    step = chess.shift_up if color == chess.WHITE else chess.shift_down
+    bb = chess.BB_SQUARES[square]
+    bb |= chess.shift_left(bb) | chess.shift_right(bb)
+    span = chess.BB_EMPTY
+    while bb := step(bb):
+        span |= bb
+    return span
+
+
+def _passed_pawns(board: chess.Board, color: chess.Color) -> chess.SquareSet:
+    """Pawns of `color` with no enemy pawn ahead on their own or an adjacent file."""
+    enemy = board.pieces_mask(chess.PAWN, not color)
+    return chess.SquareSet(
+        sq for sq in board.pieces(chess.PAWN, color) if not _front_span(sq, color) & enemy
+    )
+
+
+def _iqp_side(board: chess.Board) -> chess.Color | None:
+    """The side with an isolated, non-passed d-pawn facing an empty enemy d-file."""
+    for color in chess.COLORS:
+        own = board.pieces_mask(chess.PAWN, color)
+        d_pawn = own & chess.BB_FILE_D
+        if (
+            _single(d_pawn)
+            and not own & _IQP_NEIGHBOR_FILES
+            and not board.pieces_mask(chess.PAWN, not color) & chess.BB_FILE_D
+            and not _passed_pawns(board, color) & d_pawn
+        ):
+            return color
+    return None
+
+
+def _minority_side(board: chess.Board) -> chess.Color | None:
+    """Carlsbad shape: the side with a+b pawns against a+b+c, d-pawns locked,
+    equal pawn totals."""
+    white = board.pieces_mask(chess.PAWN, chess.WHITE)
+    black = board.pieces_mask(chess.PAWN, chess.BLACK)
+    if chess.popcount(white) != chess.popcount(black) or not _locked(board) & chess.BB_FILE_D:
+        return None
+    for color, own, enemy in ((chess.WHITE, white, black), (chess.BLACK, black, white)):
+        if (
+            all(_single(own & f) for f in _MINORITY_FILES)
+            and not own & chess.BB_FILE_C
+            and all(_single(enemy & f) for f in _MAJORITY_FILES)
+        ):
+            return color
+    return None
+
+
+def imbalance_tag(board: chess.Board, our_color: chess.Color) -> str | None:
+    # Exclusive by construction (IQP needs an empty enemy d-file); IQP first.
+    iqp = _iqp_side(board)
+    if iqp is not None:
+        return _pov(iqp, our_color, IMBALANCE_IQP_OURS, IMBALANCE_IQP_THEIRS)
+    return _pov(
+        _minority_side(board), our_color, IMBALANCE_MINORITY_OURS, IMBALANCE_MINORITY_THEIRS,
+    )
+
+
+def _both_queens(board: chess.Board) -> bool:
+    return all(board.pieces_mask(chess.QUEEN, color) for color in chess.COLORS)
+
+
+def bishops_tag(board: chess.Board) -> str | None:
+    """One bishop each on opposite-colored squares, no knights on the board
+    (a knight can trade itself for a bishop)."""
+    white = board.pieces_mask(chess.BISHOP, chess.WHITE)
+    black = board.pieces_mask(chess.BISHOP, chess.BLACK)
+    if board.knights or not (_single(white) and _single(black)):
+        return None
+    if bool(white & chess.BB_LIGHT_SQUARES) == bool(black & chess.BB_LIGHT_SQUARES):
+        return None
+    return BISHOPS_OPPOSITE_QUEENS if _both_queens(board) else BISHOPS_OPPOSITE
+
+
+def pawn_tag(board: chess.Board, our_color: chess.Color) -> str | None:
+    """Outside passer for exactly one side; both is a race, no tag."""
+    white = bool(_passed_pawns(board, chess.WHITE) & _OUTSIDE_FILES)
+    black = bool(_passed_pawns(board, chess.BLACK) & _OUTSIDE_FILES)
+    if white == black:
+        return None
+    side = chess.WHITE if white else chess.BLACK
+    return _pov(side, our_color, PAWN_PASSED_OUTSIDE_OURS, PAWN_PASSED_OUTSIDE_THEIRS)
+
+
+def castling_tag(board: chess.Board) -> str | None:
+    """Kings sheltered on opposite wings, both queens on. King squares only:
+    an artificially castled king plays the same race."""
+    if not _both_queens(board):
+        return None
+    white = board.pieces_mask(chess.KING, chess.WHITE) & _WHITE_SHELTER_RANKS
+    black = board.pieces_mask(chess.KING, chess.BLACK) & _BLACK_SHELTER_RANKS
+    if (white & _QUEENSIDE_KING_FILES and black & _KINGSIDE_KING_FILES) or (
+        white & _KINGSIDE_KING_FILES and black & _QUEENSIDE_KING_FILES
+    ):
+        return CASTLING_OPPOSITE
     return None
 
 
@@ -197,11 +341,16 @@ def classify(
     cp_ours = cp_white if our_color == chess.WHITE else -cp_white
     phase = phase_tag(board)
     # Few pawns make every file "open"; structure advice is middlegame talk.
-    structure = None if phase == PHASE_ENDGAME else structure_tag(board)
+    # Bishops and the outside passer matter in every phase.
+    middlegame_talk = phase != PHASE_ENDGAME
     return Situation(
         margin=_margin_tag(cp_ours),
         margin_source=source,
         phase=phase,
-        structure=structure,
+        structure=structure_tag(board) if middlegame_talk else None,
         repeats=repeating_moves(board),
+        imbalance=imbalance_tag(board, our_color) if middlegame_talk else None,
+        bishops=bishops_tag(board),
+        pawn=pawn_tag(board, our_color),
+        castling=castling_tag(board) if middlegame_talk else None,
     )
