@@ -2739,7 +2739,12 @@ wa-dialog[no-header] {
 }
 wa-dialog[no-header]::part(dialog) {
   min-width: 16rem;
-  background-color: #2c2f36;
+  background-color: var(--dialog-bg-raised);
+}
+/* Darken the default (cancel-style) button fill in confirm/alert popups
+   only, leaving settings' Browse/Clear buttons on the shared default. */
+wa-dialog[no-header] wa-button[variant="neutral"]::part(base) {
+  background-color: var(--dialog-bg-sunken);
 }
 .confirm-message.game-over-message {
   margin: 0;
@@ -2758,6 +2763,11 @@ wa-dialog::part(body) { overflow: visible !important; }
 wa-dialog::part(body):focus-visible { outline: none; }
 wa-dialog {
   --dialog-bg: #253347;
+  /* Lighter tint of --dialog-bg, same hue: confirm/alert popup background. */
+  --dialog-bg-raised: #2f4258;
+  /* Darker tint of --dialog-bg, same hue: cancel-style button fill in
+     confirm/alert popups. */
+  --dialog-bg-sunken: #1c2733;
   /* Shared accent for anything that needs to read against --dialog-bg:
      borders/dividers via --border-subtle, and non-border fills (e.g. the
      slider track) that read --dialog-accent directly. */
