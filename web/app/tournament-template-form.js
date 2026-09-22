@@ -21,7 +21,8 @@ export const BOOK_KEYS = ["book_path", "book_plies", "book_order"];
 const ADJUDICATION_SUMMARY = "Adjudication";
 const OPENING_BOOK_SUMMARY = "Opening book";
 const OPENING_BOOK_LABEL = "Opening book";
-const BOOK_PICK_TITLE = "Pick opening book (.epd / .pgn)";
+const BOOK_PICK_TITLE = "Pick opening book";
+export const BOOK_EXTENSIONS = [".epd", ".pgn"];
 const BOOK_ORDER_DEFAULT = "sequential";
 const BOOK_ORDER_OPTIONS = [["sequential", "Sequential"], ["random", "Random"]];
 
@@ -147,7 +148,7 @@ function buildOpeningBookSection(initialValues, pathRow, { inherited = null, raw
       sync();
       notifyChange();
     },
-    { editable: true, onClear: () => {
+    { editable: true, extensions: BOOK_EXTENSIONS, onClear: () => {
       if (mode === BOOK_MODE.SET) mode = BOOK_MODE.OFF;
       else if (mode === BOOK_MODE.OFF && inherited) mode = BOOK_MODE.INHERIT;
       else mode = BOOK_MODE.OFF;

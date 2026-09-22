@@ -233,11 +233,19 @@ export function pickFile({
   title = "Pick a file",
   mode = "file",
   startPath = null,
+  extensions = null,
 } = {}) {
   if (!api) throw new Error("pickFile requires an api function");
 
   const wantsExec = mode === "executable";
   const wantsDir = mode === "directory";
+  const extSet = extensions
+    ? new Set(extensions.map((e) => e.toLowerCase()))
+    : null;
+  const hasExt = (name) => {
+    const dot = name.lastIndexOf(".");
+    return dot >= 0 && extSet.has(name.slice(dot).toLowerCase());
+  };
   // Per-context recall, keyed by dialog title: each call site passes a
   // distinct title (e.g. "Pick fastchess binary" vs "Add engine"), so two
   // executable pickers don't bleed into each other. Explicit startPath wins.
@@ -433,6 +441,7 @@ export function pickFile({
         if (entry.error) return false;
         if (wantsDir) return entry.is_dir;
         if (wantsExec) return entry.is_file && entry.is_executable;
+        if (extSet) return entry.is_file && hasExt(entry.name);
         return entry.is_file;
       }
 
@@ -443,8 +452,9 @@ export function pickFile({
       function renderRows(entries) {
         listing.innerHTML = "";
         for (const entry of entries) {
-          // In exe-only mode, skip non-eligible files entirely (dirs still show).
-          if (exeOnly && !entry.is_dir && !eligible(entry)) continue;
+          // In exe-only mode or with an extension filter, skip non-eligible
+          // files entirely (dirs still show).
+          if ((exeOnly || extSet) && !entry.is_dir && !eligible(entry)) continue;
           const li = document.createElement("tr");
           li.className = "fs-entry";
           if (!eligible(entry) && !entry.is_dir) li.classList.add("dim");

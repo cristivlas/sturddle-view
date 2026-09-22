@@ -3,6 +3,8 @@
 //
 // pathRow is shared with the Gameplay and Tournament tabs, so it's passed in.
 
+import { BOOK_EXTENSIONS } from "./tournament-template-form.js";
+
 export function buildCommonTab({ initial, putSettings, putSettingsDebounced, pathRow }) {
   const generalTab = document.createElement("wa-tab");
   generalTab.panel = "general";
@@ -127,11 +129,12 @@ export function buildCommonTab({ initial, putSettings, putSettingsDebounced, pat
       "Opening book",
       initial.engine_default_book_path || "",
       "file",
-      "Pick opening book (.epd / .pgn)",
+      "Pick opening book",
       (p) => {
         putSettings({ engine_default_book_path: p });
         setBookOptionsEnabled(!!p);
       },
+      { extensions: BOOK_EXTENSIONS },
     ),
     bookOptionsRow,
   );

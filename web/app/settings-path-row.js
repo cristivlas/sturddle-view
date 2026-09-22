@@ -13,7 +13,7 @@ import { guard, syncTooltip } from "./wb-utils.js";
 
 export function makePathRow(api) {
   return function pathRow(labelText, value, mode, pickerTitle, onPick, opts = {}) {
-    const { hint, editable = false, placeholder, onClear } = opts;
+    const { hint, editable = false, placeholder, onClear, extensions } = opts;
     const row = document.createElement("div");
     row.className = "settings-tournament-path-row";
     const lbl = document.createElement("div");
@@ -74,7 +74,7 @@ export function makePathRow(api) {
       field.placeholder = "(not set)";
     }
     browse.addEventListener("click", guard(async () => {
-      const path = await pickFile({ api, mode, title: pickerTitle });
+      const path = await pickFile({ api, mode, title: pickerTitle, extensions });
       if (!path) return;
       field.value = path;
       syncClear();
