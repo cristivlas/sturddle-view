@@ -1220,7 +1220,7 @@ wa-dialog:has(.import-pos-form)::part(body) {
   font-size: 0.8125rem;
   padding-left: 5px;
 }
-.openings-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; }
+.openings-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; border-bottom: 2px solid var(--accent-line); }
 .openings-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
 .openings-list:focus { outline: none; }
 .openings-table { table-layout: fixed; width: 100%; border-collapse: separate; border-spacing: 0; }
@@ -1233,7 +1233,6 @@ wa-dialog:has(.import-pos-form)::part(body) {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  border-bottom: 2px solid var(--accent-line);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -2565,7 +2564,7 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   font-size: 0.8125rem;
   padding-left: 5px;
 }
-.engines-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; }
+.engines-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; border-bottom: 2px solid var(--accent-line); }
 .engines-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
 .engines-list:focus { outline: none; }
 .engines-table {
@@ -2584,7 +2583,6 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  border-bottom: 2px solid var(--accent-line);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -3028,7 +3026,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 0.875rem;
 }
-.fs-picker-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; }
+.fs-picker-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; border-bottom: 3px solid var(--accent-line); }
 .fs-picker-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
 
 .fs-picker-table {
@@ -3048,7 +3046,6 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  border-bottom: 3px solid var(--accent-line);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
