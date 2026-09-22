@@ -1241,7 +1241,6 @@ wa-dialog:has(.import-pos-form)::part(body) {
 .openings-head-table th { position: relative; }
 .openings-head-table th:hover {
   background: #252830;
-  box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
 .openings-list-item {
   cursor: pointer; user-select: none;
@@ -2590,7 +2589,6 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
 }
 .engines-head-table th:hover {
   background: #252830;
-  box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
 .engines-list-item {
   cursor: pointer; user-select: none;
@@ -3053,9 +3051,6 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 .fs-picker-head-table th:hover {
   background: #252830;
-  box-shadow:
-    inset 2px 0 0 var(--wa-color-border-loud, #353841),
-    inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
 /* Size header sits over right-aligned values. */
 .fs-picker-head-table th:last-child { text-align: right; }
@@ -3755,11 +3750,11 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border-bottom: 1px solid var(--border-subtle);
   user-select: none; white-space: nowrap;
   /* Keeps the next sticky cell off the resize grip so its hover indicator
-     shows (matches the file picker header). */
+     shows. */
   overflow: hidden;
 }
 /* Sortable-header hover: highlight the cell and outline its extent (the
-   column-size hint), like the file picker. */
+   column-size hint). */
 .studio-tourney-head-tbl th.th-sortable:hover, .studio-history-head-tbl th.th-sortable:hover,
 .wb-standings-head-tbl th.th-sortable:hover {
   background: var(--row-bg-hover);
