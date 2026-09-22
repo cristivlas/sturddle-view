@@ -105,7 +105,7 @@ async def _open_search_lines(page, base, fen=STARTPOS_FEN):
     await page.goto(base + "/")
     await page.wait_for_selector(PLAY_PERSP)
     await wait_perspective_ready(page)
-    await page.wait_for_selector(".wb-pvtable-tbl")
+    await page.wait_for_selector(".wb-pvtable-scroll")
     # Replay board + clock so the view's gate reflects the installed HVE.
     httpx.post(f"{base}/game/sync", json={}).raise_for_status()
     await page.wait_for_function(
