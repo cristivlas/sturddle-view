@@ -151,11 +151,24 @@ body { -webkit-user-select: none; user-select: none; }
   width: 8px; height: 8px;
 }
 /* `*` doesn't pierce shadow DOM, so wa-select's listbox keeps the chunky
-   default; reach into its part. (Firefox honors scrollbar-* there too.) */
-wa-select::part(listbox) {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+   default; reach into its part. Chromium ignores ::-webkit-scrollbar-* on
+   any element that also sets scrollbar-width/color, so (as with the global
+   rule above) the standard properties are gated to the Firefox-only path. */
+@supports not selector(::-webkit-scrollbar) {
+  wa-select::part(listbox) {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  }
 }
+wa-select::part(listbox)::-webkit-scrollbar { width: 5px; height: 5px; }
+wa-select::part(listbox)::-webkit-scrollbar-track { background: transparent; }
+wa-select::part(listbox)::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: linear-gradient(to top, var(--bg), rgba(255, 255, 255, 0.18));
+}
+wa-select::part(listbox)::-webkit-scrollbar-thumb:hover { background: var(--wa-color-focus); }
+wa-select::part(listbox)::-webkit-scrollbar-corner { background: transparent; }
+wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
 
 /* Toggling `disabled` runs WA's 150ms color transition, briefly painting a
    brighter "enabled" border -- reads as a focus flash on the AI rows when the
@@ -3963,6 +3976,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 
 wa-dialog.tournament-info-dialog::part(header) {
+  padding-block-end: 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.12);
 }
 wa-dialog.tournament-info-dialog::part(body) {
