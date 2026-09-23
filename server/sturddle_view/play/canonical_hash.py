@@ -13,6 +13,10 @@ import re
 import chess
 import chess.pgn
 
+# Import formats: the hash dispatch, the /game/import `format` values,
+# and the recent-imports row `fmt`.
+FMT_FEN = "fen"
+FMT_PGN = "pgn"
 
 _WS_RUN = re.compile(r"\s+")
 
@@ -80,9 +84,9 @@ def _canonical_fen(text: str) -> str:
 
 
 def canonical_hash(text: str, fmt: str) -> str:
-    if fmt == "pgn":
+    if fmt == FMT_PGN:
         canon = _canonical_pgn(text)
-    elif fmt == "fen":
+    elif fmt == FMT_FEN:
         canon = _canonical_fen(text)
     else:
         raise ValueError(f"unknown format: {fmt!r}")

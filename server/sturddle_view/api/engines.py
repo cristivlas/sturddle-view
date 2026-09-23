@@ -6,7 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from ..auth import require_token
@@ -22,6 +22,7 @@ from ..engines import (
     validate_launch_profile,
 )
 from ..tournament.store import STATUS_RUNNING, TournamentStore
+from ._http import bad_request, conflict, not_found
 
 
 def _validate_engine_path(raw: str) -> str:
@@ -30,21 +31,23 @@ def _validate_engine_path(raw: str) -> str:
     Returns the resolved string path.
     """
     if not raw or not raw.strip():
-        raise HTTPException(status_code=400, detail="engine path is empty")
+        raise bad_request("engine path is empty")
     p = Path(raw).expanduser()
     try:
         p = p.resolve(strict=False)
     except OSError as e:
-        raise HTTPException(status_code=400, detail=f"bad path: {e}") from e
+        raise bad_request(f"bad path: {e}") from e
     if not p.exists():
-        raise HTTPException(status_code=400, detail=f"path does not exist: {p}")
+        raise bad_request(f"path does not exist: {p}")
     if p.is_dir():
-        raise HTTPException(status_code=400, detail=f"path is a directory, not a file: {p}")
+        raise bad_request(f"path is a directory, not a file: {p}")
     if not p.is_file():
-        raise HTTPException(status_code=400, detail=f"path is not a regular file: {p}")
+        raise bad_request(f"path is not a regular file: {p}")
     if not sys.platform.startswith("win") and not os.access(p, os.X_OK):
-        raise HTTPException(status_code=400, detail=f"path is not executable: {p}")
+        raise bad_request(f"path is not executable: {p}")
     return str(p)
+
+_ENGINE_NOT_FOUND = "engine not found"
 
 router = APIRouter(prefix="/engines", tags=["engines"], dependencies=[Depends(require_token)])
 
@@ -93,7 +96,7 @@ def _validate_launch(args: list[str] | None, env: dict[str, str] | None) -> None
     try:
         validate_launch_profile(args, env)
     except InvalidLaunchProfileError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise bad_request(str(e)) from e
 
 
 def _registry(request: Request) -> EngineRegistry:
@@ -128,7 +131,7 @@ def _check_engine_locked(engine_id: str, request: Request) -> None:
     refs = locks.get(engine_id, [])
     if refs:
         names = ", ".join(f"{r['name']} ({r['status']})" for r in refs)
-        raise HTTPException(status_code=409, detail=f"engine in use by: {names}")
+        raise conflict(f"engine in use by: {names}")
 
 
 def _serialize(e: Engine) -> dict:
@@ -172,7 +175,7 @@ async def list_engines(request: Request, probe: bool = True) -> dict:
     }
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def add_engine(payload: EngineCreate, request: Request) -> dict:
     reg = _registry(request)
     resolved_path = _validate_engine_path(payload.path)
@@ -183,7 +186,7 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
     if probe_error:
         # Reject unprobeable engines outright -- a half-broken registry
         # entry would just trip the user up later when they try to use it.
-        raise HTTPException(status_code=400, detail=probe_error)
+        raise bad_request(probe_error)
     user_supplied = bool((payload.name or "").strip())
     name = (payload.name or "").strip() or uci_name or Path(resolved_path).name
     try:
@@ -199,7 +202,7 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
             rating=payload.rating,
         )
     except DuplicateEngineError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise conflict(str(exc)) from exc
     # First engine added with nothing selected -> auto-select it. Saves the
     # user a redundant click; any subsequent add leaves the active engine
     # alone.
@@ -214,7 +217,7 @@ def get_engine(engine_id: str, request: Request) -> dict:
     try:
         e = reg.get(engine_id)
     except EngineNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="engine not found") from exc
+        raise not_found(_ENGINE_NOT_FOUND) from exc
     locks = _engine_locks(request)
     d = _serialize(e)
     d["locked"] = locks.get(engine_id, [])
@@ -241,9 +244,9 @@ async def update_engine(engine_id: str, payload: EngineUpdate, request: Request)
             rating=payload.rating if "rating" in payload.model_fields_set else UNSET,
         )
     except EngineNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="engine not found") from exc
+        raise not_found(_ENGINE_NOT_FOUND) from exc
     except DuplicateEngineError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise conflict(str(exc)) from exc
     # If the edited engine is the one currently driving HvE, push the new
     # launch profile to the live instance so the next move uses it.
     s = request.app.state
@@ -258,14 +261,14 @@ async def update_engine(engine_id: str, payload: EngineUpdate, request: Request)
     return _serialize(e)
 
 
-@router.delete("/{engine_id}", status_code=204)
+@router.delete("/{engine_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_engine(engine_id: str, request: Request) -> None:
     _check_engine_locked(engine_id, request)
     reg = _registry(request)
     try:
         reg.remove(engine_id)
     except EngineNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="engine not found") from exc
+        raise not_found(_ENGINE_NOT_FOUND) from exc
 
 
 @router.post("/{engine_id}/select")
@@ -274,7 +277,7 @@ async def select_engine(engine_id: str, request: Request) -> dict:
     try:
         reg.select(engine_id)
     except EngineNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="engine not found") from exc
+        raise not_found(_ENGINE_NOT_FOUND) from exc
     # Eager swap so mid-analysis (no /game/* call follows) takes effect now.
     s = request.app.state
     hve = getattr(s, "hve", None)
@@ -301,19 +304,19 @@ async def refresh_engine_schema(engine_id: str, request: Request) -> dict:
     try:
         e = reg.get(engine_id)
     except EngineNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="engine not found") from exc
+        raise not_found(_ENGINE_NOT_FOUND) from exc
     uci_name, schema, probe_error = await probe_engine(
         e.path, args=list(e.args or []), env=dict(e.env or {}),
     )
     if probe_error:
         detail = f"could not capture options from engine: {probe_error['message']}"
-        raise HTTPException(status_code=502, detail=detail)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
     # An empty schema on a clean probe is legitimate (optionless engine):
     # persist it plus uci_name so the entry stops re-probing.
     try:
         e = reg.update(engine_id, option_schema=schema, uci_name=uci_name)
     except EngineNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="engine not found") from exc
+        raise not_found(_ENGINE_NOT_FOUND) from exc
     return _serialize(e)
 
 

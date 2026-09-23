@@ -26,6 +26,9 @@ from sturddle_view.llm.anthropic import (
 from sturddle_view.llm.base import LLMProvider
 from .conftest import REGISTRY_FILE
 
+_KEY = "k"
+_BUDGET = 2048
+
 
 @pytest.fixture(autouse=True)
 def clear_thinking_cache():
@@ -159,7 +162,7 @@ async def test_list_models_seeds_thinking_modes(install_fake_httpx):
         {"id": "claude-b", **_caps(False, True)},
         {"id": "claude-opus-4-8"},  # no capability tree -> heuristic
     ]})
-    p = AnthropicProvider(api_key="k", model="claude-a")
+    p = AnthropicProvider(api_key=_KEY, model="claude-a")
     models = await p.list_models()
     assert models == ["claude-a", "claude-b", "claude-opus-4-8"]
     modes = p.thinking_modes(models)
@@ -181,11 +184,11 @@ async def _drain(provider, **kw):
 @pytest.mark.asyncio
 async def test_stream_adaptive_shape_from_capability_fetch(install_fake_httpx):
     client = install_fake_httpx({"id": "claude-a", **_caps(True, False)})
-    p = AnthropicProvider(api_key="k", model="claude-a", thinking_enabled=True,
-                          thinking_budget_tokens=2048)
+    p = AnthropicProvider(api_key=_KEY, model="claude-a", thinking_enabled=True,
+                          thinking_budget_tokens=_BUDGET)
     await _drain(p)
     assert client.last_body["thinking"] == {"type": "adaptive"}
-    assert client.last_body["max_tokens"] == anthropic_mod._DEFAULT_MAX_TOKENS
+    assert client.last_body["max_tokens"] == anthropic_mod._MAX_TOKENS
     # second stream serves the mode from cache -- no extra GET
     await _drain(p)
     assert client.get_calls == 1
@@ -194,17 +197,17 @@ async def test_stream_adaptive_shape_from_capability_fetch(install_fake_httpx):
 @pytest.mark.asyncio
 async def test_stream_extended_shape_lifts_max_tokens(install_fake_httpx):
     client = install_fake_httpx({"id": "claude-b", **_caps(False, True)})
-    p = AnthropicProvider(api_key="k", model="claude-b", thinking_enabled=True,
-                          thinking_budget_tokens=2048)
+    p = AnthropicProvider(api_key=_KEY, model="claude-b", thinking_enabled=True,
+                          thinking_budget_tokens=_BUDGET)
     await _drain(p)
-    assert client.last_body["thinking"] == {"type": "enabled", "budget_tokens": 2048}
-    assert client.last_body["max_tokens"] == anthropic_mod._DEFAULT_MAX_TOKENS + 2048
+    assert client.last_body["thinking"] == {"type": "enabled", "budget_tokens": _BUDGET}
+    assert client.last_body["max_tokens"] == anthropic_mod._MAX_TOKENS + _BUDGET
 
 
 @pytest.mark.asyncio
 async def test_stream_none_mode_omits_thinking(install_fake_httpx):
     client = install_fake_httpx({"id": "claude-c", **_caps(False, False)})
-    p = AnthropicProvider(api_key="k", model="claude-c", thinking_enabled=True)
+    p = AnthropicProvider(api_key=_KEY, model="claude-c", thinking_enabled=True)
     await _drain(p)
     assert "thinking" not in client.last_body
 
@@ -212,7 +215,7 @@ async def test_stream_none_mode_omits_thinking(install_fake_httpx):
 @pytest.mark.asyncio
 async def test_stream_fetch_failure_uses_heuristic_uncached(install_fake_httpx):
     client = install_fake_httpx({}, status=500)
-    p = AnthropicProvider(api_key="k", model="claude-opus-4-8",
+    p = AnthropicProvider(api_key=_KEY, model="claude-opus-4-8",
                           thinking_enabled=True)
     await _drain(p)
     assert client.last_body["thinking"] == {"type": "adaptive"}
@@ -223,7 +226,7 @@ async def test_stream_fetch_failure_uses_heuristic_uncached(install_fake_httpx):
 @pytest.mark.asyncio
 async def test_stream_thinking_off_skips_resolution(install_fake_httpx):
     client = install_fake_httpx({}, status=500)
-    p = AnthropicProvider(api_key="k", model="claude-a", thinking_enabled=False)
+    p = AnthropicProvider(api_key=_KEY, model="claude-a", thinking_enabled=False)
     await _drain(p)
     assert "thinking" not in client.last_body
     assert client.get_calls == 0

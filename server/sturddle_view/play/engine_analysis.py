@@ -14,6 +14,7 @@ from typing import Any, Awaitable, Callable
 import chess
 import chess.engine
 
+from ..config import EVAL_POV_ENGINE, EVAL_POV_HUMAN, EVAL_POV_WHITE
 from ..engines import resolve_analysis
 from .engine_supervisor import EngineSupervisor
 
@@ -42,12 +43,6 @@ _UCI_THREADS = "Threads"
 _UCI_HASH = "Hash"
 _UCI_SYZYGY_PATH = "SyzygyPath"
 
-# play_eval_pov setting values. Public so callers can branch on them
-# without repeating literals.
-EVAL_POV_WHITE = "white"
-EVAL_POV_ENGINE = "engine"
-EVAL_POV_HUMAN = "human"
-
 
 def resolve_eval_pov_white_or_stm(
     settings: Any | None, stm: chess.Color,
@@ -58,7 +53,7 @@ def resolve_eval_pov_white_or_stm(
     STM (caller-specific handling lives in HVE; tools have no human
     color)."""
     mode = getattr(settings, "play_eval_pov", EVAL_POV_WHITE) if settings else EVAL_POV_WHITE
-    if mode == EVAL_POV_ENGINE or mode == EVAL_POV_HUMAN:
+    if mode in (EVAL_POV_ENGINE, EVAL_POV_HUMAN):
         return stm
     return chess.WHITE
 

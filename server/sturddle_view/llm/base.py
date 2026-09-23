@@ -14,11 +14,26 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, AsyncIterator, Literal
 
+from ..env_utils import env_float
+
 if TYPE_CHECKING:
     from .transcript import Transcript
 
 
 ChunkKind = Literal["text", "thinking", "tool_use", "usage"]
+
+# Per-request timeout for providers' control-plane calls (model listing,
+# daemon housekeeping). Streaming chat runs without a timeout.
+_DEFAULT_CONTROL_TIMEOUT_S = 10.0
+CONTROL_TIMEOUT_S = env_float("SV_AI_CONTROL_TIMEOUT_S", _DEFAULT_CONTROL_TIMEOUT_S)
+
+JSON_HEADERS = {"Content-Type": "application/json"}
+
+
+def with_system_message(system: str, messages: list[dict]) -> list[dict]:
+    """Chat-completions shape: the system prompt as a leading message."""
+    lead = [{"role": "system", "content": system}] if system else []
+    return [*lead, *messages]
 
 
 @dataclass(slots=True, frozen=True)
@@ -72,9 +87,9 @@ class ProviderChunk:
 
 Message = dict[str, Any]
 # Wire-shape tool schema as sent to the provider. Canonical shape is
-# Anthropic's: {name, description, input_schema}. Spec §Providers locks
-# this choice -- Ollama's provider translates to OpenAI's function-call
-# format ({"type": "function", "function": {name, description, parameters}})
+# Anthropic's: {name, description, input_schema}. The spec's Providers
+# section locks this choice -- Ollama's provider translates to OpenAI's
+# function-call format ({"type": "function", "function": {name, description, parameters}})
 # on the wire. The same translation applies to tool_use blocks in
 # responses and tool_result messages on the way back up.
 #
@@ -89,6 +104,10 @@ class LLMProvider(ABC):
     # weights. Empty on providers without one (test doubles) -- the
     # client then shows raw counts only.
     provider_name: str = ""
+
+    def _require_api_key(self, api_key: str) -> None:
+        if not api_key:
+            raise RuntimeError(f"{self.provider_name}: API key not configured")
 
     async def _tx_request(
         self,

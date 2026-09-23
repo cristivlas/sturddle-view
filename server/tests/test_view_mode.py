@@ -9,7 +9,12 @@ import pytest
 
 from sturddle_view.config import Settings
 from sturddle_view.events import EventBus
-from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
+from sturddle_view.play.human_vs_engine import (
+    EditChange,
+    HumanVsEngine,
+    TimeControl,
+    ViewModeParams,
+)
 from sturddle_view.play.mode import Mode, ModeConflictError
 
 
@@ -718,7 +723,7 @@ async def test_commit_edit_annotation_sets_comment_at_entry_ply(hve):
     result = await h.commit_edit(
         fen, apply_comment=True, comment_text="Best by test.",
     )
-    assert result["changed"] == "comment"
+    assert result.changed is EditChange.COMMENT
     assert h._view_comments == [None, "Best by test.", None]
     # Cursor restored to the entry ply.
     assert h._view_cursor == 2
@@ -735,7 +740,7 @@ async def test_commit_edit_annotation_at_root_ply_zero(hve):
     result = await h.commit_edit(
         fen, apply_comment=True, comment_text="Pre-game thoughts.",
     )
-    assert result["changed"] == "comment"
+    assert result.changed is EditChange.COMMENT
     assert h._view_root_comment == "Pre-game thoughts."
 
 
@@ -749,7 +754,7 @@ async def test_commit_edit_annotation_empty_text_deletes(hve):
     ))
     fen = await _enter_edit_at_ply(h, 1)
     result = await h.commit_edit(fen, apply_comment=True, comment_text="")
-    assert result["changed"] == "comment"
+    assert result.changed is EditChange.COMMENT
     # Comments list collapsed to None since no entries remain.
     assert h._view_comments is None
 
@@ -766,7 +771,7 @@ async def test_commit_edit_annotation_no_change_returns_none_branch(hve):
     ))
     fen = await _enter_edit_at_ply(h, 1)
     result = await h.commit_edit(fen, apply_comment=True, comment_text="same")
-    assert result["changed"] == "none"
+    assert result.changed is EditChange.NONE
     assert h._view_comments == ["same"]
 
 
@@ -781,7 +786,7 @@ async def test_commit_edit_annotation_whitespace_only_deletes(hve):
     ))
     fen = await _enter_edit_at_ply(h, 1)
     result = await h.commit_edit(fen, apply_comment=True, comment_text="   \t\n")
-    assert result["changed"] == "comment"
+    assert result.changed is EditChange.COMMENT
     assert h._view_comments is None
 
 
@@ -829,7 +834,7 @@ async def test_commit_edit_annotation_updates_hash(hve):
     ))
     fen = await _enter_edit_at_ply(h, 1)
     result = await h.commit_edit(fen, apply_comment=True, comment_text="new")
-    assert h._view_hash == result["hash"]
+    assert h._view_hash == result.pgn_hash
     assert h._view_hash != "deadbeef" * 8
 
 
@@ -848,7 +853,7 @@ async def test_commit_edit_fen_change_ignores_apply_comment(hve):
     result = await h.commit_edit(
         new_fen, apply_comment=True, comment_text="ignored",
     )
-    assert result["changed"] == "fen"
+    assert result.changed is EditChange.FEN
     # New view game has no comments.
     assert h._view_comments is None
     assert h._view_root_comment is None
@@ -864,7 +869,7 @@ async def test_commit_edit_unchanged_no_annotation_returns_none(hve):
     ))
     fen = await h.enter_edit_mode()
     result = await h.commit_edit(fen)  # no apply_comment
-    assert result["changed"] == "none"
+    assert result.changed is EditChange.NONE
 
 
 async def test_play_to_view_via_edit_round_trip_preserves_comments(hve):
@@ -1046,7 +1051,7 @@ async def test_no_op_annotation_does_not_set_edited_flag(hve):
     ))
     fen = await _enter_edit_at_ply(h, 1)
     result = await h.commit_edit(fen, apply_comment=True, comment_text="same")
-    assert result["changed"] == "none"
+    assert result.changed is EditChange.NONE
     assert h._view_edited is False
     pgn_text, _filename = h.get_pgn_text()
     assert pgn_text == _RAW_NO_COMMENTS

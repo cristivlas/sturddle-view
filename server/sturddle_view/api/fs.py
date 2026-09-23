@@ -14,9 +14,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from ..auth import require_token
+from ._http import bad_request, not_found
 
 router = APIRouter(prefix="/fs", tags=["fs"], dependencies=[Depends(require_token)])
 
@@ -123,12 +124,12 @@ def list_dir(
     try:
         target = target.resolve(strict=False)
     except OSError as e:
-        raise HTTPException(status_code=400, detail=f"bad path: {e}") from e
+        raise bad_request(f"bad path: {e}") from e
 
     if not target.exists():
-        raise HTTPException(status_code=404, detail=f"not found: {target}")
+        raise not_found(f"not found: {target}")
     if not target.is_dir():
-        raise HTTPException(status_code=400, detail=f"not a directory: {target}")
+        raise bad_request(f"not a directory: {target}")
 
     try:
         def _sort_key(p: Path) -> tuple:
@@ -139,7 +140,7 @@ def list_dir(
 
         children = sorted(target.iterdir(), key=_sort_key)
     except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e)) from e
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
 
     entries = []
     for c in children:
@@ -165,7 +166,7 @@ def stat_path(path: str = Query(...)) -> dict:
     try:
         p = p.resolve(strict=False)
     except OSError as e:
-        raise HTTPException(status_code=400, detail=f"bad path: {e}") from e
+        raise bad_request(f"bad path: {e}") from e
     if not p.exists():
-        raise HTTPException(status_code=404, detail=f"not found: {p}")
+        raise not_found(f"not found: {p}")
     return _entry_for(p)

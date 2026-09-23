@@ -26,12 +26,23 @@ from __future__ import annotations
 import json
 import logging
 import re
+from http import HTTPStatus
 from typing import Any, AsyncIterator
 
 import httpx
 
+from ..config import PROVIDER_ANTHROPIC
+from ..env_utils import env_int
 from ._errors import extract_error_message
-from .base import LLMProvider, Message, ProviderChunk, ProviderUsage, ToolWireSpec
+from .base import (
+    CONTROL_TIMEOUT_S,
+    JSON_HEADERS,
+    LLMProvider,
+    Message,
+    ProviderChunk,
+    ProviderUsage,
+    ToolWireSpec,
+)
 from .transcript import Transcript
 
 
@@ -40,13 +51,15 @@ log = logging.getLogger(__name__)
 
 _ANTHROPIC_BASE = "https://api.anthropic.com"
 _ANTHROPIC_VERSION = "2023-06-01"
-# GET timeout for the non-streaming Models API endpoints.
-_MODELS_TIMEOUT_S = 10.0
+_MODELS_PATH = "/v1/models"
+_MESSAGES_PATH = "/v1/messages"
+_SSE_DATA_PREFIX = "data:"
+_BUDGET_TOKENS_KEY = "budget_tokens"
 # Spec doesn't constrain max_tokens; pick a generous cap so the model
 # rarely truncates a coaching prose response. Env override for ops.
 _DEFAULT_MAX_TOKENS = 4096
-# Anthropic API requires budget_tokens < max_tokens. When thinking is
-# enabled we add the budget on top of the visible-output cap.
+_MAX_TOKENS = env_int("SV_AI_MAX_TOKENS", _DEFAULT_MAX_TOKENS, min_value=1)
+# Name fallback: Opus from this version on is adaptive-thinking only.
 _ADAPTIVE_THINKING_MIN_MAJOR = 4
 _ADAPTIVE_THINKING_MIN_MINOR = 6
 
@@ -137,7 +150,7 @@ class _ToolUseAccumulator:
                 args = json.loads(raw)
             except json.JSONDecodeError as exc:
                 raise RuntimeError(
-                    f"anthropic: tool {self.tool_name!r} arguments not valid "
+                    f"{PROVIDER_ANTHROPIC}: tool {self.tool_name!r} arguments not valid "
                     f"JSON ({exc}); raw={raw!r}"
                 ) from exc
         else:
@@ -150,8 +163,18 @@ class _ToolUseAccumulator:
         )
 
 
+def _held_chunks(
+    usage_fields: dict[str, int], pending_tools: list[ProviderChunk],
+) -> list[ProviderChunk]:
+    """End-of-stream flush: usage first (the coordinator stops consuming at
+    the first tool_use), then the held tool_use chunks."""
+    if not usage_fields:
+        return list(pending_tools)
+    return [ProviderChunk(kind="usage", usage=ProviderUsage(**usage_fields)), *pending_tools]
+
+
 class AnthropicProvider(LLMProvider):
-    provider_name = "anthropic"
+    provider_name = PROVIDER_ANTHROPIC
 
     def __init__(
         self,
@@ -166,6 +189,24 @@ class AnthropicProvider(LLMProvider):
         self._thinking_enabled = thinking_enabled
         self._thinking_budget_tokens = thinking_budget_tokens
 
+    def _headers(self) -> dict[str, str]:
+        return {
+            "x-api-key": self._api_key,
+            "anthropic-version": _ANTHROPIC_VERSION,
+            **JSON_HEADERS,
+        }
+
+    async def _get_json(self, path: str) -> Any:
+        """GET a control-plane endpoint; RuntimeError on non-200."""
+        async with httpx.AsyncClient(timeout=CONTROL_TIMEOUT_S) as client:
+            resp = await client.get(f"{_ANTHROPIC_BASE}{path}", headers=self._headers())
+        if resp.status_code != HTTPStatus.OK:
+            raise RuntimeError(
+                f"{PROVIDER_ANTHROPIC} {path} returned {resp.status_code}: "
+                f"{extract_error_message(resp.text)}"
+            )
+        return resp.json()
+
     async def _resolve_thinking_mode(self) -> str:
         """Thinking mode for the configured model, capability-driven.
 
@@ -177,23 +218,13 @@ class AnthropicProvider(LLMProvider):
         if cached is not None:
             return cached
         try:
-            url = f"{_ANTHROPIC_BASE}/v1/models/{self._model}"
-            headers = {
-                "x-api-key": self._api_key,
-                "anthropic-version": _ANTHROPIC_VERSION,
-            }
-            async with httpx.AsyncClient(timeout=_MODELS_TIMEOUT_S) as client:
-                resp = await client.get(url, headers=headers)
-                if resp.status_code != 200:
-                    raise RuntimeError(
-                        f"anthropic /v1/models/{self._model} returned "
-                        f"{resp.status_code}: {extract_error_message(resp.text)}"
-                    )
-                mode = _thinking_mode_from_capabilities(resp.json())
+            mode = _thinking_mode_from_capabilities(
+                await self._get_json(f"{_MODELS_PATH}/{self._model}")
+            )
         except Exception as e:
             log.warning(
-                "anthropic: capability lookup failed for %s; using name "
-                "heuristic: %s", self._model, e,
+                "%s: capability lookup failed for %s; using name heuristic: %s",
+                PROVIDER_ANTHROPIC, self._model, e,
             )
             return _thinking_mode_fallback(self._model)
         if mode is None:
@@ -205,7 +236,7 @@ class AnthropicProvider(LLMProvider):
         if mode == THINKING_ADAPTIVE:
             return {"type": "adaptive"}
         if mode == THINKING_EXTENDED:
-            return {"type": "enabled", "budget_tokens": self._thinking_budget_tokens}
+            return {"type": "enabled", _BUDGET_TOKENS_KEY: self._thinking_budget_tokens}
         return None
 
     async def list_models(self) -> list[str]:
@@ -216,21 +247,8 @@ class AnthropicProvider(LLMProvider):
         error to the UI. Side effect: seeds the thinking-mode cache
         from each item's capability tree for thinking_modes().
         """
-        if not self._api_key:
-            raise RuntimeError("anthropic: API key not configured")
-        url = f"{_ANTHROPIC_BASE}/v1/models"
-        headers = {
-            "x-api-key": self._api_key,
-            "anthropic-version": _ANTHROPIC_VERSION,
-        }
-        async with httpx.AsyncClient(timeout=_MODELS_TIMEOUT_S) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code != 200:
-                raise RuntimeError(
-                    f"anthropic /v1/models returned {resp.status_code}: "
-                    f"{extract_error_message(resp.text)}"
-                )
-            body = resp.json()
+        self._require_api_key(self._api_key)
+        body = await self._get_json(_MODELS_PATH)
         data = body.get("data") or []
         ids = []
         for m in data:
@@ -264,12 +282,11 @@ class AnthropicProvider(LLMProvider):
         thinking: bool | None = None,
         force_tool_call: bool = False,
     ) -> AsyncIterator[ProviderChunk]:
-        if not self._api_key:
-            raise RuntimeError("anthropic: API key not configured")
+        self._require_api_key(self._api_key)
 
         body: dict[str, Any] = {
             "model": self._model,
-            "max_tokens": _DEFAULT_MAX_TOKENS,
+            "max_tokens": _MAX_TOKENS,
             "messages": messages,
             "stream": True,
             # Top-level auto-caching: places one cache breakpoint on the
@@ -300,22 +317,16 @@ class AnthropicProvider(LLMProvider):
                 body["thinking"] = param
                 # Anthropic requires max_tokens > budget_tokens; lift the
                 # cap so visible output isn't squeezed by reasoning.
-                if "budget_tokens" in param:
-                    body["max_tokens"] = _DEFAULT_MAX_TOKENS + self._thinking_budget_tokens
+                if _BUDGET_TOKENS_KEY in param:
+                    body["max_tokens"] = _MAX_TOKENS + self._thinking_budget_tokens
 
         log.info(
-            "anthropic stream: model=%s thinking=%s",
+            "%s stream: model=%s thinking=%s",
+            PROVIDER_ANTHROPIC,
             self._model,
             body.get("thinking"),
         )
         await self._tx_request(transcript, round_index, body)
-
-        url = f"{_ANTHROPIC_BASE}/v1/messages"
-        headers = {
-            "x-api-key": self._api_key,
-            "anthropic-version": _ANTHROPIC_VERSION,
-            "content-type": "application/json",
-        }
 
         # Index -> open block state. For text/thinking we just remember
         # the kind so deltas route correctly; for tool_use we keep a full
@@ -330,13 +341,14 @@ class AnthropicProvider(LLMProvider):
 
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(
-                "POST", url, json=body, headers=headers,
+                "POST", f"{_ANTHROPIC_BASE}{_MESSAGES_PATH}", json=body, headers=self._headers(),
             ) as resp:
-                if resp.status_code != 200:
+                if resp.status_code != HTTPStatus.OK:
                     raw = (await resp.aread()).decode("utf-8", errors="replace")
                     await self._tx_wire(transcript, round_index, f"HTTP {resp.status_code}: {raw}")
                     raise RuntimeError(
-                        f"anthropic API error {resp.status_code}: {extract_error_message(raw)}"
+                        f"{PROVIDER_ANTHROPIC} API error {resp.status_code}: "
+                        f"{extract_error_message(raw)}"
                     )
                 async for line in resp.aiter_lines():
                     if not line:
@@ -347,16 +359,16 @@ class AnthropicProvider(LLMProvider):
                     # type is also carried inside the JSON payload as
                     # `type`, so we route off that and ignore the event:
                     # marker.
-                    if not line.startswith("data:"):
+                    if not line.startswith(_SSE_DATA_PREFIX):
                         continue
-                    payload = line[len("data:"):].strip()
+                    payload = line[len(_SSE_DATA_PREFIX):].strip()
                     if not payload:
                         continue
                     try:
                         evt = json.loads(payload)
                     except json.JSONDecodeError as exc:
                         raise RuntimeError(
-                            f"anthropic: malformed SSE payload: {payload!r} ({exc})"
+                            f"{PROVIDER_ANTHROPIC}: malformed SSE payload: {payload!r} ({exc})"
                         ) from exc
                     etype = evt.get("type")
                     if etype == "content_block_start":
@@ -402,25 +414,16 @@ class AnthropicProvider(LLMProvider):
                     elif etype == "message_delta":
                         _merge_usage(usage_fields, evt.get("usage"))
                     elif etype == "message_stop":
-                        if usage_fields:
-                            yield ProviderChunk(
-                                kind="usage",
-                                usage=ProviderUsage(**usage_fields),
-                            )
-                        for chunk in pending_tools:
+                        for chunk in _held_chunks(usage_fields, pending_tools):
                             yield chunk
                         flushed = True
                     elif etype == "error":
                         err = evt.get("error") or {}
                         msg = err.get("message") or json.dumps(err)
-                        raise RuntimeError(f"anthropic stream error: {msg}")
+                        raise RuntimeError(f"{PROVIDER_ANTHROPIC} stream error: {msg}")
                     # ping carries no chunk-relevant data for us.
                 # Defensive: a stream that closed without message_stop still
                 # surfaces whatever was held back.
                 if not flushed:
-                    if usage_fields:
-                        yield ProviderChunk(
-                            kind="usage", usage=ProviderUsage(**usage_fields)
-                        )
-                    for chunk in pending_tools:
+                    for chunk in _held_chunks(usage_fields, pending_tools):
                         yield chunk

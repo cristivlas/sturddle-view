@@ -59,9 +59,15 @@ from ..tournament.store import (
     TournamentNotFoundError,
     TournamentStore,
 )
+from ._http import bad_request, conflict, not_found
 
 
 log = logging.getLogger(__name__)
+
+_TOURNAMENT_NOT_FOUND = "tournament not found"
+_NAME_TAKEN = "tournament name already exists"
+_RUNNING_STOP_FIRST = "tournament is running; stop it first"
+_TWO_ENGINES_REQUIRED = "at least two engines required"
 
 
 router = APIRouter(tags=["tournaments"], dependencies=[Depends(require_token)])
@@ -70,6 +76,17 @@ router = APIRouter(tags=["tournaments"], dependencies=[Depends(require_token)])
 # secret). WS endpoints are authenticated by cookie / Bearer / ?token= and
 # must pass the Origin check.
 internal_router = APIRouter(tags=["tournaments-internal"])
+
+
+def _corrupt_state(e: CorruptStateError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"corrupt state: {e}",
+    )
+
+
+def _rescheck_rejected(e: RescheckError) -> HTTPException:
+    """Structured {reason, message, details} for the UI to render."""
+    return bad_request({"reason": e.reason, "message": str(e), **e.details})
 
 
 def _check_ws_auth(websocket: WebSocket, settings) -> bool:
@@ -374,13 +391,13 @@ def list_tournaments(request: Request) -> dict:
     }
 
 
-@router.post("/api/tournaments", status_code=201)
+@router.post("/api/tournaments", status_code=status.HTTP_201_CREATED)
 def create_tournament(payload: TournamentCreate, request: Request) -> dict:
     s = _store(request)
     if not payload.engines:
-        raise HTTPException(status_code=400, detail="at least one engine required")
+        raise bad_request("at least one engine required")
     if len(payload.engines) < 2:
-        raise HTTPException(status_code=400, detail="at least two engines required")
+        raise bad_request(_TWO_ENGINES_REQUIRED)
     name = payload.name.strip() or "tournament"
     settings = request.app.state.settings
     engine_defaults = _freeze_engine_defaults(settings, payload.template)
@@ -392,7 +409,7 @@ def create_tournament(payload: TournamentCreate, request: Request) -> dict:
             engine_defaults=engine_defaults,
         )
     except DuplicateNameError:
-        raise HTTPException(status_code=409, detail="tournament name already exists")
+        raise conflict(_NAME_TAKEN)
     return _serialize(t)
 
 
@@ -402,9 +419,9 @@ def get_tournament(tournament_id: str, request: Request) -> dict:
     try:
         t = s.get(tournament_id)
     except TournamentNotFoundError as e:
-        raise HTTPException(status_code=404, detail="tournament not found") from e
+        raise not_found(_TOURNAMENT_NOT_FOUND) from e
     except CorruptStateError as e:
-        raise HTTPException(status_code=500, detail=f"corrupt state: {e}") from e
+        raise _corrupt_state(e) from e
     return _serialize(t, with_stats=True, store=s, orch=_orch(request),
                       registry=getattr(request.app.state, "engines", None))
 
@@ -419,11 +436,9 @@ def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Requ
     """
     orch = _orch(request)
     if orch.active_id() == tournament_id:
-        raise HTTPException(
-            status_code=409, detail="tournament is running; stop it first"
-        )
+        raise conflict(_RUNNING_STOP_FIRST)
     if len(payload.engines) < 2:
-        raise HTTPException(status_code=400, detail="at least two engines required")
+        raise bad_request(_TWO_ENGINES_REQUIRED)
     s = _store(request)
     name = payload.name.strip() or "tournament"
     settings = request.app.state.settings
@@ -437,9 +452,9 @@ def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Requ
             engine_defaults=engine_defaults,
         )
     except TournamentNotFoundError as e:
-        raise HTTPException(status_code=404, detail="tournament not found") from e
+        raise not_found(_TOURNAMENT_NOT_FOUND) from e
     except DuplicateNameError:
-        raise HTTPException(status_code=409, detail="tournament name already exists")
+        raise conflict(_NAME_TAKEN)
     # Wipe the orchestrator's in-memory event-history buffer for this
     # tournament: any post-edit live-window re-subscribe would otherwise
     # replay stale events from the pre-edit run. Mirrors delete_tournament.
@@ -447,17 +462,15 @@ def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Requ
     return _serialize(t)
 
 
-@router.delete("/api/tournaments/{tournament_id}", status_code=204)
+@router.delete("/api/tournaments/{tournament_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_tournament(tournament_id: str, request: Request) -> None:
     orch = _orch(request)
     if orch.active_id() == tournament_id:
-        raise HTTPException(
-            status_code=409, detail="tournament is running; stop it first"
-        )
+        raise conflict(_RUNNING_STOP_FIRST)
     try:
         _store(request).remove(tournament_id)
     except TournamentNotFoundError as e:
-        raise HTTPException(status_code=404, detail="tournament not found") from e
+        raise not_found(_TOURNAMENT_NOT_FOUND) from e
     orch.clear_event_history(tournament_id)
 
 
@@ -497,15 +510,15 @@ def get_tournament_game_pgn(
     try:
         s.get(tournament_id)
     except TournamentNotFoundError as e:
-        raise HTTPException(status_code=404, detail="tournament not found") from e
+        raise not_found(_TOURNAMENT_NOT_FOUND) from e
     except CorruptStateError as e:
-        raise HTTPException(status_code=500, detail=f"corrupt state: {e}") from e
+        raise _corrupt_state(e) from e
     pgn_path = s.pgn_path(tournament_id)
     if not pgn_path.exists():
-        raise HTTPException(status_code=404, detail="no games recorded")
+        raise not_found("no games recorded")
     record = read_game_record(pgn_path, game_n)
     if record is None:
-        raise HTTPException(status_code=404, detail="game not found")
+        raise not_found("game not found")
     return record
 
 
@@ -521,28 +534,25 @@ async def start_tournament(
     try:
         t = store.get(tournament_id)
     except TournamentNotFoundError as e:
-        raise HTTPException(status_code=404, detail="tournament not found") from e
+        raise not_found(_TOURNAMENT_NOT_FOUND) from e
     needs_wipe = t.status in (STATUS_STOPPED, STATUS_FAILED)
     if needs_wipe:
         if not confirm_wipe:
-            raise HTTPException(status_code=409, detail=_WIPE_REQUIRED_DETAIL)
+            raise conflict(_WIPE_REQUIRED_DETAIL)
         store.wipe_for_restart(tournament_id)
         # The buffered chatter describes games the wipe just deleted.
         orch.clear_event_history(tournament_id)
     try:
         t = await orch.start(tournament_id)
     except TournamentNotFoundError as e:
-        raise HTTPException(status_code=404, detail="tournament not found") from e
+        raise not_found(_TOURNAMENT_NOT_FOUND) from e
     except TournamentBusyError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
+        raise conflict(str(e)) from e
     except FileNotFoundError as e:
         # fastchess binary missing
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise bad_request(str(e)) from e
     except RescheckError as e:
-        raise HTTPException(
-            status_code=400,
-            detail={"reason": e.reason, "message": str(e), **e.details},
-        ) from e
+        raise _rescheck_rejected(e) from e
     return _serialize(t)
 
 
@@ -572,10 +582,7 @@ def rescheck_tournament(payload: RescheckRequest) -> dict:
             allow_oversubscribe=payload.allow_oversubscribe or _allow_oversubscribe(),
         )
     except RescheckError as e:
-        raise HTTPException(
-            status_code=400,
-            detail={"reason": e.reason, "message": str(e), **e.details},
-        ) from e
+        raise _rescheck_rejected(e) from e
     return {"ok": True, "warnings": warnings}
 
 
@@ -585,15 +592,15 @@ async def stop_tournament(tournament_id: str, request: Request) -> dict:
     try:
         t = await orch.stop(tournament_id)
     except TournamentNotFoundError as e:
-        raise HTTPException(status_code=404, detail="tournament not found") from e
+        raise not_found(_TOURNAMENT_NOT_FOUND) from e
     return _serialize(t)
 
 
-@router.post("/api/tournaments/{tournament_id}/reveal", status_code=204)
+@router.post("/api/tournaments/{tournament_id}/reveal", status_code=status.HTTP_204_NO_CONTENT)
 def reveal_tournament_folder(tournament_id: str, request: Request) -> None:
     path = _store(request).dir_for(tournament_id)
     if not path.is_dir():
-        raise HTTPException(status_code=404, detail="tournament folder not found")
+        raise not_found("tournament folder not found")
     if sys.platform == "win32":
         subprocess.Popen(["explorer", str(path)])
     elif sys.platform == "darwin":
@@ -687,7 +694,7 @@ async def ingest_proxy(payload: ProxyBatch, request: Request) -> Response:
     if not orch.verify_proxy_secret(payload.secret):
         # Stale or unknown proxy posting after tournament ended, or
         # someone unauthorized. Quietly reject.
-        raise HTTPException(status_code=401, detail="invalid proxy secret")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid proxy secret")
 
     if payload.engine_name and payload.lines == []:
         # First post from a proxy: register it.
@@ -698,14 +705,14 @@ async def ingest_proxy(payload: ProxyBatch, request: Request) -> Response:
 
     if payload.ended:
         await orch.proxy_session_ended(payload.proxy_id)
-        return Response(status_code=204)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     # Tell the proxy whether to keep tapping ``info`` -- only when the
     # gate has flipped since we last told it, so the common case (no
     # change) stays a bodiless 204.
     signal = orch.want_info_signal(payload.proxy_id)
     if signal is None:
-        return Response(status_code=204)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     return JSONResponse({WANT_INFO_KEY: signal})
 
 

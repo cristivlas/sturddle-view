@@ -1,22 +1,32 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 import socket
 import sys
+from asyncio import proactor_events, trsock
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from pathlib import Path
 
 import chess.engine
-import hmac
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request, status
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from . import __version__
-from .auth import AUTH_COOKIE, origin_ok
+try:
+    import wsproto
+    from uvicorn.protocols.websockets import wsproto_impl
+    from wsproto.connection import ConnectionState
+except ImportError:  # optional: uvicorn falls back to its websockets impl
+    wsproto = wsproto_impl = ConnectionState = None
+
+from . import APP_NAME, __version__
+from . import llm as llm_pkg
+from .auth import AUTH_COOKIE, AUTH_PATH, AUTH_TOKEN_PARAM, INVALID_TOKEN_DETAIL, origin_ok
 from .api import chess_utils as chess_api
 from .api import connect as connect_api
 from .api import engines as engines_api
@@ -24,19 +34,26 @@ from .api import fs as fs_api
 from .api import game as game_api
 from .api import openings as openings_api
 from .api import settings as settings_api
+from .api import test_hooks as test_hooks_api
 from .api import tournaments as tournaments_api
 from .api import ws as ws_api
-from .config import LOOPBACK_HOST, Settings
+from .config import (
+    LOOPBACK_HOST,
+    PROVIDER_ANTHROPIC,
+    PROVIDER_GEMINI,
+    PROVIDER_OLLAMA,
+    ROOT_PATH,
+    Settings,
+)
 from .engine_tmp import sweep_orphans
 from .engines import EngineRegistry, resolve_selected
+from .env_utils import env_bool, env_int
 from .events import EVT_REMOTE_CONNECTED, Event, EventBus
 from .llm import CannedProvider, LLMProvider, ToolRegistry
 from .llm.anthropic import AnthropicProvider
-from .llm import gemini as gemini_mod
-from .llm.gemini import GeminiProvider
-from .llm import ollama as ollama_mod
-from .llm.ollama import OllamaProvider
-from .netinfo import entry_url, is_this_machine, reachable_hosts, url_scheme
+from .llm.gemini import DEFAULT_BASE_URL as _DEFAULT_GEMINI_BASE_URL, GeminiProvider
+from .llm.ollama import DEFAULT_BASE_URL as _DEFAULT_OLLAMA_BASE_URL, OllamaProvider
+from .netinfo import SCHEME_HTTPS, entry_url, is_this_machine, reachable_hosts, url_scheme
 from .openings import OpeningBook
 from .play.ai_analysis import (
     AIAnalysisCoordinator,
@@ -78,6 +95,20 @@ from .tournament.store import TournamentStore, default_root
 
 log = logging.getLogger(__name__)
 
+_UI_PATH = "/ui"
+_UI_ENTRY = f"{_UI_PATH}/"
+_AUTH_COOKIE_MAX_AGE_S = env_int(
+    "SV_AUTH_COOKIE_MAX_AGE_S", int(timedelta(weeks=1).total_seconds()), min_value=1,
+)
+_AI_DEBUG_ENV = "SV_AI_DEBUG"
+_READY_PORT_ENV = "SV_READY_PORT"
+_READY_SIGNAL_TIMEOUT_S = 2.0
+# WebSocket close code 1012 "service restart".
+_WS_CLOSE_SERVICE_RESTART = 1012
+# cpython's own default listen backlog for loop.create_server.
+_DEFAULT_ACCEPT_BACKLOG = 100
+_ACCEPT_FAILED_MSG = "Accept failed on a socket"
+
 
 class _NoCacheUIMiddleware(BaseHTTPMiddleware):
     # Stamp /ui/* and / responses with cache-busting headers so browsers
@@ -85,7 +116,7 @@ class _NoCacheUIMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         path = request.url.path
-        if path == "/" or path.startswith("/ui"):
+        if path == ROOT_PATH or path.startswith(_UI_PATH):
             response.headers["Cache-Control"] = "no-cache, must-revalidate"
             response.headers["Pragma"] = "no-cache"
         return response
@@ -118,20 +149,14 @@ class _OriginMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         if request.method not in self.SAFE and not origin_ok(request):
-            return PlainTextResponse("bad origin", status_code=403)
+            return PlainTextResponse("bad origin", status_code=status.HTTP_403_FORBIDDEN)
         return await call_next(request)
 
 
 # WinError codes asyncio-on-Windows mishandles on the listener socket
 # when a Job-killed proxy aborts mid-AcceptEx. Stock cpython closes the
-# listener — we re-arm instead and silence the orphan-task trace.
+# listener -- we re-arm instead and silence the orphan-task trace.
 _TRANSIENT_ACCEPT_WINERR = {64, 1236, 10054}  # NETNAME_DELETED, ABORTED, RST
-
-# Default Ollama daemon URL lives on the provider module so settings
-# code can reach it without importing app.
-_DEFAULT_OLLAMA_BASE_URL = ollama_mod.DEFAULT_BASE_URL
-# Default Gemini API base; same pattern -- empty ai_base_url falls back.
-_DEFAULT_GEMINI_BASE_URL = gemini_mod.DEFAULT_BASE_URL
 
 
 def _install_proactor_accept_resilience() -> None:
@@ -139,13 +164,20 @@ def _install_proactor_accept_resilience() -> None:
     the listener (stock cpython closes the socket on any accept OSError)."""
     if sys.platform != "win32":
         return
-    from asyncio import proactor_events
-    from asyncio import trsock
 
     def _start_serving(self, protocol_factory, sock,
-                       sslcontext=None, server=None, backlog=100,
+                       sslcontext=None, server=None, backlog=_DEFAULT_ACCEPT_BACKLOG,
                        ssl_handshake_timeout=None,
                        ssl_shutdown_timeout=None):
+        def fail(exc: BaseException) -> None:
+            if sock.fileno() != -1:
+                self.call_exception_handler({
+                    "message": _ACCEPT_FAILED_MSG,
+                    "exception": exc,
+                    "socket": trsock.TransportSocket(sock),
+                })
+                sock.close()
+
         def accept_loop(f=None):
             try:
                 if f is not None:
@@ -168,23 +200,11 @@ def _install_proactor_accept_resilience() -> None:
                     log.debug("transient AcceptEx WinError %s; re-arming", winerr)
                     self.call_soon(accept_loop)
                     return
-                if sock.fileno() != -1:
-                    self.call_exception_handler({
-                        "message": "Accept failed on a socket",
-                        "exception": exc,
-                        "socket": trsock.TransportSocket(sock),
-                    })
-                    sock.close()
+                fail(exc)
             except (SystemExit, KeyboardInterrupt):
                 raise
             except BaseException as exc:
-                if sock.fileno() != -1:
-                    self.call_exception_handler({
-                        "message": "Accept failed on a socket",
-                        "exception": exc,
-                        "socket": trsock.TransportSocket(sock),
-                    })
-                    sock.close()
+                fail(exc)
             else:
                 f.add_done_callback(accept_loop)
 
@@ -206,20 +226,18 @@ def _install_uvicorn_ws_shutdown_state_guard() -> None:
     Idempotent and applied once per process.
     """
     global _ws_shutdown_patched
-    if _ws_shutdown_patched:
-        return
-    try:
-        import wsproto
-        from uvicorn.protocols.websockets import wsproto_impl
-        from wsproto.connection import ConnectionState
-    except ImportError:
+    if _ws_shutdown_patched or wsproto is None:
         return
 
     def _safe_shutdown(self):
         self.stop_keepalive()
         if self.handshake_complete and self.conn.state != ConnectionState.CLOSED:
-            self.queue.put_nowait({"type": "websocket.disconnect", "code": 1012})
-            output = self.conn.send(wsproto.events.CloseConnection(code=1012))
+            self.queue.put_nowait(
+                {"type": "websocket.disconnect", "code": _WS_CLOSE_SERVICE_RESTART}
+            )
+            output = self.conn.send(
+                wsproto.events.CloseConnection(code=_WS_CLOSE_SERVICE_RESTART)
+            )
             self.transport.write(output)
         elif not self.handshake_complete:
             self.send_500_response()
@@ -266,7 +284,7 @@ async def _lifespan(app: FastAPI):
         log.error("engine temp sweep failed", exc_info=True)
     _maybe_restore_game(app)
     # Tournament reconciliation: any 'running' rows on disk are stale.
-    # Phase 1 has no Resume -- mark them stopped.
+    # There is no Resume -- mark them stopped.
     try:
         reconciled = app.state.tournament_orch.reconcile_on_startup()
         for t in reconciled:
@@ -338,7 +356,7 @@ def create_app(
 ) -> FastAPI:
     settings = settings or Settings()
     settings.apply_persisted()
-    app = FastAPI(title="sturddle-view", version=__version__, lifespan=_lifespan)
+    app = FastAPI(title=APP_NAME, version=__version__, lifespan=_lifespan)
 
     app.state.settings = settings
     # Desktop mode installs a LanListener; server mode has a fixed bind.
@@ -377,7 +395,6 @@ def create_app(
     app.include_router(tournaments_api.internal_router)
     app.include_router(ws_api.router)
     if settings.test_mode:
-        from .api import test_hooks as test_hooks_api
         app.include_router(test_hooks_api.router)
         log.info("test-mode endpoints (/_test/*) mounted")
 
@@ -393,26 +410,30 @@ def create_app(
                 Event(kind=EVT_REMOTE_CONNECTED, payload={"host": client.host})
             )
 
-    @app.get("/", include_in_schema=False)
+    @app.get(ROOT_PATH, include_in_schema=False)
     async def root(request: Request) -> RedirectResponse:
         # Token-less redirect; client carries the cookie set by /auth.
         # With --no-auth this is the entry URL itself (netinfo.entry_url).
         if settings.auth_disabled:
             await _announce_remote(request)
-        return RedirectResponse(url="/ui/")
+        return RedirectResponse(url=_UI_ENTRY)
 
-    @app.get("/auth", include_in_schema=False)
-    async def auth_handshake(request: Request, token: str = "") -> RedirectResponse:
+    @app.get(AUTH_PATH, include_in_schema=False)
+    async def auth_handshake(
+        request: Request, token: str = Query("", alias=AUTH_TOKEN_PARAM),
+    ) -> RedirectResponse:
         """One-shot handshake: validate ?token=, set HttpOnly cookie, redirect
         to a token-less URL so the token never appears in history or Referer.
         """
         if not settings.auth_disabled:
             if not token or not hmac.compare_digest(token, settings.token):
-                return PlainTextResponse("invalid token", status_code=401)
+                return PlainTextResponse(
+                    INVALID_TOKEN_DETAIL, status_code=status.HTTP_401_UNAUTHORIZED,
+                )
         await _announce_remote(request)
-        resp = RedirectResponse(url="/ui/", status_code=303)
+        resp = RedirectResponse(url=_UI_ENTRY, status_code=status.HTTP_303_SEE_OTHER)
         if not settings.auth_disabled:
-            secure = request.url.scheme == "https"
+            secure = request.url.scheme == SCHEME_HTTPS
             # SameSite=Lax: still defeats CSRF (cross-site POSTs strip the
             # cookie) but lets top-level GET navigations (including the 303
             # from /auth) carry it. Strict breaks the handshake in some
@@ -423,13 +444,13 @@ def create_app(
                 httponly=True,
                 samesite="lax",
                 secure=secure,
-                path="/",
-                max_age=60 * 60 * 24 * 7,
+                path=ROOT_PATH,
+                max_age=_AUTH_COOKIE_MAX_AGE_S,
             )
         return resp
 
     if settings.web_dir.is_dir():
-        app.mount("/ui", StaticFiles(directory=settings.web_dir, html=True), name="ui")
+        app.mount(_UI_PATH, StaticFiles(directory=settings.web_dir, html=True), name="ui")
     else:
         log.warning("web_dir %s does not exist; UI will not be served", settings.web_dir)
 
@@ -442,11 +463,9 @@ def create_app(
 
 
 def _setup_ai(app: FastAPI) -> None:
-    # AI analysis: registry + coordinator. Provider remains the canned
-    # walking-skeleton stand-in until real Anthropic/Ollama providers
-    # land. The `analyze` tool resolves the current engine on every
-    # call via resolve_selected(), so engine swaps in Settings are
-    # honored without rebuilding the coordinator.
+    # AI analysis: tool registries, the per-turn provider factory, and the
+    # coordinator. Engine-backed tools resolve the current engine on every
+    # call, so engine swaps in Settings are honored without rebuilding.
     def _ai_engine_launcher() -> EngineSupervisor:
         return make_analysis_supervisor(
             app.state.engines, app.state.settings, app.state.event_bus,
@@ -458,7 +477,7 @@ def _setup_ai(app: FastAPI) -> None:
 
     def _ai_board_provider():
         hve = getattr(app.state, "hve", None)
-        return getattr(hve, "_board", None) if hve else None
+        return hve.current_board() if hve else None
 
     def _ai_book_provider():
         return getattr(app.state, "openings", None)
@@ -595,20 +614,20 @@ def _setup_ai(app: FastAPI) -> None:
     # SV_AI_DEBUG=1: flip the AI loggers to DEBUG so the system prompt,
     # user message, text deltas, and tool calls are visible. Off by
     # default; meant to be set when diagnosing a misbehaving model.
-    if os.environ.get("SV_AI_DEBUG") == "1":
-        logging.getLogger("sturddle_view.llm").setLevel(logging.DEBUG)
-        logging.getLogger("sturddle_view.play.ai_analysis").setLevel(logging.DEBUG)
+    if env_bool(_AI_DEBUG_ENV, False):
+        logging.getLogger(llm_pkg.__name__).setLevel(logging.DEBUG)
+        logging.getLogger(AIAnalysisCoordinator.__module__).setLevel(logging.DEBUG)
 
     def _ai_provider_factory() -> LLMProvider:
         s = app.state.settings
         provider_name = (s.ai_provider or "").lower()
-        if provider_name == settings_api.PROVIDER_OLLAMA:
+        if provider_name == PROVIDER_OLLAMA:
             return OllamaProvider(
                 base_url=(s.ai_base_url or _DEFAULT_OLLAMA_BASE_URL),
                 model=s.ai_model,
                 thinking_enabled=s.ai_thinking_enabled,
             )
-        if provider_name == settings_api.PROVIDER_GEMINI:
+        if provider_name == PROVIDER_GEMINI:
             # OpenAI-compatible SSE provider against Google's API. Bearer
             # auth from the keyring/env key. Base URL is fixed to Google's
             # endpoint -- ai_base_url is Ollama's field (the UI hides the
@@ -620,7 +639,7 @@ def _setup_ai(app: FastAPI) -> None:
                 base_url=_DEFAULT_GEMINI_BASE_URL,
                 thinking_enabled=s.ai_thinking_enabled,
             )
-        if provider_name == settings_api.PROVIDER_ANTHROPIC:
+        if provider_name == PROVIDER_ANTHROPIC:
             # Live SSE provider (stream() POSTs /v1/messages). Raises
             # RuntimeError if the API key is unset or the API returns
             # non-200 -- surfaced as a done/error event on the bus.
@@ -688,7 +707,10 @@ def _setup_tournament(app: FastAPI, settings: Settings) -> None:
 
     # Tell the orchestrator where the proxy should POST. The proxy runs as
     # a subprocess on this same host; loopback only.
-    proxy_url = f"{url_scheme(settings)}://{LOOPBACK_HOST}:{settings.port}/internal/proxy"
+    proxy_path = tournaments_api.internal_router.url_path_for(
+        tournaments_api.ingest_proxy.__name__
+    )
+    proxy_url = f"{url_scheme(settings)}://{LOOPBACK_HOST}:{settings.port}{proxy_path}"
     app.state.tournament_orch.set_proxy_broadcast_url(proxy_url)
     # Live settings reference so each tournament start picks up the
     # current Defaults-tab values without needing a restart.
@@ -711,7 +733,7 @@ def _signal_ready_port() -> None:
     serve loop), the harness gets a deterministic ready event with no
     polling. Silent no-op when the env var is unset or unreachable.
     """
-    port_s = os.environ.get("SV_READY_PORT")
+    port_s = os.environ.get(_READY_PORT_ENV)
     if not port_s:
         return
     try:
@@ -719,6 +741,6 @@ def _signal_ready_port() -> None:
     except ValueError:
         return
     try:
-        socket.create_connection((LOOPBACK_HOST, port), timeout=2.0).close()
+        socket.create_connection((LOOPBACK_HOST, port), timeout=_READY_SIGNAL_TIMEOUT_S).close()
     except OSError:
         pass

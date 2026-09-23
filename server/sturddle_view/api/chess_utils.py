@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel
 
 import chess
 
 from ..auth import require_token
 from ..chess.board import board_from
+from ._http import bad_request
 
 log = logging.getLogger(__name__)
 
@@ -29,15 +30,15 @@ def apply_move(body: ApplyMoveRequest) -> dict:
         board = board_from(body.fen)
     except ValueError:
         log.warning("apply-move rejected: invalid FEN %r", body.fen)
-        raise HTTPException(status_code=400, detail="invalid FEN")
+        raise bad_request("invalid FEN")
     try:
         move = chess.Move.from_uci(body.move)
     except ValueError:
         log.warning("apply-move rejected: invalid UCI move %r (fen=%r)", body.move, body.fen)
-        raise HTTPException(status_code=400, detail="invalid UCI move")
+        raise bad_request("invalid UCI move")
     if move not in board.legal_moves:
         # Late bestmove: position already advanced. Client will self-correct on next position event.
         log.warning("apply-move late bestmove %r (fen=%r)", body.move, body.fen)
-        return Response(status_code=204)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     board.push(move)
     return {"fen": board.fen()}

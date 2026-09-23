@@ -22,6 +22,13 @@ by the CLI or by `desktop.py`.
 | `SV_ENGINE_PATH` | `--engine` | Fallback engine when registry has no selection. |
 | `SV_INSTANCE` | `--instance` | Instance suffix isolating config/data dirs (`SV_INSTANCE=2` -> `sturddle-view-2`). Empty = default. |
 
+## Network and auth
+
+| Var | Default | Effect | Where |
+|---|---|---|---|
+| `SV_PREFER_TAILSCALE` | `1` | The QR carries the Tailscale address when its interface is up (matched by name; macOS `utunN` is missed); `0` keeps the default-route LAN address. | `server/sturddle_view/config.py` |
+| `SV_AUTH_COOKIE_MAX_AGE_S` | `604800` | Lifetime (seconds) of the auth cookie set by the `/auth` handshake; one week. | `server/sturddle_view/app.py` |
+
 ## Paths and storage
 
 Override the default config/data file locations (chiefly for tests and
@@ -112,6 +119,8 @@ source; check the file when a precise value matters.
 | `SV_AI_VERIFIER_MAX_ROUNDS` | `8` | Round cap for a verifier sub-run (one move, a tool call or two, a verdict). | `server/sturddle_view/play/ai_analysis.py` |
 | `SV_AI_SEMANTIC_CHECK` | `1` | LLM judge that clears regex position-check flags the prose meant about a past/hypothetical/alternate position. Only drops flags, never adds; off reverts to regex-only. Accepts `1`/`true`/`yes`/`on`. | `server/sturddle_view/play/ai_analysis.py` |
 | `SV_AI_THINKING_BUDGET_TOKENS` | `4096` | Default Anthropic extended-thinking budget; UI override persists per-settings. | `server/sturddle_view/config.py` |
+| `SV_AI_MAX_TOKENS` | `4096` | Anthropic visible-output cap per round (`max_tokens`); an extended-thinking budget is added on top. | `server/sturddle_view/llm/anthropic.py` |
+| `SV_AI_CONTROL_TIMEOUT_S` | `10.0` | Per-request timeout for providers' control-plane calls (model listing, Ollama housekeeping). Streaming chat has no timeout. | `server/sturddle_view/llm/base.py` |
 | `SV_AI_MAX_RECOMMEND_FAILURES` | `2` | Consecutive failed `recommend_move` calls before the loop nudges the model to `top_moves`. | `server/sturddle_view/play/ai_analysis.py` |
 | `SV_AI_ANALYZE_MAX_DEPTH` | `30` | `analyze`/`top_moves` per-call depth cap; caller's `depth` clamped down. Searches are depth-only (no time limit) for determinism. | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_MIN_DEPTH` | `10` | `analyze`/`top_moves` per-call depth floor; caller's `depth` clamped up (then capped at `SV_AI_ANALYZE_MAX_DEPTH` if lower). Shallow searches rank candidates poorly. | `server/sturddle_view/play/tools_engine.py` |
@@ -141,5 +150,5 @@ source; check the file when a precise value matters.
 | Var | Default | Effect | Where |
 |---|---|---|---|
 | `SV_AI_TRANSCRIPT` | unset | Opt-in: write per-turn transcripts to disk. | `server/sturddle_view/llm/transcript.py` |
-| `SV_AI_DEBUG` | `0` | Flip AI loggers to DEBUG when `--debug` is also on. | `server/sturddle_view/app.py` |
+| `SV_AI_DEBUG` | `0` | Flip AI loggers to DEBUG when `--debug` is also on. Accepts `1`/`true`/`yes`/`on`. | `server/sturddle_view/app.py` |
 | `SV_AI_FORCE_INLINE_CALLS` | `0` | Force the model to emit tool calls as inline text (exercises the inline-call recovery path). Accepts `1`/`true`/`yes`/`on`. | `server/sturddle_view/llm/prompts.py` |

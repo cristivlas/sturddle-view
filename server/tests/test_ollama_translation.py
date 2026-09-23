@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import json
 
-
-from sturddle_view.llm.ollama import (
+from sturddle_view.llm.openai_compat import (
     messages_anthropic_to_openai,
-    tools_anthropic_to_openai,
     openai_tool_call_to_provider_chunk,
+    tools_anthropic_to_openai,
 )
 
 

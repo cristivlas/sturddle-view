@@ -12,6 +12,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,6 +23,8 @@ from .._atomic import atomic_write_text
 from ..config import (
     DEFAULT_TC_INCREMENT_SECONDS,
     DEFAULT_TC_INITIAL_SECONDS,
+    EVAL_POV_HUMAN,
+    EVAL_POV_WHITE,
     HVE_DIFFICULTY_MAX,
     _DEFAULT_HVE_DEFICIT_RELIEF_CAP,
     _DEFAULT_HVE_DEFICIT_RELIEF_GAIN,
@@ -38,7 +41,7 @@ if TYPE_CHECKING:
 from ..chess.board import board_from, moves_san as _moves_san, side_to_move
 from ..chess.results import SIDE_WHITE
 from ..chess.pgn_build import build_pgn
-from .canonical_hash import canonical_hash
+from .canonical_hash import FMT_PGN, canonical_hash
 from ..chess.results import DRAW, loser_result
 from ..events import (
     EVT_BOARD_UPDATE,
@@ -61,8 +64,6 @@ from .difficulty import (
     mover_cp,
 )
 from .engine_analysis import (
-    EVAL_POV_HUMAN,
-    EVAL_POV_WHITE,
     global_engine_defaults,
     log_spawn_failure,
     make_analysis_supervisor,
@@ -103,6 +104,24 @@ class ViewModeParams:
     # return this directly to avoid any re-serialization loss. Treated as
     # write-once on the HVE side -- see _view_original_text.
     view_original_text: str | None = None
+
+
+class EditChange(Enum):
+    """What commit_edit changed; the API dispatches the recents write on it."""
+    FEN = "fen"
+    COMMENT = "comment"
+    NONE = "none"
+
+
+@dataclass(frozen=True, slots=True)
+class EditCommit:
+    game_id: str
+    changed: EditChange
+    # Set only when changed is COMMENT: the regenerated PGN and its hash,
+    # plus the carried-through view summary.
+    pgn_text: str | None = None
+    pgn_hash: str | None = None
+    summary: dict | None = None
 
 
 @dataclass(eq=False)
@@ -1275,7 +1294,7 @@ class HumanVsEngine:
         *,
         apply_comment: bool = False,
         comment_text: str = "",
-    ) -> dict:
+    ) -> EditCommit:
         """Apply the edited FEN (and optionally an annotation at the
         edit-entry ply) as the next view-mode state. On any failure
         (FEN parse, illegality, replay) leaves edit mode intact so the
@@ -1288,19 +1307,9 @@ class HumanVsEngine:
         the game is truncated and the requested annotation has no
         valid target.
 
-        Returns a dict::
-
-            {
-                "game_id":   str,
-                "changed":   "fen" | "comment" | "none",
-                "pgn_text":  str | None,   # set when changed == "comment"
-                "hash":      str | None,   # canonical hash for the new PGN
-                "summary":   dict | None,  # carry-through of _view_summary
-            }
-
-        The API layer uses ``changed`` to dispatch the recents-store
-        write (FEN -> save a FEN-only row; comment -> replace_at; none
-        -> no recents touch).
+        Returns an EditCommit. The API layer uses ``changed`` to dispatch
+        the recents-store write (FEN -> save a FEN-only row; COMMENT ->
+        replace_at; NONE -> no recents touch).
         """
         async with self._lock:
             if not (self._mode & Op.COMMIT_EDIT._mask):
@@ -1333,20 +1342,14 @@ class HumanVsEngine:
                 await self._publish_clock()
             if annot is not None:
                 pgn_text, new_hash = annot
-                return {
-                    "game_id": self._game_id,
-                    "changed": "comment",
-                    "pgn_text": pgn_text,
-                    "hash": new_hash,
-                    "summary": self._view_summary,
-                }
-            return {
-                "game_id": self._game_id,
-                "changed": "none",
-                "pgn_text": None,
-                "hash": None,
-                "summary": None,
-            }
+                return EditCommit(
+                    game_id=self._game_id,
+                    changed=EditChange.COMMENT,
+                    pgn_text=pgn_text,
+                    pgn_hash=new_hash,
+                    summary=self._view_summary,
+                )
+            return EditCommit(game_id=self._game_id, changed=EditChange.NONE)
         # FEN changed -- drop history, enter fresh view at new position.
         try:
             game_id = await self.enter_view_mode(
@@ -1358,13 +1361,7 @@ class HumanVsEngine:
             raise
         async with self._lock:
             self._edit_saved_view = None
-        return {
-            "game_id": game_id,
-            "changed": "fen",
-            "pgn_text": None,
-            "hash": None,
-            "summary": None,
-        }
+        return EditCommit(game_id=game_id, changed=EditChange.FEN)
 
     def _apply_view_annotation(
         self, *, ply: int, text: str,
@@ -1405,7 +1402,7 @@ class HumanVsEngine:
         if built is None:
             return None
         pgn_text, _w, _b = built
-        new_hash = canonical_hash(pgn_text, "pgn")
+        new_hash = canonical_hash(pgn_text, FMT_PGN)
         self._view_hash = new_hash
         self._view_edited = True
         return pgn_text, new_hash
@@ -2712,12 +2709,12 @@ class HumanVsEngine:
         try:
             if old_hash is None:
                 await self._recents.save(
-                    fmt="pgn", text=text, summary=summary, game_id=game_id,
+                    fmt=FMT_PGN, text=text, summary=summary, game_id=game_id,
                     parent_game_id=parent_game_id, fork_ply=fork_ply,
                 )
             else:
                 await self._recents.replace_at(
-                    old_hash=old_hash, fmt="pgn",
+                    old_hash=old_hash, fmt=FMT_PGN,
                     text=text, summary=summary, game_id=game_id,
                     parent_game_id=parent_game_id, fork_ply=fork_ply,
                 )
@@ -2777,13 +2774,13 @@ class HumanVsEngine:
         try:
             if old_hash is None:
                 result = await self._recents.save(
-                    fmt="pgn", text=pgn_text, summary=summary,
+                    fmt=FMT_PGN, text=pgn_text, summary=summary,
                     game_id=game_id,
                     parent_game_id=parent_game_id, fork_ply=fork_ply,
                 )
             else:
                 result = await self._recents.replace_at(
-                    old_hash=old_hash, fmt="pgn",
+                    old_hash=old_hash, fmt=FMT_PGN,
                     text=pgn_text, summary=summary, game_id=game_id,
                     parent_game_id=parent_game_id, fork_ply=fork_ply,
                 )

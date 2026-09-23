@@ -20,10 +20,8 @@ from sturddle_view.llm import Transcript
 from sturddle_view.llm import ollama as ollama_mod
 from sturddle_view.llm import openai_compat as openai_compat_mod
 from sturddle_view.llm._errors import ThinkingUnsupported
-from sturddle_view.llm.ollama import (
-    OllamaProvider,
-    openai_tool_call_to_provider_chunk,
-)
+from sturddle_view.llm.ollama import OllamaProvider
+from sturddle_view.llm.openai_compat import openai_tool_call_to_provider_chunk
 
 
 # ---------- Test fakes for httpx -------------------------------------

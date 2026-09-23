@@ -10,11 +10,13 @@ import logging
 from typing import Any
 
 import chess
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 
 from ..events import Event
+from ..play.canonical_hash import FMT_PGN
 from ..play.chess_clock import ChessClock, TimeControl
 from ..play.human_vs_engine import HumanVsEngine, ViewModeParams
+from ._http import bad_request
 
 router = APIRouter(prefix="/_test")
 log = logging.getLogger(__name__)
@@ -98,7 +100,7 @@ async def publish_ai_event(payload: dict, request: Request) -> dict:
     wiring reacts to the bus event the same way regardless."""
     kind = payload.get("kind")
     if not isinstance(kind, str) or not kind:
-        raise HTTPException(status_code=400, detail="kind required")
+        raise bad_request("kind required")
     await request.app.state.event_bus.publish(Event(
         kind=kind,
         game_id=payload.get("game_id"),
@@ -118,7 +120,7 @@ async def seed_ai_replay(payload: dict, request: Request) -> dict:
     Body: ``{"events": [{"kind", "payload", "game_id"}]}``."""
     coord = getattr(request.app.state, "ai_coordinator", None)
     if coord is None:
-        raise HTTPException(status_code=400, detail="no ai coordinator")
+        raise bad_request("no ai coordinator")
     events = payload.get("events") or []
     coord.seed_replay(events)
     return {"ok": True, "count": len(events)}
@@ -137,11 +139,11 @@ async def seed_fork(payload: dict, request: Request) -> dict:
     parent = payload["parent"]
     child = payload["child"]
     await recents.save(
-        fmt="pgn", text=parent["text"], summary=parent["summary"],
+        fmt=FMT_PGN, text=parent["text"], summary=parent["summary"],
         game_id=parent["game_id"],
     )
     await recents.save(
-        fmt="pgn", text=child["text"], summary=child["summary"],
+        fmt=FMT_PGN, text=child["text"], summary=child["summary"],
         game_id=child["game_id"],
         parent_game_id=parent["game_id"], fork_ply=child["fork_ply"],
     )

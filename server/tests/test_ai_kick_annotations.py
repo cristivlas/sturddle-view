@@ -3,17 +3,19 @@
 The agent's initial user message carries the loaded PGN's sanitized
 comments (per-ply + root) so the commentator can weigh prior author
 notes against tool-verified analysis. This module covers the cap math
-(`_truncate`, `_cap_annotations`), the env-var knobs (`_int_env`), and
-the mode gate in `_build_turn_inputs` (view-only).
+(`_truncate`, `_cap_annotations`), the env-var knobs (`_annotation_cap`),
+and the mode gate in `_build_turn_inputs` (view-only).
 """
 from __future__ import annotations
 
 import chess
 
 from sturddle_view.api._ai_kick import (
+    _annotation_cap,
     _cap_annotations,
-    _int_env,
+    _PER_COMMENT_MAX_DEFAULT,
     _PER_COMMENT_MAX_ENV,
+    _TOTAL_COMMENT_MAX_DEFAULT,
     _TOTAL_COMMENT_MAX_ENV,
     _TRUNCATION_MARKER,
     _truncate,
@@ -24,7 +26,7 @@ from sturddle_view.play.playbook import Situation, classify
 from .ai_kick_helpers import build_message as _build
 
 
-_STARTPOS_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+_STARTPOS_FEN = chess.STARTING_FEN
 
 
 # _truncate: per-string length cap with the "..." marker. The marker
@@ -148,42 +150,46 @@ def test_cap_annotations_preserves_none_slots_inside_list():
     assert out == ["a", None, "c"]
 
 
-# _int_env: positive int from env, default on anything else.
+# _annotation_cap: positive int from env, default on anything else.
 
-def test_int_env_returns_default_when_unset(monkeypatch):
-    monkeypatch.delenv("SVTEST_AI_KICK_INT_PROBE", raising=False)
-    assert _int_env("SVTEST_AI_KICK_INT_PROBE", 42) == 42
-
-
-def test_int_env_parses_positive_int(monkeypatch):
-    monkeypatch.setenv("SVTEST_AI_KICK_INT_PROBE", "123")
-    assert _int_env("SVTEST_AI_KICK_INT_PROBE", 42) == 123
+_PROBE_ENV = "SVTEST_AI_KICK_INT_PROBE"
+_PROBE_DEFAULT = 42
 
 
-def test_int_env_rejects_zero_returns_default(monkeypatch):
+def test_annotation_cap_returns_default_when_unset(monkeypatch):
+    monkeypatch.delenv(_PROBE_ENV, raising=False)
+    assert _annotation_cap(_PROBE_ENV, _PROBE_DEFAULT) == _PROBE_DEFAULT
+
+
+def test_annotation_cap_parses_positive_int(monkeypatch):
+    monkeypatch.setenv(_PROBE_ENV, "123")
+    assert _annotation_cap(_PROBE_ENV, _PROBE_DEFAULT) == 123
+
+
+def test_annotation_cap_rejects_zero_returns_default(monkeypatch):
     # Zero is a footgun: capping to 0 means "render nothing" -- the
     # caller almost certainly didn't mean that. Treat as garbage.
-    monkeypatch.setenv("SVTEST_AI_KICK_INT_PROBE", "0")
-    assert _int_env("SVTEST_AI_KICK_INT_PROBE", 42) == 42
+    monkeypatch.setenv(_PROBE_ENV, "0")
+    assert _annotation_cap(_PROBE_ENV, _PROBE_DEFAULT) == _PROBE_DEFAULT
 
 
-def test_int_env_rejects_negative_returns_default(monkeypatch):
-    monkeypatch.setenv("SVTEST_AI_KICK_INT_PROBE", "-5")
-    assert _int_env("SVTEST_AI_KICK_INT_PROBE", 42) == 42
+def test_annotation_cap_rejects_negative_returns_default(monkeypatch):
+    monkeypatch.setenv(_PROBE_ENV, "-5")
+    assert _annotation_cap(_PROBE_ENV, _PROBE_DEFAULT) == _PROBE_DEFAULT
 
 
-def test_int_env_rejects_garbage_returns_default(monkeypatch):
-    monkeypatch.setenv("SVTEST_AI_KICK_INT_PROBE", "abc")
-    assert _int_env("SVTEST_AI_KICK_INT_PROBE", 42) == 42
+def test_annotation_cap_rejects_garbage_returns_default(monkeypatch):
+    monkeypatch.setenv(_PROBE_ENV, "abc")
+    assert _annotation_cap(_PROBE_ENV, _PROBE_DEFAULT) == _PROBE_DEFAULT
 
 
-def test_int_env_default_overrides_apply_via_caps(monkeypatch):
+def test_annotation_cap_overrides_apply_via_caps(monkeypatch):
     # Spot-check the actual env vars wired in -- typos in the names
     # would silently fall back to defaults forever.
     monkeypatch.setenv(_PER_COMMENT_MAX_ENV, "37")
-    assert _int_env(_PER_COMMENT_MAX_ENV, 200) == 37
+    assert _annotation_cap(_PER_COMMENT_MAX_ENV, _PER_COMMENT_MAX_DEFAULT) == 37
     monkeypatch.setenv(_TOTAL_COMMENT_MAX_ENV, "999")
-    assert _int_env(_TOTAL_COMMENT_MAX_ENV, 1500) == 999
+    assert _annotation_cap(_TOTAL_COMMENT_MAX_ENV, _TOTAL_COMMENT_MAX_DEFAULT) == 999
 
 
 # _build_turn_inputs: mode-gated annotation flow. The fake HVE captures
@@ -295,13 +301,9 @@ def test_build_user_message_viewing_mode_respects_env_caps(monkeypatch):
 
 
 # Default-cap sanity: the in-module defaults must be positive ints so
-# `_int_env` (with `v > 0` guard) accepts them.
+# `_annotation_cap` (with its min-1 guard) accepts them.
 
 def test_default_caps_are_positive_ints():
-    from sturddle_view.api._ai_kick import (
-        _PER_COMMENT_MAX_DEFAULT,
-        _TOTAL_COMMENT_MAX_DEFAULT,
-    )
     assert isinstance(_PER_COMMENT_MAX_DEFAULT, int)
     assert _PER_COMMENT_MAX_DEFAULT > 0
     assert isinstance(_TOTAL_COMMENT_MAX_DEFAULT, int)

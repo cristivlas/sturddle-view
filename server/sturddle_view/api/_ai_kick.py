@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from dataclasses import dataclass
 
 import chess
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, status
 
 from ..chess.board import moves_san
+from ..config import PROVIDER_OLLAMA
 from ..env_utils import env_int
 from ..llm import (
     COACH_MODE,
@@ -42,8 +42,13 @@ _PER_COMMENT_MAX_DEFAULT = 200
 _TOTAL_COMMENT_MAX_DEFAULT = 1500
 _PER_COMMENT_MAX_ENV = "SV_AI_ANNOTATION_PER_COMMENT_MAX"
 _TOTAL_COMMENT_MAX_ENV = "SV_AI_ANNOTATION_TOTAL_MAX"
+# A cap below one char renders nothing -- treated as a bad env value.
+_ANNOTATION_CAP_MIN = 1
 # Marker appended to a comment that was truncated mid-string.
 _TRUNCATION_MARKER = "..."
+# PGN result for "unknown / unfinished"; treated as no result.
+_PGN_RESULT_UNKNOWN = "*"
+_AI_FACTORY_MISSING = "AI provider factory not initialized"
 
 # Plies past the matched opening line that still count as "in the opening"
 # for the opening-theory directive; beyond it the game has left book and the
@@ -53,15 +58,18 @@ _OPENING_PHASE_SLACK_DEFAULT = 12
 _OPENING_PHASE_SLACK_ENV = "SV_AI_OPENING_PHASE_SLACK_PLIES"
 
 
-def _int_env(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if not raw:
-        return default
-    try:
-        v = int(raw)
-    except ValueError:
-        return default
-    return v if v > 0 else default
+def _annotation_cap(env_name: str, default: int) -> int:
+    return env_int(env_name, default, min_value=_ANNOTATION_CAP_MIN)
+
+
+def require_ai_provider_factory(request: Request):
+    """The app's per-turn provider factory; 503 before it is wired."""
+    factory = getattr(request.app.state, "ai_provider_factory", None)
+    if factory is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_AI_FACTORY_MISSING,
+        )
+    return factory
 
 
 def _cap_annotations(
@@ -173,9 +181,8 @@ async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
     if board is None:
         return None
     opening = hve.lookup_opening()
-    # `*` means "result unknown / unfinished" in PGN; treat as absent.
     raw_result = hve.viewed_pgn_result()
-    result = raw_result if raw_result and raw_result != "*" else None
+    result = raw_result if raw_result and raw_result != _PGN_RESULT_UNKNOWN else None
     san_history = _san_history_for(hve)
     # SAN at the current ply is the move played from the position under
     # review (view mode); None in play mode where there is no future.
@@ -189,8 +196,8 @@ async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
     # model how to weigh them.
     if mode == COMMENTATOR_MODE:
         raw_comments, raw_root = hve.view_game_comments()
-        per_max = _int_env(_PER_COMMENT_MAX_ENV, _PER_COMMENT_MAX_DEFAULT)
-        total_max = _int_env(_TOTAL_COMMENT_MAX_ENV, _TOTAL_COMMENT_MAX_DEFAULT)
+        per_max = _annotation_cap(_PER_COMMENT_MAX_ENV, _PER_COMMENT_MAX_DEFAULT)
+        total_max = _annotation_cap(_TOTAL_COMMENT_MAX_ENV, _TOTAL_COMMENT_MAX_DEFAULT)
         annotations, root_annotation = _cap_annotations(
             raw_comments, raw_root, per_max, total_max,
         )
@@ -242,22 +249,22 @@ async def _evict_stale_ollama_models(base_url: str, target_model: str) -> None:
     than `target_model`. All failures swallowed: worst case is the
     daemon's own "resource limits" error on the next load."""
     if not target_model:
-        log.debug("ollama: no target model selected; skipping stale-model evict")
+        log.debug("%s: no target model selected; skipping stale-model evict", PROVIDER_OLLAMA)
         return
     provider = OllamaProvider(base_url=base_url, model="")
     try:
         loaded = await provider.list_loaded_models()
     except Exception as exc:
-        log.warning("ollama: list_loaded_models failed: %s", exc)
+        log.warning("%s: list_loaded_models failed: %s", PROVIDER_OLLAMA, exc)
         return
     for name in loaded:
         if name == target_model:
             continue
         try:
             await provider.evict_model(name)
-            log.info("ollama: evicted stale model %s", name)
+            log.info("%s: evicted stale model %s", PROVIDER_OLLAMA, name)
         except Exception as exc:
-            log.warning("ollama: evict_model(%s) failed: %s", name, exc)
+            log.warning("%s: evict_model(%s) failed: %s", PROVIDER_OLLAMA, name, exc)
 
 
 def _on_turn_done(task: asyncio.Task, state) -> None:
@@ -292,12 +299,13 @@ async def start_ai_turn(request: Request) -> None:
     """
     coord = getattr(request.app.state, "ai_coordinator", None)
     if coord is None:
-        raise HTTPException(status_code=503, detail="AI coordinator not initialized")
-    factory = getattr(request.app.state, "ai_provider_factory", None)
-    if factory is None:
-        raise HTTPException(status_code=503, detail="AI provider factory not initialized")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI coordinator not initialized",
+        )
+    factory = require_ai_provider_factory(request)
     s = request.app.state.settings
-    if (s.ai_provider or "").lower() == "ollama":
+    if (s.ai_provider or "").lower() == PROVIDER_OLLAMA:
         base_url = s.ai_base_url or _DEFAULT_OLLAMA_BASE_URL
         await _evict_stale_ollama_models(base_url, s.ai_model or "")
     hve = request.app.state.hve
@@ -319,7 +327,9 @@ async def start_ai_turn(request: Request) -> None:
         # Surfaced to the client as HTTP 500 with the message; the stack
         # is noise (config/build failure, not an internal bug).
         log.error("AI provider factory failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"AI provider error: {e}") from e
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"AI provider error: {e}",
+        ) from e
     # Pin the task on app.state so the event loop holds a strong ref --
     # asyncio GC can otherwise reap an unreferenced task mid-flight.
     task = asyncio.create_task(

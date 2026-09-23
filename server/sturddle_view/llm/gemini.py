@@ -16,12 +16,22 @@ failure.
 from __future__ import annotations
 
 import logging
+from http import HTTPStatus
 from typing import Any, AsyncIterator
 
 import httpx
 
+from ..config import PROVIDER_GEMINI
 from ._errors import extract_error_message
-from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
+from .base import (
+    CONTROL_TIMEOUT_S,
+    JSON_HEADERS,
+    LLMProvider,
+    Message,
+    ProviderChunk,
+    ToolWireSpec,
+    with_system_message,
+)
 from .inline_recovery import recover_inline_tool_calls
 from .openai_compat import (
     inline_recovery_args,
@@ -50,9 +60,8 @@ _OPENAI_SUFFIX = "/openai"
 # still 400 on the chat surface -- see list_models for why they're kept.)
 _CHAT_GENERATION_METHOD = "generateContent"
 
-# Per-request timeout for the control-plane endpoint (/models). Streaming
-# chat uses no timeout (long generations) like the other providers.
-_CONTROL_TIMEOUT_S = 10.0
+# Native model names carry this prefix ("models/gemini-2.5-flash").
+_NATIVE_MODEL_PREFIX = "models/"
 
 # Gemini's compat surface maps a thinking budget onto OpenAI's
 # `reasoning_effort` enum. We pick "low" when thinking is enabled: it
@@ -64,7 +73,7 @@ _REASONING_EFFORT_ON = "low"
 
 
 class GeminiProvider(LLMProvider):
-    provider_name = "gemini"
+    provider_name = PROVIDER_GEMINI
 
     def __init__(
         self,
@@ -81,18 +90,12 @@ class GeminiProvider(LLMProvider):
 
     def _auth_headers(self) -> dict[str, str]:
         # Compat surface (chat/completions) takes OpenAI-style Bearer auth.
-        return {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-        }
+        return {"Authorization": f"Bearer {self._api_key}", **JSON_HEADERS}
 
     def _native_headers(self) -> dict[str, str]:
         # Native surface (/v1beta/models) rejects Bearer with 401; it wants
         # the key in x-goog-api-key.
-        return {
-            "x-goog-api-key": self._api_key,
-            "Content-Type": "application/json",
-        }
+        return {"x-goog-api-key": self._api_key, **JSON_HEADERS}
 
     def _native_base(self) -> str:
         """Native API base (drops the `/openai` compat suffix). Model
@@ -110,14 +113,13 @@ class GeminiProvider(LLMProvider):
         a name blocklist risks hiding valid models). Raises on auth/network
         failure so the UI falls back to free-text entry.
         """
-        if not self._api_key:
-            raise RuntimeError("gemini: API key not configured")
+        self._require_api_key(self._api_key)
         url = f"{self._native_base()}/models"
-        async with httpx.AsyncClient(timeout=_CONTROL_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(timeout=CONTROL_TIMEOUT_S) as client:
             resp = await client.get(url, headers=self._native_headers())
-            if resp.status_code != 200:
+            if resp.status_code != HTTPStatus.OK:
                 raise RuntimeError(
-                    f"gemini /models returned {resp.status_code}: "
+                    f"{PROVIDER_GEMINI} /models returned {resp.status_code}: "
                     f"{extract_error_message(resp.text)}"
                 )
             body = resp.json()
@@ -130,9 +132,9 @@ class GeminiProvider(LLMProvider):
             methods = m.get("supportedGenerationMethods") or []
             if not name or _CHAT_GENERATION_METHOD not in methods:
                 continue
-            # Native names are prefixed ("models/gemini-2.5-flash"); strip
-            # so the dropdown shows bare ids the chat endpoint also accepts.
-            ids.append(name.split("/", 1)[1] if name.startswith("models/") else name)
+            # Strip the native prefix so the dropdown shows bare ids the
+            # chat endpoint also accepts.
+            ids.append(name.removeprefix(_NATIVE_MODEL_PREFIX))
         return sorted(set(ids))
 
     def stream(
@@ -146,17 +148,11 @@ class GeminiProvider(LLMProvider):
         thinking: bool | None = None,
         force_tool_call: bool = False,
     ) -> AsyncIterator[ProviderChunk]:
-        if not self._api_key:
-            raise RuntimeError("gemini: API key not configured")
-
-        wire_messages: list[dict] = []
-        if system:
-            wire_messages.append({"role": "system", "content": system})
-        wire_messages.extend(messages_anthropic_to_openai(messages))
+        self._require_api_key(self._api_key)
 
         body: dict[str, Any] = {
             "model": self._model,
-            "messages": wire_messages,
+            "messages": with_system_message(system, messages_anthropic_to_openai(messages)),
             "stream": True,
             # Ask for the usage-bearing final chunk (token accounting for
             # the UI; also reveals Gemini's implicit-cache hits via
@@ -179,7 +175,7 @@ class GeminiProvider(LLMProvider):
             url=f"{self._base_url}/chat/completions",
             body=body,
             headers=self._auth_headers(),
-            error_label="gemini",
+            error_label=PROVIDER_GEMINI,
             transcript=transcript,
             round_index=round_index,
         )

@@ -43,7 +43,7 @@ from platformdirs import user_data_dir
 
 from . import app_dir_name
 from ._atomic import atomic_write_json, atomic_write_text
-from .play.canonical_hash import canonical_hash
+from .play.canonical_hash import FMT_FEN, FMT_PGN, canonical_hash
 
 log = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ def _hash_text(text: str) -> str:
 
 
 def _ext_for(fmt: str) -> str:
-    return "fen" if fmt == "fen" else "pgn"
+    return FMT_FEN if fmt == FMT_FEN else FMT_PGN
 
 
 def _merged_summary(incoming, existing):

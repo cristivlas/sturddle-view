@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 from pathlib import Path
@@ -13,6 +14,9 @@ from . import app_dir_name
 from . import key_store
 from ._atomic import atomic_write_json
 from ._runtime import app_root
+from .chess.results import SIDE_BLACK, SIDE_WHITE
+
+log = logging.getLogger(__name__)
 
 
 REPO_ROOT = app_root()
@@ -85,6 +89,33 @@ BOOK_ORDER_SEQUENTIAL = "sequential"
 BOOK_ORDER_RANDOM = "random"
 VALID_BOOK_ORDERS = {BOOK_ORDER_SEQUENTIAL, BOOK_ORDER_RANDOM}
 
+# AI provider names. Shared by the Settings default, the settings API
+# (validation), app's provider dispatch, and each provider's wire identity.
+PROVIDER_ANTHROPIC = "anthropic"
+PROVIDER_GEMINI = "gemini"
+PROVIDER_OLLAMA = "ollama"
+VALID_AI_PROVIDERS = {PROVIDER_ANTHROPIC, PROVIDER_GEMINI, PROVIDER_OLLAMA}
+
+# Enumerated UI settings. Shared by the Settings defaults, the settings API
+# (validation), and the code acting on them.
+HUMAN_SIDE_RANDOM = "random"
+VALID_HUMAN_SIDES = {SIDE_WHITE, SIDE_BLACK, HUMAN_SIDE_RANDOM}
+EVAL_POV_WHITE = SIDE_WHITE
+EVAL_POV_ENGINE = "engine"
+EVAL_POV_HUMAN = "human"
+VALID_EVAL_POVS = {EVAL_POV_WHITE, EVAL_POV_ENGINE, EVAL_POV_HUMAN}
+RIBBON_SIDE_LEFT = "left"
+RIBBON_SIDE_RIGHT = "right"
+VALID_RIBBON_SIDES = {RIBBON_SIDE_LEFT, RIBBON_SIDE_RIGHT}
+BOARD_STYLE_BLACK_AND_WHITE = "black-and-white"
+VALID_BOARD_STYLES = {
+    "classic", "classic-staunty",
+    "green", "green-staunty",
+    "blue", "chess-club",
+    BOARD_STYLE_BLACK_AND_WHITE, "high-contrast",
+    "sturddle-staunty", "sturddle-wine",
+}
+
 
 def default_settings_file() -> Path:
     """Path to persisted user settings.
@@ -98,6 +129,10 @@ def default_settings_file() -> Path:
 
 LOOPBACK_HOST = "127.0.0.1"
 WILDCARD_HOST = "0.0.0.0"
+DEFAULT_PORT = 8765
+ROOT_PATH = "/"
+_TOKEN_BYTES = 24
+_SETTINGS_JSON_INDENT = 2
 
 
 # Fields persisted to disk. Excludes secrets (token), bind config (host/port),
@@ -143,9 +178,9 @@ PERSISTED_FIELDS = (
     "ai_analyze_max_depth",
     "ai_verification_depth",
     "analysis_engine_id",
-    # ai_api_key intentionally NOT persisted: server mode reads SV_AI_API_KEY
-    # from env; desktop mode will switch to OS keyring (later cycle). The
-    # JSON settings file must never hold the plaintext key.
+    # ai_api_key intentionally NOT persisted: it lives in the OS keyring
+    # (SV_AI_API_KEY as fallback). The JSON settings file must never hold
+    # the plaintext key.
 )
 
 
@@ -159,8 +194,8 @@ class Settings(BaseSettings):
     )
 
     host: str = LOOPBACK_HOST
-    port: int = 8765
-    token: str = Field(default_factory=lambda: secrets.token_urlsafe(24))
+    port: int = DEFAULT_PORT
+    token: str = Field(default_factory=lambda: secrets.token_urlsafe(_TOKEN_BYTES))
     # Enables /_test/* endpoints (HVE install/state) used by the e2e
     # test subprocess fixture. Never set in production.
     test_mode: bool = False
@@ -172,10 +207,13 @@ class Settings(BaseSettings):
     # TLS: paths set via CLI (--cert/--key). Both must be present or both None.
     tls_cert: Path | None = None
     tls_key: Path | None = None
+    # Connect-from-mobile QR: hand out the Tailscale address when its
+    # interface is up (reachable off-LAN too) instead of the LAN one.
+    prefer_tailscale: bool = True
 
     tc_initial_seconds: float = DEFAULT_TC_INITIAL_SECONDS
     tc_increment_seconds: float = DEFAULT_TC_INCREMENT_SECONDS
-    human_side: str = "white"
+    human_side: str = SIDE_WHITE
     # HVE human display name, shared by all clients. Empty = unset; game
     # start falls back to game_store.DEFAULT_PLAYER_NAME.
     player_name: str = ""
@@ -186,10 +224,10 @@ class Settings(BaseSettings):
     # exact remaining time). When False (default), live clocks reset to
     # current TC's initial.
     inherit_pgn_clocks: bool = False
-    board_style: str = "black-and-white"
-    # HVE eval display POV: "white" (default, status quo), "engine"
-    # (raw UCI — engine's POV), or "human" (flipped to human's color).
-    play_eval_pov: str = "white"
+    board_style: str = BOARD_STYLE_BLACK_AND_WHITE
+    # HVE eval display POV: "white" (default), "engine" (raw UCI -- the
+    # engine's POV), or "human" (flipped to the human's color).
+    play_eval_pov: str = EVAL_POV_WHITE
     # Play mode: show the per-move engine eval graph in the side rail
     # (desktop viewports only). Hidden when False.
     play_show_eval_graph: bool = True
@@ -198,7 +236,7 @@ class Settings(BaseSettings):
     view_show_pgn_comments: bool = True
     # Side of the screen the board ribbon docks to. Toast stack and side
     # rail mirror to match.
-    ribbon_side: str = "left"
+    ribbon_side: str = RIBBON_SIDE_LEFT
 
     # Tournament subsystem settings. None = use platform default / not configured.
     tournament_fastchess_path: str | None = None
@@ -209,7 +247,7 @@ class Settings(BaseSettings):
     # Global engine defaults. Layered on top of per-engine UCI options at
     # launch time (HVE + tournament). Blank/None = no override.
     # Threads / Hash / SyzygyPath are UCI setoptions; book_path + book_plies
-    # are fastchess CLI args (tournament only — see HVE follow-up note).
+    # feed fastchess CLI args and the HVE opening book (see below).
     engine_default_threads: int | None = None
     # Override Threads while in analysis (UCI go-infinite). None = use the
     # play-time Threads value. Applied to a dedicated analysis engine
@@ -247,10 +285,10 @@ class Settings(BaseSettings):
 
     # AI analysis & commentary. Master toggle gates the engine+AI behavior
     # off the existing Analyze ribbon buttons; provider/model/base_url are
-    # UI-managed strings. ai_api_key is server-mode only (SV_AI_API_KEY);
-    # desktop builds will switch to keyring later. Empty = unset.
+    # UI-managed strings. ai_api_key lives in the OS keyring (see the
+    # property below). Empty = unset.
     ai_enabled: bool = False
-    ai_provider: str = "anthropic"
+    ai_provider: str = PROVIDER_ANTHROPIC
     # Per-provider model memory: keys are provider names, values are model
     # ids. The active model for the current provider is `ai_models.get(
     # ai_provider, "")`. Open dict so adding a provider doesn't bump the
@@ -302,13 +340,14 @@ class Settings(BaseSettings):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            log.warning("ignoring unreadable settings file %s", path, exc_info=True)
             return
         for k in PERSISTED_FIELDS:
             if k in data and data[k] is not None:
                 try:
                     setattr(self, k, data[k])
                 except Exception:
-                    pass
+                    log.warning("ignoring invalid persisted setting %s", k, exc_info=True)
 
     def save_persisted(self, path: Path | None = None) -> None:
         path = path or default_settings_file()
@@ -316,4 +355,4 @@ class Settings(BaseSettings):
         for k in PERSISTED_FIELDS:
             v = getattr(self, k, None)
             payload[k] = str(v) if isinstance(v, Path) else v
-        atomic_write_json(path, payload, indent=2)
+        atomic_write_json(path, payload, indent=_SETTINGS_JSON_INDENT)
