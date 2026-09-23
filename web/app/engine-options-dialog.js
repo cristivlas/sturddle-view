@@ -478,6 +478,7 @@ export function showEngineOptionsDialog({
       const refresh = document.createElement("wa-button");
       refresh.slot = "footer";
       refresh.size = "small";
+      refresh.className = "eo-footer-btn-sunken";
       refresh.textContent = REFRESH_BTN_LABEL;
       refresh.addEventListener("click", guard(async () => {
         // Probe with the *in-progress* launch profile so the user sees
@@ -522,6 +523,7 @@ export function showEngineOptionsDialog({
       const defaultsBtn = document.createElement("wa-button");
       defaultsBtn.slot = "footer";
       defaultsBtn.size = "small";
+      defaultsBtn.className = "eo-footer-btn-sunken";
       defaultsBtn.textContent = RESET_BTN_LABEL;
       defaultsBtn.addEventListener("click", () => {
         // Reopen with options cleared (fields render advertised defaults)

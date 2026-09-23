@@ -1,7 +1,7 @@
 :root {
   --bg: #1d1f24;
   --fg: #e8e8e8;
-  --muted: #888;
+  --muted: #9a9a9a;
   --muted-bright: #aaa;
   --wb-outline: rgba(136, 136, 136, 0.4);
   --wb-radius: 8px;
@@ -2756,7 +2756,8 @@ wa-dialog[no-header]::part(dialog) {
 }
 /* Darken the default (cancel-style) button fill in confirm/alert popups
    only, leaving settings' Browse/Clear buttons on the shared default. */
-wa-dialog[no-header] wa-button[variant="neutral"]::part(base) {
+wa-dialog[no-header] wa-button[variant="neutral"]::part(base),
+.eo-footer-btn-sunken::part(base) {
   background-color: var(--dialog-bg-sunken);
 }
 .confirm-message.game-over-message {
