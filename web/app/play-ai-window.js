@@ -695,6 +695,22 @@ function markVerdict(line, kind) {
   line.classList.add(cls);
 }
 
+// position_judge's OUT is "cleared N/M: ..." (see _judge_summary server-
+// side). Its dot is orange by default (tool identity color), which reads as
+// a failure next to the actual danger-red used for failed/refuted calls.
+// Badge it green once something was actually cleared, matching the
+// verdict-badge pattern above.
+const POSITION_JUDGE_DOT_CLASS = "play-ai-tool-dot-position_judge";
+const CLEARED_PREFIX_RE = /^cleared (\d+)\/\d+/;
+
+function markCleared(line, output) {
+  if (typeof output !== "string") return;
+  if (!line.querySelector(`:scope > .play-ai-tool-head > .${POSITION_JUDGE_DOT_CLASS}`)) return;
+  const match = CLEARED_PREFIX_RE.exec(output);
+  if (!match || match[1] === "0") return;
+  line.classList.add("play-ai-tool-call-cleared");
+}
+
 // Fill the OUT row with the tool result from ai_tool_call_complete.
 // Idempotent (replay-on-reconnect re-dispatches with the same output).
 export function setAiToolCallResult({ toolUseId, output }) {
@@ -706,6 +722,7 @@ export function setAiToolCallResult({ toolUseId, output }) {
     line._outRow.hidden = false;
     markVerdict(line, verdictKind(output));
     attachVerdictProse(line, output);
+    markCleared(line, output);
   });
 }
 

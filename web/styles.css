@@ -701,6 +701,11 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
   color: var(--wa-color-success-60, #28a745);
   font-weight: 600;
 }
+/* position_judge cleared a flag: orange identity dot reads as a failure
+   next to the danger-red used above, so badge it green instead. */
+.play-ai-tool-call-cleared > .play-ai-tool-head > .play-ai-tool-dot-position_judge {
+  background: var(--wa-color-success-60, #28a745);
+}
 /* Verifier verdict prose: reuses .play-ai-revision visuals (warm panel,
    border-left, fonts). It lives inside the delegate row, which shrinks font
    to --tool-row-scale and forces monospace -- both would leak in. Divide the
