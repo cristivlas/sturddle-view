@@ -2359,7 +2359,6 @@ export const playPerspective = {
               message: MSG.CONFIRM_MOVE_STOP_ANALYSIS,
               okLabel: MSG.PLAY_MOVE,
               cancelLabel: MSG.KEEP_ANALYZING,
-              destructive: true,
             });
             if (!ok) {
               await abortHeldDrop(view, snapBack);
