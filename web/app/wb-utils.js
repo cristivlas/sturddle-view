@@ -367,6 +367,34 @@ function rowToLine(row) {
     .join(" ");
 }
 
+// Install once. Scroll doesn't bubble, so this is delegated via capture.
+// Toggles .scrolled so the scrollbar-thumb gradient (CSS) only shows when a
+// container is scrolled all the way to its origin on both axes (the
+// unscrolled default).
+export function installScrollOriginTracking() {
+  document.addEventListener("scroll", (ev) => {
+    const el = ev.target;
+    if (!el || typeof el.scrollTop !== "number") return;
+    el.classList.toggle("scrolled", el.scrollTop !== 0 || el.scrollLeft !== 0);
+  }, true);
+
+  // wa-select's listbox is a shadow-DOM div; native `scroll` never crosses
+  // the boundary, so `document`'s delegated listener above can't see it.
+  // wa-after-show (composed) fires once the listbox exists, so attach a
+  // direct listener there and toggle .scrolled on the host, where the CSS
+  // (::part() can't take a class selector directly) can still reach it.
+  document.addEventListener("wa-after-show", (ev) => {
+    const host = ev.target;
+    if (host?.tagName !== "WA-SELECT") return;
+    const listbox = host.shadowRoot?.querySelector('[part~="listbox"]');
+    if (!listbox || listbox._scrollOriginTracked) return;
+    listbox._scrollOriginTracked = true;
+    listbox.addEventListener("scroll", () => {
+      host.classList.toggle("scrolled", listbox.scrollTop !== 0 || listbox.scrollLeft !== 0);
+    });
+  });
+}
+
 // Install once. Ctrl/Cmd+A inside a selectable region selects that region's
 // contents (or its target node) instead of the page. On copy, a region with
 // a `rows` selector serializes each row as one line via rowToLine,
