@@ -2755,10 +2755,20 @@ wa-dialog[no-header]::part(dialog) {
   background-color: var(--dialog-bg-raised);
 }
 /* Darken the default (cancel-style) button fill in confirm/alert popups
-   only, leaving settings' Browse/Clear buttons on the shared default. */
+   only, leaving settings' Browse/Clear buttons on the shared default.
+   ::part() from the light DOM beats the shadow tree's own :hover/:active
+   rules, so those states must be restated here or hovering goes dead. */
 wa-dialog[no-header] wa-button[variant="neutral"]::part(base),
 .eo-footer-btn-sunken::part(base) {
   background-color: var(--dialog-bg-sunken);
+}
+wa-dialog[no-header] wa-button[variant="neutral"]:not([disabled]):hover::part(base),
+.eo-footer-btn-sunken:not([disabled]):hover::part(base) {
+  background-color: color-mix(in oklab, var(--dialog-bg-sunken), var(--wa-color-mix-hover));
+}
+wa-dialog[no-header] wa-button[variant="neutral"]:not([disabled]):active::part(base),
+.eo-footer-btn-sunken:not([disabled]):active::part(base) {
+  background-color: color-mix(in oklab, var(--dialog-bg-sunken), var(--wa-color-mix-active));
 }
 .confirm-message.game-over-message {
   margin: 0;
