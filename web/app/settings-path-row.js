@@ -74,7 +74,7 @@ export function makePathRow(api) {
       field.placeholder = "(not set)";
     }
     browse.addEventListener("click", guard(async () => {
-      const path = await pickFile({ api, mode, title: pickerTitle, extensions });
+      const path = await pickFile({ api, mode, title: pickerTitle, extensions, currentPath: field.value });
       if (!path) return;
       field.value = path;
       syncClear();

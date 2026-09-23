@@ -1,9 +1,19 @@
 import { scrollRowIntoView } from "./col-sort.js";
 
+// Split at the last / or \ (trailing ones ignored) into { dir, name };
+// dir is "" when there is none. Roots keep their separator ("/", "C:\").
+export function splitPath(p) {
+  const trimmed = p.replace(/[\\/]+$/, "");
+  const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (cut < 0) return { dir: "", name: trimmed };
+  const isRoot = cut === 0 || trimmed[cut - 1] === ":";
+  return { dir: trimmed.slice(0, isRoot ? cut + 1 : cut), name: trimmed.slice(cut + 1) };
+}
+
 // Last path segment (handles / and \); "" for empty input.
 export function basename(p) {
   if (!p) return "";
-  return String(p).replace(/[\\/]+$/, "").split(/[\\/]/).pop() || String(p);
+  return splitPath(String(p)).name || String(p);
 }
 
 // Read a px-valued CSS custom property from the element matching

@@ -112,6 +112,7 @@ function buildField(name, entry, current, ctx) {
             api: ctx.api,
             title: `Pick ${name}`,
             mode: /(path|dir)$/i.test(name) ? "directory" : "file",
+            currentPath: text.value,
           });
           if (picked) {
             text.value = picked;
