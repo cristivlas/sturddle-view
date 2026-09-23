@@ -9,10 +9,10 @@ import { loadRaw, saveRaw } from "./storage.js";
 import { mqMobile } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
 import { getTournamentUx, tournamentUxLabel } from "./tournament-studio.js";
-import { installSelection, installScrollOriginTracking } from "./wb-utils.js";
+import { installSelection, installScrollEdgeTracking } from "./wb-utils.js";
 
 installSelection();
-installScrollOriginTracking();
+installScrollEdgeTracking();
 
 // F11 toggles native fullscreen ("theater mode") in the desktop shell via the
 // pywebview bridge -- the OS/browser F11 handling doesn't apply to the

@@ -367,31 +367,81 @@ function rowToLine(row) {
     .join(" ");
 }
 
+// scrollTop/scrollLeft are fractional under display scaling while
+// clientWidth/scrollWidth round, so a fully-scrolled container can read up
+// to ~2px short of its max; ceil the position and allow that slack.
+const SCROLL_EDGE_FUZZ_PX = 2;
+
+// Marks `el`'s scroll position on `target` as per-axis classes so CSS can
+// point the scrollbar-thumb gradient at the edge that still has content;
+// no class (the untracked default) reads the same as "at top/left".
+function markScrollEdges(el, target) {
+  // Emptied content (zero-height wrapper, e.g. a rowless table kept wide by
+  // its colgroup) leaves a meaningless stale offset; snap back to origin.
+  // el.clientHeight>0 skips hidden panels; SLOT is boxless, never "empty".
+  const content = el.firstElementChild;
+  if (content && content.tagName !== "SLOT" && content.offsetHeight === 0
+      && el.clientHeight > 0 && (el.scrollTop > 0 || el.scrollLeft > 0)) {
+    el.scrollTop = 0;
+    el.scrollLeft = 0;
+  }
+  const atBottom = Math.ceil(el.scrollTop) >= el.scrollHeight - el.clientHeight - SCROLL_EDGE_FUZZ_PX;
+  const midV = el.scrollTop > 0 && !atBottom;
+  const atRight = Math.ceil(el.scrollLeft) >= el.scrollWidth - el.clientWidth - SCROLL_EDGE_FUZZ_PX;
+  const midH = el.scrollLeft > 0 && !atRight;
+  target.classList.toggle("v-scroll-pos-mid", midV);
+  target.classList.toggle("v-scroll-pos-bottom", !midV && atBottom && el.scrollTop > 0);
+  target.classList.toggle("h-scroll-pos-mid", midH);
+  target.classList.toggle("h-scroll-pos-right", !midH && atRight && el.scrollLeft > 0);
+}
+
+// Content can resize without a scroll event, going stale; a shared
+// ResizeObserver on each known scroller + its content wrapper re-marks.
+// Multi-child scrollers self-correct on the next scroll instead.
+const edgeTracked = new WeakSet();
+const edgeROTargets = new WeakMap();
+let edgeRO = null;
+
+function trackScrollEdges(el, target) {
+  if (edgeTracked.has(el)) return;
+  edgeTracked.add(el);
+  edgeRO ??= new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const pair = edgeROTargets.get(entry.target);
+      if (pair) markScrollEdges(pair.el, pair.target);
+    }
+  });
+  edgeROTargets.set(el, { el, target });
+  edgeRO.observe(el);
+  const child = el.firstElementChild;
+  if (child) {
+    edgeROTargets.set(child, { el, target });
+    edgeRO.observe(child);
+  }
+}
+
 // Install once. Scroll doesn't bubble, so this is delegated via capture.
-// Toggles .scrolled so the scrollbar-thumb gradient (CSS) only shows when a
-// container is scrolled all the way to its origin on both axes (the
-// unscrolled default).
-export function installScrollOriginTracking() {
+export function installScrollEdgeTracking() {
   document.addEventListener("scroll", (ev) => {
     const el = ev.target;
     if (!el || typeof el.scrollTop !== "number") return;
-    el.classList.toggle("scrolled", el.scrollTop !== 0 || el.scrollLeft !== 0);
+    markScrollEdges(el, el);
+    trackScrollEdges(el, el);
   }, true);
 
   // wa-select's listbox is a shadow-DOM div; native `scroll` never crosses
   // the boundary, so `document`'s delegated listener above can't see it.
   // wa-after-show (composed) fires once the listbox exists, so attach a
-  // direct listener there and toggle .scrolled on the host, where the CSS
-  // (::part() can't take a class selector directly) can still reach it.
+  // direct listener there and mark the edge classes on the host, where the
+  // CSS (::part() can't take a class selector directly) can still reach it.
   document.addEventListener("wa-after-show", (ev) => {
     const host = ev.target;
     if (host?.tagName !== "WA-SELECT") return;
     const listbox = host.shadowRoot?.querySelector('[part~="listbox"]');
-    if (!listbox || listbox._scrollOriginTracked) return;
-    listbox._scrollOriginTracked = true;
-    listbox.addEventListener("scroll", () => {
-      host.classList.toggle("scrolled", listbox.scrollTop !== 0 || listbox.scrollLeft !== 0);
-    });
+    if (!listbox || edgeTracked.has(listbox)) return;
+    markScrollEdges(listbox, host);
+    trackScrollEdges(listbox, host);
+    listbox.addEventListener("scroll", () => markScrollEdges(listbox, host));
   });
 }
 
