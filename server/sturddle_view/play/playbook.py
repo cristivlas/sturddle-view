@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 import chess
 
+from ..chess.score import SCORE_CP, SCORE_MATE
 from ..env_utils import env_int
 
 
@@ -94,10 +95,6 @@ _KINGSIDE_KING_FILES = chess.BB_FILE_G | chess.BB_FILE_H
 _WHITE_SHELTER_RANKS = chess.BB_RANK_1 | chess.BB_RANK_2
 _BLACK_SHELTER_RANKS = chess.BB_RANK_7 | chess.BB_RANK_8
 
-# Eval dict keys, as the engine-info schema and PGN import write them.
-_SCORE_CP = "cp"
-_SCORE_MATE = "mate"
-
 
 @dataclass(frozen=True, slots=True)
 class Situation:
@@ -129,10 +126,10 @@ def _score_cp_white(score: dict | None) -> int | None:
     score (mate 0 is a finished game, not a margin)."""
     if not score:
         return None
-    mate = score.get(_SCORE_MATE)
+    mate = score.get(SCORE_MATE)
     if isinstance(mate, int) and mate != 0:
         return RESIGN_CP if mate > 0 else -RESIGN_CP
-    cp = score.get(_SCORE_CP)
+    cp = score.get(SCORE_CP)
     return cp if isinstance(cp, int) else None
 
 

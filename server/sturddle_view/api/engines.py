@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -9,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
+from .. import is_windows
 from ..auth import require_token
 from ..engines import (
     UNSET,
@@ -53,7 +53,7 @@ def _validate_engine_path(raw: str) -> str:
         raise bad_request(f"path is a directory, not a file: {p}")
     if not p.is_file():
         raise bad_request(f"path is not a regular file: {p}")
-    if not sys.platform.startswith("win") and not os.access(p, os.X_OK):
+    if not is_windows() and not os.access(p, os.X_OK):
         raise bad_request(f"path is not executable: {p}")
     return str(p)
 

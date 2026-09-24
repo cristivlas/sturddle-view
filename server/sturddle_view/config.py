@@ -145,49 +145,94 @@ ENV_TLS_CERT = f"{ENV_PREFIX}TLS_CERT"
 ENV_TLS_KEY = f"{ENV_PREFIX}TLS_KEY"
 
 
+# Settings attribute names, for code that addresses a setting by name: the
+# persisted-field list, the settings API's wire keys, getattr lookups.
+PGN_AUTOSAVE_KEY = "pgn_autosave"
+PGN_DIR_KEY = "pgn_dir"
+ENGINE_PATH_KEY = "engine_path"
+TC_INITIAL_KEY = "tc_initial_seconds"
+TC_INCREMENT_KEY = "tc_increment_seconds"
+HUMAN_SIDE_KEY = "human_side"
+PLAYER_NAME_KEY = "player_name"
+ALLOW_TAKEBACK_KEY = "allow_takeback"
+AUTO_CLAIM_DRAWS_KEY = "auto_claim_draws"
+INHERIT_PGN_CLOCKS_KEY = "inherit_pgn_clocks"
+BOARD_STYLE_KEY = "board_style"
+PLAY_EVAL_POV_KEY = "play_eval_pov"
+PLAY_SHOW_EVAL_GRAPH_KEY = "play_show_eval_graph"
+VIEW_SHOW_PGN_COMMENTS_KEY = "view_show_pgn_comments"
+RIBBON_SIDE_KEY = "ribbon_side"
+TOURNAMENT_FASTCHESS_PATH_KEY = "tournament_fastchess_path"
+TOURNAMENT_ROOT_KEY = "tournament_root"
+TOURNAMENT_DEFAULT_TEMPLATE_KEY = "tournament_default_template"
+TOURNAMENT_SPRT_DEFAULTS_KEY = "tournament_sprt_defaults"
+ENGINE_THREADS_KEY = "engine_default_threads"
+ENGINE_ANALYSIS_THREADS_KEY = "engine_default_analysis_threads"
+ENGINE_HASH_MB_KEY = "engine_default_hash_mb"
+ENGINE_SYZYGY_PATH_KEY = "engine_default_syzygy_path"
+ENGINE_BOOK_PATH_KEY = "engine_default_book_path"
+ENGINE_BOOK_PLIES_KEY = "engine_default_book_plies"
+ENGINE_BOOK_ORDER_KEY = "engine_default_book_order"
+ENGINE_BOOK_CURSOR_KEY = "engine_default_book_cursor"
+HVE_USE_OPENING_BOOK_KEY = "hve_use_opening_book"
+HVE_DIFFICULTY_KEY = "hve_difficulty"
+AI_ENABLED_KEY = "ai_enabled"
+AI_PROVIDER_KEY = "ai_provider"
+AI_MODELS_KEY = "ai_models"
+AI_MODEL_KEY = "ai_model"
+AI_BASE_URL_KEY = "ai_base_url"
+AI_API_KEY_KEY = "ai_api_key"
+AI_THINKING_ENABLED_KEY = "ai_thinking_enabled"
+AI_THINKING_BUDGET_TOKENS_KEY = "ai_thinking_budget_tokens"
+AI_MAX_TOOL_ROUNDS_KEY = "ai_max_tool_rounds"
+AI_VERIFIER_MAX_ROUNDS_KEY = "ai_verifier_max_rounds"
+AI_ANALYZE_MAX_DEPTH_KEY = "ai_analyze_max_depth"
+AI_VERIFICATION_DEPTH_KEY = "ai_verification_depth"
+ANALYSIS_ENGINE_KEY = "analysis_engine_id"
+
 # Fields persisted to disk. Excludes secrets (token), bind config (host/port),
 # auth_disabled (CLI flag), and web_dir (deployment).
 PERSISTED_FIELDS = (
-    "pgn_autosave",
-    "pgn_dir",
-    "engine_path",
-    "tc_initial_seconds",
-    "tc_increment_seconds",
-    "human_side",
-    "player_name",
-    "allow_takeback",
-    "auto_claim_draws",
-    "inherit_pgn_clocks",
-    "board_style",
-    "play_eval_pov",
-    "play_show_eval_graph",
-    "view_show_pgn_comments",
-    "ribbon_side",
-    "tournament_fastchess_path",
-    "tournament_root",
-    "tournament_default_template",
-    "tournament_sprt_defaults",
-    "engine_default_threads",
-    "engine_default_analysis_threads",
-    "engine_default_hash_mb",
-    "engine_default_syzygy_path",
-    "engine_default_book_path",
-    "engine_default_book_plies",
-    "engine_default_book_order",
-    "engine_default_book_cursor",
-    "hve_use_opening_book",
-    "hve_difficulty",
-    "ai_enabled",
-    "ai_provider",
-    "ai_models",
-    "ai_base_url",
-    "ai_thinking_enabled",
-    "ai_thinking_budget_tokens",
-    "ai_max_tool_rounds",
-    "ai_verifier_max_rounds",
-    "ai_analyze_max_depth",
-    "ai_verification_depth",
-    "analysis_engine_id",
+    PGN_AUTOSAVE_KEY,
+    PGN_DIR_KEY,
+    ENGINE_PATH_KEY,
+    TC_INITIAL_KEY,
+    TC_INCREMENT_KEY,
+    HUMAN_SIDE_KEY,
+    PLAYER_NAME_KEY,
+    ALLOW_TAKEBACK_KEY,
+    AUTO_CLAIM_DRAWS_KEY,
+    INHERIT_PGN_CLOCKS_KEY,
+    BOARD_STYLE_KEY,
+    PLAY_EVAL_POV_KEY,
+    PLAY_SHOW_EVAL_GRAPH_KEY,
+    VIEW_SHOW_PGN_COMMENTS_KEY,
+    RIBBON_SIDE_KEY,
+    TOURNAMENT_FASTCHESS_PATH_KEY,
+    TOURNAMENT_ROOT_KEY,
+    TOURNAMENT_DEFAULT_TEMPLATE_KEY,
+    TOURNAMENT_SPRT_DEFAULTS_KEY,
+    ENGINE_THREADS_KEY,
+    ENGINE_ANALYSIS_THREADS_KEY,
+    ENGINE_HASH_MB_KEY,
+    ENGINE_SYZYGY_PATH_KEY,
+    ENGINE_BOOK_PATH_KEY,
+    ENGINE_BOOK_PLIES_KEY,
+    ENGINE_BOOK_ORDER_KEY,
+    ENGINE_BOOK_CURSOR_KEY,
+    HVE_USE_OPENING_BOOK_KEY,
+    HVE_DIFFICULTY_KEY,
+    AI_ENABLED_KEY,
+    AI_PROVIDER_KEY,
+    AI_MODELS_KEY,
+    AI_BASE_URL_KEY,
+    AI_THINKING_ENABLED_KEY,
+    AI_THINKING_BUDGET_TOKENS_KEY,
+    AI_MAX_TOOL_ROUNDS_KEY,
+    AI_VERIFIER_MAX_ROUNDS_KEY,
+    AI_ANALYZE_MAX_DEPTH_KEY,
+    AI_VERIFICATION_DEPTH_KEY,
+    ANALYSIS_ENGINE_KEY,
     # ai_api_key intentionally NOT persisted: it lives in the OS keyring
     # (SV_AI_API_KEY as fallback). The JSON settings file must never hold
     # the plaintext key.

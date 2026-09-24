@@ -98,7 +98,7 @@ RecommendVerifier = Callable[[chess.Move, int | None, CancelToken], Awaitable[di
 log = logging.getLogger(__name__)
 
 
-# Cap on agent loop rounds per turn (spec §Guardrails: "Tool call cap
+# Cap on agent loop rounds per turn (spec sec. Guardrails: "Tool call cap
 # per agent turn"). UI-settable; env is the headless/no-UI default.
 MAX_TOOL_ROUNDS = env_int("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_AI_MAX_TOOL_ROUNDS)
 
@@ -595,7 +595,7 @@ def _tool_result_message(
     inside the same user message. Kept distinct from the tool_result
     content -- transcripts and log parsers see "data" vs "guidance"
     cleanly. Injected by the coordinator only on the first call to a
-    given tool per turn (see docs/ai-analysis-spec.md §Skills layer).
+    given tool per turn (see docs/ai-analysis-spec.md sec. Skills layer).
     """
     if not isinstance(result, str):
         # ensure_ascii=False: escaped non-ASCII (accented opening names)

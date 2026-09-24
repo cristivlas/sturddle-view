@@ -78,7 +78,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                 {get_task, recv_task}, return_when=asyncio.FIRST_COMPLETED
             )
             if recv_task in done:
-                # Either disconnect or unexpected message — stop.
+                # Either disconnect or unexpected message -- stop.
                 get_task.cancel()
                 break
             event = get_task.result()

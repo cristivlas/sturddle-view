@@ -14,7 +14,15 @@ from fastapi.responses import Response
 from ..auth import require_token
 from ..chess.pgn_tags import TAG_BLACK, TAG_RESULT, TAG_TERMINATION, TAG_WHITE
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
-from ..config import BOOK_ORDER_RANDOM, BOOK_ORDER_SEQUENTIAL, HUMAN_SIDE_RANDOM
+from ..config import (
+    AI_ENABLED_KEY,
+    ALLOW_TAKEBACK_KEY,
+    BOOK_ORDER_RANDOM,
+    BOOK_ORDER_SEQUENTIAL,
+    HUMAN_SIDE_KEY,
+    HUMAN_SIDE_RANDOM,
+    INHERIT_PGN_CLOCKS_KEY,
+)
 from ..engines import resolve_selected
 from ..env_utils import env_int
 from ..error_detail import ERROR_KEY, error_detail
@@ -172,7 +180,7 @@ async def new_game(payload: dict, request: Request) -> dict:
     hve = await _get_hve(request)
     s = request.app.state.settings
 
-    human_white = _resolve_human_white(payload.get("human_side", s.human_side))
+    human_white = _resolve_human_white(payload.get(HUMAN_SIDE_KEY, s.human_side))
     tc = _time_control(payload, s)
     await _cancel_ai_analysis(request)
     seed_fen, book = await _resolve_book(s)
@@ -660,7 +668,7 @@ async def view_play_from_here(payload: dict, request: Request) -> dict:
     hve = await _get_hve(request)
     s = request.app.state.settings
     tc = _time_control(payload, s)
-    inherit_clocks = bool(payload.get("inherit_pgn_clocks", s.inherit_pgn_clocks))
+    inherit_clocks = bool(payload.get(INHERIT_PGN_CLOCKS_KEY, s.inherit_pgn_clocks))
     await _cancel_ai_analysis(request)
     with _runtime_error_is_bad_request():
         try:
@@ -859,7 +867,7 @@ async def analysis_start(request: Request) -> dict:
     # Drop any prior session's buffer before a new one begins, in case
     # the previous /analysis/stop was skipped (mode toggle, crash).
     _clear_replay(request)
-    if getattr(request.app.state.settings, "ai_enabled", False):
+    if getattr(request.app.state.settings, AI_ENABLED_KEY, False):
         await start_ai_turn(request)
     return _OK
 
@@ -896,7 +904,7 @@ async def switch_sides(request: Request) -> dict:
 @router.post("/takeback")
 async def takeback(request: Request) -> dict:
     s = request.app.state.settings
-    if not getattr(s, "allow_takeback", True):
+    if not getattr(s, ALLOW_TAKEBACK_KEY, True):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="take-back is disabled in settings",
         )

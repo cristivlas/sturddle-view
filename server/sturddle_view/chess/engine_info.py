@@ -22,6 +22,8 @@ from typing import Any
 import chess
 import chess.engine
 
+from .score import SCORE_CP, SCORE_MATE
+
 _INT_FIELDS = ("depth", "seldepth", "time", "nodes", "nps",
                "hashfull", "tbhits", "multipv")
 
@@ -41,9 +43,9 @@ def serialize_info(
     if score is not None:
         side = score.pov(pov)
         if side.is_mate():
-            out["score"] = {"mate": side.mate()}
+            out["score"] = {SCORE_MATE: side.mate()}
         else:
-            out["score"] = {"cp": side.score()}
+            out["score"] = {SCORE_CP: side.score()}
     pv = info.get("pv")
     if pv:
         uci = [m.uci() for m in pv]
@@ -83,16 +85,17 @@ def parse_info_tokens(rest: str) -> dict | None:
             if taken:
                 out[tok], i = taken
         elif tok == "score":
-            if i < len(tokens) and tokens[i] == "cp":
+            # Score-dict keys are UCI's own score-unit tokens.
+            if i < len(tokens) and tokens[i] == SCORE_CP:
                 taken = take_int(i + 1)
                 if taken:
                     val, i = taken
-                    out["score"] = {"cp": val}
-            elif i < len(tokens) and tokens[i] == "mate":
+                    out["score"] = {SCORE_CP: val}
+            elif i < len(tokens) and tokens[i] == SCORE_MATE:
                 taken = take_int(i + 1)
                 if taken:
                     val, i = taken
-                    out["score"] = {"mate": val}
+                    out["score"] = {SCORE_MATE: val}
             else:
                 i += 1
         elif tok == "pv":

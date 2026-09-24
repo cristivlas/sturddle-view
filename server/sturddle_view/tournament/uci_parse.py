@@ -13,6 +13,7 @@ import chess
 
 from ..chess.board import board_from, side_to_move
 from ..chess.engine_info import parse_info_tokens
+from ..chess.score import SCORE_CP, SCORE_MATE
 
 # UCI commands. A parsed line's ``kind`` is its command name.
 UCI_POSITION = "position"
@@ -125,9 +126,9 @@ def _add_legacy_aliases(parsed: dict[str, Any]) -> dict[str, Any]:
     tournament view still reads. Removed when web migrates."""
     score = parsed.get("score")
     if score is not None:
-        if (cp := score.get("cp")) is not None:
+        if (cp := score.get(SCORE_CP)) is not None:
             parsed["score_cp"] = cp
-        elif (mate := score.get("mate")) is not None:
+        elif (mate := score.get(SCORE_MATE)) is not None:
             parsed["score_mate"] = mate
     # Guard: do not clobber an already-present ``pv`` (e.g. SAN list a
     # future tournament-side board reconstruction might supply).

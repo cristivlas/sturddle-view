@@ -33,7 +33,7 @@ from http import HTTPStatus
 
 import httpx
 
-from .. import APP_NAME
+from .. import APP_NAME, is_windows
 from ..env_utils import env_bool, env_float, env_int
 
 
@@ -234,7 +234,7 @@ async def _make_stdin_reader(loop: asyncio.AbstractEventLoop) -> asyncio.StreamR
     can't connect_read_pipe() on the inherited (non-overlapped) stdin
     handle, so use a daemon thread + feed_data on that platform."""
     reader = asyncio.StreamReader(loop=loop)
-    if sys.platform == "win32":
+    if is_windows():
         def _pump() -> None:
             try:
                 while True:
@@ -264,7 +264,7 @@ async def _run(
     spawn_env = None
     if engine_env:
         spawn_env = {**os.environ, **engine_env}
-    extra = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+    extra = {"creationflags": subprocess.CREATE_NO_WINDOW} if is_windows() else {}
     proc = await asyncio.create_subprocess_exec(
         *engine_argv,
         stdin=asyncio.subprocess.PIPE,

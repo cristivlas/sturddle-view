@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import os
 import string
-import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from .. import is_windows
 from ..auth import require_token
 from ._http import bad_request, not_found
 
@@ -45,11 +45,6 @@ def _home() -> Path:
     return Path.home()
 
 
-def _is_windows() -> bool:
-    # Read per call: tests simulate Windows by patching sys.platform.
-    return sys.platform.startswith("win")
-
-
 def _is_executable(p: Path, is_file: bool) -> bool:
     """Cross-platform executability check.
 
@@ -59,7 +54,7 @@ def _is_executable(p: Path, is_file: bool) -> bool:
     """
     if not is_file:
         return False
-    if _is_windows():
+    if is_windows():
         exts = os.environ.get("PATHEXT", _DEFAULT_WIN_PATHEXT).split(_PATHEXT_SEP)
         wanted = {e.strip().lower() for e in exts if e.strip()}
         return p.suffix.lower() in wanted
@@ -130,7 +125,7 @@ def list_dir(
     """
     if path is None:
         target = _home()
-    elif _is_windows() and (not path or path == _DRIVES_PATH):
+    elif is_windows() and (not path or path == _DRIVES_PATH):
         return _listing("", None, True, [_drive_entry(d) for d in _windows_drives()])
     else:
         target = Path(path).expanduser()
@@ -155,7 +150,7 @@ def list_dir(
         if show_hidden or not c.name.startswith(_HIDDEN_PREFIX)
     ]
     parent = str(target.parent) if target.parent != target else None
-    is_root = parent is None or (_is_windows() and len(target.parts) == 1)
+    is_root = parent is None or (is_windows() and len(target.parts) == 1)
     return _listing(str(target), parent, is_root, entries)
 
 

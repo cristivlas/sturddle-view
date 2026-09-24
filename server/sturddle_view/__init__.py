@@ -1,4 +1,5 @@
 import os as _os
+import sys as _sys
 from pathlib import Path as _Path
 
 from platformdirs import user_config_dir as _user_config_dir
@@ -35,3 +36,8 @@ def app_data_dir() -> _Path:
 def app_log_dir() -> _Path:
     """This instance's platform user-log dir."""
     return _Path(_user_log_dir(app_dir_name(), appauthor=False))
+
+
+def is_windows() -> bool:
+    """True on Windows. Reads sys.platform per call so tests can patch it."""
+    return _sys.platform == "win32"

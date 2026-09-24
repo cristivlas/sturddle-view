@@ -14,7 +14,16 @@ from typing import Any, Awaitable, Callable
 import chess
 import chess.engine
 
-from ..config import EVAL_POV_ENGINE, EVAL_POV_HUMAN, EVAL_POV_WHITE
+from ..config import (
+    ENGINE_ANALYSIS_THREADS_KEY,
+    ENGINE_HASH_MB_KEY,
+    ENGINE_SYZYGY_PATH_KEY,
+    ENGINE_THREADS_KEY,
+    EVAL_POV_ENGINE,
+    EVAL_POV_HUMAN,
+    EVAL_POV_WHITE,
+    PLAY_EVAL_POV_KEY,
+)
 from ..engines import UCI_OPT_HASH, UCI_OPT_SYZYGY_PATH, UCI_OPT_THREADS, resolve_analysis
 from .engine_supervisor import EngineSupervisor
 
@@ -39,7 +48,7 @@ def log_spawn_failure(exc: Exception, context: str) -> None:
 
 def eval_pov_mode(settings: Any | None) -> str:
     """The play_eval_pov setting; white when there are no settings."""
-    return getattr(settings, "play_eval_pov", EVAL_POV_WHITE) if settings else EVAL_POV_WHITE
+    return getattr(settings, PLAY_EVAL_POV_KEY, EVAL_POV_WHITE) if settings else EVAL_POV_WHITE
 
 
 def resolve_eval_pov_white_or_stm(
@@ -63,13 +72,13 @@ def global_engine_defaults(settings: Any | None) -> dict:
     if settings is None:
         return {}
     out: dict = {}
-    threads = getattr(settings, "engine_default_threads", None)
+    threads = getattr(settings, ENGINE_THREADS_KEY, None)
     if threads:
         out[UCI_OPT_THREADS] = threads
-    hash_mb = getattr(settings, "engine_default_hash_mb", None)
+    hash_mb = getattr(settings, ENGINE_HASH_MB_KEY, None)
     if hash_mb:
         out[UCI_OPT_HASH] = hash_mb
-    syzygy_path = getattr(settings, "engine_default_syzygy_path", None)
+    syzygy_path = getattr(settings, ENGINE_SYZYGY_PATH_KEY, None)
     if syzygy_path:
         out[UCI_OPT_SYZYGY_PATH] = syzygy_path
     return out
@@ -82,7 +91,7 @@ def analysis_overrides(settings: Any | None) -> dict:
     cores)."""
     if settings is None:
         return {}
-    n = getattr(settings, "engine_default_analysis_threads", None)
+    n = getattr(settings, ENGINE_ANALYSIS_THREADS_KEY, None)
     return {UCI_OPT_THREADS: n} if n else {}
 
 

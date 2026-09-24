@@ -12,14 +12,13 @@ import json
 import logging
 import os
 import subprocess
-import sys
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import chess.engine
 
-from . import app_config_dir
+from . import app_config_dir, is_windows
 from ._atomic import atomic_write_json
 from .engine_tmp import cleanup_spawn_dir, create_spawn_dir, temp_env
 from .env_utils import env_float, env_path
@@ -91,7 +90,7 @@ def _popen_kwargs(env: dict[str, str] | None, tmp_dir: Path | None = None) -> di
         merged.update(env)
     if merged:
         out["env"] = {**os.environ, **merged}
-    if sys.platform == "win32":
+    if is_windows():
         out["creationflags"] = subprocess.CREATE_NO_WINDOW
     return out
 

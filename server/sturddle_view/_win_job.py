@@ -13,9 +13,11 @@ import logging
 import sys
 from ctypes import wintypes
 
+from . import is_windows
+
 log = logging.getLogger(__name__)
 
-if sys.platform == "win32":
+if is_windows():
     # use_last_error: ctypes snapshots GetLastError() into thread-local
     # storage right after each call, so ctypes.get_last_error() reports the
     # failing call's code even if something else runs before we read it.
@@ -86,7 +88,7 @@ class _EXTENDED_LIMIT(ctypes.Structure):
 def create_job() -> int | None:
     """Create a fresh Job Object configured with KILL_ON_JOB_CLOSE.
     Returns the Job handle, or None off Windows."""
-    if sys.platform != "win32":
+    if not is_windows():
         return None
     h = _kernel32.CreateJobObjectW(None, None)
     if not h:
@@ -105,7 +107,7 @@ def create_job() -> int | None:
 
 def assign_to_job(job_handle: int | None, pid: int) -> None:
     """Add pid to the given Job. No-op if job_handle is None."""
-    if job_handle is None or sys.platform != "win32":
+    if job_handle is None or not is_windows():
         return
     h_proc = _kernel32.OpenProcess(_PROCESS_TERMINATE_AND_SET_QUOTA, False, pid)
     if not h_proc:
@@ -139,7 +141,7 @@ async def wait_for_pid_exit(pid: int) -> int | None:
     is closed only once the wait can no longer refer to it. Raises
     ``CancelledError`` if cancelled.
     """
-    if sys.platform != "win32":
+    if not is_windows():
         raise RuntimeError("wait_for_pid_exit is Windows-only")
     # NOTE: opening by pid has an inherent reuse window -- if the process
     # already exited and Windows recycled its pid, this can attach to an
@@ -195,9 +197,9 @@ async def wait_for_pid_exit(pid: int) -> int | None:
 
 
 def close_job(job_handle: int | None) -> None:
-    """Close the Job handle. Triggers KILL_ON_JOB_CLOSE — every process
+    """Close the Job handle. Triggers KILL_ON_JOB_CLOSE -- every process
     in the Job is killed synchronously by the OS. Idempotent on None."""
-    if job_handle is None or sys.platform != "win32":
+    if job_handle is None or not is_windows():
         return
     if not _kernel32.CloseHandle(job_handle):
         log.warning("close_job: CloseHandle failed (errno=%d)",
@@ -219,11 +221,11 @@ _PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002
 # PROC_THREAD_ATTRIBUTE_JOB_LIST requires Windows 10 build 14393
 # (1607, "Anniversary Update", 2016). Older Windows can't atomic-spawn.
 _ATOMIC_SPAWN_OK = (
-    sys.platform == "win32"
+    is_windows()
     and sys.getwindowsversion().major >= 10
     and sys.getwindowsversion().build >= 14393
 )
-if sys.platform == "win32" and not _ATOMIC_SPAWN_OK:
+if is_windows() and not _ATOMIC_SPAWN_OK:
     log.warning(
         "Windows < 10.0.14393 detected; atomic spawn-into-Job disabled, "
         "falling back to post-spawn AssignProcessToJobObject (small race)."
@@ -269,7 +271,7 @@ class _PROCESS_INFORMATION(ctypes.Structure):
     ]
 
 
-if sys.platform == "win32":
+if is_windows():
     _kernel32.InitializeProcThreadAttributeList.argtypes = [
         ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(ctypes.c_size_t)]
     _kernel32.InitializeProcThreadAttributeList.restype = wintypes.BOOL
@@ -326,7 +328,7 @@ def _create_process_in_job(
 ):
     """Drop-in replacement for ``_winapi.CreateProcess`` that creates the
     process inside ``job_handle`` atomically. Returns ``(hp, ht, pid, tid)``
-    — same shape asyncio expects, with handles as int values."""
+    -- same shape asyncio expects, with handles as int values."""
     si = _STARTUPINFOW()
     si.cb = ctypes.sizeof(_STARTUPINFOEXW)
     if startup_info is not None:
@@ -348,7 +350,7 @@ def _create_process_in_job(
     pi = _PROCESS_INFORMATION()
     flags = creation_flags | _EXTENDED_STARTUPINFO_PRESENT
 
-    # env mapping → contiguous wchar block "K=V\0K=V\0\0".
+    # env mapping -> contiguous wchar block "K=V\0K=V\0\0".
     env_block = None
     if env_mapping is not None:
         items = "".join(f"{k}={v}\0" for k, v in env_mapping.items())
@@ -372,7 +374,7 @@ def _create_process_in_job(
         del buffer  # noqa: F841
         raise err
     _kernel32.DeleteProcThreadAttributeList(attr_list)
-    del buffer  # noqa: F841 — kept alive until here on purpose
+    del buffer  # noqa: F841 -- kept alive until here on purpose
     return pi.hProcess, pi.hThread, pi.dwProcessId, pi.dwThreadId
 
 

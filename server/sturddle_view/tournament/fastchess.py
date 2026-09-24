@@ -15,10 +15,10 @@ import os
 import shutil
 import signal
 import subprocess
-import sys
 from collections import deque
 from pathlib import Path
 
+from .. import is_windows
 from .._runtime import proxy_argv_prefix
 from .._win_job import assign_to_job, close_job, create_job, spawn_in_job, wait_for_pid_exit
 from ..engines import (
@@ -419,7 +419,7 @@ def build_command(spec: RunSpec) -> list[str]:
 
 def _popen_kwargs() -> dict:
     """Cross-platform process-group isolation kwargs (POSIX vs Windows)."""
-    if sys.platform == "win32":
+    if is_windows():
         return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW}
     return {"start_new_session": True}
 
@@ -524,7 +524,7 @@ class FastchessRunner:
 
         # Create the per-tournament Job BEFORE spawn so the process can
         # be created already inside it (atomic via spawn_in_job).
-        if sys.platform == "win32":
+        if is_windows():
             try:
                 self._job_handle = create_job()
             except OSError:
@@ -605,7 +605,7 @@ class FastchessRunner:
         self._stop_requested = True
         pid = self._proc.pid
 
-        if sys.platform == "win32":
+        if is_windows():
             # Closing the Job triggers KILL_ON_JOB_CLOSE -- fastchess +
             # every descendant dies synchronously in the OS. No orphans,
             # no inherited pipe handles to wedge proc.wait().
@@ -662,7 +662,7 @@ class FastchessRunner:
         for t in self._drain_tasks:
             t.cancel()
         self._drain_tasks = []
-        if sys.platform == "win32" and self._job_handle is not None:
+        if is_windows() and self._job_handle is not None:
             close_job(self._job_handle)  # KILL_ON_JOB_CLOSE => synchronous tree kill
             self._job_handle = None
         elif proc is not None and proc.returncode is None:
@@ -709,7 +709,7 @@ class FastchessRunner:
         """
         assert self._proc is not None
         proc_wait = asyncio.ensure_future(self._proc.wait())
-        if sys.platform != "win32":
+        if not is_windows():
             return await proc_wait
         handle_wait = asyncio.ensure_future(wait_for_pid_exit(pid))
         try:

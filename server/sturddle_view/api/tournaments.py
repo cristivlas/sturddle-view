@@ -27,7 +27,14 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
+from .. import is_windows
 from ..auth import AUTH_COOKIE, check_token_value, origin_ok, require_token
+from ..config import (
+    ENGINE_BOOK_ORDER_KEY,
+    ENGINE_BOOK_PATH_KEY,
+    ENGINE_BOOK_PLIES_KEY,
+    ENGINE_SYZYGY_PATH_KEY,
+)
 from ..engines import (
     EngineNotFoundError,
     EngineRegistry,
@@ -644,7 +651,7 @@ def reveal_tournament_folder(tournament_id: str, request: Request) -> None:
     path = _store(request).dir_for(tournament_id)
     if not path.is_dir():
         raise not_found("tournament folder not found")
-    if sys.platform == "win32":
+    if is_windows():
         subprocess.Popen(["explorer", str(path)])
     elif sys.platform == "darwin":
         subprocess.Popen(["open", str(path)])
@@ -664,10 +671,10 @@ def _serialize_settings(s) -> dict:
         "default_template": dict(s.tournament_default_template or {}),
         "sprt_defaults": dict(s.tournament_sprt_defaults or {}),
         "fastchess_detected": FastchessRunner.detect_binary(s.tournament_fastchess_path),
-        "engine_default_syzygy_path": s.engine_default_syzygy_path,
-        "engine_default_book_path": s.engine_default_book_path,
-        "engine_default_book_plies": s.engine_default_book_plies,
-        "engine_default_book_order": s.engine_default_book_order,
+        ENGINE_SYZYGY_PATH_KEY: s.engine_default_syzygy_path,
+        ENGINE_BOOK_PATH_KEY: s.engine_default_book_path,
+        ENGINE_BOOK_PLIES_KEY: s.engine_default_book_plies,
+        ENGINE_BOOK_ORDER_KEY: s.engine_default_book_order,
     }
 
 

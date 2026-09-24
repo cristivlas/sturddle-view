@@ -18,7 +18,7 @@ try:
 except ImportError:  # optional: installed with the [desktop] extra
     webview = None
 
-from . import APP_NAME, app_data_dir
+from . import APP_NAME, app_data_dir, is_windows
 from ._uvicorn_signal import make_signalling_server
 from .app import create_app
 from .config import ENV_TOKEN, LOOPBACK_HOST, WEB_DIR, WILDCARD_HOST, Settings
@@ -31,7 +31,6 @@ _SERVER_STARTUP_TIMEOUT = env_float("SV_DESKTOP_STARTUP_TIMEOUT_S", 5.0, min_val
 _SERVER_SHUTDOWN_TIMEOUT = env_float("SV_DESKTOP_SHUTDOWN_TIMEOUT_S", 5.0, min_value=0.0)
 _MIN_WINDOW_WIDTH = 960
 _MIN_WINDOW_HEIGHT = 720
-_IS_WINDOWS = os.name == "nt"
 _STARTUP_ERROR_TITLE = f"{APP_NAME} could not start"
 _PORT_IN_USE_MESSAGE = (
     "Port {port} is already in use -- another copy may be running. "
@@ -147,7 +146,7 @@ def _port_in_use(host: str, port: int) -> bool:
     bind_host = LOOPBACK_HOST if host == WILDCARD_HOST else host
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        if not _IS_WINDOWS:
+        if not is_windows():
             probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         probe.bind((bind_host, port))
         return False
@@ -160,7 +159,7 @@ def _port_in_use(host: str, port: int) -> bool:
 def _apply_window_icon(window) -> None:
     """Windows only: a window's icon comes from the launcher exe (the
     Python logo in dev), so set app.ico explicitly via WM_SETICON."""
-    if not _IS_WINDOWS or not _WINDOW_ICON.is_file():
+    if not is_windows() or not _WINDOW_ICON.is_file():
         return
     try:
         user32 = ctypes.windll.user32

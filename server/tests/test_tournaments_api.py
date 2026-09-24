@@ -23,9 +23,12 @@ from sturddle_view.tournament import fastchess as fc_mod
 from sturddle_view.tournament.fastchess import FastchessRunner
 from sturddle_view.tournament.pgn_stats import SPRT_CONTINUE, SPRT_H0, SPRT_H1, SprtResult
 from sturddle_view.tournament.store import (
+    PGN_FILENAME,
+    STATE_FILENAME,
     STATUS_DONE,
     STATUS_RUNNING,
     STATUS_STOPPED,
+    TOURNAMENTS_DIRNAME,
     TournamentStore,
 )
 
@@ -55,7 +58,7 @@ sys.exit(rc)
 @pytest.fixture
 def settings(tmp_path):
     s = Settings(auth_disabled=True)
-    s.tournament_root = str(tmp_path / "tournaments")
+    s.tournament_root = str(tmp_path / TOURNAMENTS_DIRNAME)
     s.tournament_fastchess_path = sys.executable  # always present in tests
     return s
 
@@ -174,7 +177,7 @@ def test_get_standings_games_from_pgn(client, settings):
         "name": "y", "engines": _engines_payload(),
     }).json()
     tid = created["id"]
-    pgn = Path(settings.tournament_root) / tid / "games.pgn"
+    pgn = Path(settings.tournament_root) / tid / PGN_FILENAME
     pgn.parent.mkdir(parents=True, exist_ok=True)
     pgn.write_text(_PGN_TWO_GAMES, encoding="utf-8")
     body = client.get(f"/api/tournaments/{tid}").json()
@@ -205,7 +208,7 @@ def test_standings_anchor_live_first_frozen_fallback(client, settings):
     assert created["engines"][0]["rating"] == 3000
     assert "rating" not in created["engines"][1]
 
-    pgn = Path(settings.tournament_root) / tid / "games.pgn"
+    pgn = Path(settings.tournament_root) / tid / PGN_FILENAME
     pgn.parent.mkdir(parents=True, exist_ok=True)
     pgn.write_text(_PGN_BALANCED, encoding="utf-8")
 
@@ -251,7 +254,7 @@ def test_start_requires_confirm_wipe_when_stopped(client, settings, monkeypatch)
     store = TournamentStore(Path(settings.tournament_root))
     store.update_status(t["id"], "stopped", stopped_at="2026-01-01T00:00:00+00:00")
     # Drop a stray file we expect to survive (no wipe happens on 409).
-    pgn = Path(settings.tournament_root) / t["id"] / "games.pgn"
+    pgn = Path(settings.tournament_root) / t["id"] / PGN_FILENAME
     pgn.parent.mkdir(parents=True, exist_ok=True)
     pgn.write_text("[Result \"1-0\"]\n", encoding="utf-8")
 
@@ -270,7 +273,7 @@ def test_start_with_confirm_wipe_wipes_and_starts(client, settings, monkeypatch)
     }).json()
     store = TournamentStore(Path(settings.tournament_root))
     store.update_status(t["id"], "stopped", stopped_at="2026-01-01T00:00:00+00:00")
-    pgn = Path(settings.tournament_root) / t["id"] / "games.pgn"
+    pgn = Path(settings.tournament_root) / t["id"] / PGN_FILENAME
     pgn.parent.mkdir(parents=True, exist_ok=True)
     pgn.write_text("[Result \"1-0\"]\n", encoding="utf-8")
 
@@ -301,7 +304,7 @@ def test_wipe_for_restart_preserves_immutables(settings):
         engine_defaults={"threads": 4},
     )
     store.update_status(t.id, "failed", last_error={"rc": 1})
-    pgn = Path(settings.tournament_root) / t.id / "games.pgn"
+    pgn = Path(settings.tournament_root) / t.id / PGN_FILENAME
     pgn.write_text("[Result \"1-0\"]\n", encoding="utf-8")
 
     pre_template = dict(t.template)
@@ -481,7 +484,7 @@ def test_settings_persist_across_restart(tmp_path, monkeypatch):
     )
 
     s1 = Settings(auth_disabled=True)
-    s1.tournament_root = str(tmp_path / "tournaments")
+    s1.tournament_root = str(tmp_path / TOURNAMENTS_DIRNAME)
     s1.tournament_fastchess_path = sys.executable
     app1 = create_app(settings=s1)
     with TestClient(app1) as c1:
@@ -513,7 +516,7 @@ def test_reconcile_marks_stale_running_as_failed(tmp_path, monkeypatch):
     # app without stopping (simulating a server crash). The next app
     # construction must reconcile the on-disk 'running' to 'failed'.
     s = Settings(auth_disabled=True)
-    s.tournament_root = str(tmp_path / "tournaments")
+    s.tournament_root = str(tmp_path / TOURNAMENTS_DIRNAME)
     s.tournament_fastchess_path = sys.executable
     monkeypatch.setattr(
         fc_mod, "build_command",
@@ -543,7 +546,7 @@ def test_reconcile_marks_stale_running_as_failed(tmp_path, monkeypatch):
         c1.post(f"/api/tournaments/{t['id']}/stop")
 
     # Manually corrupt the on-disk state to "running" to simulate the crash
-    state_path = Path(s.tournament_root) / t["id"] / "state.json"
+    state_path = Path(s.tournament_root) / t["id"] / STATE_FILENAME
     state = json.loads(state_path.read_text())
     state["status"] = "running"
     state_path.write_text(json.dumps(state))
@@ -597,7 +600,7 @@ def test_ws_receives_tournament_status_change(client, monkeypatch):
 @pytest.fixture
 def sprt_settings(tmp_path, monkeypatch):
     s = Settings(auth_disabled=True)
-    s.tournament_root = str(tmp_path / "tournaments")
+    s.tournament_root = str(tmp_path / TOURNAMENTS_DIRNAME)
     s.tournament_fastchess_path = sys.executable
     s.tournament_sprt_defaults = {"elo0": 3, "elo1": 15, "alpha": 0.02, "beta": 0.02}
     monkeypatch.setattr(FastchessRunner, "detect_binary", staticmethod(lambda c: c))

@@ -13,7 +13,7 @@ import uvicorn
 from uvicorn import Config
 from uvicorn.supervisors import ChangeReload
 
-from . import APP_NAME, INSTANCE_ENV, app_config_dir
+from . import APP_NAME, INSTANCE_ENV, app_config_dir, is_windows
 from ._instance_lock import acquire as _acquire_lock
 from ._reload_worker import APP_FACTORY, windows_reload_worker
 from ._runtime import DESKTOP_FLAG, PROXY_SUBCOMMAND, is_frozen
@@ -48,7 +48,6 @@ _CERT_FLAG = "--cert"
 _KEY_FLAG = "--key"
 _LOCK_FILENAME = "server.lock"
 _ENV_TRUE = "1"
-_IS_WINDOWS = sys.platform == "win32"
 
 # Process exit codes: argparse's usage-error code, a generic failure, and
 # the shell convention for death by SIGINT (128 + 2).
@@ -186,16 +185,16 @@ def main() -> None:
     # which cannot spawn subprocesses (asyncio raises NotImplementedError from
     # _make_subprocess_transport). We need ProactorEventLoop to launch UCI engines.
     loop: object = "auto"
-    if _IS_WINDOWS and args.reload:
+    if is_windows() and args.reload:
         loop = asyncio.ProactorEventLoop
 
     # Windows: SIGINT can't preempt uvicorn's C-level blocking; use the
     # OS console handler instead. Hard-exits -- children rely on the
     # tournament Job Object for cleanup.
-    if _IS_WINDOWS and not args.reload:
+    if is_windows() and not args.reload:
         _install_windows_ctrl_handler()
 
-    if _IS_WINDOWS and args.reload:
+    if is_windows() and args.reload:
         _run_windows_reload(
             host=host, port=port, loop=loop,
             ssl_certfile=args.cert, ssl_keyfile=args.key,

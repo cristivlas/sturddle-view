@@ -20,7 +20,7 @@ def atomic_write_json(path: Path, payload: Any, *, indent: int | None = None) ->
 
 def atomic_write_text(path: Path, text: str) -> None:
     """Write a UTF-8 text payload via tempfile + os.replace. Same guarantees
-    as ``atomic_write_json`` — readers see the old file or the fully-written
+    as ``atomic_write_json`` -- readers see the old file or the fully-written
     new one, never a partial write."""
     _atomic_write(path, lambda f: f.write(text))
 

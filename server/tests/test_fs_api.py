@@ -105,7 +105,7 @@ def test_entry_is_executable_windows(monkeypatch, tmp_path, name, expected):
     """On Windows, is_executable is decided by PATHEXT, not os.access(X_OK)."""
     from sturddle_view.api import fs as fs_mod
 
-    monkeypatch.setattr(fs_mod.sys, "platform", "win32")
+    monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
     p = tmp_path / name
     p.write_text("x")
@@ -118,7 +118,7 @@ def test_entry_is_executable_windows_honors_pathext(monkeypatch, tmp_path):
     """Non-default PATHEXT entries (e.g. .PS1) are recognized."""
     from sturddle_view.api import fs as fs_mod
 
-    monkeypatch.setattr(fs_mod.sys, "platform", "win32")
+    monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("PATHEXT", ".EXE;.PS1")
     ps1 = tmp_path / "tool.ps1"
     ps1.write_text("x")

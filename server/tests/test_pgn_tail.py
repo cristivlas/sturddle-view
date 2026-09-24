@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
-import time
 from pathlib import Path
 
 import chess.pgn as pgn_mod
@@ -492,31 +491,40 @@ async def test_start_and_stop(pgn_path):
 
 @pytest.mark.asyncio
 async def test_loop_stays_responsive_during_slow_parse(pgn_path):
-    """Synthetic 200ms parse must not block other coroutines on the
-    loop. We schedule a 50ms heartbeat alongside poll_once and assert
-    the heartbeat ticked while the parse was still in flight."""
+    """A parse in flight must not block the loop: the parse parks off the
+    loop until the still-running loop has seen it start."""
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")
     records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
 
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    parse_started = asyncio.Event()
+    release = threading.Event()
     real_parse = tailer._parse_delta
-    def slow_parse(start, end):
-        time.sleep(0.2)
-        return real_parse(start, end)
-    tailer._parse_delta = slow_parse
 
-    ticks = 0
-    async def heartbeat():
-        nonlocal ticks
-        for _ in range(8):
-            await asyncio.sleep(0.025)
-            ticks += 1
+    def parked_parse(start, end):
+        if threading.get_ident() == loop_thread:
+            # Parsing on the loop blocks it; parking here would deadlock.
+            parse_started.set()
+            raise AssertionError("parse ran on the event loop thread")
+        loop.call_soon_threadsafe(parse_started.set)
+        release.wait()
+        return real_parse(start, end)
+    tailer._parse_delta = parked_parse
 
     poll_task = asyncio.create_task(tailer.poll_once())
-    hb_task = asyncio.create_task(heartbeat())
-    await asyncio.gather(poll_task, hb_task)
+    started = asyncio.create_task(parse_started.wait())
+    try:
+        # Waking here while the parse is parked proves the loop is free; a
+        # poll that fails before parsing ends the wait instead of hanging it.
+        await asyncio.wait({poll_task, started}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        release.set()
+        started.cancel()
+        await asyncio.gather(started, return_exceptions=True)
+    await poll_task
     assert len(records) == 1
-    assert ticks >= 5  # at minimum, heartbeat did real work during the parse
 
 
 @pytest.mark.asyncio

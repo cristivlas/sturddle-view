@@ -13,7 +13,7 @@ Tool callables are async with the shape:
     `async def tool(input: dict, *, cancel_token) -> dict`
 The `cancel_token` is the spec's per-call cancellation handle -- present
 on day one even though v1 runs tools sequentially, so the parallel-tool
-flip later is config, not refactor (spec §Triggers Forward-looking).
+flip later is config, not refactor (spec sec. Triggers Forward-looking).
 """
 from __future__ import annotations
 
@@ -21,6 +21,31 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from .base import ToolWireSpec
+
+_TYPE_KEY = "type"
+_DESCRIPTION_KEY = "description"
+_STRING_TYPE = "string"
+
+
+def object_schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
+    """A tool's JSON Schema input: an object with these properties."""
+    return {_TYPE_KEY: "object", "properties": properties, "required": required}
+
+
+def string_prop(description: str) -> dict[str, Any]:
+    return {_TYPE_KEY: _STRING_TYPE, _DESCRIPTION_KEY: description}
+
+
+def integer_prop(description: str) -> dict[str, Any]:
+    return {_TYPE_KEY: "integer", _DESCRIPTION_KEY: description}
+
+
+def string_list_prop(description: str) -> dict[str, Any]:
+    return {
+        _TYPE_KEY: "array",
+        "items": {_TYPE_KEY: _STRING_TYPE},
+        _DESCRIPTION_KEY: description,
+    }
 
 
 class UnknownToolError(KeyError):
@@ -35,7 +60,7 @@ class ToolSpec:
     description: str
     input_schema: dict[str, Any]
     # Post-call usage guidance, lazy-loaded on first tool call per turn.
-    # See docs/ai-analysis-spec.md §Skills layer. None = no card injected.
+    # See docs/ai-analysis-spec.md sec. Skills layer. None = no card injected.
     card: str | None = None
 
 
@@ -72,7 +97,7 @@ class ToolRegistry:
         return [
             {
                 "name": spec.name,
-                "description": spec.description,
+                _DESCRIPTION_KEY: spec.description,
                 "input_schema": spec.input_schema,
             }
             for spec, _ in self._tools.values()

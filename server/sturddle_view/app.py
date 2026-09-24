@@ -4,7 +4,6 @@ import asyncio
 import hmac
 import logging
 import socket
-import sys
 from asyncio import proactor_events, trsock
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -23,7 +22,7 @@ try:
 except ImportError:  # optional: uvicorn falls back to its websockets impl
     wsproto = wsproto_impl = ConnectionState = None
 
-from . import APP_NAME, __version__
+from . import APP_NAME, __version__, is_windows
 from . import llm as llm_pkg
 from .auth import AUTH_COOKIE, AUTH_PATH, AUTH_TOKEN_PARAM, INVALID_TOKEN_DETAIL, origin_ok
 from .api import chess_utils as chess_api
@@ -171,7 +170,7 @@ def _winerror(exc: OSError) -> int | None:
 def _install_proactor_accept_resilience() -> None:
     """Re-arm Windows AcceptEx on transient OSErrors instead of dropping
     the listener (stock cpython closes the socket on any accept OSError)."""
-    if sys.platform != "win32":
+    if not is_windows():
         return
 
     def _start_serving(self, protocol_factory, sock,

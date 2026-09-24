@@ -158,7 +158,7 @@ class OpeningBook:
 
     # Process-wide cache: parsing the TSVs takes ~3s and the data is static.
     # The cache is keyed by directory path only and is NOT invalidated on
-    # file changes — callers that mutate the openings directory at runtime
+    # file changes -- callers that mutate the openings directory at runtime
     # must clear `_cache` themselves. (Production data ships read-only with
     # the app; tests use the same default dir.)
     _cache: dict[Path, "OpeningBook"] = {}

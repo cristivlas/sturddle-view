@@ -17,23 +17,20 @@ from sturddle_view.engines import _popen_kwargs
 
 
 def test_popen_kwargs_no_env_no_flags_on_posix():
-    with patch("sturddle_view.engines.sys") as mock_sys:
-        mock_sys.platform = "linux"
+    with patch("sturddle_view.engines.is_windows", return_value=False):
         out = _popen_kwargs(None)
     assert out == {}
 
 
 def test_popen_kwargs_empty_env_no_overlay():
-    with patch("sturddle_view.engines.sys") as mock_sys:
-        mock_sys.platform = "linux"
+    with patch("sturddle_view.engines.is_windows", return_value=False):
         out = _popen_kwargs({})
     assert out == {}
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only creationflag")
 def test_popen_kwargs_includes_creationflag_on_win32():
-    with patch("sturddle_view.engines.sys") as mock_sys:
-        mock_sys.platform = "win32"
+    with patch("sturddle_view.engines.is_windows", return_value=True):
         out = _popen_kwargs(None)
     assert out == {"creationflags": subprocess.CREATE_NO_WINDOW}
 
@@ -41,8 +38,7 @@ def test_popen_kwargs_includes_creationflag_on_win32():
 def test_popen_kwargs_overlays_env_on_parent(monkeypatch):
     monkeypatch.setenv("PARENT_ONLY", "p")
     monkeypatch.setenv("BOTH", "parent_value")
-    with patch("sturddle_view.engines.sys") as mock_sys:
-        mock_sys.platform = "linux"
+    with patch("sturddle_view.engines.is_windows", return_value=False):
         out = _popen_kwargs({"BOTH": "child_value", "CHILD_ONLY": "c"})
     env = out["env"]
     assert env["PARENT_ONLY"] == "p"

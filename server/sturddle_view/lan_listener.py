@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import socket
 
 import uvicorn
 
+from . import is_windows
 from .config import WILDCARD_HOST
 from .netinfo import is_loopback, lan_hosts
 
@@ -77,7 +77,7 @@ def _bind_socket(host: str, port: int) -> socket.socket | None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     # SO_REUSEADDR as uvicorn does -- except on Windows, where it lets a
     # bind steal an actively listening port.
-    if os.name != "nt":
+    if not is_windows():
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.bind((host, port))

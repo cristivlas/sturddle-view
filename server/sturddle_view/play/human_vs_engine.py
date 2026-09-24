@@ -39,10 +39,16 @@ from ..chess.results import (
     loser_result,
 )
 from ..config import (
+    AI_ENABLED_KEY,
+    AUTO_CLAIM_DRAWS_KEY,
     DEFAULT_TC_INCREMENT_SECONDS,
     DEFAULT_TC_INITIAL_SECONDS,
+    ENGINE_SYZYGY_PATH_KEY,
     EVAL_POV_HUMAN,
+    HVE_DIFFICULTY_KEY,
     HVE_DIFFICULTY_MAX,
+    PGN_AUTOSAVE_KEY,
+    PGN_DIR_KEY,
     _DEFAULT_HVE_DEFICIT_RELIEF_CAP,
     _DEFAULT_HVE_DEFICIT_RELIEF_GAIN,
     _DEFAULT_HVE_REMOVAL_STEP,
@@ -742,7 +748,7 @@ class HumanVsEngine:
         return global_engine_defaults(self._settings)
 
     def _ensure_tablebase(self) -> None:
-        sp = getattr(self._settings, "engine_default_syzygy_path", None)
+        sp = getattr(self._settings, ENGINE_SYZYGY_PATH_KEY, None)
         if self._tb is not None and self._tb.path != sp:
             self._tb.close()
             self._tb = None
@@ -1133,7 +1139,7 @@ class HumanVsEngine:
             board = self._board.copy()
             await self._publish_board()
             await self._publish_clock()
-        if not getattr(self._settings, "ai_enabled", False):
+        if not getattr(self._settings, AI_ENABLED_KEY, False):
             self._analysis_task = asyncio.create_task(self._run_analysis(game_id, board))
 
     async def stop_analysis(self) -> None:
@@ -2158,7 +2164,7 @@ class HumanVsEngine:
             except Exception:
                 log.error("could not start engine for search", exc_info=True)
                 return
-        difficulty = getattr(self._settings, "hve_difficulty", HVE_DIFFICULTY_MAX)
+        difficulty = getattr(self._settings, HVE_DIFFICULTY_KEY, HVE_DIFFICULTY_MAX)
         # Below max difficulty (and with a searchmoves-compliant engine):
         # off-clock sweep + blinding pass build the visible pool; the
         # normal search below is then restricted to it. A failed probe
@@ -2458,7 +2464,7 @@ class HumanVsEngine:
         assert self._board is not None
         if self._board.is_game_over():
             return True
-        if getattr(self._settings, "auto_claim_draws", True):
+        if getattr(self._settings, AUTO_CLAIM_DRAWS_KEY, True):
             return _claimable_draw(self._board) is not None
         return False
 
@@ -2641,12 +2647,12 @@ class HumanVsEngine:
             return None
         if self._viewing:
             return None
-        if self._settings is None or not getattr(self._settings, "pgn_autosave", False):
+        if self._settings is None or not getattr(self._settings, PGN_AUTOSAVE_KEY, False):
             return None
         if not self._board.move_stack:
             return None
 
-        raw = getattr(self._settings, "pgn_dir", None)
+        raw = getattr(self._settings, PGN_DIR_KEY, None)
         if not raw:
             return None
         pgn_dir = Path(raw).expanduser()
