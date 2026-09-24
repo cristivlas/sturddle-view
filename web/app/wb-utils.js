@@ -1,4 +1,5 @@
 import { scrollRowIntoView } from "./col-sort.js";
+import { mqMobile } from "./breakpoints.js";
 
 // Split at the last / or \ (trailing ones ignored) into { dir, name };
 // dir is "" when there is none. Roots keep their separator ("/", "C:\").
@@ -376,6 +377,8 @@ const SCROLL_EDGE_FUZZ_PX = 2;
 // point the scrollbar-thumb gradient at the edge that still has content;
 // no class (the untracked default) reads the same as "at top/left".
 function markScrollEdges(el, target) {
+  // Mobile keeps the flat thumb (styles.css), so no marking or snap-back.
+  if (mqMobile.matches) return;
   // Emptied content (zero-height wrapper, e.g. a rowless table kept wide by
   // its colgroup) leaves a meaningless stale offset; snap back to origin.
   // el.clientHeight>0 skips hidden panels; SLOT is boxless, never "empty".

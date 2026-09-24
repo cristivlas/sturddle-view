@@ -142,24 +142,27 @@ body { -webkit-user-select: none; user-select: none; }
 /* Gradient points at whichever edge still has more content; flat once a
    container is scrolled away from every edge (v-/h-scroll-pos classes, JS:
    wb-utils.js installScrollEdgeTracking). No class = the at-top/at-left
-   look below, so a never-scrolled container needs no initial pass. */
-*::-webkit-scrollbar-thumb:vertical:not(:hover) {
-  background: linear-gradient(to top, transparent, var(--scrollbar-thumb));
-}
-*.v-scroll-pos-mid::-webkit-scrollbar-thumb:vertical:not(:hover) {
-  background: var(--scrollbar-thumb);
-}
-*.v-scroll-pos-bottom::-webkit-scrollbar-thumb:vertical:not(:hover) {
-  background: linear-gradient(to bottom, transparent, var(--scrollbar-thumb));
-}
-*::-webkit-scrollbar-thumb:horizontal:not(:hover) {
-  background: linear-gradient(to left, transparent, var(--scrollbar-thumb));
-}
-*.h-scroll-pos-mid::-webkit-scrollbar-thumb:horizontal:not(:hover) {
-  background: var(--scrollbar-thumb);
-}
-*.h-scroll-pos-right::-webkit-scrollbar-thumb:horizontal:not(:hover) {
-  background: linear-gradient(to right, transparent, var(--scrollbar-thumb));
+   look below, so a never-scrolled container needs no initial pass.
+   Desktop only (801px = --bp-mobile + 1); mobile keeps the flat thumb. */
+@media (min-width: 801px) {
+  *::-webkit-scrollbar-thumb:vertical:not(:hover) {
+    background: linear-gradient(to top, transparent, var(--scrollbar-thumb));
+  }
+  *.v-scroll-pos-mid::-webkit-scrollbar-thumb:vertical:not(:hover) {
+    background: var(--scrollbar-thumb);
+  }
+  *.v-scroll-pos-bottom::-webkit-scrollbar-thumb:vertical:not(:hover) {
+    background: linear-gradient(to bottom, transparent, var(--scrollbar-thumb));
+  }
+  *::-webkit-scrollbar-thumb:horizontal:not(:hover) {
+    background: linear-gradient(to left, transparent, var(--scrollbar-thumb));
+  }
+  *.h-scroll-pos-mid::-webkit-scrollbar-thumb:horizontal:not(:hover) {
+    background: var(--scrollbar-thumb);
+  }
+  *.h-scroll-pos-right::-webkit-scrollbar-thumb:horizontal:not(:hover) {
+    background: linear-gradient(to right, transparent, var(--scrollbar-thumb));
+  }
 }
 *::-webkit-scrollbar-thumb:hover { background: var(--wa-color-focus); }
 *::-webkit-scrollbar-corner { background: transparent; }
@@ -186,15 +189,17 @@ wa-select::part(listbox)::-webkit-scrollbar-thumb {
 }
 /* Gradient points at whichever edge still has more content; v-scroll-pos-mid/
    -bottom (JS, wb-utils.js installScrollEdgeTracking) live on the host,
-   since ::part() can't take a class selector of its own. */
-wa-select::part(listbox)::-webkit-scrollbar-thumb:not(:hover) {
-  background: linear-gradient(to top, transparent, var(--scrollbar-thumb));
-}
-wa-select.v-scroll-pos-mid::part(listbox)::-webkit-scrollbar-thumb:not(:hover) {
-  background: var(--scrollbar-thumb);
-}
-wa-select.v-scroll-pos-bottom::part(listbox)::-webkit-scrollbar-thumb:not(:hover) {
-  background: linear-gradient(to bottom, transparent, var(--scrollbar-thumb));
+   since ::part() can't take a class selector of its own. Desktop only. */
+@media (min-width: 801px) {
+  wa-select::part(listbox)::-webkit-scrollbar-thumb:not(:hover) {
+    background: linear-gradient(to top, transparent, var(--scrollbar-thumb));
+  }
+  wa-select.v-scroll-pos-mid::part(listbox)::-webkit-scrollbar-thumb:not(:hover) {
+    background: var(--scrollbar-thumb);
+  }
+  wa-select.v-scroll-pos-bottom::part(listbox)::-webkit-scrollbar-thumb:not(:hover) {
+    background: linear-gradient(to bottom, transparent, var(--scrollbar-thumb));
+  }
 }
 wa-select::part(listbox)::-webkit-scrollbar-thumb:hover { background: var(--wa-color-focus); }
 wa-select::part(listbox)::-webkit-scrollbar-corner { background: transparent; }
