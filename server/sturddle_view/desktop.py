@@ -12,28 +12,35 @@ from html import escape as html_escape
 from pathlib import Path
 
 import uvicorn
-from platformdirs import user_data_dir
 
-from . import app_dir_name
+try:
+    import webview  # type: ignore[import-untyped]
+except ImportError:  # optional: installed with the [desktop] extra
+    webview = None
+
+from . import APP_NAME, app_data_dir
 from ._uvicorn_signal import make_signalling_server
 from .app import create_app
-from .config import LOOPBACK_HOST, WEB_DIR, WILDCARD_HOST, Settings
+from .config import ENV_TOKEN, LOOPBACK_HOST, WEB_DIR, WILDCARD_HOST, Settings
+from .env_utils import env_float
+from .error_detail import ERROR_KEY
 from .lan_listener import LanListener
 from .netinfo import entry_url
 
-_SERVER_STARTUP_TIMEOUT = 5.0
-_SERVER_SHUTDOWN_TIMEOUT = 5.0
+_SERVER_STARTUP_TIMEOUT = env_float("SV_DESKTOP_STARTUP_TIMEOUT_S", 5.0, min_value=0.0)
+_SERVER_SHUTDOWN_TIMEOUT = env_float("SV_DESKTOP_SHUTDOWN_TIMEOUT_S", 5.0, min_value=0.0)
 _MIN_WINDOW_WIDTH = 960
 _MIN_WINDOW_HEIGHT = 720
-_STARTUP_ERROR_TITLE = "sturddle-view could not start"
+_IS_WINDOWS = os.name == "nt"
+_STARTUP_ERROR_TITLE = f"{APP_NAME} could not start"
 _PORT_IN_USE_MESSAGE = (
     "Port {port} is already in use -- another copy may be running. "
-    "Close it, or start on a different port: sturddle-view --port {alt}"
+    f"Close it, or start on a different port: {APP_NAME} --port {{alt}}"
 )
 _STARTUP_FAILED_MESSAGE = (
     "The local server exited during startup. Another copy may be running, "
     "or port {port} may be blocked. Try a different port: "
-    "sturddle-view --port {alt}"
+    f"{APP_NAME} --port {{alt}}"
 )
 _STARTUP_TIMEOUT_MESSAGE = (
     "The local server did not start within {timeout:.0f}s on port {port}."
@@ -56,8 +63,25 @@ _CLOSE_CONFIRM_MESSAGE = (
     "Closing now will stop it; on restart it will start from scratch and "
     "all recorded games will be discarded.\n\nClose anyway?"
 )
+_NOT_INSTALLED_MESSAGE = "PyWebView is not installed. Install with: pip install '.[desktop]'"
+_HTML_LINE_BREAK = "<br>"
+
+# save_pgn result keys, read by the page's desktop bridge.
+_OK_KEY = "ok"
+_PATH_KEY = "path"
 
 log = logging.getLogger(__name__)
+
+
+def _suggested_port(port: int) -> int:
+    """The next port, offered when ``port`` can't be used."""
+    return port + 1
+
+
+def _html_lines(text: str) -> str:
+    """Escape first, then turn newlines into breaks: text can carry a raw
+    exception string, so never interpolate it unescaped into HTML."""
+    return html_escape(text).replace("\n", _HTML_LINE_BREAK)
 
 
 class JsApi:
@@ -79,7 +103,7 @@ class JsApi:
     def save_pgn(self, pgn_text: str, default_filename: str) -> dict:
         window = self._window
         if window is None:
-            return {"ok": False, "error": "window not attached"}
+            return _save_failed("window not attached")
         try:
             result = window.create_file_dialog(
                 self._save_dialog_kind,
@@ -88,9 +112,9 @@ class JsApi:
             )
         except Exception as exc:
             log.error("save_pgn: dialog failed", exc_info=True)
-            return {"ok": False, "error": str(exc)}
+            return _save_failed(str(exc))
         if not result:
-            return {"ok": False, "cancelled": True}
+            return {_OK_KEY: False, "cancelled": True}
         # PyWebView returns either a string or a sequence depending on
         # backend; normalize.
         path = result[0] if isinstance(result, (list, tuple)) else result
@@ -98,13 +122,17 @@ class JsApi:
             Path(path).write_text(pgn_text, encoding="utf-8", newline="")
         except OSError as exc:
             log.error("save_pgn: write failed for %s", path, exc_info=True)
-            return {"ok": False, "error": str(exc), "path": str(path)}
-        return {"ok": True, "path": str(path)}
+            return _save_failed(str(exc), **{_PATH_KEY: str(path)})
+        return {_OK_KEY: True, _PATH_KEY: str(path)}
 
     def toggle_fullscreen(self) -> None:
         window = self._window
         if window is not None:
             window.toggle_fullscreen()
+
+
+def _save_failed(error: str, **extra) -> dict:
+    return {_OK_KEY: False, ERROR_KEY: error, **extra}
 
 
 def _port_in_use(host: str, port: int) -> bool:
@@ -119,7 +147,7 @@ def _port_in_use(host: str, port: int) -> bool:
     bind_host = LOOPBACK_HOST if host == WILDCARD_HOST else host
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        if os.name != "nt":
+        if not _IS_WINDOWS:
             probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         probe.bind((bind_host, port))
         return False
@@ -132,7 +160,7 @@ def _port_in_use(host: str, port: int) -> bool:
 def _apply_window_icon(window) -> None:
     """Windows only: a window's icon comes from the launcher exe (the
     Python logo in dev), so set app.ico explicitly via WM_SETICON."""
-    if os.name != "nt" or not _WINDOW_ICON.is_file():
+    if not _IS_WINDOWS or not _WINDOW_ICON.is_file():
         return
     try:
         user32 = ctypes.windll.user32
@@ -155,15 +183,14 @@ def _apply_window_icon(window) -> None:
 
 
 def show_error(title: str, message: str, details: str | None = None) -> None:
+    if webview is None:
+        return
     try:
-        import webview  # type: ignore[import-untyped]
-        # Escape first, then turn newlines into breaks: messages can carry a
-        # raw exception string, so never interpolate it unescaped into HTML.
-        safe = html_escape(message).replace("\n", "<br>")
+        safe = _html_lines(message)
         details_block = ""
         height = _ERROR_WINDOW_HEIGHT
         if details:
-            safe_details = html_escape(details).replace("\n", "<br>")
+            safe_details = _html_lines(details)
             # Backtick spans become <code> chips (escape first, so the
             # substitution can never introduce markup from the message).
             safe_details = re.sub(r"`([^`]+)`", r"<code>\1</code>", safe_details)
@@ -196,7 +223,7 @@ def show_error(title: str, message: str, details: str | None = None) -> None:
         window.events.shown += _apply_window_icon
         webview.start()
     except Exception:
-        pass
+        log.error("error window: failed to show %r: %s", title, message, exc_info=True)
 
 
 def _active_tournament_name(app) -> str | None:
@@ -233,18 +260,17 @@ def _make_close_handler(app, window):
     return on_closing
 
 
-def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> None:
-    try:
-        import webview  # type: ignore[import-untyped]
-    except ImportError as exc:
-        raise SystemExit("PyWebView is not installed. Install with: pip install '.[desktop]'") from exc
+def run_desktop(host: str, port: int, width: int, height: int) -> None:
+    if webview is None:
+        raise SystemExit(_NOT_INSTALLED_MESSAGE)
 
     # Pre-flight the port: uvicorn catches the bind OSError and sys.exit(1)s,
     # which surfaces as an unhelpful SystemExit(1). Detect the common case
     # here so the user gets a clear "port in use" window with guidance.
     if _port_in_use(host, port):
         show_error(
-            _STARTUP_ERROR_TITLE, _PORT_IN_USE_MESSAGE.format(port=port, alt=port + 1)
+            _STARTUP_ERROR_TITLE,
+            _PORT_IN_USE_MESSAGE.format(port=port, alt=_suggested_port(port)),
         )
         raise SystemExit(f"port {port} already in use")
 
@@ -252,7 +278,7 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
     # Pin the token so create_app picks up the same value via Settings()
     # (rather than rolling a new random one) -- the /auth handshake below
     # validates against this token.
-    os.environ.setdefault("SV_TOKEN", settings.token)
+    os.environ.setdefault(ENV_TOKEN, settings.token)
 
     # Build the app eagerly so we can hand the same instance to uvicorn
     # AND keep a reference for the close-confirm handler (reads
@@ -293,7 +319,8 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
         thread.join(timeout=_SERVER_SHUTDOWN_TIMEOUT)
         log.error("desktop server startup failed: %r", signal.error)
         show_error(
-            _STARTUP_ERROR_TITLE, _STARTUP_FAILED_MESSAGE.format(port=port, alt=port + 1)
+            _STARTUP_ERROR_TITLE,
+            _STARTUP_FAILED_MESSAGE.format(port=port, alt=_suggested_port(port)),
         )
         raise SystemExit(f"server startup failed: {signal.error!r}")
 
@@ -303,13 +330,13 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
     url = entry_url(settings, window_host)
     api = JsApi(save_dialog_kind=webview.FileDialog.SAVE)
     window = webview.create_window(
-        "sturddle-view", url, width=width, height=height,
+        APP_NAME, url, width=width, height=height,
         min_size=(_MIN_WINDOW_WIDTH, _MIN_WINDOW_HEIGHT), js_api=api,
     )
     api.attach(window)
     window.events.shown += _apply_window_icon
     window.events.closing += _make_close_handler(app, window)
-    webview.start(private_mode=False, storage_path=user_data_dir(app_dir_name(), appauthor=False))
+    webview.start(private_mode=False, storage_path=str(app_data_dir()))
 
     server.should_exit = True
     thread.join(timeout=_SERVER_SHUTDOWN_TIMEOUT)

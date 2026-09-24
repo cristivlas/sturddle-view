@@ -6,11 +6,11 @@ annotations) a wider gate in `_ai_kick.py::_build_turn_inputs`.
 """
 from __future__ import annotations
 
-import os
 import re
-from typing import TYPE_CHECKING, Iterable, Literal
+from typing import TYPE_CHECKING, Iterable, Literal, get_args
 
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
+from ..env_utils import env_bool
 from .tools import ToolSpec
 
 if TYPE_CHECKING:
@@ -29,9 +29,17 @@ _FORCE_INLINE_DIRECTIVE = (
 
 
 PromptMode = Literal["coach", "commentator", "verifier"]
-COACH_MODE: PromptMode = "coach"
-COMMENTATOR_MODE: PromptMode = "commentator"
-VERIFIER_MODE: PromptMode = "verifier"
+COACH_MODE, COMMENTATOR_MODE, VERIFIER_MODE = get_args(PromptMode)
+
+_PLIES_PER_MOVE = 2
+# Move-number suffixes: "13." before White's move, "13..." before Black's.
+_WHITE_DOTS = "."
+_BLACK_DOTS = "..."
+# FEN fields used here, and their fallbacks for a malformed FEN.
+_FEN_SIDE_FIELD = 1
+_FEN_FULLMOVE_FIELD = 5
+_FEN_BLACK_TO_MOVE = "b"
+_FIRST_MOVE_NUMBER = "1"
 
 
 SYSTEM_PROMPT_PREFACE = """\
@@ -223,8 +231,7 @@ def assemble_system_prompt(
 
 
 def _force_inline_enabled() -> bool:
-    raw = os.environ.get(_FORCE_INLINE_ENV_VAR, "").strip().lower()
-    return raw in ("1", "true", "yes", "on")
+    return env_bool(_FORCE_INLINE_ENV_VAR, False)
 
 
 _INITIAL_NO_MOVES = "(none yet -- the game has not started)"
@@ -242,7 +249,8 @@ def _scrub_comment_for_prompt(comment: str) -> str:
 
 def _move_ref(ply_index: int) -> tuple[int, str]:
     """Return (move_number, dots) for a zero-based ply index."""
-    return (ply_index // 2) + 1, "." if ply_index % 2 == 0 else "..."
+    white_to_move = ply_index % _PLIES_PER_MOVE == 0
+    return (ply_index // _PLIES_PER_MOVE) + 1, _WHITE_DOTS if white_to_move else _BLACK_DOTS
 
 
 def _render_san_pairs(san_history: list[str]) -> str:
@@ -257,7 +265,7 @@ def _render_san_pairs(san_history: list[str]) -> str:
         return _INITIAL_NO_MOVES
     parts: list[str] = []
     for i, san in enumerate(san_history):
-        if i % 2 == 0:
+        if i % _PLIES_PER_MOVE == 0:
             move_no, _ = _move_ref(i)
             parts.append(f"{move_no}. {san}")
         else:
@@ -270,7 +278,7 @@ def _side_to_move_from_fen(fen: str) -> str:
     'white' when the FEN is malformed -- the agent will still get a
     reasonable default, and analyze tools will surface the real error."""
     parts = fen.split()
-    if len(parts) >= 2 and parts[1] == "b":
+    if len(parts) > _FEN_SIDE_FIELD and parts[_FEN_SIDE_FIELD] == _FEN_BLACK_TO_MOVE:
         return SIDE_BLACK
     return SIDE_WHITE
 
@@ -283,16 +291,18 @@ _BOOK_REPLY_ALSO = "also standard"
 def _fullmove_from_fen(fen: str) -> str:
     """FEN fullmove field; '1' when malformed."""
     parts = fen.split()
-    return parts[5] if len(parts) >= 6 and parts[5].isdigit() else "1"
+    if len(parts) > _FEN_FULLMOVE_FIELD and parts[_FEN_FULLMOVE_FIELD].isdigit():
+        return parts[_FEN_FULLMOVE_FIELD]
+    return _FIRST_MOVE_NUMBER
 
 
 def _move_prefix_from_fen(fen: str) -> str:
     """SAN move-number prefix ("13." / "13...") for the side to move."""
-    dots = "..." if _side_to_move_from_fen(fen) == SIDE_BLACK else "."
+    dots = _BLACK_DOTS if _side_to_move_from_fen(fen) == SIDE_BLACK else _WHITE_DOTS
     return f"{_fullmove_from_fen(fen)}{dots}"
 
 
-def _render_book_reply(fen: str, reply: "OpeningReply") -> str:
+def _render_book_reply(fen: str, reply: OpeningReply) -> str:
     prefix = _move_prefix_from_fen(fen)
     origin = reply.line_name or _BOOK_REPLY_FILE_NOTE
     line = f"{_BOOK_REPLY_LABEL}: {prefix}{reply.san} ({origin})"

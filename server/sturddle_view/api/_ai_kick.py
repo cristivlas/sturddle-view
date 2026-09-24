@@ -20,6 +20,7 @@ import chess
 from fastapi import HTTPException, Request, status
 
 from ..chess.board import moves_san
+from ..chess.results import UNKNOWN_RESULT
 from ..config import PROVIDER_OLLAMA
 from ..env_utils import env_int
 from ..llm import (
@@ -30,6 +31,7 @@ from ..llm import (
     render_playbook,
 )
 from ..llm.ollama import DEFAULT_BASE_URL as _DEFAULT_OLLAMA_BASE_URL, OllamaProvider
+from ..play.human_vs_engine import live_hve
 from ..play.mode import Mode
 from ..play.opening_reply import book_ref_from_settings, probe_opening_reply
 
@@ -46,8 +48,6 @@ _TOTAL_COMMENT_MAX_ENV = "SV_AI_ANNOTATION_TOTAL_MAX"
 _ANNOTATION_CAP_MIN = 1
 # Marker appended to a comment that was truncated mid-string.
 _TRUNCATION_MARKER = "..."
-# PGN result for "unknown / unfinished"; treated as no result.
-_PGN_RESULT_UNKNOWN = "*"
 _AI_FACTORY_MISSING = "AI provider factory not initialized"
 
 # Plies past the matched opening line that still count as "in the opening"
@@ -60,6 +60,11 @@ _OPENING_PHASE_SLACK_ENV = "SV_AI_OPENING_PHASE_SLACK_PLIES"
 
 def _annotation_cap(env_name: str, default: int) -> int:
     return env_int(env_name, default, min_value=_ANNOTATION_CAP_MIN)
+
+
+def ai_coordinator(state):
+    """The app's AI coordinator, or None before it is wired."""
+    return getattr(state, "ai_coordinator", None)
 
 
 def require_ai_provider_factory(request: Request):
@@ -182,7 +187,7 @@ async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
         return None
     opening = hve.lookup_opening()
     raw_result = hve.viewed_pgn_result()
-    result = raw_result if raw_result and raw_result != _PGN_RESULT_UNKNOWN else None
+    result = raw_result if raw_result and raw_result != UNKNOWN_RESULT else None
     san_history = _san_history_for(hve)
     # SAN at the current ply is the move played from the position under
     # review (view mode); None in play mode where there is no future.
@@ -280,7 +285,7 @@ def _on_turn_done(task: asyncio.Task, state) -> None:
     # else this stale callback tears down the live turn's mode.
     if task is not getattr(state, "ai_task", None):
         return
-    hve = getattr(state, "hve", None)
+    hve = live_hve(state)
     if hve is None:
         return
     # A turn that died never produced analysis: exit ANALYZING so the
@@ -297,7 +302,7 @@ async def start_ai_turn(request: Request) -> None:
     Raises HTTPException on configuration/provider errors so the
     /game/analysis/start endpoint can surface them as 4xx/5xx.
     """
-    coord = getattr(request.app.state, "ai_coordinator", None)
+    coord = ai_coordinator(request.app.state)
     if coord is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -351,7 +356,7 @@ async def start_ai_turn(request: Request) -> None:
 
 async def cancel_ai_turn(request: Request) -> None:
     """Cancel any in-flight AI turn. No-op if nothing is running."""
-    coord = getattr(request.app.state, "ai_coordinator", None)
+    coord = ai_coordinator(request.app.state)
     if coord is None:
         return
     await coord.cancel()

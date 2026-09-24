@@ -36,8 +36,10 @@ python -m pytest -k frozen_window -q
 #### Custom CLI options
 
 - `--syzygy-path <dir>`: declared in `conftest.py`. Tests that exercise
-  tablebase code path (e.g. `test_tablebase.py`) pick it up when the user
-  has tablebase files locally; otherwise they skip.
+  tablebase code path (e.g. `test_tablebase.py`) pick it up (or
+  `SVTEST_SYZYGY_PATH`) when the user has tablebase files locally;
+  otherwise they skip. Test-only env vars use the `SVTEST_` prefix (see
+  [env-vars.md](env-vars.md#test-only)).
 
 #### Test data fixtures
 
@@ -147,9 +149,10 @@ The web/vendor directory contains third-party packages with their own
 
 Live under `server/tests/perf/`; collected but skipped by default.
 
-- Run: `SV_RUN_PERF_BENCHES=1 pytest server/tests/perf/`.
+- Run: `pytest -m perf server/tests/perf/` (the default `addopts` in
+  `pyproject.toml` deselect the `perf` marker).
 - Regenerate baselines (`server/tests/perf/baselines.json`):
-  `SV_RUN_PERF_BENCHES=1 pytest --update-perf-baselines server/tests/perf/`
+  `pytest -m perf --update-perf-baselines server/tests/perf/`
   on a quiet machine (idle, AC power). Baseline bumps ship as their own
   reviewed commit with a written justification -- never bundled with the
   refactor that caused the drift.
@@ -237,7 +240,7 @@ frontend.
 Triggered conversation: bounded-set bookkeeping in `addLogEntry`
 (see `tournament-workspace.js`). The function is small, pure, and has a
 non-obvious invariant ("Set size stays in lockstep with array eviction")
-that has no UI manifestation. e2e is the wrong tool — too slow, too
+that has no UI manifestation. e2e is the wrong tool -- too slow, too
 indirect, and the bug is invisible from the DOM.
 
 Three options ranked roughly by ergonomics:
@@ -260,9 +263,9 @@ Strong lean if/when the need recurs: **Vitest**.
 
 Candidate first targets (pure functions, no DOM):
 
-- `addLogEntry` in `tournament-workspace.js` — Set/Array lockstep,
+- `addLogEntry` in `tournament-workspace.js` -- Set/Array lockstep,
   reconciled-event short-circuit, ordering by seq.
-- `snapshotLive` merging logic — resolved-key attachment.
+- `snapshotLive` merging logic -- resolved-key attachment.
 - `slotGrid` math (also currently has a Python test, but the JS module is
   the actual implementation).
 
@@ -282,5 +285,5 @@ Candidate first targets (pure functions, no DOM):
   configured. If `seenSeqs`-style unbounded growth becomes a recurring
   category of bug, a targeted Playwright run that pumps N events and
   inspects `performance.memory` (or an explicit test-only `Set.size` hook)
-  could be added — but only once we have a second example to justify the
+  could be added -- but only once we have a second example to justify the
   pattern.

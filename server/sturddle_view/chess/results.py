@@ -5,6 +5,12 @@ WHITE_WIN = "1-0"
 BLACK_WIN = "0-1"
 DRAW = "1/2-1/2"
 DECISIVE_RESULTS = frozenset({WHITE_WIN, BLACK_WIN, DRAW})
+# PGN Result of a game in progress or of unknown outcome.
+UNKNOWN_RESULT = "*"
+# PGN Termination of a game still in progress.
+UNTERMINATED = "unterminated"
+# Termination of a finished game whose cause is not known.
+UNKNOWN_TERMINATION = "unknown"
 
 # Side-to-move wire strings. Emitted in the board_update/clock_tick `turn`
 # field and other STM payloads; the client switches on the same values.

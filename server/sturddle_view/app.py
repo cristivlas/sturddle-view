@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import hmac
 import logging
-import os
 import socket
 import sys
 from asyncio import proactor_events, trsock
@@ -37,6 +36,7 @@ from .api import settings as settings_api
 from .api import test_hooks as test_hooks_api
 from .api import tournaments as tournaments_api
 from .api import ws as ws_api
+from .api._ai_kick import ai_coordinator
 from .config import (
     LOOPBACK_HOST,
     PROVIDER_ANTHROPIC,
@@ -63,7 +63,7 @@ from .play.ai_analysis import (
 from .play.engine_analysis import make_analysis_supervisor
 from .play.engine_supervisor import EngineSupervisor
 from .play.game_store import GameStore
-from .play.human_vs_engine import HumanVsEngine
+from .play.human_vs_engine import HumanVsEngine, live_hve
 from .play.tools_engine import (
     ANALYZE_TOOL_SPEC,
     MATERIAL_TOOL_SPEC,
@@ -102,12 +102,16 @@ _AUTH_COOKIE_MAX_AGE_S = env_int(
 )
 _AI_DEBUG_ENV = "SV_AI_DEBUG"
 _READY_PORT_ENV = "SV_READY_PORT"
+# SV_READY_PORT unset: not launched by the test harness.
+_NO_READY_PORT = 0
 _READY_SIGNAL_TIMEOUT_S = 2.0
 # WebSocket close code 1012 "service restart".
 _WS_CLOSE_SERVICE_RESTART = 1012
 # cpython's own default listen backlog for loop.create_server.
 _DEFAULT_ACCEPT_BACKLOG = 100
 _ACCEPT_FAILED_MSG = "Accept failed on a socket"
+# asyncio exception-handler context key.
+_CTX_EXCEPTION = "exception"
 
 
 class _NoCacheUIMiddleware(BaseHTTPMiddleware):
@@ -159,6 +163,11 @@ class _OriginMiddleware(BaseHTTPMiddleware):
 _TRANSIENT_ACCEPT_WINERR = {64, 1236, 10054}  # NETNAME_DELETED, ABORTED, RST
 
 
+def _winerror(exc: OSError) -> int | None:
+    """Windows error code of an OSError (None elsewhere)."""
+    return getattr(exc, "winerror", None)
+
+
 def _install_proactor_accept_resilience() -> None:
     """Re-arm Windows AcceptEx on transient OSErrors instead of dropping
     the listener (stock cpython closes the socket on any accept OSError)."""
@@ -173,7 +182,7 @@ def _install_proactor_accept_resilience() -> None:
             if sock.fileno() != -1:
                 self.call_exception_handler({
                     "message": _ACCEPT_FAILED_MSG,
-                    "exception": exc,
+                    _CTX_EXCEPTION: exc,
                     "socket": trsock.TransportSocket(sock),
                 })
                 sock.close()
@@ -195,7 +204,7 @@ def _install_proactor_accept_resilience() -> None:
                                                     waiter=None, server=server)
                 f = self._proactor.accept(sock)
             except OSError as exc:
-                winerr = getattr(exc, "winerror", None)
+                winerr = _winerror(exc)
                 if sock.fileno() != -1 and winerr in _TRANSIENT_ACCEPT_WINERR:
                     log.debug("transient AcceptEx WinError %s; re-arming", winerr)
                     self.call_soon(accept_loop)
@@ -256,10 +265,10 @@ def _install_engine_sigkill_filter() -> None:
     prev = loop.get_exception_handler()
 
     def handler(loop_, ctx):
-        exc = ctx.get("exception")
+        exc = ctx.get(_CTX_EXCEPTION)
         if isinstance(exc, chess.engine.EngineTerminatedError):
             return
-        if isinstance(exc, OSError) and getattr(exc, "winerror", None) in _TRANSIENT_ACCEPT_WINERR:
+        if isinstance(exc, OSError) and _winerror(exc) in _TRANSIENT_ACCEPT_WINERR:
             return
         if prev is not None:
             prev(loop_, ctx)
@@ -339,10 +348,7 @@ def _maybe_restore_game(app: FastAPI) -> None:
     # Seed name + UCI options from the registry so a client reconnecting
     # before any move sees the same label, and the engine spawns with the
     # user's saved options on its first invocation.
-    hve.set_engine_name(launch.name)
-    hve.set_engine_options(launch.options)
-    hve.set_engine_args(launch.args)
-    hve.set_engine_env(launch.env)
+    hve.apply_launch(launch)
     s.hve = hve
     log.info("restored saved game (%d plies)", len(state.moves_uci))
 
@@ -371,7 +377,7 @@ def create_app(
     # game is never dropped from the store. HVE is lazy (created on
     # first /game/new), so resolve it through app.state on each call.
     app.state.recent_imports.set_active_game_id_getter(
-        lambda: getattr(app.state.hve, "game_id", None)
+        lambda: app.state.hve.game_id if app.state.hve is not None else None
     )
     log.info(
         "recent imports: %d entries at %s",
@@ -472,11 +478,11 @@ def _setup_ai(app: FastAPI) -> None:
         )
 
     def _ai_game_id_provider() -> str | None:
-        hve = getattr(app.state, "hve", None)
-        return getattr(hve, "game_id", None) if hve else None
+        hve = live_hve(app.state)
+        return hve.game_id if hve else None
 
     def _ai_board_provider():
-        hve = getattr(app.state, "hve", None)
+        hve = live_hve(app.state)
         return hve.current_board() if hve else None
 
     def _ai_book_provider():
@@ -486,13 +492,13 @@ def _setup_ai(app: FastAPI) -> None:
         return app.state.settings
 
     def _ai_book_move_provider():
-        coord = getattr(app.state, "ai_coordinator", None)
+        coord = ai_coordinator(app.state)
         return coord.turn_book_move() if coord is not None else None
 
     # Side-to-move Situation for the recommend_move gate: the pick under
     # check is the mover's, whichever persona asked for it.
     def _ai_situation_provider():
-        hve = getattr(app.state, "hve", None)
+        hve = live_hve(app.state)
         board = hve.current_board() if hve else None
         return hve.situation(board.turn) if board is not None else None
 
@@ -733,12 +739,8 @@ def _signal_ready_port() -> None:
     serve loop), the harness gets a deterministic ready event with no
     polling. Silent no-op when the env var is unset or unreachable.
     """
-    port_s = os.environ.get(_READY_PORT_ENV)
-    if not port_s:
-        return
-    try:
-        port = int(port_s)
-    except ValueError:
+    port = env_int(_READY_PORT_ENV, _NO_READY_PORT, min_value=1)
+    if port == _NO_READY_PORT:
         return
     try:
         socket.create_connection((LOOPBACK_HOST, port), timeout=_READY_SIGNAL_TIMEOUT_S).close()

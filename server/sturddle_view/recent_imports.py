@@ -29,27 +29,31 @@ which serialize on an asyncio lock; reads (``list``, ``get``,
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Callable
 
-from platformdirs import user_data_dir
-
-from . import app_dir_name
+from . import app_data_dir
 from ._atomic import atomic_write_json, atomic_write_text
+from .env_utils import env_path
 from .play.canonical_hash import FMT_FEN, FMT_PGN, canonical_hash
 
 log = logging.getLogger(__name__)
 
 DEFAULT_CAP = 50
 
+_IMPORTS_DIRNAME = "imports"
+_INDEX_FILENAME = "index.json"
+_BLOB_DIRNAME = "by-hash"
+_ENCODING = "utf-8"
+_MS_PER_SECOND = 1000
+
 # Row + ref field keys (no inline string literals at call sites).
+ROW_HASH = "hash"
 ROW_GAME_ID = "game_id"
 ROW_ALIAS_IDS = "alias_ids"
 ROW_REFS = "refs"
@@ -60,8 +64,13 @@ ROW_SUMMARY = "summary"
 ROW_TS = "ts"
 ROW_FILE = "file"
 
-REF_GAME_ID = "game_id"
-REF_FORK_PLY = "fork_ply"
+# A ref names a child row by its game_id and fork ply.
+REF_GAME_ID = ROW_GAME_ID
+REF_FORK_PLY = ROW_FORK_PLY
+
+_FORK_PAIR_REQUIRED = "parent_game_id and fork_ply must be supplied together"
+_FORK_PARENT_MISSING = "xgame.fork_parent_missing parent=%s child=%s ply=%d"
+_DANGLING_REF = "xgame.dangling_ref child=%s ply=%s"
 
 
 class RemoveStatus(Enum):
@@ -86,18 +95,29 @@ class RemoveResult:
 
 def default_imports_dir() -> Path:
     """Directory for the imports store. ``SV_IMPORTS_DIR`` overrides."""
-    override = os.environ.get("SV_IMPORTS_DIR")
-    if override:
-        return Path(override)
-    return Path(user_data_dir(app_dir_name(), appauthor=False)) / "imports"
-
-
-def _hash_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return env_path("SV_IMPORTS_DIR", app_data_dir() / _IMPORTS_DIRNAME)
 
 
 def _ext_for(fmt: str) -> str:
     return FMT_FEN if fmt == FMT_FEN else FMT_PGN
+
+
+def _blob_name(h: str, fmt: str) -> str:
+    """Blob path relative to the store root."""
+    return f"{_BLOB_DIRNAME}/{h}.{_ext_for(fmt)}"
+
+
+def _now_ms() -> int:
+    return int(time.time() * _MS_PER_SECOND)
+
+
+def _check_fork_link(parent_game_id: str | None, fork_ply: int | None) -> None:
+    if (parent_game_id is None) != (fork_ply is None):
+        raise AssertionError(_FORK_PAIR_REQUIRED)
+    if fork_ply is not None and fork_ply < 1:
+        raise AssertionError(
+            f"fork_ply must be >= 1 (got {fork_ply}); ply-0 forks are not links"
+        )
 
 
 def _merged_summary(incoming, existing):
@@ -109,11 +129,17 @@ def _merged_summary(incoming, existing):
     return incoming
 
 
+def _refresh_row(row: dict, summary) -> None:
+    """Re-save of existing content: merge the summary, bump ``ts``."""
+    row[ROW_SUMMARY] = _merged_summary(summary, row.get(ROW_SUMMARY))
+    row[ROW_TS] = _now_ms()
+
+
 # Getter contract: returns the active HVE session's current game_id or
 # None. Must not raise -- eviction calls it inline and does not guard
-# against exceptions. The standard wiring (a lambda over
-# ``getattr(app.state.hve, "game_id", None)``) trivially satisfies this.
-ActiveGameIdGetter = Callable[[], "str | None"]
+# against exceptions. The standard wiring (a lambda over the live HVE's
+# ``game_id``) trivially satisfies this.
+ActiveGameIdGetter = Callable[[], str | None]
 
 
 class RecentImports:
@@ -137,8 +163,7 @@ class RecentImports:
         active_game_id: ActiveGameIdGetter | None = None,
     ) -> None:
         self._root = root
-        self._index_path = root / "index.json"
-        self._blob_dir = root / "by-hash"
+        self._index_path = root / _INDEX_FILENAME
         self._cap = cap
         # hash -> {format, summary, ts, file, game_id, refs}
         self._index: dict[str, dict] = {}
@@ -165,11 +190,11 @@ class RecentImports:
         root: Path | None = None,
         cap: int = DEFAULT_CAP,
         active_game_id: ActiveGameIdGetter | None = None,
-    ) -> "RecentImports":
+    ) -> RecentImports:
         root = root or default_imports_dir()
         inst = cls(root, cap=cap, active_game_id=active_game_id)
         try:
-            raw = json.loads(inst._index_path.read_text(encoding="utf-8"))
+            raw = json.loads(inst._index_path.read_text(encoding=_ENCODING))
             if isinstance(raw, dict):
                 # Filter to entries that still have a blob on disk. An
                 # orphaned index row (blob deleted out-of-band) would
@@ -204,7 +229,7 @@ class RecentImports:
         hash plus its metadata. Cap enforcement is in eviction; pinned
         rows (active session, non-empty refs) may push the total past
         the cap."""
-        rows = [{"hash": h, **v} for h, v in self._index.items()]
+        rows = [{ROW_HASH: h, **v} for h, v in self._index.items()]
         rows.sort(key=lambda r: r.get(ROW_TS, 0), reverse=True)
         return rows
 
@@ -216,7 +241,7 @@ class RecentImports:
         if row is None:
             return None
         try:
-            text = (self._root / row[ROW_FILE]).read_text(encoding="utf-8")
+            text = (self._root / row[ROW_FILE]).read_text(encoding=_ENCODING)
         except OSError:
             log.warning("recent-imports blob missing for %s", h)
             return None
@@ -266,15 +291,7 @@ class RecentImports:
         On re-save of an already-stored hash, the link is ignored
         (first-save-wins matches game_id semantics).
         """
-        if (parent_game_id is None) != (fork_ply is None):
-            raise AssertionError(
-                "parent_game_id and fork_ply must be supplied together"
-            )
-        if fork_ply is not None and fork_ply < 1:
-            raise AssertionError(
-                f"fork_ply must be >= 1 (got {fork_ply}); "
-                "ply-0 forks are not links"
-            )
+        _check_fork_link(parent_game_id, fork_ply)
         trimmed = text.strip()
         h = precomputed_hash if precomputed_hash is not None else canonical_hash(trimmed, fmt)
         async with self._lock:
@@ -290,13 +307,11 @@ class RecentImports:
                     and game_id != stored_id
                 ):
                     self._bind_alias_locked(game_id, h, existing)
-                # Bump ts + refresh summary on re-save (existing behavior).
-                # Both "game_id" and "refs" keys are guaranteed present
-                # by load()'s setdefault backfill, so no key-existence
-                # check is needed here.
-                existing[ROW_SUMMARY] = _merged_summary(summary, existing.get(ROW_SUMMARY))
-                existing[ROW_TS] = int(time.time() * 1000)
-                # Backfill game_id if missing (legacy row from pre-Phase-1).
+                # Bump ts + refresh summary on re-save. Both "game_id" and
+                # "refs" keys are guaranteed present by load()'s setdefault
+                # backfill, so no key-existence check is needed here.
+                _refresh_row(existing, summary)
+                # Backfill game_id if missing (legacy row predating game_id).
                 if stored_id is None and game_id is not None:
                     self._bind_id_locked(game_id, h, existing)
                 # Deduped fork: adopt the link if the row has none; a row
@@ -310,23 +325,9 @@ class RecentImports:
                 self._persist_locked()
                 return h
 
-            # New row.
-            fname = f"by-hash/{h}.{_ext_for(fmt)}"
-            blob_path = self._root / fname
-            if not blob_path.exists():
-                atomic_write_text(blob_path, trimmed)
-            row: dict = {
-                ROW_FORMAT: fmt,
-                ROW_SUMMARY: summary,
-                ROW_TS: int(time.time() * 1000),
-                ROW_FILE: fname,
-                ROW_GAME_ID: None,
-                ROW_REFS: [],
-            }
-            if parent_game_id is not None:
-                row[ROW_PARENT_GAME_ID] = parent_game_id
-                row[ROW_FORK_PLY] = fork_ply
-            self._index[h] = row
+            row = self._insert_row_locked(
+                h, fmt, trimmed, summary, [], parent_game_id, fork_ply,
+            )
             if game_id is not None:
                 self._bind_id_locked(game_id, h, row)
             # Append to parent's refs (atomic with child write).
@@ -388,15 +389,7 @@ class RecentImports:
         ``refs`` is appended atomically. Asserts both-or-neither and
         ``fork_ply >= 1``.
         """
-        if (parent_game_id is None) != (fork_ply is None):
-            raise AssertionError(
-                "parent_game_id and fork_ply must be supplied together"
-            )
-        if fork_ply is not None and fork_ply < 1:
-            raise AssertionError(
-                f"fork_ply must be >= 1 (got {fork_ply}); "
-                "ply-0 forks are not links"
-            )
+        _check_fork_link(parent_game_id, fork_ply)
         trimmed = text.strip()
         new_hash = precomputed_hash if precomputed_hash is not None else canonical_hash(trimmed, fmt)
         async with self._lock:
@@ -468,8 +461,7 @@ class RecentImports:
                     self._bind_id_locked(game_id, new_hash, existing)
                 for alias in migrated_aliases:
                     self._bind_alias_locked(alias, new_hash, existing)
-                existing[ROW_SUMMARY] = _merged_summary(summary, existing.get(ROW_SUMMARY))
-                existing[ROW_TS] = int(time.time() * 1000)
+                _refresh_row(existing, summary)
                 # Preserve fork-link on the surviving row when it wasn't
                 # already set (old_hash == new_hash leaves it intact).
                 if (
@@ -489,22 +481,10 @@ class RecentImports:
                 return new_hash
 
             # Fresh insert at new_hash.
-            fname = f"by-hash/{new_hash}.{_ext_for(fmt)}"
-            blob_path = self._root / fname
-            if not blob_path.exists():
-                atomic_write_text(blob_path, trimmed)
-            row: dict = {
-                ROW_FORMAT: fmt,
-                ROW_SUMMARY: summary,
-                ROW_TS: int(time.time() * 1000),
-                ROW_FILE: fname,
-                ROW_GAME_ID: None,
-                ROW_REFS: preserved_refs,
-            }
-            if preserved_parent_id is not None:
-                row[ROW_PARENT_GAME_ID] = preserved_parent_id
-                row[ROW_FORK_PLY] = preserved_fork_ply
-            self._index[new_hash] = row
+            row = self._insert_row_locked(
+                new_hash, fmt, trimmed, summary, preserved_refs,
+                preserved_parent_id, preserved_fork_ply,
+            )
             self._bind_id_locked(game_id, new_hash, row)
             for alias in migrated_aliases:
                 self._bind_alias_locked(alias, new_hash, row)
@@ -517,12 +497,40 @@ class RecentImports:
             self._persist_locked()
         return new_hash
 
+    def _insert_row_locked(
+        self, h: str, fmt: str, trimmed: str, summary: dict, refs: list[dict],
+        parent_game_id: str | None, fork_ply: int | None,
+    ) -> dict:
+        """Write the blob (if new) and index a fresh, unbound row for
+        ``h``, with its fork link when given. Must hold the lock."""
+        fname = _blob_name(h, fmt)
+        blob_path = self._root / fname
+        if not blob_path.exists():
+            atomic_write_text(blob_path, trimmed)
+        row: dict = {
+            ROW_FORMAT: fmt,
+            ROW_SUMMARY: summary,
+            ROW_TS: _now_ms(),
+            ROW_FILE: fname,
+            ROW_GAME_ID: None,
+            ROW_REFS: refs,
+        }
+        if parent_game_id is not None:
+            row[ROW_PARENT_GAME_ID] = parent_game_id
+            row[ROW_FORK_PLY] = fork_ply
+        self._index[h] = row
+        return row
+
+    def _row_for_id(self, game_id: str) -> dict | None:
+        h = self._by_id.get(game_id)
+        return self._index.get(h) if h is not None else None
+
     def _bind_id_locked(self, game_id: str, h: str, row: dict) -> None:
         """Attach ``game_id`` to ``row`` (hash=``h``) and the reverse
         index. Asserts the id is free (or already bound to this hash).
         Must hold the lock."""
         self._assert_id_free_or_self(game_id, h)
-        row["game_id"] = game_id
+        row[ROW_GAME_ID] = game_id
         self._by_id[game_id] = h
 
     def _bind_alias_locked(self, game_id: str, h: str, row: dict) -> None:
@@ -556,7 +564,7 @@ class RecentImports:
             row = self._index.get(h)
             if row is None:
                 return
-            row["ts"] = int(time.time() * 1000)
+            row[ROW_TS] = _now_ms()
             self._persist_locked()
 
     async def remove(self, h: str) -> RemoveResult:
@@ -612,19 +620,13 @@ class RecentImports:
         """If the row identified by ``game_id`` has a resolvable parent,
         return the parent's ``summary`` dict. Returns None when there is
         no parent or the parent has been evicted / corrupted."""
-        h = self._by_id.get(game_id)
-        if h is None:
-            return None
-        row = self._index.get(h)
+        row = self._row_for_id(game_id)
         if row is None:
             return None
         parent_id = row.get(ROW_PARENT_GAME_ID)
         if parent_id is None:
             return None
-        parent_hash = self._by_id.get(parent_id)
-        if parent_hash is None:
-            return None
-        parent_row = self._index.get(parent_hash)
+        parent_row = self._row_for_id(parent_id)
         if parent_row is None:
             return None
         return parent_row.get(ROW_SUMMARY)
@@ -635,24 +637,17 @@ class RecentImports:
         asc. Dangling ref entries (child id not resolvable) are dropped
         from the result and warn-logged; the parent's ``refs`` list is
         not mutated here (scrubbed lazily on subsequent writes)."""
-        h = self._by_id.get(game_id)
-        if h is None:
-            return []
-        row = self._index.get(h)
+        row = self._row_for_id(game_id)
         if row is None:
             return []
-        refs = row.get(ROW_REFS) or []
-        return self._children_summary_locked(refs)
+        return self._children_summary_locked(row.get(ROW_REFS) or [])
 
     async def scrub_dangling_parent(self, game_id: str) -> bool:
         """If the row identified by ``game_id`` carries a
         ``parent_game_id`` that no longer resolves, drop the fork-link
         fields and persist. Returns True if a scrub happened."""
         async with self._lock:
-            h = self._by_id.get(game_id)
-            if h is None:
-                return False
-            row = self._index.get(h)
+            row = self._row_for_id(game_id)
             if row is None:
                 return False
             parent_id = row.get(ROW_PARENT_GAME_ID)
@@ -685,19 +680,9 @@ class RecentImports:
             raise AssertionError(
                 "fork-link requires a bound child game_id"
             )
-        h = self._by_id.get(parent_game_id)
-        if h is None:
-            log.warning(
-                "xgame.fork_parent_missing parent=%s child=%s ply=%d",
-                parent_game_id, child_game_id, fork_ply,
-            )
-            return
-        row = self._index.get(h)
+        row = self._row_for_id(parent_game_id)
         if row is None:
-            log.warning(
-                "xgame.fork_parent_missing parent=%s child=%s ply=%d",
-                parent_game_id, child_game_id, fork_ply,
-            )
+            log.warning(_FORK_PARENT_MISSING, parent_game_id, child_game_id, fork_ply)
             return
         refs = row.setdefault(ROW_REFS, [])
         refs.append({REF_GAME_ID: child_game_id, REF_FORK_PLY: fork_ply})
@@ -716,15 +701,12 @@ class RecentImports:
         no-op."""
         if child_game_id is None:
             return
-        h = self._by_id.get(parent_game_id)
-        if h is None:
+        row = self._row_for_id(parent_game_id)
+        if row is None:
             log.warning(
                 "xgame.dangling_parent_on_remove child=%s parent=%s",
                 child_game_id, parent_game_id,
             )
-            return
-        row = self._index.get(h)
-        if row is None:
             return
         refs = row.get(ROW_REFS) or []
         row[ROW_REFS] = [
@@ -740,19 +722,9 @@ class RecentImports:
             fork_ply = ref.get(REF_FORK_PLY)
             if child_id is None:
                 continue
-            child_hash = self._by_id.get(child_id)
-            if child_hash is None:
-                log.warning(
-                    "xgame.dangling_ref child=%s ply=%s",
-                    child_id, fork_ply,
-                )
-                continue
-            child_row = self._index.get(child_hash)
+            child_row = self._row_for_id(child_id)
             if child_row is None:
-                log.warning(
-                    "xgame.dangling_ref child=%s ply=%s",
-                    child_id, fork_ply,
-                )
+                log.warning(_DANGLING_REF, child_id, fork_ply)
                 continue
             out.append({
                 REF_GAME_ID: child_id,

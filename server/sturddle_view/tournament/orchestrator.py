@@ -13,8 +13,8 @@ Web-agnostic: takes ids + a broadcast callback, so the CLI wrapper can reuse it.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
-import os
 import secrets
 import uuid
 from collections import deque
@@ -24,8 +24,9 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 import chess
 
-from ..chess.results import SIDE_BLACK, SIDE_WHITE
-from ..env_utils import env_int as _env_int
+from ..chess.results import SIDE_BLACK, SIDE_WHITE, UNKNOWN_RESULT, UNKNOWN_TERMINATION
+from ..env_utils import env_bool, env_int
+from ..error_detail import REASON_KEY
 from ..events import (
     ENVELOPE_KIND,
     ENVELOPE_PAYLOAD,
@@ -37,15 +38,22 @@ from .pgn_reconcile import (
     ReconciledMatch,
     ReconciliationQueue,
     moves_complete_match,
+    short_id,
 )
 from .pgn_tail import PgnGameRecord, PgnTailer
 from .rescheck import RescheckError, check_template
-from .runner import RunSpec, Runner
-from .uci_parse import parse_uci_line
-
-if TYPE_CHECKING:
-    from ..config import Settings
+from .runner import (
+    EVT_DONE,
+    EVT_RUNNER_CRASH,
+    RC_KEY,
+    STDERR_TAIL_KEY,
+    TERMINAL_EVENTS,
+    RunSpec,
+    Runner,
+)
 from .store import (
+    ENGINE_DEFAULT_KEYS,
+    ENGINE_DEFAULT_PREFIX,
     STATUS_DONE,
     STATUS_FAILED,
     STATUS_RUNNING,
@@ -53,9 +61,62 @@ from .store import (
     Tournament,
     TournamentStore,
 )
+from .uci_parse import (
+    FEN_KEY,
+    KIND_KEY,
+    MOVE_KEY,
+    MOVES_KEY,
+    SIDE_TO_MOVE_KEY,
+    UCI_BESTMOVE,
+    UCI_GO,
+    UCI_INFO,
+    UCI_NEWGAME,
+    UCI_POSITION,
+    command_prefix,
+    parse_uci_line,
+)
+
+if TYPE_CHECKING:
+    from ..config import Settings
 
 
 log = logging.getLogger(__name__)
+
+# WS / event payload keys. LINE_KEY + PARSED_KEY frame every subscriber
+# message (the WS pump fills PARSED_KEY in lazily).
+LINE_KEY = "line"
+PARSED_KEY = "parsed"
+_TOURNAMENT_ID_KEY = "tournament_id"
+_PROXY_ID_KEY = "proxy_id"
+_PAIR_ID_KEY = "pair_id"
+_ENGINE_NAME_KEY = "engine_name"
+_THINKING_SIDE_KEY = "thinking_side"
+_SNAPSHOT_KEY = "snapshot"
+_ENDED_KEY = "ended"
+_RESULT_KEY = "result"
+_TERMINATION_KEY = "termination"
+_GAME_N_KEY = "game_n"
+_LAST_ERROR_AT_KEY = "at"
+# Pair payloads: ``_a`` is always white, ``_b`` always black.
+_PROXY_A_KEY = "proxy_a"
+_ENGINE_A_KEY = "engine_a"
+_SIDE_A_KEY = "side_a"
+_PROXY_B_KEY = "proxy_b"
+_ENGINE_B_KEY = "engine_b"
+_SIDE_B_KEY = "side_b"
+
+_EVT_STATUS_CHANGE = "status_change"
+# Latest line per command, replayed to a new subscriber.
+_SNAPSHOT_COMMANDS = (UCI_POSITION, UCI_GO, UCI_INFO)
+_NULL_MOVE = "(none)"
+# Placeholder in debug logs for a missing engine name / pairing state.
+_UNKNOWN = "?"
+_FASTCHESS_LOG_NAME = "fastchess.log"
+_PROXY_SECRET_BYTES = 24
+# A game is a pair of proxies.
+_PAIR_SIZE = 2
+# Per-subscriber WS queue bound; overflow drops (see CoalescingQueue).
+_SUBSCRIBER_QUEUE_MAX = env_int("SV_SUBSCRIBER_QUEUE_MAX", 512, min_value=1)
 
 
 # Broadcast events the orchestrator emits upstream. Mirrors the runner's
@@ -68,25 +129,19 @@ BroadcastCallback = Callable[[str, dict], Awaitable[None]]
 # completed games, so a workspace opened mid-tournament still gets
 # a useful tail. Operator knob: bump if late-joiners observe
 # evicted game_finished/game_reconciled rows in the event log.
-EVENT_HISTORY_MAX = _env_int("SV_EVENT_HISTORY_MAX", 200)
+EVENT_HISTORY_MAX = env_int("SV_EVENT_HISTORY_MAX", 200)
 
 
 # Two engines of one game share a FEN at the rendezvous: the thinker
 # (registered via ``position``) and the waiter (registered via
 # ``bestmove`` at the resulting FEN). ``info`` from the thinker fans
 # out to the waiter's subscribers -- that's the opponent's PV arrow.
-_DEBUG_PAIRING   = os.environ.get("SV_DEBUG_PAIRING",   "0") == "1"
+# SV_DEBUG_PAIRING=1 adds pairing-state invariant checks and traces.
+_DEBUG_PAIRING = env_bool("SV_DEBUG_PAIRING", False)
 
 
 def _opposite_side(side: str) -> str:
     return SIDE_BLACK if side == SIDE_WHITE else SIDE_WHITE
-
-
-# Game end = pair dissolution: ucinewgame/session-end (result unknown
-# until reconciled) or a matching PGN record (real result; idle engines
-# send no ucinewgame until their next game).
-_RESULT_UNKNOWN = "*"
-_TERMINATION_UNKNOWN = "unknown"
 
 
 def _info_carries_eval(stripped: str) -> bool:
@@ -94,12 +149,16 @@ def _info_carries_eval(stripped: str) -> bool:
     return " score " in stripped or " pv " in stripped
 
 
-def _fanout(subs: "set[CoalescingQueue]", payload: dict) -> None:
+def _is_info_line(line: object) -> bool:
+    return isinstance(line, str) and line.lstrip().startswith(command_prefix(UCI_INFO))
+
+
+def _fanout(subs: set[CoalescingQueue], payload: dict) -> None:
     """Route a payload to all subscribers. `info` lines coalesce per
     proxy (latest wins, flushed on timer or on next non-info); other
     lines drain pending infos first, then enqueue with eviction-as-
     fallback so terminal frames can't be silently lost."""
-    is_info = isinstance(payload.get("line"), str) and payload["line"].lstrip().startswith("info ")
+    is_info = _is_info_line(payload.get(LINE_KEY))
     for q in list(subs):
         if is_info:
             q.put_info(payload)
@@ -111,7 +170,8 @@ def _fanout(subs: "set[CoalescingQueue]", payload: dict) -> None:
 # few hundred ms) see every info because the timer flushes between
 # arrivals. Fast TCs (sub-100ms info cadence) collapse to the latest,
 # bounding queue pressure.
-_INFO_COALESCE_MS = 100
+_INFO_COALESCE_MS = env_int("SV_INFO_COALESCE_MS", 100, min_value=1)
+_MS_PER_SECOND = 1000
 
 
 class CoalescingQueue:
@@ -142,13 +202,13 @@ class CoalescingQueue:
             pass
 
     def put_info(self, payload: dict) -> None:
-        proxy_id = payload.get("proxy_id", "")
+        proxy_id = payload.get(_PROXY_ID_KEY, "")
         self._slots[proxy_id] = payload
         if proxy_id in self._timers:
             return
         loop = self._ensure_loop()
         self._timers[proxy_id] = loop.call_later(
-            _INFO_COALESCE_MS / 1000, self._flush_slot, proxy_id,
+            _INFO_COALESCE_MS / _MS_PER_SECOND, self._flush_slot, proxy_id,
         )
 
     def _flush_slot(self, proxy_id: str) -> None:
@@ -220,11 +280,11 @@ def wrap_event_for_bus(kind: str, payload: dict) -> dict:
     or ``tournament_update`` with ``payload.kind`` carrying the
     runner's original event kind.
     """
-    if kind == "status_change":
+    if kind == _EVT_STATUS_CHANGE:
         return {ENVELOPE_KIND: EVT_TOURNAMENT_STATUS, ENVELOPE_PAYLOAD: payload}
     return {
         ENVELOPE_KIND: EVT_TOURNAMENT_UPDATE,
-        ENVELOPE_PAYLOAD: {"kind": kind, **payload},
+        ENVELOPE_PAYLOAD: {ENVELOPE_KIND: kind, **payload},
     }
 
 
@@ -234,6 +294,23 @@ class TournamentBusyError(Exception):
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def _last_error(rc: int | None, stderr_tail: list[str], **extra) -> dict:
+    """Tournament.last_error shape (see store.Tournament)."""
+    return {RC_KEY: rc, STDERR_TAIL_KEY: stderr_tail, **extra, _LAST_ERROR_AT_KEY: _now()}
+
+
+def _proxy_end_sentinel(proxy_id: str) -> dict:
+    return {_PROXY_ID_KEY: proxy_id, _ENDED_KEY: True}
+
+
+def _game_end_sentinel(proxy_id: str, result: str, termination: str | None) -> dict:
+    return {
+        **_proxy_end_sentinel(proxy_id),
+        _RESULT_KEY: result,
+        _TERMINATION_KEY: termination,
+    }
 
 
 @dataclass
@@ -399,10 +476,11 @@ class Orchestrator:
         # existing dirs still launch.
         s = self._settings
         ed = t.engine_defaults or {}
+
         def _ed(key: str):
             if key in ed:
                 return ed[key]
-            return getattr(s, f"engine_default_{key}", None)
+            return getattr(s, ENGINE_DEFAULT_PREFIX + key, None)
 
         # Resource recheck -- values were resolved + folded into the
         # template by the client at create time; we re-verify against
@@ -412,12 +490,9 @@ class Orchestrator:
         try:
             check_template(t.template)
         except RescheckError as e:
-            last_error = {
-                "rc": None,
-                "stderr_tail": [str(e)],
-                "rescheck": {"reason": e.reason, **e.details},
-                "at": _now(),
-            }
+            last_error = _last_error(
+                None, [str(e)], rescheck={REASON_KEY: e.reason, **e.details},
+            )
             failed = self._store.update_status(
                 t.id, STATUS_FAILED, stopped_at=_now(), last_error=last_error,
             )
@@ -431,22 +506,18 @@ class Orchestrator:
         # Mark active *before* spawning so a concurrent ``start`` call
         # racing against this one is rejected by the busy check above.
         self._active_id = t.id
-        self._proxy_secret = secrets.token_urlsafe(24)
+        self._proxy_secret = secrets.token_urlsafe(_PROXY_SECRET_BYTES)
         spec = RunSpec(
             tournament=t,
             binary_path=getattr(self._runner, "binary_path", "") or "",
-            work_dir=self._store._dir(t.id),
+            work_dir=self._store.dir_for(t.id),
             pgn_path=self._store.pgn_path(t.id),
             config_path=self._store.config_path(t.id),
-            log_path=self._store.logs_dir(t.id) / "fastchess.log",
+            log_path=self._store.logs_dir(t.id) / _FASTCHESS_LOG_NAME,
             proxy_broadcast_url=self._proxy_broadcast_url,
             proxy_secret=self._proxy_secret,
-            engine_default_threads=_ed("threads"),
-            engine_default_hash_mb=_ed("hash_mb"),
-            engine_default_syzygy_path=_ed("syzygy_path"),
-            engine_default_book_path=_ed("book_path"),
-            engine_default_book_plies=_ed("book_plies"),
-            engine_default_book_order=_ed("book_order"),
+            # RunSpec's engine_default_<key> fields, one per frozen default.
+            **{ENGINE_DEFAULT_PREFIX + key: _ed(key) for key in ENGINE_DEFAULT_KEYS},
         )
         try:
             # Clear any prior last_error on (re)start -- the user has
@@ -500,15 +571,11 @@ class Orchestrator:
         stale = self._store.find_by_status(STATUS_RUNNING)
         out: list[Tournament] = []
         for t in stale:
-            last_error = {
-                "rc": None,
-                "stderr_tail": [
-                    "Server was killed or crashed while this tournament was running. "
-                    "fastchess and any engine processes have been reaped; press Start "
-                    "to restart from scratch (prior games will be discarded)."
-                ],
-                "at": _now(),
-            }
+            last_error = _last_error(None, [
+                "Server was killed or crashed while this tournament was running. "
+                "fastchess and any engine processes have been reaped; press Start "
+                "to restart from scratch (prior games will be discarded)."
+            ])
             updated = self._store.update_status(
                 t.id, STATUS_FAILED, stopped_at=_now(), last_error=last_error,
             )
@@ -534,21 +601,19 @@ class Orchestrator:
         """
         active_id = self._active_id
 
-        if kind in ("done", "stopped", "runner_crash"):
+        if kind in TERMINAL_EVENTS:
             if active_id is not None:
-                if kind == "done":
+                if kind == EVT_DONE:
                     terminal_status = STATUS_DONE
-                elif kind == "runner_crash":
+                elif kind == EVT_RUNNER_CRASH:
                     terminal_status = STATUS_FAILED
                 else:
                     terminal_status = STATUS_STOPPED
                 last_error = None
-                if kind == "runner_crash":
-                    last_error = {
-                        "rc": payload.get("rc"),
-                        "stderr_tail": payload.get("stderr_tail", []),
-                        "at": _now(),
-                    }
+                if kind == EVT_RUNNER_CRASH:
+                    last_error = _last_error(
+                        payload.get(RC_KEY), payload.get(STDERR_TAIL_KEY, []),
+                    )
                 try:
                     updated = self._store.update_status(
                         active_id, terminal_status, stopped_at=_now(),
@@ -579,11 +644,11 @@ class Orchestrator:
 
         # Always forward the runner event upstream -- UI consumers want
         # ``runner_crash`` etc. distinct from a plain status change.
-        await self._emit(kind, {"tournament_id": active_id, **payload})
+        await self._emit(kind, {_TOURNAMENT_ID_KEY: active_id, **payload})
 
     async def _emit_status(self, t: Tournament) -> None:
-        await self._emit("status_change", {
-            "tournament_id": t.id,
+        await self._emit(_EVT_STATUS_CHANGE, {
+            _TOURNAMENT_ID_KEY: t.id,
             "status": t.status,
             "started_at": t.started_at,
             "stopped_at": t.stopped_at,
@@ -598,7 +663,7 @@ class Orchestrator:
         # ``_ts`` is the server-side emission time used for display.
         self._event_seq += 1
         payload = {**payload, "_seq": self._event_seq, "_ts": _now()}
-        tid = payload.get("tournament_id")
+        tid = payload.get(_TOURNAMENT_ID_KEY)
         if tid:
             hist = self._event_history.setdefault(
                 tid, deque(maxlen=EVENT_HISTORY_MAX)
@@ -641,7 +706,7 @@ class Orchestrator:
         Each entry: ``{"proxy_id": str, "engine_name": str | None}``.
         Sorted by ``proxy_id`` for stable ordering across calls."""
         return [
-            {"proxy_id": pid, "engine_name": name}
+            {_PROXY_ID_KEY: pid, _ENGINE_NAME_KEY: name}
             for pid, name in sorted(self._proxy_engine_names.items())
         ]
 
@@ -661,14 +726,29 @@ class Orchestrator:
             seen.add(key)
             white_pid, black_pid = self._white_black_for_group(key)
             out.append({
-                "pair_id":  self._pair_ids.get(key, ""),
-                "proxy_a":  white_pid,
-                "engine_a": self._proxy_engine_names.get(white_pid),
-                "side_a":   SIDE_WHITE,
-                "proxy_b":  black_pid,
-                "engine_b": self._proxy_engine_names.get(black_pid),
-                "side_b":   SIDE_BLACK,
+                _PAIR_ID_KEY: self._pair_ids.get(key, ""),
+                **self._pair_fields(white_pid, black_pid),
             })
+        return out
+
+    def _pair_fields(
+        self, white_pid: str, black_pid: str, *,
+        name_fallback: bool = False, with_sides: bool = True,
+    ) -> dict:
+        """Both proxies of a pair and their engine names; ``name_fallback``
+        shows a proxy id when its engine never announced a name."""
+        def name(pid: str) -> str | None:
+            return self._proxy_engine_names.get(pid, pid if name_fallback else None)
+
+        out = {
+            _PROXY_A_KEY: white_pid,
+            _ENGINE_A_KEY: name(white_pid),
+            _PROXY_B_KEY: black_pid,
+            _ENGINE_B_KEY: name(black_pid),
+        }
+        if with_sides:
+            out[_SIDE_A_KEY] = SIDE_WHITE
+            out[_SIDE_B_KEY] = SIDE_BLACK
         return out
 
     def event_seq(self) -> int:
@@ -685,7 +765,6 @@ class Orchestrator:
         if self._proxy_secret is None or presented is None:
             return False
         # Constant-time comparison.
-        import hmac
         return hmac.compare_digest(self._proxy_secret, presented)
 
     async def ingest_proxy_lines(
@@ -705,19 +784,21 @@ class Orchestrator:
             paired_subs: set[CoalescingQueue] = set()
             thinking_side: str | None = None
 
-            if stripped.startswith("position "):
-                snap["position"] = line
-                snap.pop("info", None)
+            if stripped.startswith(command_prefix(UCI_POSITION)):
+                snap[UCI_POSITION] = line
+                snap.pop(UCI_INFO, None)
                 parsed = parse_uci_line(stripped)
-                if parsed is not None and "fen" in parsed and "side_to_move" in parsed:
+                if parsed is not None and FEN_KEY in parsed and SIDE_TO_MOVE_KEY in parsed:
                     if self._pairing_color.get(proxy_id) is None:
-                        self._pairing_color[proxy_id] = parsed["side_to_move"]
+                        self._pairing_color[proxy_id] = parsed[SIDE_TO_MOVE_KEY]
                     color = self._pairing_color[proxy_id]
                     if color is not None:
-                        new_pairs, orphaned = self._pairing_register(proxy_id, parsed["fen"], color)
+                        new_pairs, orphaned = self._pairing_register(
+                            proxy_id, parsed[FEN_KEY], color,
+                        )
                         await self._emit_group_events(new_pairs, orphaned)
                 self._update_pair_moves(proxy_id, parsed)
-            elif stripped.startswith("ucinewgame"):
+            elif stripped.startswith(UCI_NEWGAME):
                 # Dissolve confirmed pair directly: pair-FEN rendezvous
                 # is transient, so orphan detection misses most exits.
                 peer_before = self._confirmed_pairs.get(proxy_id)
@@ -727,25 +808,25 @@ class Orchestrator:
                     )
                     if pair_id:
                         await self._dissolve_pair(
-                            pair_id, _RESULT_UNKNOWN, _TERMINATION_UNKNOWN,
+                            pair_id, UNKNOWN_RESULT, UNKNOWN_TERMINATION,
                         )
                 self._pairing_unregister(proxy_id)
                 new_pairs, orphaned = self._recompute_groups()
                 self._pairing_color[proxy_id] = None
                 await self._emit_group_events(new_pairs, orphaned)
-            elif stripped.startswith("go "):
-                snap["go"] = line
-            elif stripped.startswith("bestmove "):
+            elif stripped.startswith(command_prefix(UCI_GO)):
+                snap[UCI_GO] = line
+            elif stripped.startswith(command_prefix(UCI_BESTMOVE)):
                 parsed = parse_uci_line(stripped)
                 new_pairs, orphaned = self._pairing_apply_bestmove(proxy_id, parsed)
                 await self._emit_group_events(new_pairs, orphaned)
-            elif stripped.startswith("info "):
+            elif _is_info_line(stripped):
                 # Scoreless infos (currmove/nodes/string) have no consumer;
                 # skip fan-out so latest-wins coalescing can't let one
                 # overwrite the scored info a subscriber needs.
                 if not _info_carries_eval(stripped):
                     continue
-                snap["info"] = line
+                snap[UCI_INFO] = line
                 state = self._pairing_state.get(proxy_id)
                 if state is not None:
                     fen, my_color = state
@@ -753,17 +834,17 @@ class Orchestrator:
                     thinking_side = my_color
 
             if own_subs:
-                payload: dict = {"proxy_id": proxy_id, "line": line}
+                payload: dict = {_PROXY_ID_KEY: proxy_id, LINE_KEY: line}
                 if parsed is not None:
-                    payload["parsed"] = parsed
+                    payload[PARSED_KEY] = parsed
                 _fanout(own_subs, payload)
             if paired_subs:
                 payload = {
-                    "proxy_id": proxy_id,
-                    "line": line,
+                    _PROXY_ID_KEY: proxy_id,
+                    LINE_KEY: line,
                     "paired": True,
-                    "thinking_side": thinking_side,
-                    "engine_name": self._proxy_engine_names.get(proxy_id),
+                    _THINKING_SIDE_KEY: thinking_side,
+                    _ENGINE_NAME_KEY: self._proxy_engine_names.get(proxy_id),
                 }
                 _fanout(paired_subs, payload)
             # Fan out to game subscribers (keyed by pair_id, not proxy_id).
@@ -775,13 +856,13 @@ class Orchestrator:
                     if game_subs:
                         state = self._pairing_state.get(proxy_id)
                         game_payload: dict = {
-                            "proxy_id":     proxy_id,
-                            "line":         line,
-                            "thinking_side": state[1] if state else None,
-                            "engine_name":  self._proxy_engine_names.get(proxy_id),
+                            _PROXY_ID_KEY: proxy_id,
+                            LINE_KEY: line,
+                            _THINKING_SIDE_KEY: state[1] if state else None,
+                            _ENGINE_NAME_KEY: self._proxy_engine_names.get(proxy_id),
                         }
                         if parsed is not None:
-                            game_payload["parsed"] = parsed
+                            game_payload[PARSED_KEY] = parsed
                         _fanout(game_subs, game_payload)
 
     def _recompute_groups(self) -> tuple[set[frozenset], set[str]]:
@@ -800,7 +881,7 @@ class Orchestrator:
         """
         new_groups: set[frozenset] = set()
         for bucket in self._pairing_map.values():
-            if len(bucket) >= 2:
+            if len(bucket) >= _PAIR_SIZE:
                 new_groups.add(frozenset(pid for pid, _ in bucket))
 
         added   = new_groups - self._current_groups
@@ -809,7 +890,7 @@ class Orchestrator:
 
         new_pairs: set[frozenset] = set()
         for group in added:
-            if len(group) == 2:
+            if len(group) == _PAIR_SIZE:
                 pid_a, pid_b = tuple(group)
                 state_a = self._pairing_state.get(pid_a)
                 state_b = self._pairing_state.get(pid_b)
@@ -837,15 +918,13 @@ class Orchestrator:
                     self._pair_moves[pair_id] = []
                     new_pairs.add(group)
                     if _DEBUG_PAIRING:
+                        white_pid = self._pair_white[pair_id]
+                        black_pid = pid_b if white_pid == pid_a else pid_a
                         log.debug(
                             "pair confirmed tag=%s white=%s(%s) black=%s(%s) pairs=%d",
-                            pair_id[:8],
-                            self._proxy_engine_names.get(
-                                pid_a if state_a[1] == SIDE_WHITE else pid_b, "?"),
-                            (pid_a if state_a[1] == SIDE_WHITE else pid_b),
-                            self._proxy_engine_names.get(
-                                pid_b if state_a[1] == SIDE_WHITE else pid_a, "?"),
-                            (pid_b if state_a[1] == SIDE_WHITE else pid_a),
+                            short_id(pair_id),
+                            self._engine_name_or_unknown(white_pid), white_pid,
+                            self._engine_name_or_unknown(black_pid), black_pid,
                             len(self._pair_proxies),
                         )
                 elif name_a and name_b and name_a == name_b and _DEBUG_PAIRING:
@@ -855,12 +934,12 @@ class Orchestrator:
                         name_a, pid_a, name_b, pid_b,
                     )
             elif _DEBUG_PAIRING:
-                fen = (self._pairing_state.get(next(iter(group))) or ("?",))[0]
+                fen = (self._pairing_state.get(next(iter(group))) or (_UNKNOWN,))[0]
                 log.debug(
                     "pairing: ambiguous size=%d fen=%.30s %s",
                     len(group),
                     fen,
-                    [(p, self._proxy_engine_names.get(p, "?")) for p in group],
+                    [(p, self._engine_name_or_unknown(p)) for p in group],
                 )
 
         orphaned: set[str] = set()
@@ -871,10 +950,13 @@ class Orchestrator:
         if orphaned and _DEBUG_PAIRING:
             log.debug(
                 "pairing: orphaned %s",
-                [(p, self._proxy_engine_names.get(p, "?")) for p in orphaned],
+                [(p, self._engine_name_or_unknown(p)) for p in orphaned],
             )
 
         return new_pairs, orphaned
+
+    def _engine_name_or_unknown(self, proxy_id: str) -> str:
+        return self._proxy_engine_names.get(proxy_id, _UNKNOWN)
 
     def _pairing_register(self, proxy_id: str, fen: str, side: str) -> tuple[set[frozenset], set[str]]:
         """Re-register proxy at a new FEN, then recompute pairing groups.
@@ -886,7 +968,7 @@ class Orchestrator:
         self._pairing_state[proxy_id] = (fen, side)
         if _DEBUG_PAIRING:
             self._pairing_assert_invariants()
-            if len(bucket) > 2:
+            if len(bucket) > _PAIR_SIZE:
                 log.warning(
                     "pairing: bucket >2 fen=%s entries=%s",
                     fen,
@@ -913,8 +995,8 @@ class Orchestrator:
         state = self._pairing_state.get(proxy_id)
         if state is None or not parsed:
             return set(), set()
-        move_uci = parsed.get("move")
-        if not move_uci or move_uci == "(none)":
+        move_uci = parsed.get(MOVE_KEY)
+        if not move_uci or move_uci == _NULL_MOVE:
             return set(), set()
         fen, my_color = state
         try:
@@ -934,19 +1016,13 @@ class Orchestrator:
         alone, so this path reports UNKNOWN and reconciliation fills
         them in. The PGN-record path dissolves with the real result."""
         for group in new_pairs:
+            # `_white_black_for_group`: frozenset iteration is
+            # nondeterministic, so orientation is resolved explicitly.
             white_pid, black_pid = self._white_black_for_group(group)
             await self._emit("proxy_paired", {
-                "tournament_id": self._active_id,
-                "pair_id": self._pair_ids.get(group, ""),
-                # `_a` is always white; `_b` is always black. See
-                # `_white_black_for_group` -- frozenset iteration is
-                # nondeterministic so we sort by side explicitly.
-                "proxy_a": white_pid,
-                "engine_a": self._proxy_engine_names.get(white_pid, white_pid),
-                "side_a": SIDE_WHITE,
-                "proxy_b": black_pid,
-                "engine_b": self._proxy_engine_names.get(black_pid, black_pid),
-                "side_b": SIDE_BLACK,
+                _TOURNAMENT_ID_KEY: self._active_id,
+                _PAIR_ID_KEY: self._pair_ids.get(group, ""),
+                **self._pair_fields(white_pid, black_pid, name_fallback=True),
             })
         # Orphan path is a backstop: ucinewgame and proxy_session_ended
         # dissolve confirmed pairs directly. This catches edge cases
@@ -962,7 +1038,7 @@ class Orchestrator:
             pair_id = self._pair_ids.get(frozenset((pid, peer)), "")
             if pair_id:
                 await self._dissolve_pair(
-                    pair_id, _RESULT_UNKNOWN, _TERMINATION_UNKNOWN,
+                    pair_id, UNKNOWN_RESULT, UNKNOWN_TERMINATION,
                 )
 
     def _white_black_for_group(self, group: frozenset) -> tuple[str, str]:
@@ -971,14 +1047,14 @@ class Orchestrator:
         `_pair_white` (cached at confirmation), falling back to
         `_pairing_state` for groups not yet confirmed."""
         pids = tuple(group)
-        if len(pids) != 2:
+        if len(pids) != _PAIR_SIZE:
             return pids[0] if pids else "", pids[1] if len(pids) > 1 else ""
         pid_a, pid_b = pids
         pair_id = self._pair_ids.get(group)
         white = self._pair_white.get(pair_id) if pair_id else None
         if white in (pid_a, pid_b):
             return (white, pid_b if white == pid_a else pid_a)
-        side_a = (self._pairing_state.get(pid_a) or ("", "?"))[1]
+        side_a = (self._pairing_state.get(pid_a) or ("", _UNKNOWN))[1]
         return (pid_a, pid_b) if side_a == SIDE_WHITE else (pid_b, pid_a)
 
     async def _on_pgn_record(self, record: PgnGameRecord) -> None:
@@ -999,7 +1075,7 @@ class Orchestrator:
             ):
                 await self._dissolve_pair(
                     pair_id, record.result,
-                    record.termination or _TERMINATION_UNKNOWN,
+                    record.termination or UNKNOWN_TERMINATION,
                 )
                 return
 
@@ -1018,17 +1094,17 @@ class Orchestrator:
     async def _emit_reconciled(self, m: ReconciledMatch) -> None:
         log.info(
             "reconciled pair=%s game_n=%d result=%s termination=%s plies=%d",
-            m.pair_id[:8], m.game_n, m.result,
+            short_id(m.pair_id), m.game_n, m.result,
             m.termination or "<none>", m.ply_count,
         )
         await self._emit("game_reconciled", {
-            "tournament_id": self._active_id,
-            "pair_id": m.pair_id,
-            "game_n": m.game_n,
+            _TOURNAMENT_ID_KEY: self._active_id,
+            _PAIR_ID_KEY: m.pair_id,
+            _GAME_N_KEY: m.game_n,
             "white": m.pgn_white,
             "black": m.pgn_black,
-            "result": m.result,
-            "termination": m.termination,
+            _RESULT_KEY: m.result,
+            _TERMINATION_KEY: m.termination,
             "matched": True,
             "ply_count": m.ply_count,
         })
@@ -1037,9 +1113,9 @@ class Orchestrator:
         """Capture the cumulative UCI move list of a confirmed pair.
         Longest-prefix-extension wins; book-prefix collisions and
         stale shorter frames are ignored."""
-        if parsed is None or parsed.get("kind") != "position":
+        if parsed is None or parsed.get(KIND_KEY) != UCI_POSITION:
             return
-        moves = parsed.get("moves")
+        moves = parsed.get(MOVES_KEY)
         if not isinstance(moves, list):
             return
         peer = self._confirmed_pairs.get(proxy_id)
@@ -1080,11 +1156,11 @@ class Orchestrator:
         moves = self._pair_moves.pop(pair_id, None)
         log.debug(
             "dissolve pair=%s plies=%d terminal=%s white=%s black=%s",
-            pair_id[:8],
+            short_id(pair_id),
             len(moves) if moves else 0,
             terminal,
-            self._proxy_engine_names.get(white_pid, "?"),
-            self._proxy_engine_names.get(black_pid, "?"),
+            self._engine_name_or_unknown(white_pid),
+            self._engine_name_or_unknown(black_pid),
         )
         reconciled: ReconciledMatch | None = None
         if moves:
@@ -1105,38 +1181,30 @@ class Orchestrator:
         if _DEBUG_PAIRING:
             log.debug(
                 "pair dissolved tag=%s result=%s termination=%s game_subs=%d",
-                pair_id[:8], result, termination,
+                short_id(pair_id), result, termination,
                 len(game_subs) if game_subs else 0,
             )
         if game_subs:
-            sentinel = {
-                "proxy_id": white_pid,
-                "ended": True,
-                "result": result,
-                "termination": termination,
-            }
+            sentinel = _game_end_sentinel(white_pid, result, termination)
             for q in game_subs:
                 q.put_sentinel(sentinel)
                 q.cancel_timers()
         # TODO: `proxy_unpaired` is redundant with `game_finished` -- same
         # trigger, overlapping payload. Kept for now as a debug signal.
         await self._emit("proxy_unpaired", {
-            "tournament_id": self._active_id,
-            "pair_id": pair_id,
-            "proxy_id": white_pid,
+            _TOURNAMENT_ID_KEY: self._active_id,
+            _PAIR_ID_KEY: pair_id,
+            _PROXY_ID_KEY: white_pid,
             "peer_id": black_pid,
         })
         await self._emit("game_finished", {
-            "tournament_id": self._active_id,
-            "pair_id": pair_id,
+            _TOURNAMENT_ID_KEY: self._active_id,
+            _PAIR_ID_KEY: pair_id,
             # game_n stays null here; reconciliation surfaces it on game_reconciled.
-            "game_n": None,
-            "proxy_a": white_pid,
-            "proxy_b": black_pid,
-            "engine_a": self._proxy_engine_names.get(white_pid),
-            "engine_b": self._proxy_engine_names.get(black_pid),
-            "result": result,
-            "termination": termination,
+            _GAME_N_KEY: None,
+            **self._pair_fields(white_pid, black_pid, with_sides=False),
+            _RESULT_KEY: result,
+            _TERMINATION_KEY: termination,
         })
         if reconciled is not None:
             await self._emit_reconciled(reconciled)
@@ -1149,13 +1217,13 @@ class Orchestrator:
             log.warning("terminal teardown found %d undissolved pair(s)", len(pending_ids))
         for pair_id in pending_ids:
             await self._dissolve_pair(
-                pair_id, _RESULT_UNKNOWN, _TERMINATION_UNKNOWN,
+                pair_id, UNKNOWN_RESULT, UNKNOWN_TERMINATION,
                 terminal=True,
             )
 
     def _paired_subscribers(
         self, proxy_id: str, fen: str, side: str
-    ) -> "set[CoalescingQueue]":
+    ) -> set[CoalescingQueue]:
         """WS queues watching the opposite side: the confirmed peer's
         subscribers (stable all game -- the FEN rendezvous below breaks
         transiently when the thinker's position outruns the waiter's
@@ -1216,7 +1284,10 @@ class Orchestrator:
         for _fen, bucket in self._pairing_map.items():
             for pid, _color in bucket:
                 if pid in seen:
-                    log.error("pairing invariant: proxy %s registered at multiple FENs; map=%s", pid, self._pairing_map)
+                    log.error(
+                        "pairing invariant: proxy %s registered at multiple FENs; map=%s",
+                        pid, self._pairing_map,
+                    )
                     return
                 seen.add(pid)
 
@@ -1227,9 +1298,9 @@ class Orchestrator:
         self._proxy_engine_names[proxy_id] = engine_name
         log.debug("proxy session started: %s (%s)", proxy_id, engine_name)
         await self._emit("proxy_started", {
-            "tournament_id": self._active_id,
-            "proxy_id": proxy_id,
-            "engine_name": engine_name,
+            _TOURNAMENT_ID_KEY: self._active_id,
+            _PROXY_ID_KEY: proxy_id,
+            _ENGINE_NAME_KEY: engine_name,
         })
 
     async def proxy_session_ended(self, proxy_id: str) -> None:
@@ -1241,7 +1312,7 @@ class Orchestrator:
             pair_id = self._pair_ids.get(frozenset((proxy_id, peer)), "")
             if pair_id:
                 await self._dissolve_pair(
-                    pair_id, _RESULT_UNKNOWN, _TERMINATION_UNKNOWN,
+                    pair_id, UNKNOWN_RESULT, UNKNOWN_TERMINATION,
                 )
         self._proxy_engine_names.pop(proxy_id, None)
         self._proxy_snapshot.pop(proxy_id, None)
@@ -1252,11 +1323,11 @@ class Orchestrator:
         subs = self._proxy_subscribers.pop(proxy_id, None)
         if subs:
             for q in subs:
-                q.put_sentinel({"proxy_id": proxy_id, "ended": True})
+                q.put_sentinel(_proxy_end_sentinel(proxy_id))
                 q.cancel_timers()
         await self._emit("proxy_ended", {
-            "tournament_id": self._active_id,
-            "proxy_id": proxy_id,
+            _TOURNAMENT_ID_KEY: self._active_id,
+            _PROXY_ID_KEY: proxy_id,
         })
         await self._emit_group_events(new_pairs, orphaned)
 
@@ -1269,24 +1340,31 @@ class Orchestrator:
         ``go`` / ``info``) onto the queue so a window opened mid-game
         gets an instant render of the engine's state instead of having
         to wait for the engine's next event (>=10s under long TC)."""
-        q = CoalescingQueue(maxsize=512)
+        q = CoalescingQueue(maxsize=_SUBSCRIBER_QUEUE_MAX)
         self._proxy_subscribers.setdefault(proxy_id, set()).add(q)
-        snap = self._proxy_snapshot.get(proxy_id)
-        if snap:
-            for kind in ("position", "go", "info"):
-                line = snap.get(kind)
-                if line is None:
-                    continue
-                # Snapshot replay bypasses coalescing -- these are all
-                # the latest values already, no benefit to slotting.
-                # ``snapshot`` tells the client to paint state without
-                # starting clock timers (the ``go`` may be stale).
-                payload = {"proxy_id": proxy_id, "line": line, "snapshot": True}
-                if kind == "info":
-                    q.put_info(payload)
-                else:
-                    q.put_other(payload)
+        # Snapshot replay bypasses coalescing -- these are all the latest
+        # values already, no benefit to slotting. ``snapshot`` tells the
+        # client to paint state without starting clock timers (the ``go``
+        # may be stale).
+        self._replay_snapshot(q, proxy_id, with_parsed=False)
         return q
+
+    def _replay_snapshot(self, q: CoalescingQueue, proxy_id: str, *, with_parsed: bool) -> None:
+        snap = self._proxy_snapshot.get(proxy_id)
+        if not snap:
+            return
+        for command in _SNAPSHOT_COMMANDS:
+            line = snap.get(command)
+            if not line:
+                continue
+            payload = {_PROXY_ID_KEY: proxy_id, LINE_KEY: line}
+            if with_parsed:
+                payload[PARSED_KEY] = parse_uci_line(line)
+            payload[_SNAPSHOT_KEY] = True
+            if command == UCI_INFO:
+                q.put_info(payload)
+            else:
+                q.put_other(payload)
 
     def unsubscribe_from_proxy(self, proxy_id: str, queue: CoalescingQueue) -> None:
         subs = self._proxy_subscribers.get(proxy_id)
@@ -1302,36 +1380,20 @@ class Orchestrator:
         The queue receives the same ``{proxy_id, line}`` payloads as the
         proxy subscriber but is closed (via ``{ended: True}`` sentinel)
         when the pair dissolves, not when the proxy session ends."""
-        q = CoalescingQueue(maxsize=512)
+        q = CoalescingQueue(maxsize=_SUBSCRIBER_QUEUE_MAX)
         proxies = self._pair_proxies.get(pair_id)
         if not proxies:
             # Pair already dissolved before this subscriber attached
             # (race: user clicks Watch as the game ends). Push the
             # sentinel immediately so the WS handler closes cleanly
             # instead of leaving a stuck window.
-            q.put_sentinel({
-                "proxy_id": "",
-                "ended": True,
-                "result": _RESULT_UNKNOWN,
-                "termination": _TERMINATION_UNKNOWN,
-            })
+            q.put_sentinel(_game_end_sentinel("", UNKNOWN_RESULT, UNKNOWN_TERMINATION))
             return q
         self._game_subscribers.setdefault(pair_id, set()).add(q)
         # Replay snapshot for both proxies so a late subscriber gets
         # instant board state without waiting for the next UCI event.
         for pid in proxies:
-            snap = self._proxy_snapshot.get(pid)
-            if snap:
-                for kind in ("position", "go", "info"):
-                    raw = snap.get(kind)
-                    if raw:
-                        payload = {"proxy_id": pid, "line": raw,
-                                   "parsed": parse_uci_line(raw),
-                                   "snapshot": True}
-                        if kind == "info":
-                            q.put_info(payload)
-                        else:
-                            q.put_other(payload)
+            self._replay_snapshot(q, pid, with_parsed=True)
         return q
 
     def unsubscribe_from_game(self, pair_id: str, queue: CoalescingQueue) -> None:
@@ -1347,5 +1409,5 @@ class Orchestrator:
         ended sentinel and drop the subscription table."""
         for proxy_id, subs in list(self._proxy_subscribers.items()):
             for q in subs:
-                q.put_sentinel({"proxy_id": proxy_id, "ended": True})
+                q.put_sentinel(_proxy_end_sentinel(proxy_id))
         self._proxy_subscribers.clear()

@@ -2,19 +2,18 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import secrets
 from pathlib import Path
 
-from platformdirs import user_config_dir
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from . import app_dir_name
+from . import app_config_dir
 from . import key_store
 from ._atomic import atomic_write_json
 from ._runtime import app_root
 from .chess.results import SIDE_BLACK, SIDE_WHITE
+from .env_utils import env_path
 
 log = logging.getLogger(__name__)
 
@@ -117,14 +116,14 @@ VALID_BOARD_STYLES = {
 }
 
 
+_SETTINGS_FILENAME = "settings.json"
+
+
 def default_settings_file() -> Path:
     """Path to persisted user settings.
 
     ``SV_SETTINGS_FILE`` overrides the default."""
-    override = os.environ.get("SV_SETTINGS_FILE")
-    if override:
-        return Path(override)
-    return Path(user_config_dir(app_dir_name(), appauthor=False)) / "settings.json"
+    return env_path("SV_SETTINGS_FILE", app_config_dir() / _SETTINGS_FILENAME)
 
 
 LOOPBACK_HOST = "127.0.0.1"
@@ -133,6 +132,17 @@ DEFAULT_PORT = 8765
 ROOT_PATH = "/"
 _TOKEN_BYTES = 24
 _SETTINGS_JSON_INDENT = 2
+
+# Settings reads each field from SV_<FIELD>. __main__ and desktop pass CLI
+# overrides to Settings() (in this or a worker process) through these.
+ENV_PREFIX = "SV_"
+ENV_HOST = f"{ENV_PREFIX}HOST"
+ENV_PORT = f"{ENV_PREFIX}PORT"
+ENV_TOKEN = f"{ENV_PREFIX}TOKEN"
+ENV_ENGINE_PATH = f"{ENV_PREFIX}ENGINE_PATH"
+ENV_AUTH_DISABLED = f"{ENV_PREFIX}AUTH_DISABLED"
+ENV_TLS_CERT = f"{ENV_PREFIX}TLS_CERT"
+ENV_TLS_KEY = f"{ENV_PREFIX}TLS_KEY"
 
 
 # Fields persisted to disk. Excludes secrets (token), bind config (host/port),
@@ -188,7 +198,7 @@ class Settings(BaseSettings):
     """Process-level config. Read from env (SV_*) or .env at repo root."""
 
     model_config = SettingsConfigDict(
-        env_prefix="SV_",
+        env_prefix=ENV_PREFIX,
         env_file=str(REPO_ROOT / ".env"),
         extra="ignore",
     )

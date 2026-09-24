@@ -6,6 +6,7 @@ fastchess subprocess is replaced by a fake-fastchess script via a
 """
 from __future__ import annotations
 
+import json
 import sys
 import time
 from collections import deque
@@ -14,13 +15,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from sturddle_view.api.tournaments import _snap_terminal_sprt_verdict
+from sturddle_view.api.tournaments import ALLOW_OVERSUBSCRIBE_ENV, _snap_terminal_sprt_verdict
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.tournament import fastchess as fc_mod
 from sturddle_view.tournament.fastchess import FastchessRunner
-from sturddle_view.tournament.pgn_stats import SPRT_CONTINUE, SPRT_H0, SPRT_H1
+from sturddle_view.tournament.pgn_stats import SPRT_CONTINUE, SPRT_H0, SPRT_H1, SprtResult
 from sturddle_view.tournament.store import (
     STATUS_DONE,
     STATUS_RUNNING,
@@ -107,8 +108,6 @@ def test_create_returns_id_and_status_idle(client):
 
 
 def test_create_injects_oversubscribe_from_env(client, monkeypatch):
-    from sturddle_view.api.tournaments import ALLOW_OVERSUBSCRIBE_ENV
-
     monkeypatch.setenv(ALLOW_OVERSUBSCRIBE_ENV, "1")
     r = client.post("/api/tournaments", json={
         "name": "over", "template": {"tc": "10+0.1"}, "engines": _engines_payload(),
@@ -490,7 +489,7 @@ def test_settings_persist_across_restart(tmp_path, monkeypatch):
             "default_template": {"tc": "60+0.6", "games_in_parallel": 2},
         })
 
-    # Fresh app, fresh Settings — auto-loads from the persisted file
+    # Fresh app, fresh Settings -- auto-loads from the persisted file
     s2 = Settings(auth_disabled=True)
     s2.apply_persisted()
     app2 = create_app(settings=s2)
@@ -545,10 +544,9 @@ def test_reconcile_marks_stale_running_as_failed(tmp_path, monkeypatch):
 
     # Manually corrupt the on-disk state to "running" to simulate the crash
     state_path = Path(s.tournament_root) / t["id"] / "state.json"
-    import json as _json
-    state = _json.loads(state_path.read_text())
+    state = json.loads(state_path.read_text())
     state["status"] = "running"
-    state_path.write_text(_json.dumps(state))
+    state_path.write_text(json.dumps(state))
 
     # Boot a fresh app -- reconcile should flip it to failed with a
     # synthetic last_error so the UI surfaces *why*.
@@ -690,7 +688,7 @@ def test_create_snapshots_engine_defaults_from_settings(client, settings):
 
 
 def test_create_freezes_unset_engine_defaults_as_none(client, settings):
-    # Settings has nothing set → snapshot still records every field
+    # Settings has nothing set -> snapshot still records every field
     # (with None values) so later Settings changes can't leak in.
     body = client.post("/api/tournaments", json={
         "name": "bare", "engines": _engines_payload(),
@@ -920,7 +918,6 @@ def test_patch_updates_name_template_engines(client):
 
 
 def test_patch_resets_status_to_idle(client):
-    from sturddle_view.tournament.store import STATUS_STOPPED
     t = _create(client)
     client.app.state.tournament_store.update_status(t["id"], STATUS_STOPPED)
 
@@ -956,7 +953,7 @@ def test_patch_wipes_tournament_dir_contents(client):
     logs = store.logs_dir(t["id"])
     logs.mkdir(exist_ok=True)
     (logs / "fastchess.log").write_text("info: ...")
-    stray = store._dir(t["id"]) / "stray.tmp"
+    stray = store.dir_for(t["id"]) / "stray.tmp"
     stray.write_text("leftover")
 
     r = client.patch(f"/api/tournaments/{t['id']}", json={
@@ -1100,7 +1097,7 @@ def test_get_game_pgn_out_of_range_returns_404(client):
 
 # Same shape as _THREE_GAME_PGN but the middle entry is in-flight (Result "*").
 # pgn_tail counts only decisive games, so what we call "game 2" must skip the
-# `*` and resolve to the third entry (1/2-1/2). Guards the read_game_pgn fix.
+# `*` and resolve to the third entry (1/2-1/2). Guards the game-numbering fix.
 _PGN_WITH_INFLIGHT_MIDDLE = """[Event "g1"]
 [White "A"]
 [Black "B"]
@@ -1152,42 +1149,45 @@ def test_get_game_pgn_zero_returns_422(client):
 
 
 def _sprt(llr, status=SPRT_CONTINUE, lower=-2.94, upper=2.94):
-    return {"llr": llr, "lower_bound": lower, "upper_bound": upper, "status": status}
+    return SprtResult(
+        llr=llr, lower_bound=lower, upper_bound=upper, status=status,
+        pairs=1, elo0=0.0, elo1=5.0,
+    )
 
 
 def test_snap_done_positive_llr_becomes_h1():
     out = _snap_terminal_sprt_verdict(_sprt(2.93), STATUS_DONE)
-    assert out["status"] == SPRT_H1
+    assert out.status == SPRT_H1
 
 
 def test_snap_done_negative_llr_becomes_h0():
     # LLR -2.75, bound -2.94: 0.19 short -- DONE snaps anyway (it concluded).
     out = _snap_terminal_sprt_verdict(_sprt(-2.75), STATUS_DONE)
-    assert out["status"] == SPRT_H0
+    assert out.status == SPRT_H0
 
 
 def test_snap_done_snaps_even_near_midpoint():
     # DONE means concluded; lean decides the side, no tolerance gate.
-    assert _snap_terminal_sprt_verdict(_sprt(0.4), STATUS_DONE)["status"] == SPRT_H1
-    assert _snap_terminal_sprt_verdict(_sprt(-0.4), STATUS_DONE)["status"] == SPRT_H0
+    assert _snap_terminal_sprt_verdict(_sprt(0.4), STATUS_DONE).status == SPRT_H1
+    assert _snap_terminal_sprt_verdict(_sprt(-0.4), STATUS_DONE).status == SPRT_H0
 
 
 def test_snap_stopped_near_bound_snaps():
     out = _snap_terminal_sprt_verdict(_sprt(2.93), STATUS_STOPPED)
-    assert out["status"] == SPRT_H1
+    assert out.status == SPRT_H1
 
 
 def test_snap_stopped_mid_run_stays_continue():
     # A genuine mid-run abort far from both bounds is not invented away.
     out = _snap_terminal_sprt_verdict(_sprt(0.4), STATUS_STOPPED)
-    assert out["status"] == SPRT_CONTINUE
+    assert out.status == SPRT_CONTINUE
 
 
 def test_snap_running_never_snaps():
     out = _snap_terminal_sprt_verdict(_sprt(2.93), STATUS_RUNNING)
-    assert out["status"] == SPRT_CONTINUE
+    assert out.status == SPRT_CONTINUE
 
 
 def test_snap_leaves_already_concluded_untouched():
     out = _snap_terminal_sprt_verdict(_sprt(2.93, status=SPRT_H1), STATUS_DONE)
-    assert out["status"] == SPRT_H1
+    assert out.status == SPRT_H1

@@ -3,7 +3,7 @@
 Real benches use the `benchmark` fixture from pytest-benchmark, which
 handles auto-calibration, warmup, GC disable, and outlier rejection.
 The bare `timeit` shim here is kept solely to exercise the harness
-plumbing (env-var gating, --update-perf-baselines path) in test_smoke.py.
+plumbing (`perf` marker selection, --update-perf-baselines path) in test_smoke.py.
 """
 from __future__ import annotations
 

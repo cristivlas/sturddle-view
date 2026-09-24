@@ -343,7 +343,7 @@ def test_update_wipes_tournament_dir_contents(store):
     ours, edits start from a clean slate). Only the freshly written
     state.json survives."""
     t = store.create(name="x", template={}, engines=[{"name": "A"}])
-    d = store._dir(t.id)
+    d = store.dir_for(t.id)
     # Lay down the artifacts produced by a real fastchess run plus a
     # nested logs dir and a stray file we never created on purpose.
     pgn = store.pgn_path(t.id)

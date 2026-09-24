@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import time
 
-
 from sturddle_view.tournament.pgn_reconcile import (
     MIN_PLIES_FOR_MATCH,
     RECONCILE_LATE_WARNING_S,
@@ -302,24 +301,6 @@ def test_queue_max_evicts_oldest():
         # cares about list equality, so any unique sentinel works.
         q.add_pending(_pending(pair_id=f"P{i}", moves=moves))
     assert q.pending_count == 3
-
-
-def test_env_float_non_numeric_returns_default(monkeypatch):
-    """`_env_float` catches ValueError from float() on non-numeric env
-    var and falls back to default. Kills ExceptionReplacer mutations
-    on the `except ValueError` catch (which would let the parse error
-    propagate)."""
-    from sturddle_view.tournament.pgn_reconcile import _env_float
-    monkeypatch.setenv("SV_TEST_BAD_FLOAT", "not-a-number")
-    assert _env_float("SV_TEST_BAD_FLOAT", 42.0) == 42.0
-
-
-def test_env_int_non_numeric_returns_default(monkeypatch):
-    """`_env_int` mirror of _env_float test. Kills ExceptionReplacer
-    on its `except ValueError` catch."""
-    from sturddle_view.tournament.pgn_reconcile import _env_int
-    monkeypatch.setenv("SV_TEST_BAD_INT", "not-an-int")
-    assert _env_int("SV_TEST_BAD_INT", 17) == 17
 
 
 def test_late_match_emits_warning(monkeypatch, caplog):

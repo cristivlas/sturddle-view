@@ -21,8 +21,18 @@ from ..engines import (
     resolve_selected,
     validate_launch_profile,
 )
+from ..error_detail import MESSAGE_KEY
+from ..play.human_vs_engine import live_hve
 from ..tournament.store import STATUS_RUNNING, TournamentStore
 from ._http import bad_request, conflict, not_found
+
+_ENGINE_NOT_FOUND = "engine not found"
+_ENGINE_PATH = "/{engine_id}"
+_SELECTED_ID_KEY = "selected_id"
+# Running-tournament lock entries: {name, status}.
+_LOCK_NAME_KEY = "name"
+_LOCK_STATUS_KEY = "status"
+_ENGINE_REF_ID_KEY = "id"
 
 
 def _validate_engine_path(raw: str) -> str:
@@ -47,7 +57,6 @@ def _validate_engine_path(raw: str) -> str:
         raise bad_request(f"path is not executable: {p}")
     return str(p)
 
-_ENGINE_NOT_FOUND = "engine not found"
 
 router = APIRouter(prefix="/engines", tags=["engines"], dependencies=[Depends(require_token)])
 
@@ -83,7 +92,7 @@ class EngineUpdate(BaseModel):
 
 
 class EngineProbe(BaseModel):
-    """Trial-spawn payload — does not touch the registry. Used by the
+    """Trial-spawn payload -- does not touch the registry. Used by the
     Engine Settings dialog to probe with the user's *in-progress* launch
     profile (current path/args/env edits) before saving."""
     path: str
@@ -116,21 +125,22 @@ def _engine_locks(request: Request) -> dict[str, list[dict]]:
         if t.status != STATUS_RUNNING:
             continue
         for ref in t.engines or []:
-            eng_id = ref.get("id") if isinstance(ref, dict) else getattr(ref, "id", None)
+            eng_id = (
+                ref.get(_ENGINE_REF_ID_KEY) if isinstance(ref, dict)
+                else getattr(ref, _ENGINE_REF_ID_KEY, None)
+            )
             if eng_id:
-                locks.setdefault(eng_id, []).append({"name": t.name, "status": t.status})
+                locks.setdefault(eng_id, []).append(
+                    {_LOCK_NAME_KEY: t.name, _LOCK_STATUS_KEY: t.status}
+                )
     return locks
 
 
 def _check_engine_locked(engine_id: str, request: Request) -> None:
     """Raise 409 if the engine is referenced by a running tournament."""
-    ts: TournamentStore = getattr(request.app.state, "tournament_store", None)
-    if ts is None:
-        return
-    locks = _engine_locks(request)
-    refs = locks.get(engine_id, [])
+    refs = _engine_locks(request).get(engine_id, [])
     if refs:
-        names = ", ".join(f"{r['name']} ({r['status']})" for r in refs)
+        names = ", ".join(f"{r[_LOCK_NAME_KEY]} ({r[_LOCK_STATUS_KEY]})" for r in refs)
         raise conflict(f"engine in use by: {names}")
 
 
@@ -171,7 +181,7 @@ async def list_engines(request: Request, probe: bool = True) -> dict:
         out.append(_serialize(e))
     return {
         "engines": out,
-        "selected_id": reg.selected_id,
+        _SELECTED_ID_KEY: reg.selected_id,
     }
 
 
@@ -211,7 +221,7 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
     return _serialize(e)
 
 
-@router.get("/{engine_id}")
+@router.get(_ENGINE_PATH)
 def get_engine(engine_id: str, request: Request) -> dict:
     reg = _registry(request)
     try:
@@ -224,7 +234,7 @@ def get_engine(engine_id: str, request: Request) -> dict:
     return d
 
 
-@router.patch("/{engine_id}")
+@router.patch(_ENGINE_PATH)
 async def update_engine(engine_id: str, payload: EngineUpdate, request: Request) -> dict:
     _check_engine_locked(engine_id, request)
     reg = _registry(request)
@@ -250,18 +260,14 @@ async def update_engine(engine_id: str, payload: EngineUpdate, request: Request)
     # If the edited engine is the one currently driving HvE, push the new
     # launch profile to the live instance so the next move uses it.
     s = request.app.state
-    hve = getattr(s, "hve", None)
+    hve = live_hve(s)
     if hve is not None and reg.selected_id == engine_id:
-        launch = resolve_selected(s.engines, s.settings)
-        hve.set_engine_name(launch.name)
-        hve.set_engine_options(launch.options)
-        hve.set_engine_args(launch.args)
-        hve.set_engine_env(launch.env)
+        hve.apply_launch(resolve_selected(s.engines, s.settings))
         await hve.apply_engine_settings_live()
     return _serialize(e)
 
 
-@router.delete("/{engine_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(_ENGINE_PATH, status_code=status.HTTP_204_NO_CONTENT)
 def remove_engine(engine_id: str, request: Request) -> None:
     _check_engine_locked(engine_id, request)
     reg = _registry(request)
@@ -280,16 +286,13 @@ async def select_engine(engine_id: str, request: Request) -> dict:
         raise not_found(_ENGINE_NOT_FOUND) from exc
     # Eager swap so mid-analysis (no /game/* call follows) takes effect now.
     s = request.app.state
-    hve = getattr(s, "hve", None)
+    hve = live_hve(s)
     if hve is not None:
         launch = resolve_selected(s.engines, s.settings)
         if launch.path is not None and hve.engine_path != launch.path:
             await hve.swap_engine(launch.path)
-            hve.set_engine_name(launch.name)
-            hve.set_engine_options(launch.options)
-            hve.set_engine_args(launch.args)
-            hve.set_engine_env(launch.env)
-    return {"selected_id": engine_id}
+            hve.apply_launch(launch)
+    return {_SELECTED_ID_KEY: engine_id}
 
 
 @router.post("/{engine_id}/refresh-schema")
@@ -309,7 +312,7 @@ async def refresh_engine_schema(engine_id: str, request: Request) -> dict:
         e.path, args=list(e.args or []), env=dict(e.env or {}),
     )
     if probe_error:
-        detail = f"could not capture options from engine: {probe_error['message']}"
+        detail = f"could not capture options from engine: {probe_error[MESSAGE_KEY]}"
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
     # An empty schema on a clean probe is legitimate (optionless engine):
     # persist it plus uci_name so the entry stops re-probing.

@@ -6,19 +6,18 @@ PGN tailer are joined by UCI move-list comparison.
 from __future__ import annotations
 
 import logging
-import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
 
-from ..env_utils import env_float as _env_float, env_int as _env_int
-from .pgn_tail import PgnGameRecord
+from ..env_utils import env_float, env_int
+from .pgn_tail import DEBUG_RECONCILE, PgnGameRecord
 
 
 log = logging.getLogger(__name__)
 
-# SV_DEBUG_RECONCILE=1 turns on per-record / per-match traces.
-_DEBUG = os.environ.get("SV_DEBUG_RECONCILE", "0") == "1"
+# Log-friendly prefix length for pair ids.
+_SHORT_ID_CHARS = 8
 
 # Min captured plies before we attempt a match -- guards against
 # opening-prefix collisions across parallel slots.
@@ -26,9 +25,9 @@ MIN_PLIES_FOR_MATCH = 12
 
 # Operator knobs (env-overridable). Defaults work for typical
 # tournaments; bump under high concurrency or slow disk.
-RECONCILE_TIMEOUT_S = _env_float("SV_RECONCILE_TIMEOUT_S", 60.0)
-RECONCILE_LATE_WARNING_S = _env_float("SV_RECONCILE_LATE_WARNING_S", 5.0)
-RECONCILE_QUEUE_MAX = _env_int("SV_RECONCILE_QUEUE_MAX", 256)
+RECONCILE_TIMEOUT_S = env_float("SV_RECONCILE_TIMEOUT_S", 60.0)
+RECONCILE_LATE_WARNING_S = env_float("SV_RECONCILE_LATE_WARNING_S", 5.0)
+RECONCILE_QUEUE_MAX = env_int("SV_RECONCILE_QUEUE_MAX", 256)
 
 # Captured may overrun PGN by 1 ply when fastchess adjudicates after
 # the engine has already emitted bestmove.
@@ -38,6 +37,10 @@ _MAX_CAPTURED_OVERRUN_PLIES = 1
 # after the final ``bestmove``); a bigger shortfall means the pair is
 # likely mid-game (e.g. a rematch replaying the same opening line).
 _MAX_CAPTURED_SHORTFALL_PLIES = 2
+
+
+def short_id(ident: str) -> str:
+    return ident[:_SHORT_ID_CHARS]
 
 
 def _moves_match(captured: list[str], pgn: list[str]) -> bool:
@@ -123,10 +126,10 @@ class ReconciliationQueue:
         PGN record matches, else park the entry."""
         if len(entry.uci_moves) < self._min_plies:
             return None
-        if _DEBUG:
+        if DEBUG_RECONCILE:
             log.debug(
                 "reconcile pending pair=%s plies=%d white=%s black=%s",
-                entry.pair_id[:8], len(entry.uci_moves),
+                short_id(entry.pair_id), len(entry.uci_moves),
                 entry.white_engine, entry.black_engine,
             )
         match = self._try_match_pending(entry)
@@ -140,7 +143,7 @@ class ReconciliationQueue:
         dissolution matches, else park it in the ring buffer."""
         if len(record.uci_moves) < self._min_plies:
             return None
-        if _DEBUG:
+        if DEBUG_RECONCILE:
             log.debug(
                 "reconcile pgn_record n=%d plies=%d white=%s black=%s result=%s",
                 record.game_n, len(record.uci_moves),
@@ -163,7 +166,7 @@ class ReconciliationQueue:
             entry = self._pending.popleft()
             log.info(
                 "reconcile timeout pair=%s plies=%d age=%.1fs",
-                entry.pair_id[:8], len(entry.uci_moves),
+                short_id(entry.pair_id), len(entry.uci_moves),
                 now - entry.enqueued_at,
             )
             dropped.append(entry)
@@ -184,7 +187,7 @@ class ReconciliationQueue:
             on_hit=lambda item: _join(entry, item[0]),
             query_plies=len(entry.uci_moves),
             miss_log=("reconcile miss (pending) pair=%s plies=%d closest_pgn_plies=%d",
-                      entry.pair_id[:8]),
+                      short_id(entry.pair_id)),
         )
 
     def _try_match_pgn(self, record: PgnGameRecord) -> ReconciledMatch | None:
@@ -205,7 +208,7 @@ class ReconciliationQueue:
             if matches(item):
                 del container[i]
                 return on_hit(item)
-        if _DEBUG and container:
+        if DEBUG_RECONCILE and container:
             closest = min(container, key=lambda x: abs(len(moves_of(x)) - query_plies))
             fmt, *prefix_args = miss_log
             log.debug(fmt, *prefix_args, query_plies, len(moves_of(closest)))
@@ -217,7 +220,7 @@ def _join(entry: PendingMatch, record: PgnGameRecord) -> ReconciledMatch:
     if age >= RECONCILE_LATE_WARNING_S:
         log.info(
             "reconcile late pair=%s plies=%d age=%.1fs",
-            entry.pair_id[:8], len(entry.uci_moves), age,
+            short_id(entry.pair_id), len(entry.uci_moves), age,
         )
     return ReconciledMatch(
         pair_id=entry.pair_id,

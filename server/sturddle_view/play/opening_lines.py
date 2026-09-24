@@ -25,6 +25,7 @@ from pathlib import Path
 
 import chess
 
+from ..chess.results import DECISIVE_RESULTS, UNKNOWN_RESULT
 from ..config import BOOK_ORDER_RANDOM
 from ..env_utils import env_int
 
@@ -46,7 +47,7 @@ _DEFAULT_BOOK_PLIES = 20
 # are stripped separately (nesting-aware).
 _PGN_COMMENT = re.compile(r"\{[^}]*\}")
 _PGN_NAG = re.compile(r"\$\d+")
-_PGN_RESULTS = {"*", "1-0", "0-1", "1/2-1/2"}
+_PGN_RESULTS = {UNKNOWN_RESULT, *DECISIVE_RESULTS}
 # Split a multi-game PGN on the blank-line gap before a new game's headers.
 _PGN_GAME_SPLIT = re.compile(r"\n\s*\n(?=\[)")
 # SAN decorations that don't identify the move: checks, mates, annotations.
@@ -103,7 +104,7 @@ def _epd_to_fen(entry: str) -> str | None:
 
 def _pgn_movetext(rec: str) -> str:
     """The movetext of one PGN game chunk (header lines dropped)."""
-    return " ".join(l for l in rec.splitlines() if not l.startswith("["))
+    return " ".join(line for line in rec.splitlines() if not line.startswith("["))
 
 
 def _strip_variations(movetext: str) -> str:

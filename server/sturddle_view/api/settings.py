@@ -19,6 +19,7 @@ from ..config import (
     VALID_RIBBON_SIDES,
 )
 from ..engines import EngineNotFoundError
+from ..play.human_vs_engine import live_hve
 from ._ai_kick import require_ai_provider_factory
 from ._http import bad_request
 
@@ -390,7 +391,7 @@ async def update_settings(payload: dict, request: Request) -> dict:
     # (Threads/Hash/SyzygyPath). Other fields (PGN, eval POV, board style)
     # are read at use time and don't need an engine respawn.
     if any(k in payload for k in _LIVE_ENGINE_KEYS):
-        hve = getattr(request.app.state, "hve", None)
+        hve = live_hve(request.app.state)
         if hve is not None:
             await hve.apply_engine_settings_live()
 

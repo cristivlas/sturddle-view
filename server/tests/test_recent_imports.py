@@ -9,7 +9,6 @@ import pytest
 from sturddle_view.recent_imports import (
     RecentImports,
     RemoveStatus,
-    _hash_text,
 )
 
 
@@ -166,14 +165,7 @@ def test_fen_format_uses_fen_extension(store, tmp_path):
     assert (tmp_path / "imports" / rel).exists()
 
 
-def test_hash_is_stable(store):
-    h1 = _hash_text("hello")
-    h2 = _hash_text("hello")
-    assert h1 == h2
-    assert h1 != _hash_text("HELLO")
-
-
-# ---- Phase 1: game_id, refs, active-session pinning ----
+# ---- game_id, refs, active-session pinning ----
 
 def test_save_round_trips_game_id(store, tmp_path):
     _run(store.save(fmt="pgn", text="1. e4 *", summary="s", game_id="gid-1"))

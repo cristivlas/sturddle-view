@@ -1,4 +1,4 @@
-"""PGN tailer (slice 2 of pgn-reconciliation).
+"""PGN tailer (pgn-reconciliation).
 
 Covers delta parsing, offset bookkeeping, in-flight handling, the
 fast-skip path when nothing changed, and truncation recovery. The
@@ -7,10 +7,15 @@ orchestrator wiring is exercised in `test_pgn_reconciliation.py`.
 from __future__ import annotations
 
 import asyncio
+import os
+import threading
+import time
 from pathlib import Path
 
+import chess.pgn as pgn_mod
 import pytest
 
+from sturddle_view.tournament import pgn_tail as pt_mod
 from sturddle_view.tournament.pgn_tail import PgnGameRecord, PgnTailer
 
 
@@ -81,16 +86,6 @@ def _records_collector():
 @pytest.fixture
 def pgn_path(tmp_path) -> Path:
     return tmp_path / "games.pgn"
-
-
-def test_env_float_non_numeric_returns_default(monkeypatch):
-    """`_env_float` catches ValueError from float() on non-numeric env
-    var and falls back to default. Kills ExceptionReplacer mutations
-    on the `except ValueError` catch (which would let the parse error
-    propagate)."""
-    from sturddle_view.tournament.pgn_tail import _env_float
-    monkeypatch.setenv("SV_TEST_PGN_TAIL_BAD_FLOAT", "abc")
-    assert _env_float("SV_TEST_PGN_TAIL_BAD_FLOAT", 1.5) == 1.5
 
 
 def _write_pgn_text(path: Path, text: str) -> None:
@@ -226,7 +221,6 @@ async def test_illegal_move_game_skipped_valid_game_emitted(pgn_path):
 async def test_poll_once_has_more_true_when_delta_capped(pgn_path, monkeypatch):
     """When _snap_to_boundary caps the delta below file_size, poll_once
     must set _has_more=True so the run loop polls again without sleeping."""
-    from sturddle_view.tournament import pgn_tail as pt_mod
     # Force a tiny cap so two games can't both fit in one poll.
     monkeypatch.setattr(pt_mod, "_MAX_DELTA_BYTES_PER_POLL", 200)
 
@@ -363,8 +357,6 @@ def test_parse_delta_returns_empty_on_read_game_exception(pgn_path, monkeypatch)
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")
     records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
-
-    import chess.pgn as pgn_mod
 
     def boom(*_a, **_kw):
         raise RuntimeError("parser exploded")
@@ -503,15 +495,13 @@ async def test_loop_stays_responsive_during_slow_parse(pgn_path):
     """Synthetic 200ms parse must not block other coroutines on the
     loop. We schedule a 50ms heartbeat alongside poll_once and assert
     the heartbeat ticked while the parse was still in flight."""
-    import time as _t
-
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")
     records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
 
     real_parse = tailer._parse_delta
     def slow_parse(start, end):
-        _t.sleep(0.2)
+        time.sleep(0.2)
         return real_parse(start, end)
     tailer._parse_delta = slow_parse
 
@@ -534,8 +524,6 @@ async def test_parse_runs_off_main_loop_thread(pgn_path):
     """Multi-MB PGN deltas must not block the asyncio loop. The parse
     is dispatched via asyncio.to_thread; verify the actual call lands
     on a worker thread, not the main thread that ran poll_once."""
-    import threading
-
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")
     records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
@@ -581,7 +569,6 @@ def _bump_mtime(path: Path) -> None:
     swallow our test mutation. Filesystems on some hosts have coarse
     mtime granularity (NTFS, HFS+); writing back-to-back in a test
     can land in the same nanosecond bucket."""
-    import os
     st = path.stat()
     os.utime(path, ns=(st.st_atime_ns + 10_000_000, st.st_mtime_ns + 10_000_000))
 
@@ -633,7 +620,6 @@ async def test_finalize_running_drains_capped_backlog(pgn_path, monkeypatch):
     """With the per-poll cap forced small, a multi-game file requires
     several poll iterations to drain. Finalize must keep going until
     EOF, not exit on the first cap-truncated pass."""
-    from sturddle_view.tournament import pgn_tail as pt_mod
     monkeypatch.setattr(pt_mod, "_MAX_DELTA_BYTES_PER_POLL", 200)
 
     pgn_path.write_text(_ONE_GAME + _SECOND_GAME, encoding="utf-8")

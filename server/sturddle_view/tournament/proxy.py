@@ -24,43 +24,51 @@ import argparse
 import asyncio
 import os
 import queue
-import re
 import subprocess
 import sys
 import threading
 import time
 import uuid
+from http import HTTPStatus
 
 import httpx
 
+from .. import APP_NAME
+from ..env_utils import env_bool, env_float, env_int
 
-# Batching defaults — see spec "Volume & high-concurrency considerations".
-BATCH_INTERVAL_S = 0.05  # 50 ms
-BATCH_MAX_LINES = 32
 
-# Lines matching this pattern are not broadcast (pipe to engine stays transparent).
-# TODO: consider a "System" settings category with user-editable log filters
-# (hot-reload and perf implications TBD before exposing in UI).
-_BROADCAST_FILTER: re.Pattern | None = None
+# Batching defaults -- see spec "Volume & high-concurrency considerations".
+BATCH_INTERVAL_S = env_float("SV_PROXY_BATCH_INTERVAL_S", 0.05, min_value=0.0)
+BATCH_MAX_LINES = env_int("SV_PROXY_BATCH_MAX_LINES", 32, min_value=1)
 
 # Kill-switch: when SV_BROADCAST_INFO=0, drop UCI ``info`` lines from the
 # broadcast tap. The pipe to fastchess remains transparent; only the
 # observability fan-out is suppressed. Used to bisect perf regressions
 # between the broadcast machinery and the engine itself.
-_BROADCAST_INFO = os.environ.get("SV_BROADCAST_INFO", "1") != "0"
+_BROADCAST_INFO = env_bool("SV_BROADCAST_INFO", True)
 
+_POST_TIMEOUT_S = env_float("SV_PROXY_POST_TIMEOUT_S", 2.0, min_value=0.0)
+# How long end() waits for queued posts to drain before giving up.
+_END_DRAIN_TIMEOUT_S = env_float("SV_PROXY_END_DRAIN_S", 2.0, min_value=0.0)
 
-_POST_TIMEOUT_S = 2
+# The orchestrator hands the per-tournament secret over in this env var.
+PROXY_SECRET_ENV = "SV_PROXY_SECRET"
 
 # Response field by which the server tells the proxy whether any watcher
 # needs ``info`` lines. Sent only when it flips; absent body = unchanged.
-_WANT_INFO_KEY = "want_info"
+WANT_INFO_KEY = "want_info"
+
+# Local, not uci_parse's: importing it would pull python-chess into every
+# per-engine proxy process.
+_INFO_PREFIX = "info "
+_ENCODING = "utf-8"
+_PROXY_ID_HEX_CHARS = 8
 
 
 class Broadcaster:
     """Buffers proxy lines and POSTs them in batches to the server's
     ``/internal/proxy`` endpoint. Failures are logged to stderr and
-    swallowed — the proxy must never block the engine pipe on
+    swallowed -- the proxy must never block the engine pipe on
     broadcast trouble.
 
     Posts run in a background worker thread so the asyncio loop that
@@ -118,13 +126,13 @@ class Broadcaster:
             return
         self._apply_want_info(resp)
 
-    def _apply_want_info(self, resp: "httpx.Response") -> None:
+    def _apply_want_info(self, resp: httpx.Response) -> None:
         """Read the want-info gate off a batch response. Server sends a
         body only on flip; 204/empty/garbled leaves the flag as-is."""
-        if resp.status_code == 204 or not resp.content:
+        if resp.status_code == HTTPStatus.NO_CONTENT or not resp.content:
             return
         try:
-            value = resp.json().get(_WANT_INFO_KEY)
+            value = resp.json().get(WANT_INFO_KEY)
         except (ValueError, AttributeError):
             return
         if isinstance(value, bool):
@@ -137,18 +145,22 @@ class Broadcaster:
     def _post(self, payload: dict) -> None:
         self._post_q.put(payload)
 
+    def _post_batch(self, lines: list[str], *, ended: bool = False) -> None:
+        """POST body; mirrors the server's ``ProxyBatch`` model."""
+        self._post({
+            "proxy_id": self._proxy_id,
+            "secret": self._secret,
+            "engine_name": self._engine_name,
+            "lines": lines,
+            "ended": ended,
+        })
+
     def announce(self) -> None:
         """First post: register the proxy session with the server."""
         if self._announced:
             return
         self._announced = True
-        self._post({
-            "proxy_id": self._proxy_id,
-            "secret": self._secret,
-            "engine_name": self._engine_name,
-            "lines": [],
-            "ended": False,
-        })
+        self._post_batch([])
 
     def add_line(self, line: str) -> None:
         self._buf.append(line)
@@ -164,41 +176,25 @@ class Broadcaster:
             return
         lines, self._buf = self._buf, []
         self._last_flush = time.monotonic()
-        self._post({
-            "proxy_id": self._proxy_id,
-            "secret": self._secret,
-            "engine_name": self._engine_name,
-            "lines": lines,
-            "ended": False,
-        })
+        self._post_batch(lines)
 
     def end(self) -> None:
         # Final flush + ended sentinel + drain the worker.
         self.flush()
-        self._post({
-            "proxy_id": self._proxy_id,
-            "secret": self._secret,
-            "engine_name": self._engine_name,
-            "lines": [],
-            "ended": True,
-        })
+        self._post_batch([], ended=True)
         self._post_q.put(None)
-        # Bounded wait — don't hold up shutdown if the server is slow.
-        self._post_stopped.wait(timeout=2)
+        # Bounded wait -- don't hold up shutdown if the server is slow.
+        self._post_stopped.wait(timeout=_END_DRAIN_TIMEOUT_S)
 
 
 async def _pump(
     src: asyncio.StreamReader,
     dst_writer,
     broadcaster: Broadcaster | None,
-    tag: str,
 ) -> None:
     """Forward src -> dst_writer line by line, also pushing each line to
-    the broadcaster (if any). ``tag`` is "in" (fastchess→engine) or
-    "out" (engine→fastchess) — currently only used for stderr logging
-    on broadcast failure.
+    the broadcaster (if any).
     """
-    del tag  # reserved
     while True:
         line = await src.readline()
         if not line:
@@ -209,18 +205,17 @@ async def _pump(
         except AttributeError:
             pass
         if broadcaster is not None:
-            decoded = line.decode("utf-8", errors="replace").rstrip("\r\n")
+            decoded = line.decode(_ENCODING, errors="replace").rstrip("\r\n")
             # Gate info: static kill-switch, or no watcher needs it now.
             # Structural lines (position/bestmove/...) always tap, so a
             # flip reaches us by the next move boundary (no idle POSTs).
-            is_info = decoded.lstrip().startswith("info ")
+            is_info = decoded.lstrip().startswith(_INFO_PREFIX)
             if is_info and (not _BROADCAST_INFO or not broadcaster.want_info):
                 continue
-            if _BROADCAST_FILTER is None or not _BROADCAST_FILTER.match(decoded):
-                try:
-                    broadcaster.add_line(decoded)
-                except Exception as e:  # noqa: BLE001 - belt and suspenders
-                    print(f"proxy add_line failed: {e}", file=sys.stderr, flush=True)
+            try:
+                broadcaster.add_line(decoded)
+            except Exception as e:  # noqa: BLE001 - belt and suspenders
+                print(f"proxy add_line failed: {e}", file=sys.stderr, flush=True)
 
 
 async def _periodic_flush(broadcaster: Broadcaster, stop_event: asyncio.Event) -> None:
@@ -292,8 +287,8 @@ async def _run(
     loop = asyncio.get_running_loop()
     stdin_reader = await _make_stdin_reader(loop)
 
-    upstream = asyncio.create_task(_pump(stdin_reader, proc.stdin, broadcaster, "in"))
-    downstream = asyncio.create_task(_pump(proc.stdout, sys.stdout.buffer, broadcaster, "out"))
+    upstream = asyncio.create_task(_pump(stdin_reader, proc.stdin, broadcaster))
+    downstream = asyncio.create_task(_pump(proc.stdout, sys.stdout.buffer, broadcaster))
 
     rc = await proc.wait()
     upstream.cancel()
@@ -310,7 +305,7 @@ async def _run(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="sturddle-view stdio proxy")
+    parser = argparse.ArgumentParser(description=f"{APP_NAME} stdio proxy")
     parser.add_argument("--broadcast-url", default=None)
     parser.add_argument("--proxy-id", default=None,
                         help="optional explicit proxy id (tests). When "
@@ -328,10 +323,10 @@ def main() -> None:
     parser.add_argument("engine_args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
-    proxy_id = args.proxy_id or f"p-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    proxy_id = args.proxy_id or f"p-{os.getpid()}-{uuid.uuid4().hex[:_PROXY_ID_HEX_CHARS]}"
     # Pop (don't get) so the engine subprocess we spawn below doesn't
     # inherit the secret in its environment.
-    secret = os.environ.pop("SV_PROXY_SECRET", None)
+    secret = os.environ.pop(PROXY_SECRET_ENV, None)
 
     engine_env: dict[str, str] = {}
     for kv in args.env:

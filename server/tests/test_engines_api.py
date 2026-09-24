@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import stat
 import sys
+import time
 
+import chess.engine
 import pytest
 from fastapi.testclient import TestClient
 
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
-from sturddle_view.engines import EngineRegistry
+from sturddle_view.engines import EngineRegistry, probe_engine
 from sturddle_view.tournament.store import (
     STATUS_DONE,
     STATUS_FAILED,
@@ -19,6 +22,9 @@ from sturddle_view.tournament.store import (
     TournamentStore,
 )
 from .conftest import REGISTRY_FILE
+
+# Env var the echo engine reports back (test-only name).
+_ECHO_ENV = "SVTEST_ENV"
 
 
 def _make_exec(path):
@@ -33,7 +39,7 @@ def _make_echo_uci(path):
 
     On `uci`, it announces:
       - ``id name argv:<argv[1:] joined by '|'>``
-      - ``id author env:<value of $SV_TEST_ENV>``
+      - ``id author env:<value of $SVTEST_ENV>``
     Then ``uciok``. Lets a probe assert the engine subprocess actually
     saw the args/env we asked for, without depending on a third-party
     UCI binary.
@@ -43,7 +49,7 @@ def _make_echo_uci(path):
         "#!/usr/bin/env python3\n"
         "import os, sys\n"
         "argv_joined = '|'.join(sys.argv[1:])\n"
-        "env_val = os.environ.get('SV_TEST_ENV', '')\n"
+        f"env_val = os.environ.get('{_ECHO_ENV}', '')\n"
         "while True:\n"
         "    line = sys.stdin.readline()\n"
         "    if not line:\n"
@@ -145,7 +151,7 @@ def test_add_then_list(client, exe_a):
 
 
 def test_add_duplicate_user_name_409(client, exe_a, exe_b):
-    """User-supplied names must collide → 409 (different paths, same name)."""
+    """User-supplied names must collide -> 409 (different paths, same name)."""
     client.post("/engines", json={"name": "X", "path": exe_a})
     r = client.post("/engines", json={"name": "X", "path": exe_b})
     assert r.status_code == 409
@@ -407,10 +413,6 @@ def test_first_add_auto_selects(client, exe_a, exe_b):
 
 async def test_probe_engine_returns_error_when_spawn_fails(monkeypatch, exe_a):
     """probe_engine surfaces the spawn failure as a structured {code, message} dict."""
-    import chess.engine
-
-    from sturddle_view.engines import probe_engine
-
     async def boom(*_a, **_kw):
         raise NotImplementedError("nope")
 
@@ -436,10 +438,6 @@ async def test_probe_engine_returns_error_when_spawn_fails(monkeypatch, exe_a):
 ])
 async def test_probe_engine_classifies_spawn_errors(monkeypatch, exe_a, exc, expected_code):
     """probe_engine classifies spawn-time exceptions by type, cross-platform."""
-    import chess.engine
-
-    from sturddle_view.engines import probe_engine
-
     async def boom(*_a, **_kw):
         raise exc
 
@@ -457,12 +455,6 @@ async def test_probe_engine_logs_classified_failures_at_warning(monkeypatch, exe
     A broken legacy engine entry gets probed on every GET /engines; pumping
     a full traceback into the server log on each list call is just noise.
     """
-    import logging
-
-    import chess.engine
-
-    from sturddle_view.engines import probe_engine
-
     async def boom(*_a, **_kw):
         raise OSError(8, "Exec format error")
 
@@ -481,12 +473,6 @@ async def test_probe_engine_logs_classified_failures_at_warning(monkeypatch, exe
 
 async def test_probe_engine_logs_unclassified_failures_at_error(monkeypatch, exe_a, caplog):
     """Unknown exception classes keep the full stacktrace -- that's a real bug signal."""
-    import logging
-
-    import chess.engine
-
-    from sturddle_view.engines import probe_engine
-
     async def boom(*_a, **_kw):
         raise RuntimeError("something nobody expected")
 
@@ -507,10 +493,6 @@ async def test_probe_engine_times_out_on_hanging_handshake(tmp_path, monkeypatch
     Without a handshake timeout, ``GET /engines`` would hang forever on any
     binary that opens stdin and waits silently (e.g. python.exe).
     """
-    import time
-
-    from sturddle_view.engines import probe_engine
-
     # Fast bound so the test stays snappy; classification is what matters.
     monkeypatch.setenv("SV_ENGINE_PROBE_TIMEOUT_SEC", "0.1")
 
@@ -536,10 +518,6 @@ async def test_probe_engine_times_out_on_hanging_handshake(tmp_path, monkeypatch
 
 async def test_probe_engine_classifies_non_uci_engine(monkeypatch, exe_a):
     """A spawned process that doesn't speak UCI maps to engine_not_uci."""
-    import chess.engine
-
-    from sturddle_view.engines import probe_engine
-
     async def boom(*_a, **_kw):
         raise chess.engine.EngineError("did not respond to uci")
 
@@ -638,7 +616,7 @@ def test_add_rejects_non_uci_engine(client, monkeypatch, exe_a):
 
 
 def test_add_omits_probe_error_on_success(client, monkeypatch, exe_a):
-    """The success response shape stays unchanged — no `probe_error` key when the probe worked."""
+    """The success response shape stays unchanged -- no `probe_error` key when the probe worked."""
     async def fake_probe(_path, args=None, env=None):
         return "FakeEngine", {"Hash": {"type": "spin", "default": 16}}, None
 
@@ -652,7 +630,7 @@ def test_add_omits_probe_error_on_success(client, monkeypatch, exe_a):
 
 def test_refresh_schema_502_includes_probe_error_in_detail(client, monkeypatch, exe_a):
     """The dialog's Refresh button needs the underlying reason, not just a generic 502."""
-    # First add succeeds (real probe, may yield empty schema — that's fine).
+    # First add succeeds (real probe, may yield empty schema -- that's fine).
     eid = client.post("/engines", json={"path": exe_a}).json()["id"]
 
     async def fake_probe(_path, args=None, env=None):
@@ -668,11 +646,9 @@ def test_refresh_schema_502_includes_probe_error_in_detail(client, monkeypatch, 
 
 async def test_probe_engine_passes_args_and_env(tmp_path):
     """probe_engine spawns with the exact args/env it was given."""
-    from sturddle_view.engines import probe_engine
-
     exe = _make_echo_uci(tmp_path / "echo")
     name, _schema, err = await probe_engine(
-        exe, args=["--foo", "bar baz"], env={"SV_TEST_ENV": "hello"}
+        exe, args=["--foo", "bar baz"], env={_ECHO_ENV: "hello"}
     )
     assert err is None, err
     # The fake engine reports argv via `id name`; python-chess concatenates
@@ -723,7 +699,7 @@ def test_probe_endpoint_uses_in_progress_profile(client, tmp_path):
     r = client.post("/engines/probe", json={
         "path": exe,
         "args": ["--mode", "fast"],
-        "env": {"SV_TEST_ENV": "probe-only"},
+        "env": {_ECHO_ENV: "probe-only"},
     })
     assert r.status_code == 200
     body = r.json()
@@ -740,15 +716,15 @@ def test_add_probes_with_supplied_args_and_env(client, tmp_path):
         "name": "E1",
         "path": exe,
         "args": ["--probe-flag"],
-        "env": {"SV_TEST_ENV": "added"},
+        "env": {_ECHO_ENV: "added"},
     })
     assert r.status_code == 201
     # The argv reported back via UCI confirms the probe saw our args.
     listed = client.get("/engines").json()["engines"][0]
-    # option_schema ends up empty (echo engine declares no options) — that's
+    # option_schema ends up empty (echo engine declares no options) -- that's
     # fine, the assertion that matters is no probe error and persistence.
     assert listed["args"] == ["--probe-flag"]
-    assert listed["env"] == {"SV_TEST_ENV": "added"}
+    assert listed["env"] == {_ECHO_ENV: "added"}
 
 
 def test_refresh_schema_uses_saved_args_and_env(client, tmp_path):
@@ -758,7 +734,7 @@ def test_refresh_schema_uses_saved_args_and_env(client, tmp_path):
         "name": "E1",
         "path": exe,
         "args": ["--saved"],
-        "env": {"SV_TEST_ENV": "from-disk"},
+        "env": {_ECHO_ENV: "from-disk"},
     }).json()["id"]
     # The echo engine round-trips its argv via `id name`, so the persisted
     # uci_name proves the re-probe spawned with the saved profile.
@@ -768,7 +744,7 @@ def test_refresh_schema_uses_saved_args_and_env(client, tmp_path):
     listed = client.get("/engines").json()["engines"][0]
     assert listed["id"] == eid
     assert listed["args"] == ["--saved"]
-    assert listed["env"] == {"SV_TEST_ENV": "from-disk"}
+    assert listed["env"] == {_ECHO_ENV: "from-disk"}
 
 
 def test_auth_required(tmp_path):

@@ -5,14 +5,20 @@ PGN files. Each test writes to a tmp file because the public API takes
 a Path."""
 from __future__ import annotations
 
+import json
 import math
+import os
 from pathlib import Path
 
 import pytest
 
-import json
-
+from sturddle_view.play.canonical_hash import canonical_hash
+from sturddle_view.tournament import pgn_stats
 from sturddle_view.tournament.pgn_stats import (
+    EngineRecord,
+    _form_pairs,
+    _ordo_fit_margins,
+    _ordo_iterative_fit,
     compute_games_list,
     compute_sprt,
     compute_standings,
@@ -20,7 +26,6 @@ from sturddle_view.tournament.pgn_stats import (
     elo_margin_from_wld,
     games_played_from_config,
     ordo_fit,
-    read_game_pgn,
     read_game_record,
 )
 
@@ -28,6 +33,9 @@ from sturddle_view.tournament.pgn_stats import (
 _FIXTURE_RESUME_CONFIG = (
     Path(__file__).parent / "fixtures" / "tournament_resume" / "config.json"
 )
+
+# Explicit mtime step: a rewrite can land in the same timestamp tick.
+_MTIME_BUMP_NS = 1_000_000
 
 
 def _find_bak_gz(p: Path) -> Path | None:
@@ -196,7 +204,7 @@ def test_standings_to_dict_includes_elo(tmp_path):
     p = _write_pgn(tmp_path, body)
     d = compute_standings(p).to_dict()
     a = next(e for e in d["engines"] if e["name"] == "A")
-    # 2 wins out of 3 → score 2/3 → +120.something Elo
+    # 2 wins out of 3 -> score 2/3 -> +120.something Elo
     assert a["elo"] is not None
     assert 100 < a["elo"] < 150
     assert a["elo_margin_95"] is not None
@@ -266,17 +274,17 @@ def test_gauntlet_standings_exact_challenger_elo_and_margin(tmp_path):
     """Pin exact challenger Elo and margin against the leader. Kills
     NumberReplacers on the wld `[0, 0, 0]` initializers and the
     index access `[0]`/`[1]`/`[2]` (W/L/D slot routing)."""
-    # B vs leader A: 2 wins, 1 loss, 1 draw → score 0.625.
+    # B vs leader A: 2 wins, 1 loss, 1 draw -> score 0.625.
     # Color-flipped so all 4 are leader-vs-challenger pairs.
     body = (
-        _game("A", "B", "0-1") + _game("B", "A", "1-0")  # 2× B wins
+        _game("A", "B", "0-1") + _game("B", "A", "1-0")  # 2x B wins
         + _game("A", "B", "1-0")  # A wins
         + _game("A", "B", "1/2-1/2")  # draw
     )
     p = _write_pgn(tmp_path, body)
     d = compute_standings(p, tournament_type="gauntlet").to_dict()
     by = {e["name"]: e for e in d["engines"]}
-    # B: 2W 1L 1D vs A → exact head-to-head Elo and margin.
+    # B: 2W 1L 1D vs A -> exact head-to-head Elo and margin.
     assert by["B"]["elo"] == pytest.approx(88.7395, abs=0.01)
     assert by["B"]["elo_margin_95"] == pytest.approx(347.7241, abs=0.01)
 
@@ -299,10 +307,8 @@ def test_gauntlet_first_contact_white_win_pins_wld_init(tmp_path):
     d = compute_standings(p, tournament_type="gauntlet").to_dict()
     by = {e["name"]: e for e in d["engines"]}
     # B vs A: 1W 2L 0D -> score 1/3 -> elo ~= -191.
-    import math
     expected_elo = -400 * math.log10((1 - 1/3) / (1/3))
     assert by["B"]["elo"] == pytest.approx(expected_elo, abs=0.01)
-    from sturddle_view.tournament.pgn_stats import elo_margin_from_wld
     assert by["B"]["elo_margin_95"] == pytest.approx(
         elo_margin_from_wld(1, 2, 0), abs=0.01,
     )
@@ -325,10 +331,8 @@ def test_gauntlet_first_contact_black_win_pins_wld_init(tmp_path):
     d = compute_standings(p, tournament_type="gauntlet").to_dict()
     by = {e["name"]: e for e in d["engines"]}
     # B vs A: 1W 2L 0D -> score 1/3 -> exact Elo.
-    import math
     expected_elo = -400 * math.log10((1 - 1/3) / (1/3))
     assert by["B"]["elo"] == pytest.approx(expected_elo, abs=0.01)
-    from sturddle_view.tournament.pgn_stats import elo_margin_from_wld
     assert by["B"]["elo_margin_95"] == pytest.approx(
         elo_margin_from_wld(1, 2, 0), abs=0.01,
     )
@@ -349,10 +353,8 @@ def test_gauntlet_first_contact_draw_pins_wld_init(tmp_path):
     d = compute_standings(p, tournament_type="gauntlet").to_dict()
     by = {e["name"]: e for e in d["engines"]}
     # B vs A: 0W 2L 1D -> score 0.5/3 = 1/6 -> elo ~= -279.
-    import math
     expected_elo = -400 * math.log10((1 - 1/6) / (1/6))
     assert by["B"]["elo"] == pytest.approx(expected_elo, abs=0.01)
-    from sturddle_view.tournament.pgn_stats import elo_margin_from_wld
     assert by["B"]["elo_margin_95"] == pytest.approx(
         elo_margin_from_wld(0, 2, 1), abs=0.01,
     )
@@ -381,8 +383,8 @@ def test_three_engine_roundrobin_does_not_compute_per_engine_elo(tmp_path):
 
 
 def test_gauntlet_standings_n_engines_branch_runs_for_four(tmp_path):
-    """4-engine gauntlet with non-perfect challenger scores → challenger
-    gets a real Elo. Kills `>= 3`→`== 3` mutation (which would skip the
+    """4-engine gauntlet with non-perfect challenger scores -> challenger
+    gets a real Elo. Kills `>= 3`->`== 3` mutation (which would skip the
     gauntlet branch for n=4 and leave elo None)."""
     body = (
         _game("A", "B", "1/2-1/2") + _game("B", "A", "1/2-1/2")  # B: 0W 0L 2D vs A
@@ -392,15 +394,15 @@ def test_gauntlet_standings_n_engines_branch_runs_for_four(tmp_path):
     p = _write_pgn(tmp_path, body)
     d = compute_standings(p, tournament_type="gauntlet").to_dict()
     by = {e["name"]: e for e in d["engines"]}
-    # B drew both vs A → score 0.5 → elo 0.0 exactly. If `== 3` mutation
-    # is applied, the gauntlet branch is skipped → B.elo stays None.
+    # B drew both vs A -> score 0.5 -> elo 0.0 exactly. If `== 3` mutation
+    # is applied, the gauntlet branch is skipped -> B.elo stays None.
     assert by["B"]["elo"] is not None
     assert by["B"]["elo"] == pytest.approx(0.0, abs=0.01)
 
 
 def test_single_engine_standings_no_elo_no_ordo(tmp_path):
-    """1 engine → none of the Elo branches run. Kills `== 2`→`<= 2`
-    on the head-to-head guard and `>= 2`→`>= 1` on the ordo guard."""
+    """1 engine -> none of the Elo branches run. Kills `== 2`->`<= 2`
+    on the head-to-head guard and `>= 2`->`>= 1` on the ordo guard."""
     # PGN with a single engine playing itself (white==black) is degenerate,
     # so build one with only one EngineRecord by using same name twice.
     # _iter_games would still record both white and black as the same name.
@@ -418,9 +420,9 @@ def test_single_engine_standings_no_elo_no_ordo(tmp_path):
 
 
 def test_two_engine_standings_populates_ordo_margin(tmp_path):
-    """2 engines with 4 games (2W 2L from A's side) → ordo margin is a
+    """2 engines with 4 games (2W 2L from A's side) -> ordo margin is a
     finite number (not None). Pins `enc[1] += 1` played-counter increment:
-    a NumberReplacer `+= 1`→`+= 0` would leave np_=0 → margin None."""
+    a NumberReplacer `+= 1`->`+= 0` would leave np_=0 -> margin None."""
     body = (
         _game("A", "B", "1-0") + _game("B", "A", "1-0")
         + _game("A", "B", "1-0") + _game("B", "A", "1-0")
@@ -428,7 +430,7 @@ def test_two_engine_standings_populates_ordo_margin(tmp_path):
     p = _write_pgn(tmp_path, body)
     s = compute_standings(p)
     by = {e.name: e for e in s.engines}
-    # Both engines went 2-2 → ordo Elo ~ 0, margin finite.
+    # Both engines went 2-2 -> ordo Elo ~ 0, margin finite.
     assert by["A"].elo_ordo_margin_95 is not None
     assert by["A"].elo_ordo_margin_95 > 0
 
@@ -454,7 +456,7 @@ def test_elo_margin_from_wld_exactly_two_games_returns_finite():
 
 
 def test_elo_margin_from_wld_shrinks_with_more_games():
-    # Same score% (50%), more games → tighter CI.
+    # Same score% (50%), more games -> tighter CI.
     small = elo_margin_from_wld(5, 5, 0)
     large = elo_margin_from_wld(50, 50, 0)
     assert small is not None and large is not None
@@ -462,54 +464,52 @@ def test_elo_margin_from_wld_shrinks_with_more_games():
 
 
 def test_elo_margin_from_wld_exact_symmetric(pytest_approx=None):
-    """5W5L0D at 50% → known value. Pins the variance formula
+    """5W5L0D at 50% -> known value. Pins the variance formula
     and the Elo propagation constants."""
     result = elo_margin_from_wld(5, 5, 0)
     assert result == pytest.approx(226.99, abs=0.01)
 
 
 def test_elo_margin_from_wld_exact_with_draws():
-    """3W1L2D → known value. Draws contribute (0.5-s)² term; pins
+    """3W1L2D -> known value. Draws contribute (0.5-s)^2 term; pins
     the draw term coefficient in the variance formula."""
     result = elo_margin_from_wld(3, 1, 2)
     assert result == pytest.approx(255.37, abs=0.01)
 
 
 def test_elo_margin_from_wld_exact_asymmetric():
-    """1W9L0D (low score) → known value. Pins (0-s)² loss term and
+    """1W9L0D (low score) -> known value. Pins (0-s)^2 loss term and
     the dElo/dscore denominator at non-0.5 score."""
     result = elo_margin_from_wld(1, 9, 0)
     assert result == pytest.approx(378.32, abs=0.01)
 
 
 def test_elo_margin_from_wld_exact_with_wins_and_draws():
-    """10W0L10D (s=0.75) → known value. Pins the win+draw combination."""
+    """10W0L10D (s=0.75) -> known value. Pins the win+draw combination."""
     result = elo_margin_from_wld(10, 0, 10)
     assert result == pytest.approx(104.15, abs=0.01)
 
 
 def test_elo_margin_from_wld_all_draws_returns_zero():
-    """All draws → var=0 → returns 0.0 exactly. Kills NumberReplacer
+    """All draws -> var=0 -> returns 0.0 exactly. Kills NumberReplacer
     on the `return 0.0` branch."""
     assert elo_margin_from_wld(0, 0, 5) == 0.0
     assert elo_margin_from_wld(0, 0, 10) == 0.0
 
 
 # ---------------------------------------------------------------------------
-# _ordo_fit_margins — pin numeric output to kill formula-operator survivors
+# _ordo_fit_margins -- pin numeric output to kill formula-operator survivors
 # ---------------------------------------------------------------------------
-
-from sturddle_view.tournament.pgn_stats import _form_pairs, _ordo_fit_margins, _ordo_iterative_fit  # noqa: E402
 
 
 def test_ordo_fit_margins_one_engine_returns_none():
-    """n<2 → all None. Kills guard mutations."""
+    """n<2 -> all None. Kills guard mutations."""
     result = _ordo_fit_margins(["A"], [], {"A": 0.0})
     assert result == {"A": None}
 
 
 def test_ordo_fit_margins_zero_info_returns_none():
-    """No encounters → info=0 → None for all. Kills `<= 0` mutations."""
+    """No encounters -> info=0 -> None for all. Kills `<= 0` mutations."""
     result = _ordo_fit_margins(["A", "B"], [], {"A": 0.0, "B": 0.0})
     assert result == {"A": None, "B": None}
 
@@ -612,12 +612,12 @@ def test_ordo_fit_margins_three_engines_symmetric():
 
 
 # ---------------------------------------------------------------------------
-# _ordo_iterative_fit — pin numeric output to kill formula-operator survivors
+# _ordo_iterative_fit -- pin numeric output to kill formula-operator survivors
 # ---------------------------------------------------------------------------
 
 
 def test_ordo_iterative_fit_under_two_engines_returns_empty():
-    """n<2 → return {}. Kills NumberReplacer on the `< 2` guard."""
+    """n<2 -> return {}. Kills NumberReplacer on the `< 2` guard."""
     assert _ordo_iterative_fit([], []) == {}
     assert _ordo_iterative_fit(["solo"], []) == {}
 
@@ -658,9 +658,9 @@ def test_ordo_iterative_fit_three_engines_exact():
 
 
 def test_ordo_iterative_fit_50_pct_collapses_to_zero():
-    """Both engines score 50% over many games → ratings collapse to 0.0
-    exactly. Kills mutations that bias the step (Sub→Add on
-    `obtained - expected`, USub→Not on the sign multiplier)."""
+    """Both engines score 50% over many games -> ratings collapse to 0.0
+    exactly. Kills mutations that bias the step (Sub->Add on
+    `obtained - expected`, USub->Not on the sign multiplier)."""
     r = _ordo_iterative_fit(
         ["A", "B"],
         [("A", "B", 5.0, 10), ("B", "A", 5.0, 10)],
@@ -670,13 +670,13 @@ def test_ordo_iterative_fit_50_pct_collapses_to_zero():
 
 
 # ---------------------------------------------------------------------------
-# _form_pairs — exercise directly (only used via callers in prod)
+# _form_pairs -- exercise directly (only used via callers in prod)
 # ---------------------------------------------------------------------------
 
 
 def test_form_pairs_default_paired_true():
     """Default `paired=True` keyword applies when omitted. Kills
-    `True`→`False` mutation on the default value (which would force
+    `True`->`False` mutation on the default value (which would force
     callers using the default to receive ([], [])."""
     keyed = [
         ("1", "A", "B", "1-0"),
@@ -689,7 +689,7 @@ def test_form_pairs_default_paired_true():
 
 def test_form_pairs_unpaired_returns_empty_for_nonempty_input():
     """`paired=False` with non-empty keyed must short-circuit to ([], []).
-    Kills `or`→`and` on the early-return guard (which would let processing
+    Kills `or`->`and` on the early-return guard (which would let processing
     continue and emit pairs/orphans for a non-paired tour)."""
     keyed = [
         ("1", "A", "B", "1-0"),
@@ -700,7 +700,7 @@ def test_form_pairs_unpaired_returns_empty_for_nonempty_input():
 
 def test_form_pairs_empty_round_tag_becomes_orphan():
     """An entry with empty Round tag is orphaned (not bucketed). Kills
-    `or`→`and` on the round-tag guard."""
+    `or`->`and` on the round-tag guard."""
     keyed = [("", "A", "B", "1-0")]
     pairs, orphans = _form_pairs(keyed, paired=True)
     assert pairs == []
@@ -708,7 +708,7 @@ def test_form_pairs_empty_round_tag_becomes_orphan():
 
 
 def test_form_pairs_question_mark_round_becomes_orphan():
-    """Round=='?' is treated as no-round and orphaned. Kills `==`→`>`/`is`
+    """Round=='?' is treated as no-round and orphaned. Kills `==`->`>`/`is`
     mutations on the `round_tag == '?'` comparison."""
     keyed = [("?", "A", "B", "1-0")]
     pairs, orphans = _form_pairs(keyed, paired=True)
@@ -742,7 +742,7 @@ def test_form_pairs_no_round_continue_processes_subsequent_entries():
     entries with real rounds must still be bucketed and paired. Kills
     ReplaceContinueWithBreak in the no-round branch."""
     keyed = [
-        ("", "A", "B", "1-0"),                # no round → orphan
+        ("", "A", "B", "1-0"),                # no round -> orphan
         ("1", "A", "B", "1-0"),               # paired with next
         ("1", "B", "A", "0-1"),
     ]
@@ -762,8 +762,8 @@ def test_form_pairs_singleton_bucket_becomes_orphan():
 def test_form_pairs_pair_order_uses_lower_file_index_first():
     """When the i-th `A-white` game is at a later file index than the
     i-th `B-white` game, the pair tuple lists the *lower* index first.
-    Kills `<` → other comparison mutations on the tuple-order normalizer."""
-    # B-white at index 0, A-white at index 1 → pair should be (0, 1).
+    Kills `<` -> other comparison mutations on the tuple-order normalizer."""
+    # B-white at index 0, A-white at index 1 -> pair should be (0, 1).
     keyed = [
         ("1", "B", "A", "0-1"),  # B as white
         ("1", "A", "B", "1-0"),  # A as white
@@ -793,10 +793,10 @@ def test_form_pairs_pair_order_swaps_when_side_a_index_greater():
 
 def test_form_pairs_partition_by_first_white():
     """Bucket entries are split by which engine is white (per the first
-    entry's white). Asymmetric counts → surplus side becomes orphans.
-    Kills `==`→`!=`/Is/IsNot mutations on the partitioning predicate
+    entry's white). Asymmetric counts -> surplus side becomes orphans.
+    Kills `==`->`!=`/Is/IsNot mutations on the partitioning predicate
     and NumberReplacers on the `keyed[idx][1]` white-name lookup."""
-    # 3 A-as-white + 1 B-as-white in same bucket → 1 pair + 2 orphans (extra A).
+    # 3 A-as-white + 1 B-as-white in same bucket -> 1 pair + 2 orphans (extra A).
     keyed = [
         ("1", "A", "B", "1-0"),  # A white
         ("1", "A", "B", "1-0"),  # A white
@@ -821,9 +821,9 @@ def test_elo_from_score_50_pct_is_zero():
 
 
 def test_elo_from_score_known_values():
-    # +400 Elo ⇨ score 10/11 ≈ 0.9091
+    # +400 Elo => score 10/11 ~= 0.9091
     assert elo_from_score(10 / 11) == pytest.approx(400.0, abs=0.5)
-    # -400 Elo ⇨ score 1/11
+    # -400 Elo => score 1/11
     assert elo_from_score(1 / 11) == pytest.approx(-400.0, abs=0.5)
 
 
@@ -965,16 +965,16 @@ def test_ordo_fit_returns_mean_zero():
 
 def test_ordo_fit_no_wins_losses_dicts_skips_purge():
     """Without wins/losses dicts, no engine is purged even if its W/L
-    pattern would qualify. Kills `and`→`or` on the purge-precondition guard."""
+    pattern would qualify. Kills `and`->`or` on the purge-precondition guard."""
     encs = [("A", "B", 1.0, 1), ("B", "A", 0.0, 1)]
     fit = ordo_fit(["A", "B"], encs)
-    # A swept B but no purge dicts → A must still get a rating, not (None, None).
+    # A swept B but no purge dicts -> A must still get a rating, not (None, None).
     assert fit["A"][0] is not None
     assert fit["B"][0] is not None
 
 
 def test_ordo_fit_only_wins_dict_skips_purge():
-    """Only wins provided (losses=None) → guard fails, no purge. Kills
+    """Only wins provided (losses=None) -> guard fails, no purge. Kills
     the `or`-mutation case where one None side alone would trigger purge."""
     encs = [("A", "B", 1.0, 1), ("B", "A", 0.0, 1)]
     fit = ordo_fit(["A", "B"], encs, wins={"A": 1, "B": 0})
@@ -1031,7 +1031,7 @@ def test_ordo_fit_zero_games_engine_not_purged():
     fit = ordo_fit(["A", "B", "Z"], encs,
                    wins={"A": 1, "B": 1, "Z": 0},
                    losses={"A": 1, "B": 1, "Z": 0})
-    # Z played nothing → singleton component → (None, None), but for the
+    # Z played nothing -> singleton component -> (None, None), but for the
     # purge-not-applied reason, not the all-W/all-L reason. The crucial
     # check is that purge does NOT fire on a zero-zero engine.
     # Verified indirectly: A and B form a connected component and get
@@ -1044,9 +1044,9 @@ def test_ordo_fit_zero_games_engine_not_purged():
 def test_ordo_fit_purge_requires_strict_positive_wins():
     """`wins.get(n, 0) > 0` must be STRICTLY positive. An engine missing
     from the wins dict (defaults to 0) cannot be purged via the wins-leg.
-    Kills `> 0`→`>= 0` mutation on the wins-leg of the purge predicate."""
+    Kills `> 0`->`>= 0` mutation on the wins-leg of the purge predicate."""
     encs = [("A", "B", 1.0, 2), ("B", "A", 1.0, 2)]
-    # "Z" not in wins dict at all → wins.get("Z", 0) == 0 → strictly-positive
+    # "Z" not in wins dict at all -> wins.get("Z", 0) == 0 -> strictly-positive
     # leg fails. losses.get("Z", 0) > 0 with wins == 0 would trigger the
     # other purge leg, so put losses at 0 too.
     fit = ordo_fit(["A", "B", "Z"], encs,
@@ -1062,13 +1062,13 @@ def test_ordo_fit_purge_requires_strict_positive_wins():
 
 
 def test_ordo_fit_singleton_component_returns_none():
-    """An engine with zero encounters → singleton component → (None, None).
-    Kills `== 1`→`< 1` / `<= 1` mutations on the singleton-check and
+    """An engine with zero encounters -> singleton component -> (None, None).
+    Kills `== 1`->`< 1` / `<= 1` mutations on the singleton-check and
     ReplaceContinueWithBreak on the singleton branch (break would skip
     the remaining components)."""
     encs = [("A", "B", 1.0, 2), ("B", "A", 1.0, 2)]
     # Three engines: A+B connected, C isolated. C must get (None, None);
-    # A and B must get real ratings (proving `continue` worked — `break`
+    # A and B must get real ratings (proving `continue` worked -- `break`
     # would have skipped fitting the A,B component if A,B sorted after C).
     fit = ordo_fit(["C", "A", "B"], encs,
                    wins={"A": 1, "B": 1, "C": 0},
@@ -1081,19 +1081,19 @@ def test_ordo_fit_singleton_component_returns_none():
 def test_ordo_fit_empty_remaining_returns_all_none():
     """If every engine is purged, return (None, None) for all. Kills
     AddNot on `if not remaining:` early-exit guard."""
-    # Both A and B are "all wins" against each other? Impossible — make
+    # Both A and B are "all wins" against each other? Impossible -- make
     # one all-wins, one all-losses, each against the other.
     encs = [("A", "B", 1.0, 1)]
     fit = ordo_fit(["A", "B"], encs,
                    wins={"A": 1, "B": 0},
                    losses={"A": 0, "B": 1})
-    # Both purged → all (None, None).
+    # Both purged -> all (None, None).
     assert fit["A"] == (None, None)
     assert fit["B"] == (None, None)
 
 
 def test_ordo_fit_empty_engine_names_returns_empty_dict():
-    """No engines → empty dict. Kills AddNot on the early-exit guard."""
+    """No engines -> empty dict. Kills AddNot on the early-exit guard."""
     assert ordo_fit([], []) == {}
 
 
@@ -1114,7 +1114,6 @@ def test_standings_populates_elo_ordo_for_two_engines(tmp_path):
 
 
 def test_standings_elo_ordo_serializes_to_dict():
-    from sturddle_view.tournament.pgn_stats import EngineRecord
     r = EngineRecord(name="x", elo_ordo=12.3, elo_ordo_margin_95=4.5)
     d = r.to_dict()
     assert d["elo_ordo"] == 12.3
@@ -1127,8 +1126,6 @@ def test_standings_elo_ordo_serializes_to_dict():
 
 
 def test_iter_games_cached_when_file_unchanged(tmp_path, monkeypatch):
-    from sturddle_view.tournament import pgn_stats
-
     p = _write_pgn(tmp_path, _game("A", "B", "1-0"))
     pgn_stats._iter_games_cache.pop(p, None)
 
@@ -1148,9 +1145,6 @@ def test_iter_games_cached_when_file_unchanged(tmp_path, monkeypatch):
 
 
 def test_iter_games_reparses_when_file_grows(tmp_path, monkeypatch):
-    import os
-    from sturddle_view.tournament import pgn_stats
-
     p = _write_pgn(tmp_path, _game("A", "B", "1-0"))
     pgn_stats._iter_games_cache.pop(p, None)
 
@@ -1169,7 +1163,7 @@ def test_iter_games_reparses_when_file_grows(tmp_path, monkeypatch):
     with p.open("a", encoding="utf-8") as f:
         f.write(_game("A", "B", "0-1"))
     st = p.stat()
-    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + _MTIME_BUMP_NS))
 
     s2 = compute_standings(p)
     assert s2.games == 2
@@ -1240,17 +1234,17 @@ def test_sprt_runaway_b_dominates_accepts_h0(tmp_path):
 
 def test_sprt_balanced_play_continues(tmp_path):
     # Realistic mix: pair scores spread {0, 0.5, 1, 1.5, 2} centered at 1.0.
-    # Mean ≈ 1.0 (50% per game), real variance > 0. With elo0=0, elo1=5
+    # Mean ~= 1.0 (50% per game), real variance > 0. With elo0=0, elo1=5
     # and only ~12 pairs, LLR should sit between Wald bounds.
     body = ""
     pair_outcomes = [
-        ("1-0", "0-1"),   # split → A scores 1
-        ("1-0", "1-0"),   # A wins both → 2
-        ("0-1", "0-1"),   # B wins both → 0
-        ("1/2-1/2", "1/2-1/2"),   # both drawn → 1
+        ("1-0", "0-1"),   # split -> A scores 1
+        ("1-0", "1-0"),   # A wins both -> 2
+        ("0-1", "0-1"),   # B wins both -> 0
+        ("1/2-1/2", "1/2-1/2"),   # both drawn -> 1
         ("1-0", "1/2-1/2"),       # 1.5
         ("0-1", "1/2-1/2"),       # 0.5
-        # Repeat the symmetric set so mean stays ≈ 1.0.
+        # Repeat the symmetric set so mean stays ~= 1.0.
         ("0-1", "1-0"),   # 1
         ("1-0", "1-0"),   # 2
         ("0-1", "0-1"),   # 0
@@ -1355,11 +1349,11 @@ def test_sprt_invalid_params_raise(tmp_path, overrides):
 
 
 def test_sprt_alpha_beta_defaults_accept_valid_params(tmp_path):
-    """Omit alpha/beta from params → defaults (0.05) must be valid.
+    """Omit alpha/beta from params -> defaults (0.05) must be valid.
     Kills NumberReplacers on the default values (e.g. `1.05`, `-0.95`)
     which would trip the (0, 1) range guard and raise ValueError."""
     p = _write_pgn(tmp_path, "")
-    # No alpha/beta keys → exercise the .get(..., 0.05) defaults.
+    # No alpha/beta keys -> exercise the .get(..., 0.05) defaults.
     r = compute_sprt(p, {"elo0": 0.0, "elo1": 5.0},
                      engine_a="A", engine_b="B")
     assert r.status == "continue"
@@ -1591,24 +1585,11 @@ def test_sprt_engine_identity_independent_of_pgn_file_order(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# read_game_pgn
+# read_game_record: game numbering
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("game_n", [0, -1, -100])
-def test_read_game_pgn_non_positive_returns_none(tmp_path, game_n):
-    p = _write_pgn(tmp_path, _game("A", "B", "1-0"))
-    assert read_game_pgn(p, game_n) is None
-
-
-def test_read_game_pgn_beyond_end_returns_none(tmp_path):
-    body = _game("A", "B", "1-0") + _game("B", "A", "0-1")
-    p = _write_pgn(tmp_path, body)
-    assert read_game_pgn(p, 3) is None
-    assert read_game_pgn(p, 999) is None
-
-
-def test_read_game_pgn_skips_ongoing_games(tmp_path):
+def test_read_game_record_skips_ongoing_games(tmp_path):
     # Decisive games are counted; "*" (ongoing) is skipped. Game_n=2
     # should resolve to the third record on disk.
     body = (
@@ -1617,16 +1598,17 @@ def test_read_game_pgn_skips_ongoing_games(tmp_path):
         + _game("B", "A", "1/2-1/2")
     )
     p = _write_pgn(tmp_path, body)
-    text = read_game_pgn(p, 2)
-    assert text is not None
-    assert '[Result "1/2-1/2"]' in text
+    rec = read_game_record(p, 2)
+    assert rec is not None
+    assert '[Result "1/2-1/2"]' in rec["pgn"]
 
 
-def test_read_game_pgn_returns_first_game(tmp_path):
+def test_read_game_record_returns_first_game(tmp_path):
     body = _game("A", "B", "1-0") + _game("B", "A", "0-1")
     p = _write_pgn(tmp_path, body)
-    text = read_game_pgn(p, 1)
-    assert text is not None
+    rec = read_game_record(p, 1)
+    assert rec is not None
+    text = rec["pgn"]
     assert '[White "A"]' in text and '[Black "B"]' in text
     assert '[Result "1-0"]' in text
 
@@ -1647,7 +1629,7 @@ def test_standings_counts_round_number_reuse(tmp_path):
 # Real-PGN fixture: cross-checked against ordo on the same file
 # ---------------------------------------------------------------------------
 
-# tests/fixtures/sample_50.pgn — first 50 games of a real Sturddle 2.4.0 vs
+# tests/fixtures/sample_50.pgn -- first 50 games of a real Sturddle 2.4.0 vs
 # 2.3.1 self-play tournament. Hand-tally + ordo baseline below; if either
 # breaks, the parser or the Elo math drifted.
 #
@@ -1671,13 +1653,13 @@ def test_real_pgn_fixture_tally():
 
 def test_real_pgn_fixture_leader_elo_matches_ordo():
     # Ordo with -a 0 -A "sturddle-2.3.1" anchors the trailer at 0 and
-    # reports +14.0 for the leader — the standard chess Elo rating gap.
+    # reports +14.0 for the leader -- the standard chess Elo rating gap.
     # Our compute_standings stores ``elo_from_score(score_pct)`` on each
     # engine independently. For the leader (score_pct = 0.52) that yields
     # +13.9, which matches ordo's anchored gap to within rounding.
     # NOTE: we *also* store -13.9 on the trailer (mirror), so the two
     # engines' Elo values *appear* to span 28. That's a UI/convention
-    # question (anchored vs symmetric display), not a math bug — the
+    # question (anchored vs symmetric display), not a math bug -- the
     # underlying formula agrees with ordo.
     s = compute_standings(_FIXTURE)
     by = {e.name: e for e in s.engines}
@@ -1685,7 +1667,6 @@ def test_real_pgn_fixture_leader_elo_matches_ordo():
 
 
 def test_read_game_record_returns_hash_and_summary():
-    from sturddle_view.play.canonical_hash import canonical_hash
     fixture = Path(__file__).parent / "fixtures" / "sample_50.pgn"
     rec = read_game_record(fixture, 1)
     assert rec is not None
@@ -1703,7 +1684,7 @@ def test_read_game_record_returns_hash_and_summary():
 
 
 def test_read_game_record_missing_file_returns_none(tmp_path):
-    """Nonexistent PGN path → return None (not raise). Kills
+    """Nonexistent PGN path -> return None (not raise). Kills
     ExceptionReplacer on the `FileNotFoundError` catch (replacing with
     a non-parent exception class would let the error propagate)."""
     p = tmp_path / "absent.pgn"
@@ -1711,7 +1692,7 @@ def test_read_game_record_missing_file_returns_none(tmp_path):
 
 
 def test_read_game_record_out_of_range_returns_none(tmp_path):
-    """game_n past end of file → None. Kills NotEq/Gt mutations on
+    """game_n past end of file -> None. Kills NotEq/Gt mutations on
     the `game_n > len(offsets)` bounds check."""
     body = _game("A", "B", "1-0")
     p = _write_pgn(tmp_path, body)
@@ -1720,7 +1701,7 @@ def test_read_game_record_out_of_range_returns_none(tmp_path):
 
 
 def test_read_game_record_zero_or_negative_game_n_returns_none(tmp_path):
-    """game_n < 1 → None. Pins the `< 1` guard."""
+    """game_n < 1 -> None. Pins the `< 1` guard."""
     body = _game("A", "B", "1-0")
     p = _write_pgn(tmp_path, body)
     assert read_game_record(p, 0) is None
@@ -1729,7 +1710,7 @@ def test_read_game_record_zero_or_negative_game_n_returns_none(tmp_path):
 
 def test_read_game_record_seeks_to_correct_game_for_n_greater_than_two(tmp_path):
     """Reading game 3 must return game 3, not game 1 (`game_n - 1`
-    indexing into offsets). Kills `-` → `>>` mutation: `3 - 1 = 2`
+    indexing into offsets). Kills `-` -> `>>` mutation: `3 - 1 = 2`
     but `3 >> 1 = 1`, which would re-read game 2."""
     body = (
         _game("AAA", "BBB", "1-0")  # game 1
@@ -1747,7 +1728,7 @@ def test_read_game_record_seeks_to_correct_game_for_n_greater_than_two(tmp_path)
 def test_read_game_record_final_fen_reflects_played_moves(tmp_path):
     """final_fen must reflect the position AFTER the last move was played
     (board iteration over mainline). Kills ZeroIterationForLoop on the
-    walk_mainline loop (would leave board=None → final_fen=initial pos)
+    walk_mainline loop (would leave board=None -> final_fen=initial pos)
     and IsNot mutation on the `if board is None:` reset guard
     (would overwrite the iterated board with the initial one)."""
     body = _game("A", "B", "1-0")  # contains `1. e4 e5 1-0`
@@ -1763,7 +1744,7 @@ def test_read_game_record_final_fen_reflects_played_moves(tmp_path):
 
 def test_read_game_record_summary_question_mark_names_become_none(tmp_path):
     """White or Black tag value of '?' (the PGN unknown sentinel) must
-    map to None in the summary dict. Kills `!=`→`is`/`>`/`>=` mutations
+    map to None in the summary dict. Kills `!=`->`is`/`>`/`>=` mutations
     on the `white != '?'` / `black != '?'` checks."""
     # Build a game with explicit "?" tags (override _game helper).
     body = (
@@ -1786,8 +1767,6 @@ def test_read_game_record_cache_invalidates_when_size_grows(tmp_path):
     isolates the size-check half of the AND: kills `==` -> `<=`/`<`
     mutations on `cached[1] == st.st_size` which would stale-hit and
     return outdated offsets."""
-    from sturddle_view.tournament import pgn_stats as _mod
-
     body1 = _game("A", "B", "1-0")
     p = _write_pgn(tmp_path, body1)
     rec1 = read_game_record(p, 1)
@@ -1799,9 +1778,9 @@ def test_read_game_record_cache_invalidates_when_size_grows(tmp_path):
     # Patch the cache entry: pretend the cached mtime equals the new file
     # mtime (so only the size check could falsely accept it).
     new_st = p.stat()
-    _mod._game_offsets_cache[p] = (new_st.st_mtime_ns,
-                                   _mod._game_offsets_cache[p][1],
-                                   _mod._game_offsets_cache[p][2])
+    pgn_stats._game_offsets_cache[p] = (new_st.st_mtime_ns,
+                                   pgn_stats._game_offsets_cache[p][1],
+                                   pgn_stats._game_offsets_cache[p][2])
 
     # Size differs, mtime matches -> cache must miss via size check.
     rec2 = read_game_record(p, 2)
@@ -1816,9 +1795,6 @@ def test_read_game_record_cache_invalidates_when_mtime_changes(tmp_path):
     the cached offsets WOULD return a different game from offset 0
     than the recomputed offsets do. Kills `==` -> `<=`/`<` mutations on
     `cached[0] == st.st_mtime_ns`."""
-    from sturddle_view.tournament import pgn_stats as _mod
-    import time as _time
-
     g1 = _game("A", "B", "1-0")
     p = _write_pgn(tmp_path, g1)
     rec1 = read_game_record(p, 1)
@@ -1838,12 +1814,12 @@ def test_read_game_record_cache_invalidates_when_mtime_changes(tmp_path):
     g_padded = g_ongoing + " " * pad_len  # exactly len(g1) bytes
     assert len(g_padded) == len(g1)
 
-    _time.sleep(0.01)
     p.write_text(g_padded, encoding="utf-8")
     new_st = p.stat()
-    _mod._game_offsets_cache[p] = (_mod._game_offsets_cache[p][0],
+    os.utime(p, ns=(new_st.st_atime_ns, new_st.st_mtime_ns + _MTIME_BUMP_NS))
+    pgn_stats._game_offsets_cache[p] = (pgn_stats._game_offsets_cache[p][0],
                                    new_st.st_size,
-                                   _mod._game_offsets_cache[p][2])
+                                   pgn_stats._game_offsets_cache[p][2])
 
     # Recomputed offsets = [] (the only game has Result "*"). game_n=1
     # is out of range -> None. With stale-hit (mutated mtime check),
@@ -1950,11 +1926,9 @@ def test_games_list_row_index_matches_replay_game_number(tmp_path):
 
 
 def test_games_list_served_from_cache_when_unchanged(tmp_path):
-    from sturddle_view.tournament import pgn_stats as _mod
-
     p = _write_pgn(tmp_path, _game_moves("A", "B", "1-0", _NAJDORF))
     first = compute_games_list(p)
-    assert _mod._games_list_cache[p][2] is first
+    assert pgn_stats._games_list_cache[p][2] is first
     assert compute_games_list(p) is first  # unchanged file -> same object
 
 
@@ -1975,12 +1949,10 @@ def test_forget_drops_memo_so_wipe_reparses(tmp_path):
     # Stop/restart wipes the PGN and reuses offset 0 for a new game. forget()
     # (called by the wipe path) is the contract that invalidates the memo;
     # without it the append-only invariant breaks and offset 0 goes stale.
-    from sturddle_view.tournament import pgn_stats as _mod
-
     p = _write_pgn(tmp_path, _game_moves("A", "B", "1-0", _NAJDORF))
     assert "Najdorf" in compute_games_list(p)[0]["opening"]
-    _mod.forget(p)
-    assert not any(k[0] == p for k in _mod._opening_memo)
+    pgn_stats.forget(p)
+    assert not any(k[0] == p for k in pgn_stats._opening_memo)
     p.write_text(_game_moves("C", "D", "0-1", _QGD), encoding="utf-8")
     after = compute_games_list(p)[0]
     assert after["white"] == "C"

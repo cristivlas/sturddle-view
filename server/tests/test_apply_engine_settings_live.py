@@ -6,6 +6,8 @@ subprocess is spawned.
 """
 from __future__ import annotations
 
+import stat
+import sys
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -132,10 +134,7 @@ def api_client(tmp_path, monkeypatch):
     hve_stub = MagicMock()
     hve_stub.apply_engine_settings_live = AsyncMock()
     hve_stub.shutdown = AsyncMock()  # invoked by app lifespan on teardown
-    hve_stub.set_engine_name = MagicMock()
-    hve_stub.set_engine_options = MagicMock()
-    hve_stub.set_engine_args = MagicMock()
-    hve_stub.set_engine_env = MagicMock()
+    hve_stub.apply_launch = MagicMock()
     app.state.hve = hve_stub
     with TestClient(app) as c:
         c.headers["Authorization"] = "Bearer test-token"
@@ -144,9 +143,6 @@ def api_client(tmp_path, monkeypatch):
 
 def _add_engine(client, tmp_path, name="A"):
     """Register a probeable stub UCI engine binary."""
-    import stat
-    import sys
-
     py = tmp_path / f"engine_{name}.py"
     py.write_text(
         "#!/usr/bin/env python3\n"
@@ -178,7 +174,8 @@ def test_patch_selected_engine_triggers_live_apply(api_client, tmp_path):
     r = client.patch(f"/engines/{eid}", json={"options": {"Threads": 4}})
     assert r.status_code == 200
     hve.apply_engine_settings_live.assert_awaited_once()
-    hve.set_engine_options.assert_called()
+    hve.apply_launch.assert_called_once()
+    assert hve.apply_launch.call_args.args[0].options == {"Threads": 4}
 
 
 def test_patch_unselected_engine_skips_live_apply(api_client, tmp_path):

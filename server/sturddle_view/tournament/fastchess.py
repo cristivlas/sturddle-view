@@ -17,12 +17,63 @@ import signal
 import subprocess
 import sys
 from collections import deque
+from pathlib import Path
 
 from .._runtime import proxy_argv_prefix
 from .._win_job import assign_to_job, close_job, create_job, spawn_in_job, wait_for_pid_exit
-from .rescheck import ALLOW_OVERSUBSCRIBE_KEY
-from .runner import EventCallback, RunSpec
+from ..engines import (
+    UCI_OPT_HASH,
+    UCI_OPT_OWNBOOK,
+    UCI_OPT_PONDER,
+    UCI_OPT_SYZYGY_PATH,
+    UCI_OPT_THREADS,
+)
+from ..env_utils import env_choice, env_float
+from ..play.opening_lines import is_epd_book
+from .pgn_stats import (
+    SPRT_ALPHA,
+    SPRT_BETA,
+    SPRT_DEFAULT_ALPHA,
+    SPRT_DEFAULT_BETA,
+    SPRT_ELO0,
+    SPRT_ELO1,
+    SPRT_MODEL,
+    SPRT_MODEL_LOGISTIC,
+    SPRT_MODEL_NORMALIZED,
+)
+from .proxy import PROXY_SECRET_ENV
+from .runner import (
+    EVT_DONE,
+    EVT_RUNNER_CRASH,
+    EVT_RUNNER_LOG,
+    EVT_STARTED,
+    EVT_STOPPED,
+    RC_KEY,
+    STDERR_TAIL_KEY,
+    EventCallback,
+    RunSpec,
+)
+from .store import (
+    ENGINE_REF_ARGS,
+    ENGINE_REF_CMD,
+    ENGINE_REF_DIR,
+    ENGINE_REF_ENV,
+    ENGINE_REF_NAME,
+    ENGINE_REF_OPTIONS,
+)
+from .template import (
+    ALLOW_OVERSUBSCRIBE_KEY,
+    GAMES_IN_PARALLEL_KEY,
+    PIN_AFFINITY_KEY,
+    PONDER_KEY,
+    SEED_KEY,
+    SPRT_KEY,
+    TOURNAMENT_TYPE_KEY,
+    TYPE_GAUNTLET,
+    TYPE_ROUNDROBIN,
+)
 
+log = logging.getLogger(__name__)
 
 # Recent stderr/stdout lines retained for runner_crash diagnostics.
 _STDERR_TAIL_MAX = 40
@@ -33,17 +84,45 @@ _STDERR_TAIL_MAX = 40
 _UNKNOWN_EXIT_RC = -9999
 
 
-# SPRT models. New tournaments default to normalized pentanomial (the UI no
-# longer exposes a choice); a legacy template may carry "logistic", which we
-# honor so fastchess and our LLR recompute use the same model and agree.
-_SPRT_MODEL_DEFAULT = "normalized"
-_SPRT_MODEL_LOGISTIC = "logistic"
+# Template keys (see tournament.template for the shared ones).
+_TPL_TC = "tc"
+_TPL_ROUNDS = "rounds"
+_TPL_GAMES_PER_ROUND = "games_per_round"
+_TPL_SEEDS = "seeds"
+_TPL_RESIGN = "resign"
+_TPL_DRAW = "draw"
+# Adjudication dict keys shared by resign and draw.
+_ADJ_MOVECOUNT = "movecount"
+_ADJ_SCORE = "score"
+
+# fastchess CLI values.
+_ARG_ROUNDS = "-rounds"
+_ARG_TOURNAMENT = "-tournament"
+_APPEND_ON = "append=true"
+# rounds=0 is fastchess's SPRT-unlimited mode (500k rounds).
+_SPRT_UNLIMITED_ROUNDS = "0"
+# Save cfg.json after every game (fastchess default: 20).
+_AUTOSAVE_EVERY_GAME = "1"
+_BOOK_FORMAT_EPD = "epd"
+_BOOK_FORMAT_PGN = "pgn"
+_FC_LOG_LEVELS = frozenset({"trace", "info", "warn", "err", "fatal"})
+_FC_LOG_LEVEL_DEFAULT = "info"
+
+# Drain task stream tags; the stderr one picks the crash-diagnostic tail.
+_STREAM_OUT = "out"
+_STREAM_ERR = "err"
+# Windows ERROR_ACCESS_DENIED: assign_to_job on a process already in the Job.
+_ERROR_ACCESS_DENIED = 5
+# How long the supervisor waits for each drain task to flush after exit.
+_DRAIN_FLUSH_TIMEOUT_S = env_float("SV_FASTCHESS_DRAIN_TIMEOUT_S", 2.0, min_value=0.0)
 
 
 def _sprt_model(model) -> str:
-    """fastchess CLI model name. Only logistic is honored as an override;
-    anything else (incl. the "pentanomial" alias / unset) -> normalized."""
-    return _SPRT_MODEL_LOGISTIC if model == _SPRT_MODEL_LOGISTIC else _SPRT_MODEL_DEFAULT
+    """fastchess CLI model name. New tournaments default to normalized
+    pentanomial; a legacy template may carry "logistic", which is honored so
+    fastchess and our LLR recompute use the same model and agree. Anything
+    else (incl. the "pentanomial" alias / unset) -> normalized."""
+    return SPRT_MODEL_LOGISTIC if model == SPRT_MODEL_LOGISTIC else SPRT_MODEL_NORMALIZED
 
 
 def _quote_arg(arg: str) -> str:
@@ -52,7 +131,7 @@ def _quote_arg(arg: str) -> str:
     fastchess parses ``args="A B C"`` by stripping the outer quotes and
     splitting on whitespace. To pass an argument that itself contains
     whitespace (e.g. an engine name like ``"Sturddle 2.5.0"``), wrap it
-    in double quotes. Internal quotes get backslash-escaped — same
+    in double quotes. Internal quotes get backslash-escaped -- same
     convention as POSIX shells.
     """
     if not arg:
@@ -63,11 +142,6 @@ def _quote_arg(arg: str) -> str:
     return arg
 
 
-# When a common opening book feeds the tournament, disable each engine's
-# built-in book so it doesn't override/double the shared openings.
-_OWNBOOK_OFF = "option.OwnBook=false"
-
-
 def _uci_option_value(v) -> str:
     """fastchess option.K=V value text; JSON bools become true/false."""
     if isinstance(v, bool):
@@ -75,30 +149,33 @@ def _uci_option_value(v) -> str:
     return str(v)
 
 
-def _managed_option_keys(spec: RunSpec) -> set[str]:
-    """Casefolded UCI option names the tournament itself defines (emitted
-    via ``-each`` below). Per-engine snapshot values for these are skipped
-    so the tournament stays the single source of truth; anything the
-    tournament leaves unset falls back to the engine's own setting."""
+def _option_arg(name: str, value) -> str:
+    return f"option.{name}={_uci_option_value(value)}"
+
+
+def _each_options(spec: RunSpec) -> dict[str, object]:
+    """UCI options the tournament itself sets on every engine (``-each``).
+    UCI knobs come from the global engine defaults snapshotted on the
+    RunSpec; the legacy template fields with the same names are ignored.
+    When a common opening book feeds the tournament, each engine's own
+    book is disabled so it doesn't override/double the shared openings."""
     t = spec.tournament.template
-    managed: set[str] = set()
+    opts: dict[str, object] = {}
     if spec.engine_default_hash_mb is not None:
-        managed.add("hash")
+        opts[UCI_OPT_HASH] = spec.engine_default_hash_mb
     if spec.engine_default_threads is not None:
-        managed.add("threads")
+        opts[UCI_OPT_THREADS] = spec.engine_default_threads
+    if PONDER_KEY in t:
+        opts[UCI_OPT_PONDER] = bool(t[PONDER_KEY])
     if spec.engine_default_syzygy_path:
-        managed.add("syzygypath")
-    if "ponder" in t:
-        managed.add("ponder")
+        opts[UCI_OPT_SYZYGY_PATH] = spec.engine_default_syzygy_path
     if spec.engine_default_book_path:
-        managed.add("ownbook")
-    return managed
+        opts[UCI_OPT_OWNBOOK] = False
+    return opts
+
 
 # Restart each engine process between games (fastchess restart=on).
 _RESTART_ON = "restart=on"
-
-
-log = logging.getLogger(__name__)
 
 
 def build_command(spec: RunSpec) -> list[str]:
@@ -118,19 +195,24 @@ def build_command(spec: RunSpec) -> list[str]:
       - draw              : dict {movenumber, movecount, score}
 
     Legacy template fields (``hash``, ``threads``, ``tablebase``,
-    ``book``, ``book_format``) are tolerated on read but ignored —
+    ``book``, ``book_format``) are tolerated on read but ignored --
     Hash/Threads/SyzygyPath/book come from the tournament's frozen
     ``engine_defaults`` snapshot, propagated via ``RunSpec``.
 
-    Engines come from ``spec.tournament.engines`` — each entry is a
+    Engines come from ``spec.tournament.engines`` -- each entry is a
     dict with at minimum ``name`` and ``cmd`` (engine binary path).
     Optional: ``args``, ``dir``, ``options`` (per-engine UCI options
-    snapshotted from the registry at create/edit time; keys the
-    tournament defines itself are skipped, see _managed_option_keys).
+    snapshotted from the registry at create/edit time; options the
+    tournament sets itself are skipped, see _each_options).
     """
     t = spec.tournament.template
     engines = spec.tournament.engines
-    managed_options = _managed_option_keys(spec)
+    each_options = _each_options(spec)
+    # Per-engine snapshot values for these are skipped so the tournament
+    # stays the single source of truth; anything it leaves unset falls
+    # back to the engine's own setting.
+    managed_options = {name.casefold() for name in each_options}
+    tc = t.get(_TPL_TC)
 
     cmd: list[str] = [spec.binary_path]
 
@@ -144,18 +226,19 @@ def build_command(spec: RunSpec) -> list[str]:
 
     # Per-engine: -engine cmd=... name=... [args=...] [dir=...]
     for eng in engines:
-        if "cmd" not in eng:
-            raise ValueError(f"engine missing 'cmd': {eng!r}")
-        engine_name = eng.get("name", eng["cmd"])
+        if ENGINE_REF_CMD not in eng:
+            raise ValueError(f"engine missing '{ENGINE_REF_CMD}': {eng!r}")
+        eng_cmd = eng[ENGINE_REF_CMD]
+        engine_name = eng.get(ENGINE_REF_NAME, eng_cmd)
         # Per-engine launch profile (registered via the Engine Settings
         # dialog). ``args`` is a list[str] today; older callers / tests may
-        # pass a single pre-joined string — accept both for resilience.
-        eng_args_raw = eng.get("args") or []
+        # pass a single pre-joined string -- accept both for resilience.
+        eng_args_raw = eng.get(ENGINE_REF_ARGS) or []
         if isinstance(eng_args_raw, str):
             eng_args: list[str] = [eng_args_raw] if eng_args_raw else []
         else:
             eng_args = [str(a) for a in eng_args_raw]
-        eng_env = eng.get("env") or {}
+        eng_env = eng.get(ENGINE_REF_ENV) or {}
         e: list[str] = ["-engine"]
         if proxy_enabled:
             # cmd = python; args = the proxy invocation + the real
@@ -165,8 +248,8 @@ def build_command(spec: RunSpec) -> list[str]:
             # game-slots when ``-concurrency > 1``; each spawned slot
             # process must get a distinct proxy_id, which only the
             # proxy itself can mint at startup.
-            # Secret is passed via SV_PROXY_SECRET in the environment
-            # (see FastchessRunner._spawn). Keeping it out of argv hides
+            # Secret is passed via PROXY_SECRET_ENV in the environment
+            # (see FastchessRunner.start). Keeping it out of argv hides
             # it from `ps` / `/proc/<pid>/cmdline`.
             # Per-engine env overrides ride along as repeatable
             # ``--env KEY=VAL`` flags; the proxy applies them when it
@@ -180,7 +263,7 @@ def build_command(spec: RunSpec) -> list[str]:
             ]
             for k, v in eng_env.items():
                 parts.extend(["--env", _quote_arg(f"{k}={v}")])
-            parts.extend(["--", _quote_arg(eng["cmd"])])
+            parts.extend(["--", _quote_arg(eng_cmd)])
             for a in eng_args:
                 parts.append(_quote_arg(a))
             e.append(f"cmd={_proxy_prefix[0]}")
@@ -194,36 +277,23 @@ def build_command(spec: RunSpec) -> list[str]:
                     "engine %s: per-engine env ignored (proxy disabled)",
                     engine_name,
                 )
-            e.append(f"cmd={eng['cmd']}")
+            e.append(f"cmd={eng_cmd}")
             if eng_args:
                 e.append(f"args={' '.join(_quote_arg(a) for a in eng_args)}")
         e.append(f"name={engine_name}")
-        if eng.get("dir"):
-            e.append(f"dir={eng['dir']}")
-        for k, v in (eng.get("options") or {}).items():
+        eng_dir = eng.get(ENGINE_REF_DIR)
+        if eng_dir:
+            e.append(f"dir={eng_dir}")
+        for k, v in (eng.get(ENGINE_REF_OPTIONS) or {}).items():
             if k.casefold() in managed_options:
                 continue
-            e.append(f"option.{k}={_uci_option_value(v)}")
-        if "tc" in t:
-            e.append(f"tc={t['tc']}")
+            e.append(_option_arg(k, v))
+        if tc is not None:
+            e.append(f"tc={tc}")
         cmd.extend(e)
 
-    # -each: options applied to all engines. UCI knobs (Hash/Threads/
-    # SyzygyPath) come from the global engine defaults snapshotted on
-    # the RunSpec — the legacy template fields with the same names are
-    # ignored on purpose (kept readable for old saved templates but no
-    # longer authoritative).
-    each: list[str] = []
-    if spec.engine_default_hash_mb is not None:
-        each.append(f"option.Hash={spec.engine_default_hash_mb}")
-    if spec.engine_default_threads is not None:
-        each.append(f"option.Threads={spec.engine_default_threads}")
-    if "ponder" in t:
-        each.append(f"option.Ponder={'true' if t['ponder'] else 'false'}")
-    if spec.engine_default_syzygy_path:
-        each.append(f"option.SyzygyPath={spec.engine_default_syzygy_path}")
-    if spec.engine_default_book_path:
-        each.append(_OWNBOOK_OFF)
+    # -each: options applied to all engines.
+    each = [_option_arg(name, value) for name, value in each_options.items()]
     if t.get("restart_engines"):
         each.append(_RESTART_ON)
     if each:
@@ -231,48 +301,52 @@ def build_command(spec: RunSpec) -> list[str]:
         cmd.extend(each)
 
     # Tournament setup
-    if "games_in_parallel" in t:
-        cmd.extend(["-concurrency", str(t["games_in_parallel"])])
+    games_in_parallel = t.get(GAMES_IN_PARALLEL_KEY)
+    if games_in_parallel is not None:
+        cmd.extend(["-concurrency", str(games_in_parallel)])
     # Without this, fastchess refuses concurrency > logical CPUs. Our
     # own rescheck has already either passed or warned the user; the
     # flag tells fastchess to honor the same intent.
     if t.get(ALLOW_OVERSUBSCRIBE_KEY):
         cmd.append("-force-concurrency")
-    if t.get("pin_affinity"):
+    if t.get(PIN_AFFINITY_KEY):
         cmd.append("-use-affinity")
-    if "sprt" in t and t["sprt"]:
-        # rounds=0 triggers fastchess's SPRT-unlimited mode (500k rounds).
-        cmd.extend(["-rounds", "0"])
-    elif "rounds" in t:
-        cmd.extend(["-rounds", str(t["rounds"])])
-    if "games_per_round" in t:
-        cmd.extend(["-games", str(t["games_per_round"])])
-    if t.get("tournament_type") == "gauntlet":
-        cmd.extend(["-tournament", "gauntlet"])
-        if "seeds" in t:
-            cmd.extend(["-seeds", str(t["seeds"])])
-    elif t.get("tournament_type") == "roundrobin":
-        cmd.extend(["-tournament", "roundrobin"])
+    sprt = t.get(SPRT_KEY)
+    rounds = t.get(_TPL_ROUNDS)
+    if sprt:
+        cmd.extend([_ARG_ROUNDS, _SPRT_UNLIMITED_ROUNDS])
+    elif rounds is not None:
+        cmd.extend([_ARG_ROUNDS, str(rounds)])
+    games_per_round = t.get(_TPL_GAMES_PER_ROUND)
+    if games_per_round is not None:
+        cmd.extend(["-games", str(games_per_round)])
+    tournament_type = t.get(TOURNAMENT_TYPE_KEY)
+    if tournament_type in (TYPE_GAUNTLET, TYPE_ROUNDROBIN):
+        cmd.extend([_ARG_TOURNAMENT, tournament_type])
+    seeds = t.get(_TPL_SEEDS)
+    if tournament_type == TYPE_GAUNTLET and seeds is not None:
+        cmd.extend(["-seeds", str(seeds)])
 
     if spec.tournament.name:
         cmd.extend(["-event", spec.tournament.name])
 
     # Pinned seed for fastchess's PRNG (opening shuffle, etc) so the
     # opening sequence is reproducible for this tournament's lifetime.
-    if "seed" in t:
-        cmd.extend(["-srand", str(t["seed"])])
+    seed = t.get(SEED_KEY)
+    if seed is not None:
+        cmd.extend(["-srand", str(seed)])
 
     # Save cfg.json after every game so a server crash loses at most
-    # one in-flight game's worth of recorded progress (default is 20).
-    cmd.extend(["-autosaveinterval", "1"])
+    # one in-flight game's worth of recorded progress.
+    cmd.extend(["-autosaveinterval", _AUTOSAVE_EVERY_GAME])
 
-    # Opening book — global default from settings; legacy template
+    # Opening book -- global default from settings; legacy template
     # ``book``/``book_format`` fields are ignored. Format inferred from
-    # the file extension (.epd → epd, anything else → pgn) since the
+    # the file extension (.epd -> epd, anything else -> pgn) since the
     # settings tab exposes only the path + plies.
     if spec.engine_default_book_path:
         path = spec.engine_default_book_path
-        fmt = "epd" if path.lower().endswith(".epd") else "pgn"
+        fmt = _BOOK_FORMAT_EPD if is_epd_book(path) else _BOOK_FORMAT_PGN
         opening = ["-openings", f"file={path}", f"format={fmt}"]
         if spec.engine_default_book_plies is not None:
             opening.append(f"plies={spec.engine_default_book_plies}")
@@ -282,30 +356,33 @@ def build_command(spec: RunSpec) -> list[str]:
 
     # SPRT -- honor the template's model (normalized default) so fastchess and
     # our LLR recompute agree. New tournaments are always normalized.
-    if "sprt" in t and t["sprt"]:
-        s = t["sprt"]
+    if sprt:
         cmd.extend([
             "-sprt",
-            f"elo0={s['elo0']}",
-            f"elo1={s['elo1']}",
-            f"alpha={s.get('alpha', 0.05)}",
-            f"beta={s.get('beta', 0.05)}",
-            f"model={_sprt_model(s.get('model'))}",
+            f"{SPRT_ELO0}={sprt[SPRT_ELO0]}",
+            f"{SPRT_ELO1}={sprt[SPRT_ELO1]}",
+            f"{SPRT_ALPHA}={sprt.get(SPRT_ALPHA, SPRT_DEFAULT_ALPHA)}",
+            f"{SPRT_BETA}={sprt.get(SPRT_BETA, SPRT_DEFAULT_BETA)}",
+            f"{SPRT_MODEL}={_sprt_model(sprt.get(SPRT_MODEL))}",
         ])
 
     # Adjudication
-    if "resign" in t and t["resign"]:
-        r = t["resign"]
-        cmd.extend(["-resign", f"movecount={r['movecount']}", f"score={r['score']}"])
-        if r.get("twosided"):
+    resign = t.get(_TPL_RESIGN)
+    if resign:
+        cmd.extend([
+            "-resign",
+            f"{_ADJ_MOVECOUNT}={resign[_ADJ_MOVECOUNT]}",
+            f"{_ADJ_SCORE}={resign[_ADJ_SCORE]}",
+        ])
+        if resign.get("twosided"):
             cmd.append("twosided=true")
-    if "draw" in t and t["draw"]:
-        d = t["draw"]
+    draw = t.get(_TPL_DRAW)
+    if draw:
         cmd.extend([
             "-draw",
-            f"movenumber={d['movenumber']}",
-            f"movecount={d['movecount']}",
-            f"score={d['score']}",
+            f"movenumber={draw['movenumber']}",
+            f"{_ADJ_MOVECOUNT}={draw[_ADJ_MOVECOUNT]}",
+            f"{_ADJ_SCORE}={draw[_ADJ_SCORE]}",
         ])
     # Tablebase (Syzygy) adjudication: only -tb <path>, leaving fastchess
     # at its defaults for piece count / 50-move / result type. Gated on a
@@ -319,15 +396,13 @@ def build_command(spec: RunSpec) -> list[str]:
         "-pgnout",
         f"file={spec.pgn_path}",
         "notation=san",
-        "append=true",
+        _APPEND_ON,
     ])
     cmd.extend(["-output", "format=fastchess"])
 
-    # FASTCHESS_LOG_LEVEL (trace|info|warn|err|fatal); default info.
     # fastchess writes directly to log_path; Python drain handles events only.
-    _fc_log_level = os.environ.get("FASTCHESS_LOG_LEVEL", "info").strip().lower()
-    if _fc_log_level in {"trace", "info", "warn", "err", "fatal"}:
-        cmd.extend(["-log", f"file={spec.log_path}", f"level={_fc_log_level}", "append=true"])
+    log_level = env_choice("SV_FASTCHESS_LOG_LEVEL", _FC_LOG_LEVEL_DEFAULT, _FC_LOG_LEVELS)
+    cmd.extend(["-log", f"file={spec.log_path}", f"level={log_level}", _APPEND_ON])
 
     # Always pass outname= so fastchess writes its scoreboard snapshot
     # (used post-run for the games-played reconcile check). Only pass
@@ -398,8 +473,7 @@ class FastchessRunner:
           3. ``None``.
         """
         if configured_path:
-            from pathlib import Path as _P
-            p = _P(configured_path)
+            p = Path(configured_path)
             if p.is_file():
                 return str(p)
         return shutil.which("fastchess")
@@ -431,7 +505,7 @@ class FastchessRunner:
 
         # Should always be cfg_exists=false post-wipe; any true here
         # flags a wipe bypass and is worth investigating.
-        seed = spec.tournament.template.get("seed")
+        seed = spec.tournament.template.get(SEED_KEY)
         log.info(
             "starting fastchess: tournament=%s cfg_exists=%s seed=%s pgn=%s",
             spec.tournament.id,
@@ -446,7 +520,7 @@ class FastchessRunner:
         # via `ps` / `/proc/<pid>/cmdline` to other local users.
         env = os.environ.copy()
         if spec.proxy_secret:
-            env["SV_PROXY_SECRET"] = spec.proxy_secret
+            env[PROXY_SECRET_ENV] = spec.proxy_secret
 
         # Create the per-tournament Job BEFORE spawn so the process can
         # be created already inside it (atomic via spawn_in_job).
@@ -475,24 +549,24 @@ class FastchessRunner:
                 try:
                     assign_to_job(self._job_handle, self._proc.pid)
                 except OSError as e:
-                    # ERROR_ACCESS_DENIED (5) = already in this Job. Expected
-                    # in the atomic path. Anything else is real.
-                    if getattr(e, "winerror", None) != 5:
+                    # Already in this Job: expected in the atomic path.
+                    # Anything else is real.
+                    if getattr(e, "winerror", None) != _ERROR_ACCESS_DENIED:
                         log.error("assign_to_job failed for pid=%d", self._proc.pid, exc_info=True)
 
             # Pipe drains: emit runner_log events; fastchess writes the log file.
             self._drain_tasks = [
                 asyncio.create_task(
-                    self._drain(self._proc.stdout, "out"),
+                    self._drain(self._proc.stdout, _STREAM_OUT),
                     name="fastchess-stdout",
                 ),
                 asyncio.create_task(
-                    self._drain(self._proc.stderr, "err"),
+                    self._drain(self._proc.stderr, _STREAM_ERR),
                     name="fastchess-stderr",
                 ),
             ]
 
-            await self._emit("started", {"pid": self._proc.pid})
+            await self._emit(EVT_STARTED, {"pid": self._proc.pid})
 
             # Supervisor task watches for exit and emits the terminal event.
             # Detached: callers don't await it; ``stop()`` cancels it cleanly.
@@ -508,12 +582,12 @@ class FastchessRunner:
     # microseconds, but the in-flight game's engines may need to drain
     # UCI traffic). Short enough that the UI doesn't hang on a runaway
     # subprocess.
-    _STOP_GRACE_SECONDS = 2.0
+    _STOP_GRACE_SECONDS = env_float("SV_FASTCHESS_STOP_GRACE_S", 2.0, min_value=0.0)
 
     async def stop(self) -> None:
         """Stop the subprocess. Idempotent.
 
-        Windows: closes the per-tournament Job → KILL_ON_JOB_CLOSE
+        Windows: closes the per-tournament Job -> KILL_ON_JOB_CLOSE
         kills the entire tree synchronously. POSIX: SIGTERM + grace
         for fastchess to flush resume state, escalates to SIGKILL.
         """
@@ -532,7 +606,7 @@ class FastchessRunner:
         pid = self._proc.pid
 
         if sys.platform == "win32":
-            # Closing the Job triggers KILL_ON_JOB_CLOSE — fastchess +
+            # Closing the Job triggers KILL_ON_JOB_CLOSE -- fastchess +
             # every descendant dies synchronously in the OS. No orphans,
             # no inherited pipe handles to wedge proc.wait().
             log.info("stop: closing Job for pid=%d (kills tree)", pid)
@@ -541,7 +615,7 @@ class FastchessRunner:
         else:
             # SIGTERM the whole process group (set via start_new_session in
             # _popen_kwargs) so engines + proxies get the chance to clean
-            # up too — proc.terminate() would only signal fastchess.
+            # up too -- proc.terminate() would only signal fastchess.
             try:
                 pgid = os.getpgid(pid)
             except ProcessLookupError:
@@ -554,7 +628,7 @@ class FastchessRunner:
                 except ProcessLookupError:
                     log.info("stop: pgid=%d already gone before SIGTERM", pgid)
             # TODO(#7): the grace timeout fires when the supervisor's
-            # terminal chain takes >2s -- not necessarily because fastchess
+            # terminal chain outlasts the grace -- not necessarily because fastchess
             # ignored SIGTERM. Only escalate to SIGKILL if proc.returncode
             # is None. Needs Linux/macOS to test.
             try:
@@ -616,9 +690,9 @@ class FastchessRunner:
                     return
                 stripped = line.decode("utf-8", errors="replace").rstrip("\r\n")
                 if stripped:
-                    tail = self._stderr_tail if tag == "err" else self._stdout_tail
+                    tail = self._stderr_tail if tag == _STREAM_ERR else self._stdout_tail
                     tail.append(stripped)
-                    await self._emit("runner_log", {"stream": tag, "line": stripped})
+                    await self._emit(EVT_RUNNER_LOG, {"stream": tag, "line": stripped})
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -673,10 +747,10 @@ class FastchessRunner:
         # Cancellation skips this; stop() owns the Job in that path.
         close_job(self._job_handle)
         self._job_handle = None
-        # Wait for drain tasks to flush — they exit naturally on EOF.
+        # Wait for drain tasks to flush -- they exit naturally on EOF.
         for t in self._drain_tasks:
             try:
-                await asyncio.wait_for(t, timeout=2.0)
+                await asyncio.wait_for(t, timeout=_DRAIN_FLUSH_TIMEOUT_S)
             except asyncio.TimeoutError:
                 t.cancel()
             except asyncio.CancelledError:
@@ -686,16 +760,20 @@ class FastchessRunner:
         if hasattr(self._proc, "close"):
             self._proc.close()
 
+        payload: dict = {RC_KEY: rc}
         if self._stop_requested:
-            kind, payload = "stopped", {"rc": rc}
+            kind = EVT_STOPPED
         elif rc == 0:
-            kind, payload = "done", {"rc": rc}
+            kind = EVT_DONE
         else:
             # Prefer stderr; fall back to stdout (fastchess emits some
             # CLI errors there) so the UI never gets an empty diagnostic.
             tail = list(self._stderr_tail) or list(self._stdout_tail)
-            kind, payload = "runner_crash", {"rc": rc, "stderr_tail": tail}
-            log.error("runner_crash: rc=%s\n%s", rc, "\n".join(tail) if tail else "(no output captured)")
+            kind = EVT_RUNNER_CRASH
+            payload[STDERR_TAIL_KEY] = tail
+            log.error(
+                "runner_crash: rc=%s\n%s", rc, "\n".join(tail) if tail else "(no output captured)",
+            )
 
         await self._emit(kind, payload)
 

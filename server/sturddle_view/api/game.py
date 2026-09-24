@@ -12,12 +12,22 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 
 from ..auth import require_token
+from ..chess.pgn_tags import TAG_BLACK, TAG_RESULT, TAG_TERMINATION, TAG_WHITE
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
 from ..config import BOOK_ORDER_RANDOM, BOOK_ORDER_SEQUENTIAL, HUMAN_SIDE_RANDOM
 from ..engines import resolve_selected
 from ..env_utils import env_int
+from ..error_detail import ERROR_KEY, error_detail
 from ..play.canonical_hash import FMT_FEN, FMT_PGN, canonical_hash, canonical_hash_from_game
-from ..play.human_vs_engine import EditChange, HumanVsEngine, TimeControl, ViewModeParams
+from ..play.human_vs_engine import (
+    FEN_KEY,
+    VIEWING_KEY,
+    EditChange,
+    HumanVsEngine,
+    TimeControl,
+    ViewModeParams,
+    idle_status,
+)
 from ..play.import_position import (
     ImportedPosition,
     PositionImportError,
@@ -30,13 +40,14 @@ from ..recent_imports import (
     ROW_FORK_PLY,
     ROW_FORMAT,
     ROW_GAME_ID,
+    ROW_HASH,
     ROW_PARENT_GAME_ID,
     ROW_REFS,
     ROW_SUMMARY,
     ROW_TS,
     RemoveStatus,
 )
-from ._ai_kick import cancel_ai_turn, start_ai_turn
+from ._ai_kick import ai_coordinator, cancel_ai_turn, start_ai_turn
 from ._http import bad_request, conflict, not_found
 
 log = logging.getLogger(__name__)
@@ -54,18 +65,17 @@ MAX_ANNOTATION_LENGTH = env_int("SV_MAX_ANNOTATION_LENGTH", 10_000)
 _GAME_ID_KEY = ROW_GAME_ID
 _FORMAT_KEY = ROW_FORMAT
 _SUMMARY_KEY = ROW_SUMMARY
-_VIEWING_KEY = "viewing"
-_HASH_KEY = "hash"
+_VIEWING_KEY = VIEWING_KEY
+_HASH_KEY = ROW_HASH
 _TEXT_KEY = "text"
-_FEN_KEY = "fen"
+_FEN_KEY = FEN_KEY
 _OPENING_KEY = "opening"
 _LAND_AT_PLY_KEY = "land_at_ply"
 _COMMENT_TEXT_KEY = "comment_text"
 _DETECTED_FORMAT_KEY = "detected_format"
 _CHILDREN_KEY = "children"
-_CODE_KEY = "code"
-_MESSAGE_KEY = "message"
-_ERROR_KEY = "error"
+_EVENTS_KEY = "events"
+_ERROR_KEY = ERROR_KEY
 # Import `format` values: FEN, PGN, or try FEN then PGN.
 _FMT_AUTO = "auto"
 _VALID_FORMATS = (FMT_FEN, FMT_PGN, _FMT_AUTO)
@@ -74,6 +84,7 @@ _PARSED_GAME_FIELD = "parsed_game"
 _NOT_FOUND = "not found"
 _OK = {"ok": True}
 _PGN_MEDIA_TYPE = "application/x-chess-pgn; charset=utf-8"
+_RECENT_IMPORT_PATH = "/recent-imports/{h}"
 
 router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_token)])
 
@@ -124,10 +135,9 @@ async def _get_hve(request: Request) -> HumanVsEngine:
     s = request.app.state
     launch = resolve_selected(s.engines, s.settings)
     if launch.path is None:
-        raise bad_request({
-            _CODE_KEY: "no_engine_configured",
-            _MESSAGE_KEY: "No engine configured. Add one in Settings > Engines.",
-        })
+        raise bad_request(error_detail(
+            "no_engine_configured", "No engine configured. Add one in Settings > Engines.",
+        ))
     if s.hve is not None and s.hve.engine_path != launch.path:
         # Swap in-place to preserve the active game across engine changes.
         await s.hve.swap_engine(launch.path)
@@ -145,10 +155,7 @@ async def _get_hve(request: Request) -> HumanVsEngine:
     # set_engines here is the single wiring point -- no construction site can
     # forget the registry and silently leave analysis on the play engine.
     s.hve.set_engines(s.engines)
-    s.hve.set_engine_name(launch.name)
-    s.hve.set_engine_options(launch.options)
-    s.hve.set_engine_args(launch.args)
-    s.hve.set_engine_env(launch.env)
+    s.hve.apply_launch(launch)
     return s.hve
 
 
@@ -289,8 +296,7 @@ def _resolve_game_id_for_import(recents, payload: dict, view_hash: str) -> str:
                 view_hash, stored_id, supplied_id,
             )
             raise conflict({
-                _CODE_KEY: "game_id_mismatch",
-                _MESSAGE_KEY: "supplied game_id does not match stored row",
+                **error_detail("game_id_mismatch", "supplied game_id does not match stored row"),
                 "stored_game_id": stored_id,
                 "supplied_game_id": supplied_id,
             })
@@ -335,8 +341,8 @@ async def import_game(payload: dict, request: Request) -> dict:
     # name the sides player-vs-engine per gameplay settings (instead of the
     # dataset PGN's "?" headers).
     opening = payload.get(_OPENING_KEY)
-    white_name = headers.get("White")
-    black_name = headers.get("Black")
+    white_name = headers.get(TAG_WHITE)
+    black_name = headers.get(TAG_BLACK)
     if opening is not None:
         if not isinstance(opening, dict):
             raise bad_request(f"{_OPENING_KEY} must be an object")
@@ -381,8 +387,8 @@ async def import_game(payload: dict, request: Request) -> dict:
                 eval_history=pos.eval_history,
                 comments=pos.comments,
                 root_comment=pos.root_comment,
-                pgn_result=headers.get("Result"),
-                pgn_termination=headers.get("Termination"),
+                pgn_result=headers.get(TAG_RESULT),
+                pgn_termination=headers.get(TAG_TERMINATION),
                 view_hash=view_hash,
                 view_summary=summary,
                 view_original_text=raw_text if detected == FMT_PGN else None,
@@ -454,7 +460,7 @@ async def get_recent_import_by_id(game_id: str, request: Request) -> dict:
     return _recent_import_payload(recents, h, game_id, row, text)
 
 
-@router.get("/recent-imports/{h}")
+@router.get(_RECENT_IMPORT_PATH)
 async def get_recent_import(h: str, request: Request) -> dict:
     """Return the full text + metadata for a single recent import.
 
@@ -478,7 +484,7 @@ async def get_recent_import(h: str, request: Request) -> dict:
     return _recent_import_payload(recents, h, game_id, row, text)
 
 
-@router.delete("/recent-imports/{h}")
+@router.delete(_RECENT_IMPORT_PATH)
 async def delete_recent_import(h: str, request: Request, force: bool = False) -> dict:
     """Remove a single entry from the recent-imports store.
 
@@ -793,16 +799,6 @@ async def sync(request: Request) -> dict:
     return _OK
 
 
-# /status response when no HVE exists yet (nothing to guard).
-_IDLE_STATUS = {
-    "in_progress": False,
-    _VIEWING_KEY: False,
-    "view_hash": None,
-    "view_summary": None,
-    "analyzing": False,
-}
-
-
 @router.get("/status")
 async def game_status(request: Request) -> dict:
     """Authoritative state for the client's discard/replace confirmations
@@ -810,7 +806,7 @@ async def game_status(request: Request) -> dict:
     endpoint doesn't. Never creates an HVE."""
     s = request.app.state
     if s.hve is None:
-        return dict(_IDLE_STATUS)
+        return idle_status()
     return await s.hve.status()
 
 
@@ -831,7 +827,7 @@ async def resume(request: Request) -> dict:
 
 
 def _clear_replay(request: Request) -> None:
-    coord = getattr(request.app.state, "ai_coordinator", None)
+    coord = ai_coordinator(request.app.state)
     if coord is not None:
         coord.clear_replay()
 
@@ -873,10 +869,10 @@ async def analysis_replay(request: Request) -> dict:
     """Return the buffered AI events for the in-flight analysis turn.
     Lets a client reconnecting mid-analysis rebuild the panel from the
     bus events it missed. Empty list when no analysis is live."""
-    coord = getattr(request.app.state, "ai_coordinator", None)
+    coord = ai_coordinator(request.app.state)
     if coord is None:
-        return {"events": []}
-    return {"events": coord.replay()}
+        return {_EVENTS_KEY: []}
+    return {_EVENTS_KEY: coord.replay()}
 
 
 @router.post("/analysis/stop")

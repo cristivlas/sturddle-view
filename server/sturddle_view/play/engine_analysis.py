@@ -15,7 +15,7 @@ import chess
 import chess.engine
 
 from ..config import EVAL_POV_ENGINE, EVAL_POV_HUMAN, EVAL_POV_WHITE
-from ..engines import resolve_analysis
+from ..engines import UCI_OPT_HASH, UCI_OPT_SYZYGY_PATH, UCI_OPT_THREADS, resolve_analysis
 from .engine_supervisor import EngineSupervisor
 
 log = logging.getLogger(__name__)
@@ -37,11 +37,9 @@ def log_spawn_failure(exc: Exception, context: str) -> None:
         log.error("%s: engine spawn failed", context, exc_info=True)
 
 
-# UCI option keys -- kept as constants to avoid scattered string literals
-# in two callers + tests.
-_UCI_THREADS = "Threads"
-_UCI_HASH = "Hash"
-_UCI_SYZYGY_PATH = "SyzygyPath"
+def eval_pov_mode(settings: Any | None) -> str:
+    """The play_eval_pov setting; white when there are no settings."""
+    return getattr(settings, "play_eval_pov", EVAL_POV_WHITE) if settings else EVAL_POV_WHITE
 
 
 def resolve_eval_pov_white_or_stm(
@@ -52,8 +50,7 @@ def resolve_eval_pov_white_or_stm(
     context: 'white' -> white; 'engine' -> STM. 'human' falls back to
     STM (caller-specific handling lives in HVE; tools have no human
     color)."""
-    mode = getattr(settings, "play_eval_pov", EVAL_POV_WHITE) if settings else EVAL_POV_WHITE
-    if mode in (EVAL_POV_ENGINE, EVAL_POV_HUMAN):
+    if eval_pov_mode(settings) in (EVAL_POV_ENGINE, EVAL_POV_HUMAN):
         return stm
     return chess.WHITE
 
@@ -68,13 +65,13 @@ def global_engine_defaults(settings: Any | None) -> dict:
     out: dict = {}
     threads = getattr(settings, "engine_default_threads", None)
     if threads:
-        out[_UCI_THREADS] = threads
+        out[UCI_OPT_THREADS] = threads
     hash_mb = getattr(settings, "engine_default_hash_mb", None)
     if hash_mb:
-        out[_UCI_HASH] = hash_mb
+        out[UCI_OPT_HASH] = hash_mb
     syzygy_path = getattr(settings, "engine_default_syzygy_path", None)
     if syzygy_path:
-        out[_UCI_SYZYGY_PATH] = syzygy_path
+        out[UCI_OPT_SYZYGY_PATH] = syzygy_path
     return out
 
 
@@ -86,7 +83,7 @@ def analysis_overrides(settings: Any | None) -> dict:
     if settings is None:
         return {}
     n = getattr(settings, "engine_default_analysis_threads", None)
-    return {_UCI_THREADS: n} if n else {}
+    return {UCI_OPT_THREADS: n} if n else {}
 
 
 def make_analysis_supervisor(registry, settings: Any | None, bus) -> EngineSupervisor:

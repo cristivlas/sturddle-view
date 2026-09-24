@@ -5,25 +5,28 @@ Positions verified against python-chess syzygy on a 3-4-5 man TB set:
   KNNvKP  1N6/8/p7/8/8/8/2k1N3/K7 w - - 0 1   wdl=1  (cursed win)
   KPPvKP  8/8/1k2P2K/6P1/8/3p4/8/8 b - - 0 1  wdl=-1 (blessed loss)
 
-Run with --syzygy-path=/path/to/tables or set SYZYGY_PATH env var.
+Run with --syzygy-path=/path/to/tables or set SVTEST_SYZYGY_PATH env var.
 """
 from __future__ import annotations
 
 import os
-import pytest
+
 import chess
+import pytest
 
 from sturddle_view.config import Settings
 from sturddle_view.events import EventBus
 from sturddle_view.play.human_vs_engine import HumanVsEngine
 from sturddle_view.play.tablebase import TablebaseProber, MAX_PIECES
 
+_SYZYGY_PATH_ENV = "SVTEST_SYZYGY_PATH"
+
 
 @pytest.fixture(scope="session")
 def syzygy_path(request):
-    path = request.config.getoption("--syzygy-path") or os.environ.get("SYZYGY_PATH")
+    path = request.config.getoption("--syzygy-path") or os.environ.get(_SYZYGY_PATH_ENV)
     if not path:
-        pytest.skip("pass --syzygy-path or set SYZYGY_PATH to run tablebase tests")
+        pytest.skip(f"pass --syzygy-path or set {_SYZYGY_PATH_ENV} to run tablebase tests")
     return path
 
 

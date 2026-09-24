@@ -8,7 +8,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from sturddle_view.tournament.proxy import _WANT_INFO_KEY, Broadcaster
+from sturddle_view.tournament.proxy import WANT_INFO_KEY, Broadcaster
 
 
 @pytest.fixture
@@ -43,18 +43,18 @@ def test_empty_body_leaves_flag_untouched(bc):
 
 
 def test_flips_false_then_true(bc):
-    bc._apply_want_info(_resp(200, json={_WANT_INFO_KEY: False}))
+    bc._apply_want_info(_resp(200, json={WANT_INFO_KEY: False}))
     assert bc.want_info is False
-    bc._apply_want_info(_resp(200, json={_WANT_INFO_KEY: True}))
+    bc._apply_want_info(_resp(200, json={WANT_INFO_KEY: True}))
     assert bc.want_info is True
 
 
 def test_garbage_body_is_failopen(bc):
-    bc._apply_want_info(_resp(200, json={_WANT_INFO_KEY: False}))
+    bc._apply_want_info(_resp(200, json={WANT_INFO_KEY: False}))
     assert bc.want_info is False
     # Non-JSON, missing key, and non-bool value all leave the last
     # good value in place rather than crashing or blinding the watcher.
     bc._apply_want_info(_resp(200, content=b"not json"))
     bc._apply_want_info(_resp(200, json={"other": 1}))
-    bc._apply_want_info(_resp(200, json={_WANT_INFO_KEY: "yes"}))
+    bc._apply_want_info(_resp(200, json={WANT_INFO_KEY: "yes"}))
     assert bc.want_info is False
