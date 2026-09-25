@@ -72,6 +72,7 @@
   /* Breakpoints in rem so they scale with browser font-size and stay
      meaningful under zoom. JS reads these via getComputedStyle. */
   --bp-narrow-dialog: 30rem;  /* 480px @ default font */
+  --bp-settings-top-tabs: 46rem; /* 736px; Settings side rail needs the full 690px dialog */
   --bp-mobile:        50rem;  /* 800px @ default font */
   --bp-mobile-h:      30rem;  /* 480px @ default font; height analog */
   --bp-mobile-h-play: 42.5rem; /* 680px; play side-rail short-height gate */
@@ -2482,9 +2483,14 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
     box-sizing: border-box;
   }
 }
-wa-dialog:has(.engine-settings-tabs)::part(footer) {
+wa-dialog:has(.engine-settings-tabs)::part(footer),
+wa-dialog:has(> .settings-reset-btn)::part(footer) {
   border-top: 1px solid rgba(255, 255, 255, 0.12);
   padding-top: 12px;
+}
+/* Settings Reset: the gap above the button mirrors the one below it. */
+wa-dialog:has(> .settings-reset-btn)::part(footer) {
+  padding-top: var(--spacing);
 }
 wa-dialog:has(.engine-settings-tabs)::part(body) {
   padding-block-end: 0;
@@ -2880,6 +2886,17 @@ wa-dialog .settings-tabs wa-tab-panel > * {
    the gap is tuned to fill the space without overflowing the dialog cap. */
 wa-dialog .settings-tabs wa-tab-panel[name="general"] > * + * {
   margin-top: 38px;
+}
+/* Side-tab panels pad their right edge by --wa-space-xl (WA tab-group), so
+   inset the footer Reset button to line up with the panel's controls. */
+wa-dialog:has(.settings-tabs:not(.settings-top-tabs)) > .settings-reset-btn {
+  margin-inline-end: var(--wa-space-xl);
+}
+/* Settings uses top tabs below --bp-settings-top-tabs (wider than the
+   481px side-rail gate); undo the equal-width side-rail tabs there. */
+wa-dialog .settings-top-tabs wa-tab,
+wa-dialog .settings-top-tabs wa-tab::part(base) {
+  width: auto;
 }
 /* wa-dialog .settings-tabs wa-tab-panel[name="play"] {
   --settings-group-gap: 18px;

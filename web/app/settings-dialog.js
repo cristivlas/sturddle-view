@@ -1,4 +1,4 @@
-// Settings dialog: tabbed Web Awesome dialog. Apply-on-change semantics —
+// Settings dialog: tabbed Web Awesome dialog. Apply-on-change semantics --
 // every toggle / input commits to the server immediately (debounced for
 // text fields). No Save button. The X just closes.
 
@@ -8,7 +8,7 @@ import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import { mountEngineList } from "./engines.js";
 import { DEFAULT_BOARD_STYLE } from "./board-styles.js";
-import { mqNarrowDialog } from "./breakpoints.js";
+import { mqSettingsTopTabs } from "./breakpoints.js";
 import { buildAnalysisTab } from "./settings-analysis-tab.js";
 import { buildTournamentTab } from "./settings-tournament-tab.js";
 import { buildCommonTab } from "./settings-common-tab.js";
@@ -21,6 +21,15 @@ const SETTINGS_ENGINES_COL_PCTS_KEY = STORAGE_KEY.ENGINES_SETTINGS_COL_PCTS;
 const PLAYER_NAME_KEY = STORAGE_KEY.PLAYER_NAME;
 export const PLAYER_NAME_DEFAULT = "Human";
 const PLAYER_NAME_MAX_LEN = 32;
+const SETTINGS_PATH = "/settings";
+const TOURNAMENT_SETTINGS_PATH = "/api/tournament-settings";
+const ENGINES_TAB = "engines";
+const PUT_DEBOUNCE_MS = 400;
+const DIALOG_WIDTH = "min(690px, 94vw)";
+// Top-tab layouts get the full vertical share; side-tab layouts cap high
+// enough that the Tournament tab's disclosure area fits without body scroll.
+const DIALOG_HEIGHT_NARROW = "92vh";
+const DIALOG_HEIGHT = `min(640px, ${DIALOG_HEIGHT_NARROW})`;
 
 // One-time migration off the pre-0.5.2 localStorage name: if the server
 // name is still unset, push the local one; either way drop the local key.
@@ -33,30 +42,34 @@ export function migrateLegacyPlayerName(api, serverSettings) {
     return;
   }
   // Clear only after the PUT lands, so a failed push retries next boot.
-  api("PUT", "/settings", { player_name: legacy })
+  api("PUT", SETTINGS_PATH, { player_name: legacy })
     .then(() => saveRaw(PLAYER_NAME_KEY, null))
     .catch(() => {});
 }
 
-// Persisted unit is always seconds (float). The UI picks the most natural
-// display unit on load (largest unit with no fractional remainder) and
-// converts back to seconds on save. UCI/cutechess/fastchess all support
-// sub-second values; the wire protocol resolution is 1ms.
+// Persisted unit is always seconds (float); the UI shows the largest unit
+// with no fractional remainder. Wire resolution is 1ms.
+const SECONDS_PER_MINUTE = 60;
+const MS_PER_SECOND = 1000;
+const TENTHS_PER_SECOND = 10;
+const UNIT_MIN = "min";
+const UNIT_SEC = "sec";
+const UNIT_MS = "ms";
 const DURATION_UNITS = [
-  { id: "min", label: "min", toSeconds: 60 },
-  { id: "sec", label: "sec", toSeconds: 1 },
-  { id: "ms",  label: "ms",  toSeconds: 0.001 },
+  { id: UNIT_MIN, label: UNIT_MIN, toSeconds: SECONDS_PER_MINUTE },
+  { id: UNIT_SEC, label: UNIT_SEC, toSeconds: 1 },
+  { id: UNIT_MS,  label: UNIT_MS,  toSeconds: 1 / MS_PER_SECOND },
 ];
 
 function pickDurationUnit(seconds) {
-  if (seconds === 0) return "sec";
+  if (seconds === 0) return UNIT_SEC;
   // Whole minutes -> minutes (300 -> "5 min").
-  if (seconds >= 60 && seconds % 60 === 0) return "min";
+  if (seconds >= SECONDS_PER_MINUTE && seconds % SECONDS_PER_MINUTE === 0) return UNIT_MIN;
   // Tenth-of-a-second resolution fits "sec" (0.1, 0.5, 60.5 all stay readable).
   // Round to 1 decimal place to absorb float jitter.
-  if (Math.round(seconds * 10) === seconds * 10) return "sec";
-  // Otherwise ms — sub-100ms or multi-decimal values.
-  return "ms";
+  if (Math.round(seconds * TENTHS_PER_SECOND) === seconds * TENTHS_PER_SECOND) return UNIT_SEC;
+  // Otherwise ms -- sub-100ms or multi-decimal values.
+  return UNIT_MS;
 }
 
 function makeDurationRow({ label, seconds, minSeconds, onChange }) {
@@ -66,16 +79,19 @@ function makeDurationRow({ label, seconds, minSeconds, onChange }) {
   const lbl = document.createElement("label");
   lbl.textContent = label;
 
-  const initialUnit = pickDurationUnit(seconds);
-  let unitId = initialUnit;
+  let unitId = pickDurationUnit(seconds);
   const unitDef = () => DURATION_UNITS.find((u) => u.id === unitId);
 
   const input = document.createElement("wa-input");
   input.size = "small";
   input.type = "number";
   input.setAttribute("autocomplete", "off");
-  input.value = String(seconds / unitDef().toSeconds);
-  input.min = String(minSeconds / unitDef().toSeconds);
+  // Render `sec` (and the floor) in the current display unit.
+  const showSeconds = (sec) => {
+    input.value = String(sec / unitDef().toSeconds);
+    input.min = String(minSeconds / unitDef().toSeconds);
+  };
+  showSeconds(seconds);
 
   const unit = document.createElement("wa-select");
   unit.size = "small";
@@ -90,21 +106,18 @@ function makeDurationRow({ label, seconds, minSeconds, onChange }) {
   function commit() {
     const raw = parseFloat(input.value);
     if (!Number.isFinite(raw) || raw < 0) return;
-    const sec = Math.round(raw * unitDef().toSeconds * 1000) / 1000;  // 1ms resolution
+    const sec = Math.round(raw * unitDef().toSeconds * MS_PER_SECOND) / MS_PER_SECOND;
     if (sec < minSeconds) return;
     onChange(sec);
   }
 
   input.addEventListener("input", commit);
   unit.addEventListener("change", () => {
-    // Display-only: convert the shown value into the new unit so the
-    // underlying seconds stays the same. No commit() — the value didn't
-    // change; only its presentation did.
-    const oldDef = DURATION_UNITS.find((u) => u.id === unitId);
-    const sec = (parseFloat(input.value) || 0) * oldDef.toSeconds;
+    // Display-only: re-express the same seconds in the new unit. No
+    // commit() -- the value didn't change; only its presentation did.
+    const sec = (parseFloat(input.value) || 0) * unitDef().toSeconds;
     unitId = unit.value;
-    input.value = String(sec / unitDef().toSeconds);
-    input.min = String(minSeconds / unitDef().toSeconds);
+    showSeconds(sec);
   });
 
   const inputs = document.createElement("div");
@@ -115,15 +128,15 @@ function makeDurationRow({ label, seconds, minSeconds, onChange }) {
 }
 
 export async function openSettingsDialog({
-  api, initialTab, focusClass, getActivePerspective, reloadPerspective,
+  api, initialTab, focusClass, reloadPerspective,
 }) {
   let initial;
   let tournamentInitial;
   let engineList = [];
   let activeEngineId = "";
   try {
-    initial = await api("GET", "/settings");
-    tournamentInitial = await api("GET", "/api/tournament-settings");
+    initial = await api("GET", SETTINGS_PATH);
+    tournamentInitial = await api("GET", TOURNAMENT_SETTINGS_PATH);
     // Engine list feeds the analysis-engine dropdown shown when the
     // provider is "Engine only".
     try {
@@ -146,63 +159,61 @@ export async function openSettingsDialog({
 
   await showDialog({
     label: "Settings",
-    width: "min(690px, 94vw)",
-    // Phones get the full vertical share; desktops cap high enough that the
-    // Tournament tab's fixed-height disclosure area (ttf-sections) fits without
-    // the body scrolling.
-    height: mqNarrowDialog.matches ? "92vh" : "min(640px, 92vh)",
+    width: DIALOG_WIDTH,
+    height: mqSettingsTopTabs.matches ? DIALOG_HEIGHT_NARROW : DIALOG_HEIGHT,
     body: (resolve, dialog) => {
-      // Listeners on long-lived globals (e.g. the mqMobile media query) must
-      // be torn down when the dialog closes, or each open leaks a pair and
-      // pins the detached panel. Builders take this signal and pass it to
-      // addEventListener; aborting on close removes them all at once.
+      // Builders pass this signal to listeners on long-lived globals (e.g.
+      // the mqMobile media query); aborting on close removes them all, so
+      // reopening doesn't leak listeners pinning the detached panel.
       const dialogClosed = new AbortController();
       dialog.addEventListener("wa-after-hide", (ev) => {
         if (ev.target === dialog) dialogClosed.abort();
       });
+      const onDialogShown = (fn) => {
+        dialog.addEventListener("wa-after-show", function once(ev) {
+          if (ev.target !== dialog) return;
+          dialog.removeEventListener("wa-after-show", once);
+          fn();
+        });
+      };
 
-      // ---- helper: PUT a partial settings update; toast on failure. ----
-      const putSettings = async (patch) => {
+      // PUT a partial update; broadcast on success, toast on failure.
+      const putAndNotify = async (path, patch) => {
         try {
-          await api("PUT", "/settings", patch);
+          await api("PUT", path, patch);
           window.dispatchEvent(new CustomEvent(APP_EVT.SETTINGS_CHANGED));
         } catch (e) {
           toast(`Save failed: ${apiErrorDetail(e)}`, { variant: "danger" });
         }
       };
-      const putSettingsDebounced = debounce(putSettings, 400);
-
-      const putTournamentSettings = async (patch) => {
-        try {
-          tournamentInitial = await api("PUT", "/api/tournament-settings", patch);
-          window.dispatchEvent(new CustomEvent(APP_EVT.SETTINGS_CHANGED));
-        } catch (e) {
-          toast(`Save failed: ${apiErrorDetail(e)}`, { variant: "danger" });
-        }
-      };
+      const putSettings = (patch) => putAndNotify(SETTINGS_PATH, patch);
+      const putSettingsDebounced = debounce(putSettings, PUT_DEBOUNCE_MS);
+      const putTournamentSettings = (patch) => putAndNotify(TOURNAMENT_SETTINGS_PATH, patch);
 
       const tabs = document.createElement("wa-tab-group");
-      const isNarrow = mqNarrowDialog.matches;
-      tabs.placement = isNarrow ? "top" : "start";
+      const topTabs = mqSettingsTopTabs.matches;
+      tabs.placement = topTabs ? "top" : "start";
       tabs.classList.add("dialog-side-tabs", "settings-tabs");
+      if (topTabs) tabs.classList.add("settings-top-tabs");
 
       // --- Engines tab ---
       const enginesTab = document.createElement("wa-tab");
-      enginesTab.panel = "engines";
+      enginesTab.panel = ENGINES_TAB;
       enginesTab.textContent = "Engines";
       const enginesPanel = document.createElement("wa-tab-panel");
-      enginesPanel.name = "engines";
+      enginesPanel.name = ENGINES_TAB;
       enginesPanel.classList.add("settings-engines-panel");
       const enginesHost = document.createElement("div");
       enginesHost.className = "settings-engines-host";
       enginesPanel.appendChild(enginesHost);
+      const mountEngines = () => mountEngineList(enginesHost, api, {
+        colPctsKey: SETTINGS_ENGINES_COL_PCTS_KEY,
+      });
       let enginesMounted = false;
       tabs.addEventListener("wa-tab-show", (ev) => {
-        if (ev.detail?.name !== "engines" || enginesMounted) return;
+        if (ev.detail?.name !== ENGINES_TAB || enginesMounted) return;
         enginesMounted = true;
-        mountEngineList(enginesHost, api, {
-          colPctsKey: SETTINGS_ENGINES_COL_PCTS_KEY,
-        });
+        mountEngines();
       });
 
       // Shared path-row builder, bound to api for the file picker. Used by
@@ -231,8 +242,8 @@ export async function openSettingsDialog({
       });
 
       // --- Common tab ---
-      const { tab: generalTab, panel: generalPanel } = buildCommonTab({
-        initial, putSettings, putSettingsDebounced, pathRow,
+      const { tab: generalTab, panel: generalPanel, footer: generalFooter } = buildCommonTab({
+        api, initial, putSettings, putSettingsDebounced, pathRow,
       });
 
       // --- Tournament tab ---
@@ -249,39 +260,38 @@ export async function openSettingsDialog({
       // opening Settings on another tab issues no provider call.
       let analysisMounted = false;
       tabs.addEventListener("wa-tab-show", (ev) => {
-        if (ev.detail?.name !== "analysis" || analysisMounted) return;
+        if (ev.detail?.name !== analysisPanel.name || analysisMounted) return;
         analysisMounted = true;
         mountAnalysis();
       });
-      // Map preserves insertion order by spec -- the iteration order here
-      // IS the visual tab order. Each entry pairs the tab control with
-      // its panel, eliminating the parallel-list bug class where one of
-      // them gets forgotten in tabs.append().
+      // Insertion order IS the visual tab order. Pairing each tab with its
+      // panel keeps tabs.append() from forgetting one of them.
       const TABS = new Map([
-        ["general",    { tab: generalTab,    panel: generalPanel }],
-        ["engines",    { tab: enginesTab,    panel: enginesPanel }],
-        ["play",       { tab: playTab,       panel: playPanel }],
-        ["display",    { tab: displayTab,    panel: displayPanel }],
-        ["analysis",   { tab: analysisTab,   panel: analysisPanel }],
-        ["tournament", { tab: tournamentTab, panel: tournamentPanel }],
-      ]);
+        { tab: generalTab,    panel: generalPanel },
+        { tab: enginesTab,    panel: enginesPanel },
+        { tab: playTab,       panel: playPanel },
+        { tab: displayTab,    panel: displayPanel },
+        { tab: analysisTab,   panel: analysisPanel },
+        { tab: tournamentTab, panel: tournamentPanel },
+      ].map((entry) => [entry.panel.name, entry]));
 
-      const startTab = (TABS.get(initialTab) || TABS.get("general")).tab;
+      const startTab = (TABS.get(initialTab) || TABS.get(generalPanel.name)).tab;
       startTab.setAttribute("active", "");
-      // Eager mount when Engines is the starting tab: defer until the
-      // dialog is actually in the document so mountEngineList can measure
-      // its surroundings (it reads getBoundingClientRect on the dialog
-      // body to size the table-wrap). Doing it inline here would leave
-      // the host detached and yield a collapsed list.
+      // Common's footer shows only on that tab. WA renders the footer slot
+      // only when filled and misses a re-fill, so force the re-render.
+      const showGeneralFooter = (on) => {
+        if (on) dialog.append(generalFooter);
+        else generalFooter.remove();
+        dialog.requestUpdate();
+      };
+      tabs.addEventListener("wa-tab-show", (ev) => showGeneralFooter(ev.detail?.name === generalPanel.name));
+      showGeneralFooter(startTab === generalTab);
+      // Engines as the start tab mounts only once the dialog is in the
+      // document: mountEngineList measures the dialog body to size its
+      // table, and a detached host yields a collapsed list.
       if (startTab === enginesTab) {
         enginesMounted = true;
-        dialog.addEventListener("wa-after-show", function once(ev) {
-          if (ev.target !== dialog) return;
-          dialog.removeEventListener("wa-after-show", once);
-          mountEngineList(enginesHost, api, {
-            colPctsKey: SETTINGS_ENGINES_COL_PCTS_KEY,
-          });
-        });
+        onDialogShown(mountEngines);
       } else if (startTab === analysisTab) {
         analysisMounted = true;
         mountAnalysis();
@@ -290,13 +300,7 @@ export async function openSettingsDialog({
       // Deep link naming a control: focus it once the dialog is showing, so
       // the setting the link exists to fix is the one under the cursor.
       // Silent no-op if the tab doesn't carry it.
-      if (focusClass) {
-        dialog.addEventListener("wa-after-show", function once(ev) {
-          if (ev.target !== dialog) return;
-          dialog.removeEventListener("wa-after-show", once);
-          dialog.querySelector(`.${focusClass}`)?.focus();
-        });
-      }
+      if (focusClass) onDialogShown(() => dialog.querySelector(`.${focusClass}`)?.focus());
 
       for (const { tab, panel } of TABS.values()) tabs.append(tab, panel);
 
@@ -307,7 +311,7 @@ export async function openSettingsDialog({
   if (boardStyleDirty) {
     try { await boardStylePending; } catch {}
     // Re-PUT guards against the fire-and-forget change-handler racing a fast close.
-    try { await api("PUT", "/settings", { board_style: boardStyleFinal }); } catch {}
+    try { await api("PUT", SETTINGS_PATH, { board_style: boardStyleFinal }); } catch {}
     if (reloadPerspective) reloadPerspective();
     else location.reload();
   }

@@ -263,7 +263,7 @@ document.getElementById("about-btn").addEventListener("click", () => {
 // startup slot, which during a disconnect window still holds the pre-drop tab.
 const reloadPerspective = () => router.activate(router.activeId(), { force: true, persist: false });
 document.getElementById("settings-btn").addEventListener("click", () => {
-  openSettingsDialog({ api, getActivePerspective: () => router.activeId(), reloadPerspective });
+  openSettingsDialog({ api, reloadPerspective });
 });
 // Allow any module to deep-link into the Settings dialog without
 // threading the `api` reference through call chains. detail.tab opens
@@ -275,7 +275,6 @@ window.addEventListener(APP_EVT.OPEN_SETTINGS, (e) => {
     api,
     initialTab: tab,
     focusClass: e.detail?.focus,
-    getActivePerspective: () => router.activeId(),
     reloadPerspective,
   });
 });

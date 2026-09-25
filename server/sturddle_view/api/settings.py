@@ -375,26 +375,48 @@ _APPLIERS = {
 }
 
 
+def _persist(s) -> None:
+    try:
+        s.save_persisted()
+    except OSError:
+        log.error("failed to persist settings", exc_info=True)
+
+
+def _live_engine_values(s) -> tuple:
+    return tuple(getattr(s, k) for k in _LIVE_ENGINE_KEYS)
+
+
+# Live-apply: only globals that flow into _spawn_engine's option layering
+# (Threads/Hash/SyzygyPath). Other fields (PGN, eval POV, board style)
+# are read at use time and don't need an engine respawn.
+async def _live_apply_engine_settings(request: Request) -> None:
+    hve = live_hve(request.app.state)
+    if hve is not None:
+        await hve.apply_engine_settings_live()
+
+
 @router.put("")
 async def update_settings(payload: dict, request: Request) -> dict:
     s = request.app.state.settings
     for key, apply in _APPLIERS.items():
         if key in payload:
             apply(payload, s, request)
-
-    try:
-        s.save_persisted()
-    except OSError:
-        log.error("failed to persist settings", exc_info=True)
-
-    # Live-apply: only globals that flow into _spawn_engine's option layering
-    # (Threads/Hash/SyzygyPath). Other fields (PGN, eval POV, board style)
-    # are read at use time and don't need an engine respawn.
+    _persist(s)
     if any(k in payload for k in _LIVE_ENGINE_KEYS):
-        hve = live_hve(request.app.state)
-        if hve is not None:
-            await hve.apply_engine_settings_live()
+        await _live_apply_engine_settings(request)
+    return _serialize(s)
 
+
+# Settings file only: registered engines (engines.json) and API keys
+# (OS keyring) live elsewhere and survive.
+@router.post("/reset")
+async def reset_settings(request: Request) -> dict:
+    s = request.app.state.settings
+    before = _live_engine_values(s)
+    s.reset_persisted()
+    _persist(s)
+    if _live_engine_values(s) != before:
+        await _live_apply_engine_settings(request)
     return _serialize(s)
 
 

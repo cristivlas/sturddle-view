@@ -411,3 +411,9 @@ class Settings(BaseSettings):
             v = getattr(self, k, None)
             payload[k] = str(v) if isinstance(v, Path) else v
         atomic_write_json(path, payload, indent=_SETTINGS_JSON_INDENT)
+
+    def reset_persisted(self) -> None:
+        """Restore persisted fields to defaults; a fresh instance keeps SV_ env overrides."""
+        defaults = type(self)()
+        for k in PERSISTED_FIELDS:
+            setattr(self, k, getattr(defaults, k))
