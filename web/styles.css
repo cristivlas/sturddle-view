@@ -2492,20 +2492,18 @@ wa-dialog:has(> .settings-reset-row)::part(footer) {
 wa-dialog:has(> .settings-reset-row)::part(footer) {
   padding-top: var(--spacing);
 }
-/* Label at the panels' left edge (JS-measured inset), button fills the rest. */
+/* Button spans the panels' width: left edge at the JS-measured inset. */
 .settings-reset-row {
   flex: 1;
   display: flex;
-  align-items: center;
-  gap: var(--wa-space-s);
   margin-inline-start: var(--settings-footer-inset, 0px);
 }
 .settings-reset-row .settings-reset-btn { flex: 1; }
-/* Input-field fill at rest so the wide button reads as part of the form;
-   hover lights it up in the brand (loud) fill. ::part() beats the shadow
-   :hover/:active rules, so both states are restated here. */
+/* Dark text on gray at rest; hover lights it up in the brand (loud) fill.
+   ::part() beats the shadow :hover/:active rules, so both are restated. */
 .settings-reset-row .settings-reset-btn::part(base) {
-  background-color: var(--wa-form-control-background-color);
+  background-color: var(--wa-color-neutral-70);
+  color: var(--wa-color-neutral-05);
 }
 .settings-reset-row .settings-reset-btn:not([disabled]):hover::part(base) {
   background-color: var(--wa-color-brand-fill-loud);
@@ -2513,10 +2511,6 @@ wa-dialog:has(> .settings-reset-row)::part(footer) {
 }
 .settings-reset-row .settings-reset-btn:not([disabled]):active::part(base) {
   background-color: color-mix(in oklab, var(--wa-color-brand-fill-loud), var(--wa-color-mix-active));
-}
-.settings-reset-row label {
-  color: var(--muted);
-  font-size: 0.75rem;
 }
 wa-dialog:has(.engine-settings-tabs)::part(body) {
   padding-block-end: 0;

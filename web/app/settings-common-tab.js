@@ -17,7 +17,8 @@ const BOOK_PLIES_KEY = "engine_default_book_plies";
 const BOOK_ORDER_KEY = "engine_default_book_order";
 const OPTION_MIN = "1";
 const RESET_PATH = "/settings/reset";
-const RESET_LABEL = "Restore application defaults";
+// Same icon as Play's Take back.
+const RESET_ICON = "rotate-left";
 const RESET_CONFIRM_MESSAGE =
   "Reset all settings to defaults? Engines, API keys and window layouts are kept.";
 
@@ -133,12 +134,13 @@ export function buildCommonTab({ api, initial, putSettings, putSettingsDebounced
     const row = document.createElement("div");
     row.slot = "footer";
     row.className = "settings-reset-row";
-    const lbl = document.createElement("label");
-    lbl.textContent = RESET_LABEL;
     const btn = document.createElement("wa-button");
     btn.size = "small";
     btn.className = "settings-reset-btn";
-    btn.textContent = "Reset all settings";
+    const icon = document.createElement("wa-icon");
+    icon.name = RESET_ICON;
+    icon.slot = "start";
+    btn.append(icon, "Reset all settings");
     btn.addEventListener("click", async () => {
       const ok = await confirm({
         message: RESET_CONFIRM_MESSAGE, okLabel: "Reset", destructive: true,
@@ -152,7 +154,7 @@ export function buildCommonTab({ api, initial, putSettings, putSettingsDebounced
       }
       location.reload();
     });
-    row.append(lbl, btn);
+    row.append(btn);
     return row;
   }
 

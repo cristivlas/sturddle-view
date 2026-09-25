@@ -287,7 +287,7 @@ export async function openSettingsDialog({
       };
       tabs.addEventListener("wa-tab-show", (ev) => showGeneralFooter(ev.detail?.name === generalPanel.name));
       showGeneralFooter(startTab === generalTab);
-      // Line the footer label up with the panels' left edge (side rail only).
+      // Line the footer up with the panels' left edge (side rail only).
       // The rail is content-sized; observing layout sets it before first paint.
       if (!topTabs) {
         const alignFooter = new ResizeObserver(() => {
