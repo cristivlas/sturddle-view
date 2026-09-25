@@ -475,6 +475,27 @@ def test_put_settings_updates(client, tmp_path):
     assert body["default_template"] == {"tc": "60+0.6"}
 
 
+def test_root_change_refused_while_running(client, settings, monkeypatch, tmp_path):
+    """Changing the tournaments folder mid-run would lose the running
+    tournament, so it is refused and the tournament stays listed."""
+    _patch_fake_fastchess(monkeypatch, "--sleep", "30")
+    t = client.post("/api/tournaments", json={
+        "name": "x", "engines": _engines_payload(),
+    }).json()
+    client.post(f"/api/tournaments/{t['id']}/start")
+    try:
+        assert client.get("/api/tournament-settings").json()["tournament_running"] is True
+        r = client.put("/api/tournament-settings", json={
+            "tournaments_root": str(tmp_path / "alt-root"),
+        })
+        assert r.status_code == 409
+        assert settings.tournament_root == str(tmp_path / TOURNAMENTS_DIRNAME)
+        listed = [x["id"] for x in client.get("/api/tournaments").json()["tournaments"]]
+        assert t["id"] in listed
+    finally:
+        client.post(f"/api/tournaments/{t['id']}/stop")
+
+
 def test_settings_persist_across_restart(tmp_path, monkeypatch):
     """After PUT, a fresh app constructed from the same settings file
     should read back the persisted values."""

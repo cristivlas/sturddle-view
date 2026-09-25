@@ -238,6 +238,10 @@ PERSISTED_FIELDS = (
     # the plaintext key.
 )
 
+# Survive a settings reset: the tournaments folder is a data location, and
+# resetting it would hide past tournaments' standings and games.
+RESET_KEPT_FIELDS = frozenset({TOURNAMENT_ROOT_KEY})
+
 
 class Settings(BaseSettings):
     """Process-level config. Read from env (SV_*) or .env at repo root."""
@@ -416,4 +420,5 @@ class Settings(BaseSettings):
         """Restore persisted fields to defaults; a fresh instance keeps SV_ env overrides."""
         defaults = type(self)()
         for k in PERSISTED_FIELDS:
-            setattr(self, k, getattr(defaults, k))
+            if k not in RESET_KEPT_FIELDS:
+                setattr(self, k, getattr(defaults, k))

@@ -107,6 +107,9 @@ log = logging.getLogger(__name__)
 _TOURNAMENT_NOT_FOUND = "tournament not found"
 _NAME_TAKEN = "tournament name already exists"
 _RUNNING_STOP_FIRST = "tournament is running; stop it first"
+_ROOT_LOCKED_WHILE_RUNNING = "tournaments folder can't change while a tournament is running"
+# Settings-GET flag so the UI can lock the folder row up front.
+_TOURNAMENT_RUNNING_KEY = "tournament_running"
 _TWO_ENGINES_REQUIRED = "at least two engines required"
 _DEFAULT_TOURNAMENT_NAME = "tournament"
 _MIN_ENGINES = 2
@@ -664,8 +667,10 @@ def reveal_tournament_folder(tournament_id: str, request: Request) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _serialize_settings(s) -> dict:
+def _serialize_settings(request: Request) -> dict:
+    s = request.app.state.settings
     return {
+        _TOURNAMENT_RUNNING_KEY: _orch(request).active_id() is not None,
         "fastchess_path": s.tournament_fastchess_path,
         "tournaments_root": s.tournament_root or str(_default_root_for_settings()),
         "default_template": dict(s.tournament_default_template or {}),
@@ -684,24 +689,23 @@ def _default_root_for_settings() -> Path:
 
 @router.get(_SETTINGS_PATH)
 def get_tournament_settings(request: Request) -> dict:
-    return _serialize_settings(request.app.state.settings)
+    return _serialize_settings(request)
 
 
 @router.put(_SETTINGS_PATH)
 def update_tournament_settings(payload: TournamentSettingsUpdate, request: Request) -> dict:
     s = request.app.state.settings
-    runner: FastchessRunner = request.app.state.tournament_runner
     store: TournamentStore = request.app.state.tournament_store
+    # The store resolves the running tournament under the current root, so
+    # repointing it mid-run would lose that tournament. Refuse before any write.
+    if payload.tournaments_root is not None and _orch(request).active_id() is not None:
+        raise conflict(_ROOT_LOCKED_WHILE_RUNNING)
 
     if payload.fastchess_path is not None:
         s.tournament_fastchess_path = payload.fastchess_path or None
-        runner.set_binary_path(s.tournament_fastchess_path)
     if payload.tournaments_root is not None:
         new_root = (payload.tournaments_root or "").strip() or None
         s.tournament_root = new_root
-        # Live-update the store's root. A change while a tournament is
-        # running affects only future tournaments (the running runner
-        # has its paths frozen in RunSpec).
         store.set_root(Path(new_root) if new_root else _default_root_for_settings())
     if payload.default_template is not None:
         s.tournament_default_template = dict(payload.default_template)
@@ -712,7 +716,7 @@ def update_tournament_settings(payload: TournamentSettingsUpdate, request: Reque
         s.save_persisted()
     except OSError:
         log.warning("could not persist tournament settings", exc_info=True)
-    return _serialize_settings(s)
+    return _serialize_settings(request)
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 """POST /settings/reset: the settings file returns to defaults, while
-registered engines and API keys (stored elsewhere) survive."""
+registered engines, API keys and the tournaments folder survive."""
 from __future__ import annotations
 
 import json
@@ -25,6 +25,11 @@ from .conftest import REGISTRY_FILE
 
 SETTINGS_PATH = "/settings"
 RESET_PATH = "/settings/reset"
+TOURNAMENT_SETTINGS_PATH = "/api/tournament-settings"
+TOURNAMENTS_ROOT_KEY = "tournaments_root"
+FASTCHESS_PATH_KEY = "fastchess_path"
+TOURNAMENTS_DIR = "my-tournaments"
+FASTCHESS_FILE = "my-fastchess"
 ENGINES_NO_PROBE_PATH = "/engines?probe=false"
 AI_API_KEY_SET_KEY = "ai_api_key_set"
 SELECTED_ID_KEY = "selected_id"
@@ -112,6 +117,24 @@ def test_reset_keeps_registered_engines(client, registry, tmp_path):
     assert before[SELECTED_ID_KEY] == engine.id
     client.post(RESET_PATH)
     assert client.get(ENGINES_NO_PROBE_PATH).json() == before
+
+
+def test_reset_keeps_tournaments_folder(client, tmp_path):
+    """Past tournaments' standings and games must stay reachable."""
+    root = str(tmp_path / TOURNAMENTS_DIR)
+    client.put(TOURNAMENT_SETTINGS_PATH, json={TOURNAMENTS_ROOT_KEY: root}).raise_for_status()
+    client.post(RESET_PATH)
+    assert client.get(TOURNAMENT_SETTINGS_PATH).json()[TOURNAMENTS_ROOT_KEY] == root
+
+
+def test_reset_fastchess_path_reaches_runner(client, tmp_path):
+    """The runner reads the path from settings, so a reset needs no resync."""
+    path = str(tmp_path / FASTCHESS_FILE)
+    client.put(TOURNAMENT_SETTINGS_PATH, json={FASTCHESS_PATH_KEY: path}).raise_for_status()
+    runner = client.app.state.tournament_runner
+    assert runner.binary_path == path
+    client.post(RESET_PATH)
+    assert runner.binary_path is None
 
 
 def test_reset_keeps_env_overrides(monkeypatch, registry):

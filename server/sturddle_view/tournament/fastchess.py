@@ -16,6 +16,7 @@ import shutil
 import signal
 import subprocess
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
 
 from .. import is_windows
@@ -427,7 +428,9 @@ def _popen_kwargs() -> dict:
 class FastchessRunner:
     """Owns one fastchess subprocess; ``start`` while running raises."""
 
-    def __init__(self, binary_path: str | None = None) -> None:
+    def __init__(self, binary_path: Callable[[], str | None]) -> None:
+        # Getter, read at each start(): settings stay the one source of truth,
+        # and a running subprocess keeps the argv it was spawned with.
         self._binary_path = binary_path
         self._proc: asyncio.subprocess.Process | None = None
         # Exit code observed via the OS process handle when asyncio could
@@ -448,15 +451,7 @@ class FastchessRunner:
 
     @property
     def binary_path(self) -> str | None:
-        return self._binary_path
-
-    def set_binary_path(self, path: str | None) -> None:
-        """Update the configured fastchess binary path.
-
-        Takes effect on the next ``start()``; a currently-running
-        subprocess is unaffected (its argv is frozen at spawn time).
-        """
-        self._binary_path = path
+        return self._binary_path()
 
     def is_running(self) -> bool:
         if self._proc is None or self._exited_rc is not None:
@@ -482,10 +477,11 @@ class FastchessRunner:
         if self.is_running():
             raise RuntimeError("FastchessRunner already running")
 
-        binary = self.detect_binary(self._binary_path)
+        configured = self.binary_path
+        binary = self.detect_binary(configured)
         if not binary:
             raise FileNotFoundError(
-                f"fastchess binary not found (configured: {self._binary_path!r})"
+                f"fastchess binary not found (configured: {configured!r})"
             )
 
         self._on_event = on_event

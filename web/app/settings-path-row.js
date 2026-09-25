@@ -38,7 +38,7 @@ export function makePathRow(api) {
     inner_actions.className = "settings-row-actions";
     const browse = document.createElement("wa-button");
     browse.size = "small";
-    browse.title = "Browse…";
+    browse.title = "Browse...";
     browse.setAttribute("aria-label", pickerTitle || "Browse");
     const browseIcon = document.createElement("wa-icon");
     browseIcon.setAttribute("name", "folder-open");
@@ -99,6 +99,7 @@ export function makePathRow(api) {
     // Expose the working parts so tri-state callers can drive placeholder,
     // value, and X tooltip without reaching through fragile selectors.
     row.pathField = field;
+    row.browseBtn = browse;
     row.clearBtn = clear;
     return row;
   };

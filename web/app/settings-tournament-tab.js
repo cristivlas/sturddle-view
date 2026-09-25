@@ -6,12 +6,18 @@
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { toast } from "./dialogs.js";
 
+const TOURNAMENT_TAB = "tournament";
+const TEMPLATE_PUT_DEBOUNCE_MS = 400;
+// The server refuses a root change mid-run (it would lose the running
+// tournament); the UI locks the row to match.
+const ROOT_LOCKED_TITLE = "Stop the running tournament to change the folder";
+
 export function buildTournamentTab({ tournamentInitial, putTournamentSettings, pathRow, debounce }) {
   const tournamentTab = document.createElement("wa-tab");
-  tournamentTab.panel = "tournament";
+  tournamentTab.panel = TOURNAMENT_TAB;
   tournamentTab.textContent = "Tournament";
   const tournamentPanel = document.createElement("wa-tab-panel");
-  tournamentPanel.name = "tournament";
+  tournamentPanel.name = TOURNAMENT_TAB;
 
   const fastchessLabel = document.createDocumentFragment();
   const fastchessLink = document.createElement("a");
@@ -21,6 +27,19 @@ export function buildTournamentTab({ tournamentInitial, putTournamentSettings, p
   fastchessLink.textContent = "Fastchess";
   fastchessLabel.append(fastchessLink, document.createTextNode(" binary"));
 
+  const rootRow = pathRow(
+    "Tournaments root",
+    tournamentInitial.tournaments_root || "",
+    "directory",
+    "Pick tournaments root",
+    (p) => putTournamentSettings({ tournaments_root: p }),
+  );
+  if (tournamentInitial.tournament_running) {
+    rootRow.browseBtn.disabled = true;
+    rootRow.clearBtn.disabled = true;
+    rootRow.title = ROOT_LOCKED_TITLE;
+  }
+
   tournamentPanel.append(
     pathRow(
       fastchessLabel,
@@ -29,13 +48,7 @@ export function buildTournamentTab({ tournamentInitial, putTournamentSettings, p
       "Pick fastchess binary",
       (p) => putTournamentSettings({ fastchess_path: p }),
     ),
-    pathRow(
-      "Tournaments root",
-      tournamentInitial.tournaments_root || "",
-      "directory",
-      "Pick tournaments root",
-      (p) => putTournamentSettings({ tournaments_root: p }),
-    ),
+    rootRow,
   );
 
   const tplHost = document.createElement("div");
@@ -66,7 +79,7 @@ export function buildTournamentTab({ tournamentInitial, putTournamentSettings, p
       return;
     }
     putTournamentSettings({ default_template: template });
-  }, 400);
+  }, TEMPLATE_PUT_DEBOUNCE_MS);
   tplHost.addEventListener("input", persistTemplate);
   tplHost.addEventListener("change", persistTemplate);
 

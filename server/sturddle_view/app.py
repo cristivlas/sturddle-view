@@ -693,7 +693,7 @@ def _setup_tournament(app: FastAPI, settings: Settings) -> None:
     t_root = settings.tournament_root or str(default_root())
     app.state.tournament_store = TournamentStore(Path(t_root))
     app.state.tournament_runner = FastchessRunner(
-        binary_path=settings.tournament_fastchess_path
+        binary_path=lambda: settings.tournament_fastchess_path
     )
     app.state.tournament_orch = Orchestrator(
         app.state.tournament_store, app.state.tournament_runner

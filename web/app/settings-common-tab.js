@@ -20,7 +20,7 @@ const RESET_PATH = "/settings/reset";
 // Same icon as Play's Take back.
 const RESET_ICON = "rotate-left";
 const RESET_CONFIRM_MESSAGE =
-  "Reset all settings to defaults? Engines, API keys and window layouts are kept.";
+  "Reset all settings to defaults? Engines, API keys, tournaments folder and window layouts are kept.";
 
 export function buildCommonTab({ api, initial, putSettings, putSettingsDebounced, pathRow }) {
   const generalTab = document.createElement("wa-tab");
