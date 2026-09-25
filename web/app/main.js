@@ -9,9 +9,10 @@ import { loadRaw, saveRaw } from "./storage.js";
 import { mqMobile } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
 import { getTournamentUx, tournamentUxLabel } from "./tournament-studio.js";
-import { installSelection } from "./wb-utils.js";
+import { installSelection, installScrollEdgeTracking } from "./wb-utils.js";
 
 installSelection();
+installScrollEdgeTracking();
 
 // F11 toggles native fullscreen ("theater mode") in the desktop shell via the
 // pywebview bridge -- the OS/browser F11 handling doesn't apply to the
@@ -262,7 +263,7 @@ document.getElementById("about-btn").addEventListener("click", () => {
 // startup slot, which during a disconnect window still holds the pre-drop tab.
 const reloadPerspective = () => router.activate(router.activeId(), { force: true, persist: false });
 document.getElementById("settings-btn").addEventListener("click", () => {
-  openSettingsDialog({ api, getActivePerspective: () => router.activeId(), reloadPerspective });
+  openSettingsDialog({ api, reloadPerspective });
 });
 // Allow any module to deep-link into the Settings dialog without
 // threading the `api` reference through call chains. detail.tab opens
@@ -274,7 +275,6 @@ window.addEventListener(APP_EVT.OPEN_SETTINGS, (e) => {
     api,
     initialTab: tab,
     focusClass: e.detail?.focus,
-    getActivePerspective: () => router.activeId(),
     reloadPerspective,
   });
 });

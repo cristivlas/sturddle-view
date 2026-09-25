@@ -9,15 +9,33 @@ from dataclasses import dataclass, field
 
 import psutil
 
+from ..env_utils import env_float, env_int
+from ..error_detail import MESSAGE_KEY, REASON_KEY
+from .template import (
+    ALLOW_OVERSUBSCRIBE_KEY,
+    GAMES_IN_PARALLEL_KEY,
+    MAX_HASH_MB_KEY,
+    MAX_THREADS_KEY,
+    PIN_AFFINITY_KEY,
+    PONDER_KEY,
+)
 
 # Per-engine memory beyond the configured Hash table: binary, NNUE/eval
-# weights, PV stacks, search overhead. Symbolic — revisit with telemetry.
-ENGINE_OVERHEAD_MB = 256
+# weights, PV stacks, search overhead. Symbolic -- revisit with telemetry.
+ENGINE_OVERHEAD_MB = env_int("SV_RESCHECK_ENGINE_OVERHEAD_MB", 256, min_value=0)
+# Share of total RAM the tournament's engines may use.
+RAM_HEADROOM_FACTOR = env_float("SV_RESCHECK_RAM_HEADROOM", 0.75, min_value=0.0)
 
-RAM_HEADROOM_FACTOR = 0.75
+# Hash size assumed when neither the request nor the template names one.
+DEFAULT_HASH_MB = 16
 
-# Template field gating CPU/RAM oversubscription (set via SV_ALLOW_OVERSUBSCRIBE).
-ALLOW_OVERSUBSCRIBE_KEY = "allow_oversubscribe"
+# Every game runs two engine processes; pondering doubles each one's CPU.
+_ENGINES_PER_GAME = 2
+_PONDER_CPU_FACTOR = 2
+_BYTES_PER_MB = 1024 * 1024
+
+_REASON_OVERSUBSCRIBED = "oversubscribed"
+_REASON_INSUFFICIENT_RAM = "insufficient_ram"
 
 
 @dataclass
@@ -43,8 +61,12 @@ class HostSpecs:
 def host_specs() -> HostSpecs:
     logical = psutil.cpu_count(logical=True) or 1
     physical = psutil.cpu_count(logical=False) or logical
-    total_ram_mb = int(psutil.virtual_memory().total // (1024 * 1024))
+    total_ram_mb = int(psutil.virtual_memory().total // _BYTES_PER_MB)
     return HostSpecs(logical, physical, total_ram_mb)
+
+
+def _warning(reason: str, message: str, details: dict) -> dict:
+    return {REASON_KEY: reason, MESSAGE_KEY: message, **details}
 
 
 def check(
@@ -68,16 +90,16 @@ def check(
     max_threads = max(1, int(max_threads))
     max_hash_mb = max(0, int(max_hash_mb))
 
-    cpu_load = parallel * (2 if ponder else 1) * max_threads
-    ram_load_mb = parallel * 2 * (max_hash_mb + ENGINE_OVERHEAD_MB)
+    cpu_load = parallel * (_PONDER_CPU_FACTOR if ponder else 1) * max_threads
+    ram_load_mb = parallel * _ENGINES_PER_GAME * (max_hash_mb + ENGINE_OVERHEAD_MB)
     ram_budget_mb = int(specs.total_ram_mb * RAM_HEADROOM_FACTOR)
 
-    affinity_load = parallel * 2 * max_threads
+    affinity_load = parallel * _ENGINES_PER_GAME * max_threads
     base = {
         "parallel": parallel,
-        "max_threads": max_threads,
-        "max_hash_mb": max_hash_mb,
-        "ponder": ponder,
+        MAX_THREADS_KEY: max_threads,
+        MAX_HASH_MB_KEY: max_hash_mb,
+        PONDER_KEY: ponder,
         "cpu_load": cpu_load,
         "affinity_load": affinity_load,
         "ram_load_mb": ram_load_mb,
@@ -106,10 +128,10 @@ def check(
             f"logical cores."
         )
         if allow_oversubscribe:
-            warnings.append({"reason": "oversubscribed", "message": msg, **base})
+            warnings.append(_warning(_REASON_OVERSUBSCRIBED, msg, base))
         else:
             raise RescheckError(
-                reason="oversubscribed",
+                reason=_REASON_OVERSUBSCRIBED,
                 message=(
                     f"{msg} Lower parallelism/Threads/Ponder, or enable "
                     f"oversubscription explicitly."
@@ -120,13 +142,13 @@ def check(
     if ram_load_mb > ram_budget_mb:
         msg = (
             f"Estimated RAM use {ram_load_mb} MB exceeds {ram_budget_mb} MB "
-            f"(75% of {specs.total_ram_mb} MB total)."
+            f"({RAM_HEADROOM_FACTOR:.0%} of {specs.total_ram_mb} MB total)."
         )
         if allow_oversubscribe:
-            warnings.append({"reason": "insufficient_ram", "message": msg, **base})
+            warnings.append(_warning(_REASON_INSUFFICIENT_RAM, msg, base))
         else:
             raise RescheckError(
-                reason="insufficient_ram",
+                reason=_REASON_INSUFFICIENT_RAM,
                 message=(
                     f"{msg} Lower Hash size, lower parallelism, or enable "
                     f"oversubscription explicitly."
@@ -138,16 +160,16 @@ def check(
 
 
 def check_template(template: dict, *, specs: HostSpecs | None = None) -> list[dict]:
-    """Convenience wrapper for ``Orchestrator.start()`` — pulls the
+    """Convenience wrapper for ``Orchestrator.start()`` -- pulls the
     resolved values the client folded into the template at create time.
     Missing values fall back to single-thread / 16 MB hash so legacy
     tournaments (created before rescheck existed) still launch."""
     return check(
-        parallel=int(template.get("games_in_parallel", 1) or 1),
-        max_threads=int(template.get("max_threads", 1) or 1),
-        max_hash_mb=int(template.get("max_hash_mb", 16) or 16),
-        ponder=bool(template.get("ponder")),
-        pin_affinity=bool(template.get("pin_affinity")),
+        parallel=int(template.get(GAMES_IN_PARALLEL_KEY, 1) or 1),
+        max_threads=int(template.get(MAX_THREADS_KEY, 1) or 1),
+        max_hash_mb=int(template.get(MAX_HASH_MB_KEY, DEFAULT_HASH_MB) or DEFAULT_HASH_MB),
+        ponder=bool(template.get(PONDER_KEY)),
+        pin_affinity=bool(template.get(PIN_AFFINITY_KEY)),
         allow_oversubscribe=bool(template.get(ALLOW_OVERSUBSCRIBE_KEY)),
         specs=specs,
     )

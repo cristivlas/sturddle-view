@@ -11,6 +11,7 @@ function read(name, fallback) {
 
 export const BP = {
   narrowDialog: read("--bp-narrow-dialog", "30rem"),
+  settingsTopTabs: read("--bp-settings-top-tabs", "46rem"),
   mobile:       read("--bp-mobile",        "50rem"),
   mobileH:      read("--bp-mobile-h",      "30rem"),
   mobileHPlay:  read("--bp-mobile-h-play", "42.5rem"),
@@ -18,6 +19,7 @@ export const BP = {
 };
 
 export const mqNarrowDialog = matchMedia(`(max-width: ${BP.narrowDialog})`);
+export const mqSettingsTopTabs = matchMedia(`(max-width: ${BP.settingsTopTabs})`);
 export const mqMobile       = matchMedia(`(max-width: ${BP.mobile})`);
 export const mqMobileH      = matchMedia(`(max-height: ${BP.mobileH})`);
 export const mqMobileHPlay  = matchMedia(`(max-height: ${BP.mobileHPlay})`);

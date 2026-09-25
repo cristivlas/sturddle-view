@@ -6,10 +6,11 @@ annotations) a wider gate in `_ai_kick.py::_build_turn_inputs`.
 """
 from __future__ import annotations
 
-import os
-from typing import TYPE_CHECKING, Iterable, Literal
+import re
+from typing import TYPE_CHECKING, Iterable, Literal, get_args
 
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
+from ..env_utils import env_bool
 from .tools import ToolSpec
 
 if TYPE_CHECKING:
@@ -28,6 +29,17 @@ _FORCE_INLINE_DIRECTIVE = (
 
 
 PromptMode = Literal["coach", "commentator", "verifier"]
+COACH_MODE, COMMENTATOR_MODE, VERIFIER_MODE = get_args(PromptMode)
+
+_PLIES_PER_MOVE = 2
+# Move-number suffixes: "13." before White's move, "13..." before Black's.
+_WHITE_DOTS = "."
+_BLACK_DOTS = "..."
+# FEN fields used here, and their fallbacks for a malformed FEN.
+_FEN_SIDE_FIELD = 1
+_FEN_FULLMOVE_FIELD = 5
+_FEN_BLACK_TO_MOVE = "b"
+_FIRST_MOVE_NUMBER = "1"
 
 
 SYSTEM_PROMPT_PREFACE = """\
@@ -57,10 +69,11 @@ whenever you name a specific past, current, or hypothetical move, so the \
 reader knows which ply you mean. The user message gives the side to move -- \
 trust it, don't re-derive from FEN.
 - Honesty: don't invent moves, lines, or pieces. Assert a geometric \
-relation -- shared file, rank, or diagonal, a pin, "opposing" a piece -- \
-only after confirming it on the board with `piece_at`. Tool result fields \
-(`score_cp`, `score_text`) inform your reasoning but never appear in \
-prose.
+relation -- shared file, rank, or diagonal, "opposing" a piece -- \
+only after confirming it on the board with `piece_at`. Name a pin or a \
+fork only if `tactics` lists it for the position; when it lists none, \
+name none. Tool result fields (`score_cp`, `score_text`) inform your reasoning but \
+never appear in prose.
 - Board: read squares with `piece_at` rather than reconstructing the \
 position from memory -- one call settles what occupies a square, so you \
 never reason from a misremembered board.
@@ -97,6 +110,14 @@ _REPORT_LINE_RULE = (
     "prose; a rejected line is fixed at the move it names or dropped, "
     "never re-sent unchanged. "
 )
+# The plan line (llm/playbook.py) decides the pick, both personas; the
+# engine check only vetoes, it never chooses.
+_PLAN_RULE = (
+    "The `Plan:` line in the user message is the strategy for the side to "
+    "move and decides the pick: choose candidates that carry it out, and "
+    "among moves the check accepts submit the one that serves the plan, "
+    "not the highest-scoring one. "
+)
 # Opens each addendum's engine workflow: a book turn (see
 # BOOK_REPLY_GUIDANCE) submits the given reply instead of weighing.
 _BOOK_REPLY_EXEMPTION = "Unless the user message gives a book reply, "
@@ -109,6 +130,7 @@ COACH_ADDENDUM = (
     + _SILENT_TOOLS_PREFIX
     + "the player reads only chess -- the position, the plan, the move in SAN"
     + _SILENT_TOOLS_SUFFIX
+    + _PLAN_RULE
     + _BOOK_REPLY_EXEMPTION
     + "weigh your candidates with one `top_moves` call; red-team the "
     "winner with `delegate` and pick differently if it is refuted. Then "
@@ -137,6 +159,7 @@ COMMENTATOR_ADDENDUM = (
     + "the reader sees only the annotation -- positions, moves in SAN, plans"
     + _SILENT_TOOLS_SUFFIX
     + _REPORT_LINE_RULE
+    + _PLAN_RULE
     + _BOOK_REPLY_EXEMPTION
     + "treat the move played as a claim to test: compare it with the "
     "alternatives in one `top_moves` call, red-team your verdict move with "
@@ -155,9 +178,12 @@ Assume it is flawed and hunt the refutation with the engine (top_moves / \
 analyze): the opponent's strongest reply, the tactic it allows, the \
 material it loses. validate_move is for legality only, never the verdict. \
 Never conclude from intuition alone. The move holds only when the \
-strongest reply still fails to crack it. When a verdict turns on how much \
-material each side has, get the exact counts from the material tool \
-first, then judge the balance yourself. Report only your conclusion \
+strongest reply still fails to crack it. Refuted means a concrete reply \
+wins material, forces mate, or wrecks the position; a move that merely \
+scores below the engine's favorite is not refuted. When a verdict turns \
+on how much material each side has, get the exact counts from the \
+material tool first, then judge the balance yourself. Report only your \
+conclusion \
 about the live position: a verdict opening with "holds" or "refuted", \
 then a one-line reason. Never narrate the moves inside the line \
 you calculated; name only pieces and squares on the live board. One or \
@@ -166,9 +192,9 @@ two sentences, no audience, no voice.\
 
 
 _ADDENDA: dict[PromptMode, str] = {
-    "coach": COACH_ADDENDUM,
-    "commentator": COMMENTATOR_ADDENDUM,
-    "verifier": VERIFIER_ADDENDUM,
+    COACH_MODE: COACH_ADDENDUM,
+    COMMENTATOR_MODE: COMMENTATOR_ADDENDUM,
+    VERIFIER_MODE: VERIFIER_ADDENDUM,
 }
 
 _SEPARATOR = "\n\n"
@@ -205,8 +231,7 @@ def assemble_system_prompt(
 
 
 def _force_inline_enabled() -> bool:
-    raw = os.environ.get(_FORCE_INLINE_ENV_VAR, "").strip().lower()
-    return raw in ("1", "true", "yes", "on")
+    return env_bool(_FORCE_INLINE_ENV_VAR, False)
 
 
 _INITIAL_NO_MOVES = "(none yet -- the game has not started)"
@@ -224,7 +249,8 @@ def _scrub_comment_for_prompt(comment: str) -> str:
 
 def _move_ref(ply_index: int) -> tuple[int, str]:
     """Return (move_number, dots) for a zero-based ply index."""
-    return (ply_index // 2) + 1, "." if ply_index % 2 == 0 else "..."
+    white_to_move = ply_index % _PLIES_PER_MOVE == 0
+    return (ply_index // _PLIES_PER_MOVE) + 1, _WHITE_DOTS if white_to_move else _BLACK_DOTS
 
 
 def _render_san_pairs(san_history: list[str]) -> str:
@@ -239,7 +265,7 @@ def _render_san_pairs(san_history: list[str]) -> str:
         return _INITIAL_NO_MOVES
     parts: list[str] = []
     for i, san in enumerate(san_history):
-        if i % 2 == 0:
+        if i % _PLIES_PER_MOVE == 0:
             move_no, _ = _move_ref(i)
             parts.append(f"{move_no}. {san}")
         else:
@@ -252,7 +278,7 @@ def _side_to_move_from_fen(fen: str) -> str:
     'white' when the FEN is malformed -- the agent will still get a
     reasonable default, and analyze tools will surface the real error."""
     parts = fen.split()
-    if len(parts) >= 2 and parts[1] == "b":
+    if len(parts) > _FEN_SIDE_FIELD and parts[_FEN_SIDE_FIELD] == _FEN_BLACK_TO_MOVE:
         return SIDE_BLACK
     return SIDE_WHITE
 
@@ -265,16 +291,18 @@ _BOOK_REPLY_ALSO = "also standard"
 def _fullmove_from_fen(fen: str) -> str:
     """FEN fullmove field; '1' when malformed."""
     parts = fen.split()
-    return parts[5] if len(parts) >= 6 and parts[5].isdigit() else "1"
+    if len(parts) > _FEN_FULLMOVE_FIELD and parts[_FEN_FULLMOVE_FIELD].isdigit():
+        return parts[_FEN_FULLMOVE_FIELD]
+    return _FIRST_MOVE_NUMBER
 
 
 def _move_prefix_from_fen(fen: str) -> str:
     """SAN move-number prefix ("13." / "13...") for the side to move."""
-    dots = "..." if _side_to_move_from_fen(fen) == SIDE_BLACK else "."
+    dots = _BLACK_DOTS if _side_to_move_from_fen(fen) == SIDE_BLACK else _WHITE_DOTS
     return f"{_fullmove_from_fen(fen)}{dots}"
 
 
-def _render_book_reply(fen: str, reply: "OpeningReply") -> str:
+def _render_book_reply(fen: str, reply: OpeningReply) -> str:
     prefix = _move_prefix_from_fen(fen)
     origin = reply.line_name or _BOOK_REPLY_FILE_NOTE
     line = f"{_BOOK_REPLY_LABEL}: {prefix}{reply.san} ({origin})"
@@ -329,13 +357,21 @@ BOOK_REPLY_GUIDANCE = (
 # registry lacks, so verifier sub-runs must not inherit them.
 _OPENING_STEERS = (OPENING_PHASE_GUIDANCE, BOOK_REPLY_GUIDANCE)
 
+# The playbook plan (llm/playbook.py) is one line opening with this lead;
+# the verifier judges soundness, not the plan, so it is stripped too.
+PLAYBOOK_LEAD = "Plan: "
+_PLAYBOOK_LINE_RE = re.compile(rf"^{re.escape(PLAYBOOK_LEAD)}.*$\n?", re.MULTILINE)
 
-def split_opening_steer(user_content: str) -> tuple[str, bool]:
-    """(content without any opening steer, whether one was present)."""
+
+def split_narrator_steers(user_content: str) -> tuple[str, bool]:
+    """(content without any narrator-only steer, whether an opening steer
+    was present). The playbook line is stripped silently: it does not
+    make the turn an opening turn."""
+    content = _PLAYBOOK_LINE_RE.sub("", user_content)
     for steer in _OPENING_STEERS:
-        if steer in user_content:
-            return user_content.replace(steer, "").rstrip() + "\n", True
-    return user_content, False
+        if steer in content:
+            return content.replace(steer, "").rstrip() + "\n", True
+    return content, False
 
 
 def build_initial_user_message(
@@ -351,6 +387,7 @@ def build_initial_user_message(
     root_annotation: str | None = None,
     in_opening: bool = False,
     book_reply: "OpeningReply | None" = None,
+    playbook: str | None = None,
 ) -> str:
     """Build the user message that opens an agent turn. Carries the FEN,
     the explicit side-to-move (so the model does not re-derive it), the
@@ -384,6 +421,10 @@ def build_initial_user_message(
     (opening_reply probe). It rides the message as its own line and
     carries the favor-the-book steer in place of the opening-phase one.
 
+    `playbook` is the rendered plan line (`render_playbook`), opening
+    with PLAYBOOK_LEAD; it decides the pick. Narrator-only, last on the
+    message.
+
     Optional fields are omitted entirely when not provided."""
     lines: list[str] = []
     if engine_name:
@@ -410,6 +451,8 @@ def build_initial_user_message(
         lines.append(BOOK_REPLY_GUIDANCE)
     elif in_opening:
         lines.append(OPENING_PHASE_GUIDANCE)
+    if playbook:
+        lines.append(playbook)
     return "\n".join(lines) + "\n"
 
 

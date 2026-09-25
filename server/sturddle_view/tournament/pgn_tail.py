@@ -9,29 +9,45 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
 import chess.pgn
 
-from ..chess.results import DECISIVE_RESULTS
-from ..env_utils import env_float as _env_float
+from ..chess.pgn_tags import (
+    TAG_BLACK,
+    TAG_RESULT,
+    TAG_ROUND,
+    TAG_TERMINATION,
+    TAG_WHITE,
+    UNKNOWN_TAG_VALUE,
+)
+from ..chess.results import DECISIVE_RESULTS, UNKNOWN_RESULT
+from ..env_utils import env_bool, env_float, env_int
 
 log = logging.getLogger(__name__)
 
-# Same flag the reconcile queue uses; one opt-in for the whole subsystem.
-_DEBUG = os.environ.get("SV_DEBUG_RECONCILE", "0") == "1"
+# One opt-in for the whole reconciliation subsystem (tailer + match queue).
+DEBUG_RECONCILE = env_bool("SV_DEBUG_RECONCILE", False)
 
 # Operator knob (env-overridable). 1Hz is the default; lower for
 # faster matching at the cost of more stat() calls.
-PGN_TAIL_POLL_S = _env_float("SV_PGN_TAIL_POLL_S", 1.0)
+PGN_TAIL_POLL_S = env_float("SV_PGN_TAIL_POLL_S", 1.0)
+
+# How long stop() waits for the poll task before cancelling it.
+_STOP_TIMEOUT_S = env_float("SV_PGN_TAIL_STOP_TIMEOUT_S", 5.0, min_value=0.0)
 
 # Cap bytes parsed per poll so each call stays bounded -- matters on stop,
 # where the tailer task must finish promptly. Backlog drains across multiple
 # polls (the run loop skips its sleep while more delta is pending).
-_MAX_DELTA_BYTES_PER_POLL = 256 * 1024
+_MAX_DELTA_BYTES_PER_POLL = env_int("SV_PGN_TAIL_MAX_DELTA_BYTES", 256 * 1024, min_value=1)
+
+# Games are separated by a blank line then a new tag block. A cut keeps
+# the blank line and leaves the "[" for the next pass.
+_GAME_BOUNDARY = b"\n\n["
+_BOUNDARY_KEEP_BYTES = len(_GAME_BOUNDARY) - 1
+_ENCODING = "utf-8"
 
 
 @dataclass
@@ -154,9 +170,9 @@ class PgnTailer:
         if task is None:
             return
         try:
-            await asyncio.wait_for(task, timeout=5.0)
+            await asyncio.wait_for(task, timeout=_STOP_TIMEOUT_S)
         except asyncio.TimeoutError:
-            log.warning("PgnTailer task did not exit within 5s; cancelling")
+            log.warning("PgnTailer task did not exit within %.1fs; cancelling", _STOP_TIMEOUT_S)
             task.cancel()
             try:
                 await task
@@ -252,7 +268,7 @@ class PgnTailer:
         records, new_offset = await asyncio.to_thread(
             self._parse_delta, self._offset, end,
         )
-        if _DEBUG:
+        if DEBUG_RECONCILE:
             log.debug(
                 "PgnTailer parsed delta=%dB games=%d new_offset=%d",
                 delta_bytes, len(records), new_offset,
@@ -292,12 +308,10 @@ class PgnTailer:
         happen in practice for chess tournaments -- log a warning if it
         ever does."""
         try:
-            with self._path.open("rb") as f:
-                f.seek(start)
-                chunk = f.read(end - start)
+            chunk = self._read_range(start, end)
         except OSError:
             return end
-        sep = chunk.rfind(b"\n\n[")
+        sep = chunk.rfind(_GAME_BOUNDARY)
         if sep < 0:
             if not self._warned_oversized:
                 log.warning(
@@ -308,7 +322,12 @@ class PgnTailer:
                 self._warned_oversized = True
             return file_size
         self._warned_oversized = False
-        return start + sep + 2  # include the blank line; leave the `[` for next pass
+        return start + sep + _BOUNDARY_KEEP_BYTES
+
+    def _read_range(self, start: int, end: int) -> bytes:
+        with self._path.open("rb") as f:
+            f.seek(start)
+            return f.read(end - start)
 
     def _parse_delta(
         self, start: int, end: int,
@@ -317,14 +336,12 @@ class PgnTailer:
         Returns ``(records, new_offset)``; in-flight trailing bytes
         are left for the next pass."""
         try:
-            with self._path.open("rb") as f:
-                f.seek(start)
-                blob = f.read(end - start)
+            blob = self._read_range(start, end)
         except OSError:
             log.error("PgnTailer read failed for %s", self._path, exc_info=True)
             return [], start
 
-        text = blob.decode("utf-8", errors="replace")
+        text = blob.decode(_ENCODING, errors="replace")
         f = io.StringIO(text)
         records: list[PgnGameRecord] = []
         # Running byte counter so we don't re-encode the consumed
@@ -335,7 +352,7 @@ class PgnTailer:
         def advance_bytes() -> int:
             nonlocal prev_char_pos
             cur = f.tell()
-            n = len(text[prev_char_pos:cur].encode("utf-8"))
+            n = len(text[prev_char_pos:cur].encode(_ENCODING))
             prev_char_pos = cur
             return n
 
@@ -347,7 +364,7 @@ class PgnTailer:
                 break
             if game is None:
                 break
-            result = game.headers.get("Result", "*")
+            result = game.headers.get(TAG_RESULT, UNKNOWN_RESULT)
             if result not in DECISIVE_RESULTS:
                 # `*` = in-flight bytes; retry this region next pass.
                 break
@@ -362,13 +379,13 @@ class PgnTailer:
             uci_moves: list[str] = [node.move.uci() for node in game.mainline()]
 
             records.append(PgnGameRecord(
-                white=game.headers.get("White", "?"),
-                black=game.headers.get("Black", "?"),
+                white=game.headers.get(TAG_WHITE, UNKNOWN_TAG_VALUE),
+                black=game.headers.get(TAG_BLACK, UNKNOWN_TAG_VALUE),
                 result=result,
-                termination=game.headers.get("Termination", ""),
+                termination=game.headers.get(TAG_TERMINATION, ""),
                 uci_moves=uci_moves,
                 game_n=0,  # filled in by the caller (cumulative)
-                round_tag=game.headers.get("Round", ""),
+                round_tag=game.headers.get(TAG_ROUND, ""),
             ))
             last_complete_bytes += advance_bytes()
 

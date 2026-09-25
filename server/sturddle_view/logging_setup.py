@@ -9,15 +9,9 @@ import logging
 import logging.handlers
 from pathlib import Path
 
-from platformdirs import user_log_dir
+from . import APP_NAME, app_log_dir
 
-from . import app_dir_name
-
-
-def default_log_dir() -> Path:
-    return Path(user_log_dir(app_dir_name(), appauthor=False))
-
-
+_LOG_FILENAME = f"{APP_NAME}.log"
 _configured = False
 
 
@@ -31,9 +25,9 @@ def configure_logging(
     uvicorn doesn't drown app logs even when --debug is on. Pass
     ``DEBUG`` to debug the server itself."""
     global _configured
-    log_dir = log_dir or default_log_dir()
+    log_dir = log_dir or app_log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "sturddle-view.log"
+    log_file = log_dir / _LOG_FILENAME
     if server_level is None:
         server_level = logging.WARNING
 

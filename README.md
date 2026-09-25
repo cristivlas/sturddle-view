@@ -58,7 +58,9 @@ the server on the LAN/tailnet, pass `--host 0.0.0.0` (token still
 required, or add `--no-auth` if you trust the network). In desktop mode,
 About -> Connect from mobile opens the LAN port on demand (Windows Firewall
 asks once) and shows a QR code that opens the app on a phone on the same
-network. To serve over TLS, supply `--cert PATH --key PATH`.
+network. When Tailscale is up (Windows/Linux), the QR carries the
+Tailscale address instead (`SV_PREFER_TAILSCALE=0` keeps the LAN one).
+To serve over TLS, supply `--cert PATH --key PATH`.
 
 ## Command-line flags
 

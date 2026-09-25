@@ -6,18 +6,40 @@ would otherwise require deep access to ``app.state.hve`` internals.
 """
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import chess
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 
+from ..config import DEFAULT_TC_INCREMENT_SECONDS, DEFAULT_TC_INITIAL_SECONDS
 from ..events import Event
+from ..play.canonical_hash import FMT_PGN
 from ..play.chess_clock import ChessClock, TimeControl
-from ..play.human_vs_engine import HumanVsEngine, ViewModeParams
+from ..play.human_vs_engine import VIEWING_KEY, HumanVsEngine, ViewModeParams
+from ..recent_imports import ROW_FORK_PLY, ROW_GAME_ID, ROW_PARENT_GAME_ID, ROW_SUMMARY
+from ._ai_kick import ai_coordinator
+from ._http import bad_request
 
 router = APIRouter(prefix="/_test")
-log = logging.getLogger(__name__)
+
+_DEFAULT_ENGINE_PATH = "/nonexistent"
+_DEFAULT_GAME_ID = "test-game"
+_GAME_ID_KEY = ROW_GAME_ID
+_ENGINE_NAME_KEY = "engine_name"
+_START_FEN_KEY = "start_fen"
+_HUMAN_WHITE_KEY = "human_white"
+_WHITE_TIME_KEY = "white_time"
+_BLACK_TIME_KEY = "black_time"
+_BOARD_FEN_KEY = "board_fen"
+_TEXT_KEY = "text"
+_SUMMARY_KEY = ROW_SUMMARY
+_FORK_PLY_KEY = ROW_FORK_PLY
+_OK_KEY = "ok"
+_HVE_KEY = "hve"
+
+
+def _board_fen(hve: HumanVsEngine) -> str | None:
+    return hve._board.fen() if hve._board is not None else None
 
 
 @router.post("/hve/install")
@@ -39,15 +61,16 @@ async def install_hve(payload: dict, request: Request) -> dict:
       * ``game_id`` -- override game id (default ``"test-game"``).
     """
     app = request.app
-    engine_path = payload.get("engine_path", "/nonexistent")
+    engine_path = payload.get("engine_path", _DEFAULT_ENGINE_PATH)
     hve = HumanVsEngine(
         engine_path=engine_path,
         bus=app.state.event_bus,
         openings=getattr(app.state, "openings", None),
         settings=app.state.settings,
     )
-    if payload.get("engine_name"):
-        hve._engine_name = payload["engine_name"]
+    engine_name = payload.get(_ENGINE_NAME_KEY)
+    if engine_name:
+        hve._engine_name = engine_name
     view_mode = bool(payload.get("view_mode", False))
     if view_mode:
         await hve.enter_view_mode(ViewModeParams(
@@ -56,28 +79,31 @@ async def install_hve(payload: dict, request: Request) -> dict:
             clock_history=payload.get("view_clock_history"),
         ))
     else:
-        hve._board = chess.Board(payload["start_fen"]) if payload.get("start_fen") else chess.Board()
+        start_fen = payload.get(_START_FEN_KEY)
+        hve._board = chess.Board(start_fen) if start_fen else chess.Board()
         for uci in payload.get("moves_uci", []):
             hve._board.push_uci(uci)
         hve._eval_history = [None] * len(hve._board.move_stack)
-        hve._human_white = bool(payload.get("human_white", True))
+        hve._human_white = bool(payload.get(_HUMAN_WHITE_KEY, True))
         tc_spec = payload.get("tc", {})
         tc = TimeControl(
-            initial_seconds=float(tc_spec.get("initial_seconds", 300.0)),
-            increment_seconds=float(tc_spec.get("increment_seconds", 0.0)),
+            initial_seconds=float(tc_spec.get("initial_seconds", DEFAULT_TC_INITIAL_SECONDS)),
+            increment_seconds=float(
+                tc_spec.get("increment_seconds", DEFAULT_TC_INCREMENT_SECONDS)
+            ),
         )
         hve._clock = ChessClock(tc)
-        if "white_time" in payload:
-            hve._clock.white_time = float(payload["white_time"])
-        if "black_time" in payload:
-            hve._clock.black_time = float(payload["black_time"])
-        hve._game_id = payload.get("game_id", "test-game")
+        if _WHITE_TIME_KEY in payload:
+            hve._clock.white_time = float(payload[_WHITE_TIME_KEY])
+        if _BLACK_TIME_KEY in payload:
+            hve._clock.black_time = float(payload[_BLACK_TIME_KEY])
+        hve._game_id = payload.get(_GAME_ID_KEY, _DEFAULT_GAME_ID)
         hve._clock.start_turn()
     app.state.hve = hve
     return {
-        "game_id": hve._game_id,
-        "board_fen": hve._board.fen() if hve._board is not None else None,
-        "viewing": view_mode,
+        _GAME_ID_KEY: hve._game_id,
+        _BOARD_FEN_KEY: _board_fen(hve),
+        VIEWING_KEY: view_mode,
     }
 
 
@@ -98,13 +124,13 @@ async def publish_ai_event(payload: dict, request: Request) -> dict:
     wiring reacts to the bus event the same way regardless."""
     kind = payload.get("kind")
     if not isinstance(kind, str) or not kind:
-        raise HTTPException(status_code=400, detail="kind required")
+        raise bad_request("kind required")
     await request.app.state.event_bus.publish(Event(
         kind=kind,
-        game_id=payload.get("game_id"),
+        game_id=payload.get(_GAME_ID_KEY),
         payload=payload.get("payload") or {},
     ))
-    return {"ok": True}
+    return {_OK_KEY: True}
 
 
 @router.post("/ai/seed_replay")
@@ -116,12 +142,12 @@ async def seed_ai_replay(payload: dict, request: Request) -> dict:
     e2e tests exercise the replay-render path without a real LLM turn.
 
     Body: ``{"events": [{"kind", "payload", "game_id"}]}``."""
-    coord = getattr(request.app.state, "ai_coordinator", None)
+    coord = ai_coordinator(request.app.state)
     if coord is None:
-        raise HTTPException(status_code=400, detail="no ai coordinator")
+        raise bad_request("no ai coordinator")
     events = payload.get("events") or []
     coord.seed_replay(events)
-    return {"ok": True, "count": len(events)}
+    return {_OK_KEY: True, "count": len(events)}
 
 
 @router.post("/recents/seed_fork")
@@ -136,19 +162,21 @@ async def seed_fork(payload: dict, request: Request) -> dict:
     recents = request.app.state.recent_imports
     parent = payload["parent"]
     child = payload["child"]
+    parent_id = parent[_GAME_ID_KEY]
+    child_id = child[_GAME_ID_KEY]
+    fork_ply = child[_FORK_PLY_KEY]
     await recents.save(
-        fmt="pgn", text=parent["text"], summary=parent["summary"],
-        game_id=parent["game_id"],
+        fmt=FMT_PGN, text=parent[_TEXT_KEY], summary=parent[_SUMMARY_KEY],
+        game_id=parent_id,
     )
     await recents.save(
-        fmt="pgn", text=child["text"], summary=child["summary"],
-        game_id=child["game_id"],
-        parent_game_id=parent["game_id"], fork_ply=child["fork_ply"],
+        fmt=FMT_PGN, text=child[_TEXT_KEY], summary=child[_SUMMARY_KEY],
+        game_id=child_id, parent_game_id=parent_id, fork_ply=fork_ply,
     )
     return {
-        "parent_game_id": parent["game_id"],
-        "child_game_id": child["game_id"],
-        "fork_ply": child["fork_ply"],
+        ROW_PARENT_GAME_ID: parent_id,
+        "child_game_id": child_id,
+        _FORK_PLY_KEY: fork_ply,
     }
 
 
@@ -157,16 +185,17 @@ def hve_state(request: Request) -> dict[str, Any]:
     """Read invariants tests assert on. Returns ``hve is None`` if no HVE."""
     hve = request.app.state.hve
     if hve is None:
-        return {"hve": None}
+        return {_HVE_KEY: None}
+    board = hve._board
     return {
-        "hve": True,
-        "game_id": hve._game_id,
+        _HVE_KEY: True,
+        _GAME_ID_KEY: hve._game_id,
         "view_cursor": hve._view_cursor,
-        "viewing": hve._viewing,
-        "human_white": hve._human_white,
+        VIEWING_KEY: hve._viewing,
+        _HUMAN_WHITE_KEY: hve._human_white,
         "player_name": hve._player_name,
         "paused": hve._paused,
-        "board_fen": hve._board.fen() if hve._board is not None else None,
-        "move_stack_uci": [m.uci() for m in hve._board.move_stack] if hve._board is not None else [],
-        "n_plies": len(hve._board.move_stack) if hve._board is not None else 0,
+        _BOARD_FEN_KEY: _board_fen(hve),
+        "move_stack_uci": [m.uci() for m in board.move_stack] if board is not None else [],
+        "n_plies": len(board.move_stack) if board is not None else 0,
     }

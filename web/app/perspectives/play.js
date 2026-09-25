@@ -410,7 +410,7 @@ function dispatchAiEvent(aiCtx, evt) {
         // Cancel is excluded: it self-resolves via stopAnalysisFromUi ->
         // analyzing=false. Without this, an error left the button pulsing.
         if (!p.cancelled) {
-          aiShared.turnFinished = true;
+          setAiTurnFinished(aiShared, view, true);
           dismissAnalysisToast(aiShared);
           refreshButtons();
         }
@@ -513,6 +513,10 @@ async function rehydrateAiPanel(ai, aiCtx, { adopt = false } = {}) {
   let replayedThrough = 0;
   try {
     const r = await aiCtx.api("GET", "/game/analysis/replay");
+    // Unmounted mid-GET (nav away): unmount already closed the panel and
+    // dropped its hosts -- opening now would float it over the next
+    // perspective.
+    if (aiCtx.isUnmounted()) return;
     const events = Array.isArray(r?.events) ? r.events : [];
     if (adopt || events.length > 0) {
       openAi();
@@ -522,7 +526,7 @@ async function rehydrateAiPanel(ai, aiCtx, { adopt = false } = {}) {
     }
   } catch { /* */ } finally {
     ai.rehydrating = false;
-    const buffered = ai.liveBuffer;
+    const buffered = aiCtx.isUnmounted() ? [] : ai.liveBuffer;
     ai.liveBuffer = [];
     for (const evt of buffered) {
       // Already covered by the replay. The dispatcher's own seq dedupe can't
@@ -532,6 +536,7 @@ async function rehydrateAiPanel(ai, aiCtx, { adopt = false } = {}) {
       if (seq > 0 && seq <= replayedThrough) continue;
       dispatchAiEventOrdered(ai, aiCtx, evt);
     }
+    window.dispatchEvent(new CustomEvent(APP_EVT.AI_REHYDRATED));
   }
 }
 
@@ -709,12 +714,12 @@ function resetXgame(state) {
   state.xgame.childrenToastDismissed = false;
 }
 async function fetchXgameInfo(state, gameId) {
-  if (!gameId) {
-    resetXgame(state);
-    refreshXgameToasts(state);
-    return;
-  }
   try {
+    if (!gameId) {
+      resetXgame(state);
+      refreshXgameToasts(state);
+      return;
+    }
     const r = await state.api(
       "GET", `/game/recent-imports/by-id/${encodeURIComponent(gameId)}`,
     );
@@ -742,6 +747,8 @@ async function fetchXgameInfo(state, gameId) {
     // game with no moves yet). That's expected; just clear state.
     resetXgame(state);
     refreshXgameToasts(state);
+  } finally {
+    window.dispatchEvent(new CustomEvent(APP_EVT.XGAME_INFO_APPLIED));
   }
 }
 function buildParentToast(state) {
@@ -965,6 +972,14 @@ async function doViewNav(state, endpoint, payload = {}) {
 
 // Analysis state setter + stop flow operating on shared `state`.
 
+// Single sync point for the AI-finished latch: the game-view's line-play
+// gate reads it (no search runs once the turn is done), and it flips
+// without a board_update, so every write pushes it there.
+function setAiTurnFinished(aiShared, view, v) {
+  aiShared.turnFinished = v;
+  view.setAnalysisIdle(v);
+}
+
 // Single sync point: every analyzing write goes through this setter so the
 // AI-finished latch and the x-game lock class stay consistent.
 // Direct `state.analyzing = ...` writes will drift -- always call setAnalyzing.
@@ -973,7 +988,7 @@ function setAnalyzing(state, v) {
   state.analyzing = !!v;
   // Server flipped out of ANALYSIS -- clear the AI-finished latch
   // so the ribbon can re-enable when the game is paused again.
-  if (!state.analyzing) state.aiShared.turnFinished = false;
+  if (!state.analyzing) setAiTurnFinished(state.aiShared, state.view, false);
   document.body.classList.toggle(XGAME_LOCK_CLASS, state.analyzing);
   // The session is server-owned: whoever ended it, every client drops the
   // panel -- its replay buffer is gone, so it can't be restored anyway.
@@ -1010,7 +1025,7 @@ async function stopAnalysisFromUi(state) {
   } finally {
     state.analysisTransitionInFlight = false;
   }
-  state.aiShared.turnFinished = false;
+  setAiTurnFinished(state.aiShared, state.view, false);
   // The AI window's lifecycle is tied to the analysis session, so it
   // always closes on stop. PV/UCI close only if analysis opened them.
   teardownAiPanel(state.aiShared);
@@ -1672,7 +1687,7 @@ async function startAnalysisFromUiImpl(state) {
   // before starting, so the dock shows engine-only output. Done first so
   // the close can't race the new analysis state.
   if (!state.aiEnabled && isAiOpen()) closeAi();
-  state.aiShared.turnFinished = false;
+  setAiTurnFinished(state.aiShared, state.view, false);
   dismissAiErrorToast();
   clearUciLog();
   // Build ALL start-state (toast + panel) synchronously BEFORE the POST.
@@ -2344,7 +2359,6 @@ export const playPerspective = {
               message: MSG.CONFIRM_MOVE_STOP_ANALYSIS,
               okLabel: MSG.PLAY_MOVE,
               cancelLabel: MSG.KEEP_ANALYZING,
-              destructive: true,
             });
             if (!ok) {
               await abortHeldDrop(view, snapBack);
@@ -2426,6 +2440,15 @@ export const playPerspective = {
       },
     });
     state.view = view;
+    // Before any board_update reaches the view: its gate announcement makes
+    // the Search Lines body (alive across a nav) re-derive showability, and
+    // with no board wired every row would go inert and stay that way.
+    setPvLineBoard({
+      currentPlacement: view.currentPlacement,
+      canPlayLine: () => view.canPlayLine(),
+      playLine: view.playLine,
+      cancelLine: view.cancelLine,
+    });
 
     // Rail dock: capacity-one dock destination in the band under the moves
     // list (positioned by positionSideRail). Default home of the Engine Eval
@@ -2503,7 +2526,10 @@ export const playPerspective = {
 
     // Private replay-buffer state + the deps the AI dispatch needs.
     const ai = { rehydrating: true, liveBuffer: [], maxSeq: 0 };
-    const aiCtx = { view, api: ctx.api, refreshButtons: () => refreshButtons(state), aiShared: state.aiShared };
+    const aiCtx = {
+      view, api: ctx.api, refreshButtons: () => refreshButtons(state), aiShared: state.aiShared,
+      isUnmounted: () => !!state.unmounted,
+    };
     rehydrateAiPanel(ai, aiCtx);
 
     // --- Hook events for control-bar state changes (board state changes
@@ -2578,12 +2604,6 @@ export const playPerspective = {
     const onPvTable = () => togglePvTableWindow(ctx.events);
     uciLogBtn?.addEventListener("click", onUciLog);
     pvTableBtn?.addEventListener("click", onPvTable);
-    setPvLineBoard({
-      currentPlacement: view.currentPlacement,
-      canPlayLine: () => view.canPlayLine(),
-      playLine: view.playLine,
-      cancelLine: view.cancelLine,
-    });
     restoreDebugWindows(ctx.events);
     // After restoreDebugWindows: sync makes the server re-emit board state and
     // the last engine_info, and only a panel that already exists can catch it.

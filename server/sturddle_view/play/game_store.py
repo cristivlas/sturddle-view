@@ -12,14 +12,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from platformdirs import user_config_dir
-
-from .. import app_dir_name
+from .. import app_config_dir
 from .._atomic import atomic_write_json
+from ..env_utils import env_path
 
 log = logging.getLogger(__name__)
 
@@ -27,13 +25,12 @@ SCHEMA_VERSION = 1
 
 DEFAULT_PLAYER_NAME = "Human"
 
+_STATE_FILENAME = "current_game.json"
+
 
 def default_state_path() -> Path:
     """Path to the persisted current-game snapshot. ``SV_GAME_STATE_PATH`` overrides."""
-    override = os.environ.get("SV_GAME_STATE_PATH")
-    if override:
-        return Path(override)
-    return Path(user_config_dir(app_dir_name(), appauthor=False)) / "current_game.json"
+    return env_path("SV_GAME_STATE_PATH", app_config_dir() / _STATE_FILENAME)
 
 
 @dataclass
@@ -84,10 +81,11 @@ class GameStore:
         except (OSError, json.JSONDecodeError):
             log.error("could not read %s; ignoring saved game", self._path, exc_info=True)
             return None
-        if data.get("version") != SCHEMA_VERSION:
+        version = data.get("version")
+        if version != SCHEMA_VERSION:
             log.warning(
                 "saved game schema mismatch (got %r, want %d); ignoring",
-                data.get("version"), SCHEMA_VERSION,
+                version, SCHEMA_VERSION,
             )
             return None
         try:

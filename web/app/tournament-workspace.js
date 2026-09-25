@@ -1185,6 +1185,10 @@ function buildWindowSpecs(ctx) {
       makeBody: makeStandingsBody,
       setBody: (b) => { ctx.standingsBody = b; },
       render: () => renderStandings(ctx.standingsBody, ctx.detail),
+      // The split header/body tables scroll internally (see
+      // tournament-standings.js); the WinBox body itself must not also
+      // scroll, or the header table scrolls out of view with it.
+      extraClass: "sturddle-wb-standings",
     },
     schedule: {
       title: "Live Games",

@@ -13,7 +13,7 @@ import { guard, syncTooltip } from "./wb-utils.js";
 
 export function makePathRow(api) {
   return function pathRow(labelText, value, mode, pickerTitle, onPick, opts = {}) {
-    const { hint, editable = false, placeholder, onClear } = opts;
+    const { hint, editable = false, placeholder, onClear, extensions } = opts;
     const row = document.createElement("div");
     row.className = "settings-tournament-path-row";
     const lbl = document.createElement("div");
@@ -38,7 +38,7 @@ export function makePathRow(api) {
     inner_actions.className = "settings-row-actions";
     const browse = document.createElement("wa-button");
     browse.size = "small";
-    browse.title = "Browse…";
+    browse.title = "Browse...";
     browse.setAttribute("aria-label", pickerTitle || "Browse");
     const browseIcon = document.createElement("wa-icon");
     browseIcon.setAttribute("name", "folder-open");
@@ -74,7 +74,7 @@ export function makePathRow(api) {
       field.placeholder = "(not set)";
     }
     browse.addEventListener("click", guard(async () => {
-      const path = await pickFile({ api, mode, title: pickerTitle });
+      const path = await pickFile({ api, mode, title: pickerTitle, extensions, currentPath: field.value });
       if (!path) return;
       field.value = path;
       syncClear();
@@ -99,7 +99,12 @@ export function makePathRow(api) {
     // Expose the working parts so tri-state callers can drive placeholder,
     // value, and X tooltip without reaching through fragile selectors.
     row.pathField = field;
+    row.browseBtn = browse;
     row.clearBtn = clear;
+    row.setValue = (v) => {
+      field.value = v;
+      syncClear();
+    };
     return row;
   };
 }

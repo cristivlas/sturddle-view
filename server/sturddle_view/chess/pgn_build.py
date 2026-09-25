@@ -4,24 +4,23 @@ from __future__ import annotations
 import chess
 import chess.pgn
 
-from sturddle_view.chess.board import board_from
+from .board import board_from
+from .pgn_tags import TAG_ECO, TAG_OPENING, TAG_RESULT, TAG_TERMINATION, TAG_TIME_CONTROL
+from .results import UNKNOWN_RESULT, UNTERMINATED
+from .score import CP_PER_PAWN, SCORE_CP, SCORE_DEPTH, SCORE_MATE, flip_score
 
 
 def _format_eval(score: dict) -> str:
     """Format a white-POV (already flipped if needed) score dict for cutechess."""
-    if "mate" in score:
-        n = score["mate"]
+    if SCORE_MATE in score:
+        n = score[SCORE_MATE]
         return f"+M{n}" if n >= 0 else f"-M{-n}"
-    cp = score["cp"]
-    pawns = cp / 100.0
+    pawns = score[SCORE_CP] / CP_PER_PAWN
     return f"{pawns:+.2f}"
 
 
-def _flip_pov(score: dict) -> dict:
-    """Negate cp/mate for white-POV -> STM-POV on a black-to-move ply."""
-    if "mate" in score:
-        return {"mate": -score["mate"], **{k: v for k, v in score.items() if k != "mate"}}
-    return {"cp": -score["cp"], **{k: v for k, v in score.items() if k != "cp"}}
+def _pgn_text(game: chess.pgn.Game) -> str:
+    return f"{game}\n\n"
 
 
 def build_pgn(
@@ -32,8 +31,8 @@ def build_pgn(
     final_clocks: tuple[float, float] | None = None,
     headers: dict[str, str],
     opening: tuple[str, str] | None = None,
-    result: str = "*",
-    termination: str = "unterminated",
+    result: str = UNKNOWN_RESULT,
+    termination: str = UNTERMINATED,
     time_control: tuple[int, int] | None = None,
     eval_history: list[dict | None] | None = None,
     comments: list[str | None] | None = None,
@@ -74,20 +73,20 @@ def build_pgn(
 
     for key, val in headers.items():
         game.headers[key] = val
-    game.headers["Result"] = result
-    game.headers["Termination"] = termination
+    game.headers[TAG_RESULT] = result
+    game.headers[TAG_TERMINATION] = termination
     if time_control is not None:
-        game.headers["TimeControl"] = f"{time_control[0]}+{time_control[1]}"
+        game.headers[TAG_TIME_CONTROL] = f"{time_control[0]}+{time_control[1]}"
     if opening is not None:
-        game.headers["ECO"] = opening[0]
-        game.headers["Opening"] = opening[1]
+        game.headers[TAG_ECO] = opening[0]
+        game.headers[TAG_OPENING] = opening[1]
 
     if root_comment:
         game.comment = root_comment
 
     nodes = list(game.mainline())
     if not nodes:
-        return f"{game}\n\n"
+        return _pgn_text(game)
 
     # Seed user-prose comments first so the [%clk] / cutechess-token
     # machinery below appends to them rather than clobbering them.
@@ -114,7 +113,7 @@ def build_pgn(
                 else:
                     continue
                 node.set_clock(w_after if movers_white[i] else b_after)
-        return f"{game}\n\n"
+        return _pgn_text(game)
 
     # Cutechess token path. Compute per-ply elapsed from clock_history delta
     # plus increment (consume_turn credits the increment after debiting).
@@ -140,9 +139,10 @@ def build_pgn(
         score = eval_history[i]
         parts: list[str] = []
         if score is not None:
-            display = score if movers_white[i] else _flip_pov(score)
+            # White-POV in memory -> STM-POV on a black-to-move ply.
+            display = score if movers_white[i] else flip_score(score)
             eval_str = _format_eval(display)
-            depth = score.get("depth") if isinstance(score, dict) else None
+            depth = score.get(SCORE_DEPTH) if isinstance(score, dict) else None
             parts.append(f"{eval_str}/{depth}" if depth is not None else eval_str)
         if elapsed is not None:
             parts.append(f"{elapsed:.1f}s")
@@ -150,4 +150,4 @@ def build_pgn(
             token = " ".join(parts)
             node.comment = f"{node.comment} {token}" if node.comment else token
 
-    return f"{game}\n\n"
+    return _pgn_text(game)

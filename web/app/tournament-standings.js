@@ -11,6 +11,7 @@ import { SORT_DIR } from "./col-sort.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { escapeHtml, markSelectable } from "./wb-utils.js";
 import { fmtSignedElo, fmtMargin } from "./tournament-format.js";
+import { wireSplitScroll } from "./split-table.js";
 
 const STANDINGS_COL_PCTS_KEY = STORAGE_KEY.TOURNAMENTS_STANDINGS_COL_PCTS;
 const STANDINGS_DEFAULT_PCTS = [25, 7, 7, 7, 7, 7, 8, 14];
@@ -44,46 +45,61 @@ export function makeStandingsBody() {
     <div class="wb-sprt-slot"></div>
     <div class="wb-empty wb-standings-empty">Loading...</div>
     <div class="wb-standings-table-wrap" hidden>
-      <table class="wb-table wb-standings-tbl">
-        <colgroup>
-          <col><col><col><col><col><col><col><col>
-        </colgroup>
-        <thead>
-          <tr>
-            <th>Engine<span class="th-grip"></span></th>
-            <th>G<span class="th-grip"></span></th>
-            <th>W<span class="th-grip"></span></th>
-            <th>L<span class="th-grip"></span></th>
-            <th>D<span class="th-grip"></span></th>
-            <th>Pts<span class="th-grip"></span></th>
-            <th>%<span class="th-grip"></span></th>
-            <th>Elo<span class="th-grip"></span></th>
-            <th>Ordo</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+      <div class="wb-standings-head-scroll">
+        <table class="wb-table wb-standings-tbl wb-standings-head-tbl">
+          <colgroup>
+            <col><col><col><col><col><col><col><col>
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Engine<span class="th-grip"></span></th>
+              <th>G<span class="th-grip"></span></th>
+              <th>W<span class="th-grip"></span></th>
+              <th>L<span class="th-grip"></span></th>
+              <th>D<span class="th-grip"></span></th>
+              <th>Pts<span class="th-grip"></span></th>
+              <th>%<span class="th-grip"></span></th>
+              <th>Elo<span class="th-grip"></span></th>
+              <th>Ordo</th>
+            </tr>
+          </thead>
+        </table>
+      </div>
+      <div class="wb-standings-body-scroll">
+        <table class="wb-table wb-standings-tbl wb-standings-body-tbl">
+          <colgroup>
+            <col><col><col><col><col><col><col><col>
+          </colgroup>
+          <tbody></tbody>
+        </table>
+      </div>
     </div>
   `;
   const wrapEl = el.querySelector(".wb-standings-table-wrap");
-  const tableEl = el.querySelector(".wb-standings-tbl");
-  markSelectable(tableEl);
-  const colEls = Array.from(el.querySelectorAll(".wb-standings-tbl col"));
-  const grips = Array.from(el.querySelectorAll(".wb-standings-tbl .th-grip"));
+  const headTableEl = el.querySelector(".wb-standings-head-tbl");
+  const bodyTableEl = el.querySelector(".wb-standings-body-tbl");
+  const headScrollEl = el.querySelector(".wb-standings-head-scroll");
+  const bodyScrollEl = el.querySelector(".wb-standings-body-scroll");
+  markSelectable(headTableEl);
+  markSelectable(bodyTableEl);
+  wireSplitScroll(headScrollEl, bodyScrollEl);
+  const headColEls = Array.from(headTableEl.querySelectorAll("col"));
+  const bodyColEls = Array.from(bodyTableEl.querySelectorAll("col"));
+  const grips = Array.from(headTableEl.querySelectorAll(".th-grip"));
   const colPcts = STANDINGS_DEFAULT_PCTS.slice();
   attachColumnResize({
-    table: tableEl,
+    table: headTableEl,
     grips,
     overlayHost: wrapEl,
     storageKey: STANDINGS_COL_PCTS_KEY,
     sizes: colPcts,
     unit: "pct",
-    applySizes: makePctApplySizes(colEls, STANDINGS_MIN_PCT),
+    applySizes: makePctApplySizes([headColEls, bodyColEls], STANDINGS_MIN_PCT),
   });
   // Layered header sort, shared by every standings surface (Arena + Studio).
   // The widget re-renders itself from the detail stashed by renderStandings.
   el._sortStack = attachLayeredSort({
-    table: tableEl,
+    table: headTableEl,
     columns: STANDINGS_SORT_COLS,
     sortKey: STORAGE_KEY.TOURNAMENTS_STANDINGS_SORT,
     stackKey: STORAGE_KEY.TOURNAMENTS_STANDINGS_STACK,
@@ -104,7 +120,7 @@ export function renderStandings(el, detail, studio = false) {
   const sprtSlot = el.querySelector(".wb-sprt-slot");
   const emptyEl = el.querySelector(".wb-standings-empty");
   const wrapEl = el.querySelector(".wb-standings-table-wrap");
-  const tbody = el.querySelector(".wb-standings-tbl tbody");
+  const tbody = el.querySelector(".wb-standings-body-tbl tbody");
   const standings = detail?.standings;
   if (!standings || standings.engines.length === 0) {
     emptyEl.textContent = NO_GAMES_MSG;

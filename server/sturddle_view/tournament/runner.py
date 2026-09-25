@@ -1,8 +1,8 @@
-"""Runner protocol — abstract surface for tournament-manager backends.
+"""Runner protocol -- abstract surface for tournament-manager backends.
 
-Phase 1 impl is ``FastchessRunner`` in ``fastchess.py``; the protocol exists
-so a future ``CutechessRunner`` can drop in without rewriting callers.
-Web-agnostic — events flow through an ``on_event`` callback supplied by the
+The shipped impl is ``FastchessRunner`` in ``fastchess.py``; the protocol
+exists so a future ``CutechessRunner`` can drop in without rewriting callers.
+Web-agnostic -- events flow through an ``on_event`` callback supplied by the
 orchestrator (routes to WebSocket or a local CLI consumer).
 """
 from __future__ import annotations
@@ -14,13 +14,19 @@ from typing import Awaitable, Callable, Protocol
 from .store import Tournament
 
 
-# An event carries a ``kind`` and an arbitrary ``payload`` dict. Known kinds:
-#   "started"        — runner just spawned the subprocess
-#   "done"           — runner exited cleanly (rounds completed)
-#   "stopped"        — runner was killed via ``stop()``
-#   "runner_crash"   — runner exited with non-zero rc not caused by ``stop()``
-#   "log"            — a single line of runner output (advisory; not all callers
-#                      will subscribe — chatty)
+# An event carries a ``kind`` and an arbitrary ``payload`` dict.
+EVT_STARTED = "started"            # runner just spawned the subprocess
+EVT_DONE = "done"                  # runner exited cleanly (rounds completed)
+EVT_STOPPED = "stopped"            # runner was killed via ``stop()``
+EVT_RUNNER_CRASH = "runner_crash"  # non-zero rc not caused by ``stop()``
+EVT_RUNNER_LOG = "runner_log"      # one line of runner output (chatty)
+TERMINAL_EVENTS = frozenset({EVT_DONE, EVT_STOPPED, EVT_RUNNER_CRASH})
+
+# Terminal-event payload keys: the exit code, plus the last stderr lines
+# on a crash.
+RC_KEY = "rc"
+STDERR_TAIL_KEY = "stderr_tail"
+
 EventCallback = Callable[[str, dict], Awaitable[None]]
 
 
@@ -37,9 +43,9 @@ class RunSpec:
     config_path: Path  # work_dir / "config.json"
     log_path: Path  # work_dir / "logs" / "fastchess.log"
 
-    # Slice 9b: when set, the runner wraps each engine in the proxy
-    # script so its UCI traffic is broadcast to the GUI server. ``None``
-    # disables the wrap (used by tests that want raw fastchess argv).
+    # When set, the runner wraps each engine in the proxy script so its
+    # UCI traffic is broadcast to the GUI server. ``None`` disables the
+    # wrap (used by tests that want raw fastchess argv).
     proxy_broadcast_url: str | None = None
     proxy_secret: str | None = None
 

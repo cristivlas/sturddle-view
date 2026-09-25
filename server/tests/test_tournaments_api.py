@@ -6,6 +6,7 @@ fastchess subprocess is replaced by a fake-fastchess script via a
 """
 from __future__ import annotations
 
+import json
 import sys
 import time
 from collections import deque
@@ -14,17 +15,20 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from sturddle_view.api.tournaments import _snap_terminal_sprt_verdict
+from sturddle_view.api.tournaments import ALLOW_OVERSUBSCRIBE_ENV, _snap_terminal_sprt_verdict
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.tournament import fastchess as fc_mod
 from sturddle_view.tournament.fastchess import FastchessRunner
-from sturddle_view.tournament.pgn_stats import SPRT_CONTINUE, SPRT_H0, SPRT_H1
+from sturddle_view.tournament.pgn_stats import SPRT_CONTINUE, SPRT_H0, SPRT_H1, SprtResult
 from sturddle_view.tournament.store import (
+    PGN_FILENAME,
+    STATE_FILENAME,
     STATUS_DONE,
     STATUS_RUNNING,
     STATUS_STOPPED,
+    TOURNAMENTS_DIRNAME,
     TournamentStore,
 )
 
@@ -54,7 +58,7 @@ sys.exit(rc)
 @pytest.fixture
 def settings(tmp_path):
     s = Settings(auth_disabled=True)
-    s.tournament_root = str(tmp_path / "tournaments")
+    s.tournament_root = str(tmp_path / TOURNAMENTS_DIRNAME)
     s.tournament_fastchess_path = sys.executable  # always present in tests
     return s
 
@@ -107,8 +111,6 @@ def test_create_returns_id_and_status_idle(client):
 
 
 def test_create_injects_oversubscribe_from_env(client, monkeypatch):
-    from sturddle_view.api.tournaments import ALLOW_OVERSUBSCRIBE_ENV
-
     monkeypatch.setenv(ALLOW_OVERSUBSCRIBE_ENV, "1")
     r = client.post("/api/tournaments", json={
         "name": "over", "template": {"tc": "10+0.1"}, "engines": _engines_payload(),
@@ -175,7 +177,7 @@ def test_get_standings_games_from_pgn(client, settings):
         "name": "y", "engines": _engines_payload(),
     }).json()
     tid = created["id"]
-    pgn = Path(settings.tournament_root) / tid / "games.pgn"
+    pgn = Path(settings.tournament_root) / tid / PGN_FILENAME
     pgn.parent.mkdir(parents=True, exist_ok=True)
     pgn.write_text(_PGN_TWO_GAMES, encoding="utf-8")
     body = client.get(f"/api/tournaments/{tid}").json()
@@ -206,7 +208,7 @@ def test_standings_anchor_live_first_frozen_fallback(client, settings):
     assert created["engines"][0]["rating"] == 3000
     assert "rating" not in created["engines"][1]
 
-    pgn = Path(settings.tournament_root) / tid / "games.pgn"
+    pgn = Path(settings.tournament_root) / tid / PGN_FILENAME
     pgn.parent.mkdir(parents=True, exist_ok=True)
     pgn.write_text(_PGN_BALANCED, encoding="utf-8")
 
@@ -252,7 +254,7 @@ def test_start_requires_confirm_wipe_when_stopped(client, settings, monkeypatch)
     store = TournamentStore(Path(settings.tournament_root))
     store.update_status(t["id"], "stopped", stopped_at="2026-01-01T00:00:00+00:00")
     # Drop a stray file we expect to survive (no wipe happens on 409).
-    pgn = Path(settings.tournament_root) / t["id"] / "games.pgn"
+    pgn = Path(settings.tournament_root) / t["id"] / PGN_FILENAME
     pgn.parent.mkdir(parents=True, exist_ok=True)
     pgn.write_text("[Result \"1-0\"]\n", encoding="utf-8")
 
@@ -271,7 +273,7 @@ def test_start_with_confirm_wipe_wipes_and_starts(client, settings, monkeypatch)
     }).json()
     store = TournamentStore(Path(settings.tournament_root))
     store.update_status(t["id"], "stopped", stopped_at="2026-01-01T00:00:00+00:00")
-    pgn = Path(settings.tournament_root) / t["id"] / "games.pgn"
+    pgn = Path(settings.tournament_root) / t["id"] / PGN_FILENAME
     pgn.parent.mkdir(parents=True, exist_ok=True)
     pgn.write_text("[Result \"1-0\"]\n", encoding="utf-8")
 
@@ -302,7 +304,7 @@ def test_wipe_for_restart_preserves_immutables(settings):
         engine_defaults={"threads": 4},
     )
     store.update_status(t.id, "failed", last_error={"rc": 1})
-    pgn = Path(settings.tournament_root) / t.id / "games.pgn"
+    pgn = Path(settings.tournament_root) / t.id / PGN_FILENAME
     pgn.write_text("[Result \"1-0\"]\n", encoding="utf-8")
 
     pre_template = dict(t.template)
@@ -473,6 +475,47 @@ def test_put_settings_updates(client, tmp_path):
     assert body["default_template"] == {"tc": "60+0.6"}
 
 
+def test_settings_report_tournaments_in_root(client, tmp_path):
+    """GET and PUT both count the tournaments under the current root, so the
+    UI can warn before switching away from a non-empty folder."""
+    assert client.get("/api/tournament-settings").json()["tournaments_in_root"] == 0
+    client.post("/api/tournaments", json={"name": "x", "engines": _engines_payload()})
+    assert client.get("/api/tournament-settings").json()["tournaments_in_root"] == 1
+    r = client.put("/api/tournament-settings", json={
+        "tournaments_root": str(tmp_path / "alt-root"),
+    })
+    assert r.json()["tournaments_in_root"] == 0
+
+
+def test_settings_report_root_is_default(client):
+    """Clearing the root falls back to the default folder; the flag lets the
+    UI disable Clear there instead of warning about a no-op switch."""
+    assert client.get("/api/tournament-settings").json()["tournaments_root_is_default"] is False
+    r = client.put("/api/tournament-settings", json={"tournaments_root": ""})
+    assert r.json()["tournaments_root_is_default"] is True
+
+
+def test_root_change_refused_while_running(client, settings, monkeypatch, tmp_path):
+    """Changing the tournaments folder mid-run would lose the running
+    tournament, so it is refused and the tournament stays listed."""
+    _patch_fake_fastchess(monkeypatch, "--sleep", "30")
+    t = client.post("/api/tournaments", json={
+        "name": "x", "engines": _engines_payload(),
+    }).json()
+    client.post(f"/api/tournaments/{t['id']}/start")
+    try:
+        assert client.get("/api/tournament-settings").json()["tournament_running"] is True
+        r = client.put("/api/tournament-settings", json={
+            "tournaments_root": str(tmp_path / "alt-root"),
+        })
+        assert r.status_code == 409
+        assert settings.tournament_root == str(tmp_path / TOURNAMENTS_DIRNAME)
+        listed = [x["id"] for x in client.get("/api/tournaments").json()["tournaments"]]
+        assert t["id"] in listed
+    finally:
+        client.post(f"/api/tournaments/{t['id']}/stop")
+
+
 def test_settings_persist_across_restart(tmp_path, monkeypatch):
     """After PUT, a fresh app constructed from the same settings file
     should read back the persisted values."""
@@ -482,7 +525,7 @@ def test_settings_persist_across_restart(tmp_path, monkeypatch):
     )
 
     s1 = Settings(auth_disabled=True)
-    s1.tournament_root = str(tmp_path / "tournaments")
+    s1.tournament_root = str(tmp_path / TOURNAMENTS_DIRNAME)
     s1.tournament_fastchess_path = sys.executable
     app1 = create_app(settings=s1)
     with TestClient(app1) as c1:
@@ -490,7 +533,7 @@ def test_settings_persist_across_restart(tmp_path, monkeypatch):
             "default_template": {"tc": "60+0.6", "games_in_parallel": 2},
         })
 
-    # Fresh app, fresh Settings — auto-loads from the persisted file
+    # Fresh app, fresh Settings -- auto-loads from the persisted file
     s2 = Settings(auth_disabled=True)
     s2.apply_persisted()
     app2 = create_app(settings=s2)
@@ -514,7 +557,7 @@ def test_reconcile_marks_stale_running_as_failed(tmp_path, monkeypatch):
     # app without stopping (simulating a server crash). The next app
     # construction must reconcile the on-disk 'running' to 'failed'.
     s = Settings(auth_disabled=True)
-    s.tournament_root = str(tmp_path / "tournaments")
+    s.tournament_root = str(tmp_path / TOURNAMENTS_DIRNAME)
     s.tournament_fastchess_path = sys.executable
     monkeypatch.setattr(
         fc_mod, "build_command",
@@ -544,11 +587,10 @@ def test_reconcile_marks_stale_running_as_failed(tmp_path, monkeypatch):
         c1.post(f"/api/tournaments/{t['id']}/stop")
 
     # Manually corrupt the on-disk state to "running" to simulate the crash
-    state_path = Path(s.tournament_root) / t["id"] / "state.json"
-    import json as _json
-    state = _json.loads(state_path.read_text())
+    state_path = Path(s.tournament_root) / t["id"] / STATE_FILENAME
+    state = json.loads(state_path.read_text())
     state["status"] = "running"
-    state_path.write_text(_json.dumps(state))
+    state_path.write_text(json.dumps(state))
 
     # Boot a fresh app -- reconcile should flip it to failed with a
     # synthetic last_error so the UI surfaces *why*.
@@ -599,7 +641,7 @@ def test_ws_receives_tournament_status_change(client, monkeypatch):
 @pytest.fixture
 def sprt_settings(tmp_path, monkeypatch):
     s = Settings(auth_disabled=True)
-    s.tournament_root = str(tmp_path / "tournaments")
+    s.tournament_root = str(tmp_path / TOURNAMENTS_DIRNAME)
     s.tournament_fastchess_path = sys.executable
     s.tournament_sprt_defaults = {"elo0": 3, "elo1": 15, "alpha": 0.02, "beta": 0.02}
     monkeypatch.setattr(FastchessRunner, "detect_binary", staticmethod(lambda c: c))
@@ -690,7 +732,7 @@ def test_create_snapshots_engine_defaults_from_settings(client, settings):
 
 
 def test_create_freezes_unset_engine_defaults_as_none(client, settings):
-    # Settings has nothing set → snapshot still records every field
+    # Settings has nothing set -> snapshot still records every field
     # (with None values) so later Settings changes can't leak in.
     body = client.post("/api/tournaments", json={
         "name": "bare", "engines": _engines_payload(),
@@ -920,7 +962,6 @@ def test_patch_updates_name_template_engines(client):
 
 
 def test_patch_resets_status_to_idle(client):
-    from sturddle_view.tournament.store import STATUS_STOPPED
     t = _create(client)
     client.app.state.tournament_store.update_status(t["id"], STATUS_STOPPED)
 
@@ -956,7 +997,7 @@ def test_patch_wipes_tournament_dir_contents(client):
     logs = store.logs_dir(t["id"])
     logs.mkdir(exist_ok=True)
     (logs / "fastchess.log").write_text("info: ...")
-    stray = store._dir(t["id"]) / "stray.tmp"
+    stray = store.dir_for(t["id"]) / "stray.tmp"
     stray.write_text("leftover")
 
     r = client.patch(f"/api/tournaments/{t['id']}", json={
@@ -1100,7 +1141,7 @@ def test_get_game_pgn_out_of_range_returns_404(client):
 
 # Same shape as _THREE_GAME_PGN but the middle entry is in-flight (Result "*").
 # pgn_tail counts only decisive games, so what we call "game 2" must skip the
-# `*` and resolve to the third entry (1/2-1/2). Guards the read_game_pgn fix.
+# `*` and resolve to the third entry (1/2-1/2). Guards the game-numbering fix.
 _PGN_WITH_INFLIGHT_MIDDLE = """[Event "g1"]
 [White "A"]
 [Black "B"]
@@ -1152,42 +1193,45 @@ def test_get_game_pgn_zero_returns_422(client):
 
 
 def _sprt(llr, status=SPRT_CONTINUE, lower=-2.94, upper=2.94):
-    return {"llr": llr, "lower_bound": lower, "upper_bound": upper, "status": status}
+    return SprtResult(
+        llr=llr, lower_bound=lower, upper_bound=upper, status=status,
+        pairs=1, elo0=0.0, elo1=5.0,
+    )
 
 
 def test_snap_done_positive_llr_becomes_h1():
     out = _snap_terminal_sprt_verdict(_sprt(2.93), STATUS_DONE)
-    assert out["status"] == SPRT_H1
+    assert out.status == SPRT_H1
 
 
 def test_snap_done_negative_llr_becomes_h0():
     # LLR -2.75, bound -2.94: 0.19 short -- DONE snaps anyway (it concluded).
     out = _snap_terminal_sprt_verdict(_sprt(-2.75), STATUS_DONE)
-    assert out["status"] == SPRT_H0
+    assert out.status == SPRT_H0
 
 
 def test_snap_done_snaps_even_near_midpoint():
     # DONE means concluded; lean decides the side, no tolerance gate.
-    assert _snap_terminal_sprt_verdict(_sprt(0.4), STATUS_DONE)["status"] == SPRT_H1
-    assert _snap_terminal_sprt_verdict(_sprt(-0.4), STATUS_DONE)["status"] == SPRT_H0
+    assert _snap_terminal_sprt_verdict(_sprt(0.4), STATUS_DONE).status == SPRT_H1
+    assert _snap_terminal_sprt_verdict(_sprt(-0.4), STATUS_DONE).status == SPRT_H0
 
 
 def test_snap_stopped_near_bound_snaps():
     out = _snap_terminal_sprt_verdict(_sprt(2.93), STATUS_STOPPED)
-    assert out["status"] == SPRT_H1
+    assert out.status == SPRT_H1
 
 
 def test_snap_stopped_mid_run_stays_continue():
     # A genuine mid-run abort far from both bounds is not invented away.
     out = _snap_terminal_sprt_verdict(_sprt(0.4), STATUS_STOPPED)
-    assert out["status"] == SPRT_CONTINUE
+    assert out.status == SPRT_CONTINUE
 
 
 def test_snap_running_never_snaps():
     out = _snap_terminal_sprt_verdict(_sprt(2.93), STATUS_RUNNING)
-    assert out["status"] == SPRT_CONTINUE
+    assert out.status == SPRT_CONTINUE
 
 
 def test_snap_leaves_already_concluded_untouched():
     out = _snap_terminal_sprt_verdict(_sprt(2.93, status=SPRT_H1), STATUS_DONE)
-    assert out["status"] == SPRT_H1
+    assert out.status == SPRT_H1

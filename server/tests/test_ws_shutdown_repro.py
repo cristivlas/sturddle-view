@@ -1,10 +1,10 @@
 """One-off stress repro for the wsproto LocalProtocolError that used to
 surface during test_e2e_slot_grid teardown.
 
-Opt-in only -- skipped unless SV_WS_STRESS=1 is set.
+Opt-in only -- skipped unless SVTEST_WS_STRESS=1 is set.
 
 Run with:
-    SV_WS_STRESS=1 pytest server/tests/test_ws_shutdown_repro.py -s
+    SVTEST_WS_STRESS=1 pytest server/tests/test_ws_shutdown_repro.py -s
 
 Background: uvicorn's WSProtocol.shutdown() sends CloseConnection(1012)
 without checking conn.state. When a client cleanly closes right before
@@ -18,60 +18,66 @@ iteration without the guard, 0/N with it) and is preserved for future
 troubleshooting.
 
 Useful knobs:
-    SV_WS_STRESS_ITERS         -- iteration count (default 20)
-    SV_WS_STRESS_CLIENTS       -- WSs per iteration (default 12)
-    SV_WS_STRESS_BYPASS_GUARD  -- remove the app guard mid-test to
-                                  confirm the harness still repros
-                                  against vanilla uvicorn
+    SVTEST_WS_STRESS_ITERS         -- iteration count (default 20)
+    SVTEST_WS_STRESS_CLIENTS       -- WSs per iteration (default 12)
+    SVTEST_WS_STRESS_BYPASS_GUARD  -- remove the app guard mid-test to
+                                      confirm the harness still repros
+                                      against vanilla uvicorn
 """
 from __future__ import annotations
 
-import os
 import socket
 import threading
-import time
 import traceback
 
 import pytest
 
-if not os.environ.get("SV_WS_STRESS"):
-    pytest.skip("set SV_WS_STRESS=1 to run", allow_module_level=True)
+from sturddle_view.env_utils import env_bool, env_int
+
+if not env_bool("SVTEST_WS_STRESS", False):
+    pytest.skip("set SVTEST_WS_STRESS=1 to run", allow_module_level=True)
 
 pytest.importorskip("playwright.async_api")
 
+import uvicorn  # noqa: E402
+import wsproto  # noqa: E402
+from uvicorn.protocols.websockets import wsproto_impl  # noqa: E402
+
+from sturddle_view import app as app_mod  # noqa: E402
+from sturddle_view._uvicorn_signal import make_signalling_server  # noqa: E402
 from sturddle_view.app import create_app  # noqa: E402
-from sturddle_view.config import Settings  # noqa: E402
+from sturddle_view.config import LOOPBACK_HOST, Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 from .conftest import REGISTRY_FILE  # noqa: E402
 
 
-ITERATIONS = int(os.environ.get("SV_WS_STRESS_ITERS", "20"))
-CLIENTS_PER_ITER = int(os.environ.get("SV_WS_STRESS_CLIENTS", "12"))
-BYPASS_GUARD = bool(os.environ.get("SV_WS_STRESS_BYPASS_GUARD"))
+ITERATIONS = env_int("SVTEST_WS_STRESS_ITERS", 20, min_value=1)
+CLIENTS_PER_ITER = env_int("SVTEST_WS_STRESS_CLIENTS", 12, min_value=1)
+BYPASS_GUARD = env_bool("SVTEST_WS_STRESS_BYPASS_GUARD", False)
+# WebSocket close code "service restart", as vanilla uvicorn sends it.
+_WS_CLOSE_SERVICE_RESTART = 1012
 
 
 def _free_port() -> int:
     with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
+        s.bind((LOOPBACK_HOST, 0))
         return s.getsockname()[1]
 
 
 def _start_server(tmp_path):
-    import uvicorn
-
     settings = Settings(token="test-token", auth_disabled=True)
     settings.pgn_dir = tmp_path / "pgn"
     registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     app = create_app(settings=settings, engine_registry=registry)
     port = _free_port()
-    cfg = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="critical", ws="wsproto")
-    srv = uvicorn.Server(cfg)
+    cfg = uvicorn.Config(app, host=LOOPBACK_HOST, port=port, log_level="critical", ws="wsproto")
+    srv, startup = make_signalling_server(cfg)
     thread = threading.Thread(target=srv.run, daemon=True)
     thread.start()
-    deadline = time.time() + 10
-    while time.time() < deadline and not srv.started:
-        time.sleep(0.02)
-    return srv, thread, f"http://127.0.0.1:{port}"
+    startup.done.wait()
+    if not srv.started:
+        raise RuntimeError("uvicorn failed to start") from startup.error
+    return srv, thread, f"http://{LOOPBACK_HOST}:{port}"
 
 
 _OPEN_AND_TRACK_JS = """
@@ -125,18 +131,18 @@ def _maybe_bypass_guard():
     Returns a tuple of (saved_shutdown, saved_flag) so we can restore."""
     if not BYPASS_GUARD:
         return None
-    import wsproto
-    from uvicorn.protocols.websockets import wsproto_impl
-    from sturddle_view import app as app_mod
-
     saved_shutdown = wsproto_impl.WSProtocol.shutdown
     saved_flag = app_mod._ws_shutdown_patched
 
     def _vanilla_shutdown(self):
         self.stop_keepalive()
         if self.handshake_complete:
-            self.queue.put_nowait({"type": "websocket.disconnect", "code": 1012})
-            output = self.conn.send(wsproto.events.CloseConnection(code=1012))
+            self.queue.put_nowait(
+                {"type": "websocket.disconnect", "code": _WS_CLOSE_SERVICE_RESTART}
+            )
+            output = self.conn.send(
+                wsproto.events.CloseConnection(code=_WS_CLOSE_SERVICE_RESTART)
+            )
             self.transport.write(output)
         else:
             self.send_500_response()
@@ -152,9 +158,6 @@ def _maybe_bypass_guard():
 def _restore_guard(saved):
     if saved is None:
         return
-    from uvicorn.protocols.websockets import wsproto_impl
-    from sturddle_view import app as app_mod
-
     saved_shutdown, saved_flag = saved
     wsproto_impl.WSProtocol.shutdown = saved_shutdown
     app_mod._ws_shutdown_patched = saved_flag

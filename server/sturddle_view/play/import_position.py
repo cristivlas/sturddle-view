@@ -13,8 +13,26 @@ import chess
 import chess.pgn
 
 from ..chess.board import board_from, side_to_move
+from ..chess.pgn_tags import (
+    TAG_ANNOTATOR,
+    TAG_BLACK,
+    TAG_EVENT,
+    TAG_FEN,
+    TAG_RESULT,
+    TAG_TIME_CONTROL,
+    TAG_WHITE,
+    UNKNOWN_TAG_VALUE,
+)
 from ..chess.pgn_walk import walk_mainline
-from ..chess.results import DECISIVE_RESULTS
+from ..chess.results import DECISIVE_RESULTS, UNKNOWN_RESULT
+from ..chess.score import CP_PER_PAWN, SCORE_CP, SCORE_DEPTH, SCORE_MATE, flip_score
+
+_ILLEGAL_POSITION = "illegal position"
+# Blank line between comment paragraphs.
+_PARAGRAPH_SEP = "\n\n"
+_MS_PER_SECOND = 1000.0
+# A pasted FEN that starts with one of these tags is really a PGN.
+_PGN_GIVEAWAY_TAGS = (TAG_EVENT, TAG_WHITE, TAG_FEN)
 
 
 def explain_invalid(board: chess.Board) -> str:
@@ -22,11 +40,15 @@ def explain_invalid(board: chess.Board) -> str:
     'illegal position' if no flags are set."""
     status = board.status()
     if status == chess.STATUS_VALID:
-        return "illegal position"
+        return _ILLEGAL_POSITION
     reasons = [s.name.lower().replace("_", " ")
                for s in chess.Status if s != chess.STATUS_VALID and status & s]
-    return ", ".join(reasons) if reasons else "illegal position"
+    return ", ".join(reasons) if reasons else _ILLEGAL_POSITION
 
+
+def _summary(white: str | None, black: str | None, result: str | None, side: str, **extra) -> dict:
+    """Import summary; the client formats it."""
+    return {"white": white, "black": black, "result": result, "side_to_move": side, **extra}
 
 
 @dataclass
@@ -198,7 +220,7 @@ def _sanitize_comment(comment: str | None) -> str | None:
             if ch.islower():
                 paragraphs[0] = first[:i] + ch.upper() + first[i + 1:]
             break
-    return "\n\n".join(paragraphs)
+    return _PARAGRAPH_SEP.join(paragraphs)
 
 
 def _cutechess_time_seconds(comment: str | None) -> float | None:
@@ -220,7 +242,7 @@ def _cutechess_time_seconds(comment: str | None) -> float | None:
         v = float(m.group(1))
     except ValueError:
         return None
-    return v / 1000.0 if m.group(2) == "ms" else v
+    return v / _MS_PER_SECOND if m.group(2) == "ms" else v
 
 
 def _parse_eval_token(tok: str) -> dict | None:
@@ -245,7 +267,7 @@ def _parse_eval_token(tok: str) -> dict | None:
             n = int(s[1:])
         except ValueError:
             return None
-        return {"mate": sign * n}
+        return {SCORE_MATE: sign * n}
     # Float pawns vs integer centipawns: a decimal point (or value < ~50)
     # implies pawns. Without a decimal we can't tell, but in practice:
     # - Cutechess uses dotted floats (+0.34).
@@ -256,16 +278,15 @@ def _parse_eval_token(tok: str) -> dict | None:
     except ValueError:
         return None
     if "." in s:
-        return {"cp": int(round(sign * f * 100))}
-    return {"cp": sign * int(f)}
+        return {SCORE_CP: int(round(sign * f * CP_PER_PAWN))}
+    return {SCORE_CP: sign * int(f)}
 
 
-def _flip_pov(score: dict) -> dict:
-    """Negate cp/mate for STM->white POV conversion."""
-    if "cp" in score:
-        return {"cp": -score["cp"]}
-    if "mate" in score:
-        return {"mate": -score["mate"]}
+def _with_depth(score: dict, depth_s: str) -> dict:
+    try:
+        score[SCORE_DEPTH] = int(depth_s.strip())
+    except ValueError:
+        pass
     return score
 
 
@@ -294,13 +315,7 @@ def _parse_pgn_eval(comment: str | None, mover_white: bool) -> dict | None:
             head, _, depth_s = body.partition(",")
             score = _parse_eval_token(head)
             if score is not None:
-                if not mover_white:
-                    score = _flip_pov(score)
-                try:
-                    score["depth"] = int(depth_s.strip())
-                except ValueError:
-                    pass
-                return score
+                return _with_depth(score if mover_white else flip_score(score), depth_s)
         else:
             # Lichess: float pawns or mate, white POV (no flip).
             score = _parse_eval_token(body)
@@ -312,13 +327,7 @@ def _parse_pgn_eval(comment: str | None, mover_white: bool) -> dict | None:
     if m:
         score = _parse_eval_token(m.group("eval"))
         if score is not None:
-            if not mover_white:
-                score = _flip_pov(score)
-            try:
-                score["depth"] = int(m.group("depth"))
-            except ValueError:
-                pass
-            return score
+            return _with_depth(score if mover_white else flip_score(score), m.group("depth"))
 
     return None
 
@@ -330,7 +339,7 @@ def parse_fen(text: str) -> ImportedPosition:
     # Common mistake: paste a PGN into the FEN tab. Detect early and give a
     # clear redirect instead of letting python-chess echo back the full
     # pasted blob in its ValueError.
-    if "[Event " in fen or "[White " in fen or "[FEN " in fen:
+    if any(f"[{tag} " in fen for tag in _PGN_GIVEAWAY_TAGS):
         raise PositionImportError(
             "This looks like a PGN, not a FEN. Switch to the PGN tab."
         )
@@ -341,7 +350,9 @@ def parse_fen(text: str) -> ImportedPosition:
         # message as-is rather than re-prefixing (which doubled the label).
         raise PositionImportError(str(e)) from e
     if not board.is_valid():
-        raise PositionImportError("illegal position (e.g. adjacent kings, too many pieces, pawns on back rank)")
+        raise PositionImportError(
+            f"{_ILLEGAL_POSITION} (e.g. adjacent kings, too many pieces, pawns on back rank)"
+        )
     side = side_to_move(board)
     # Treat the standard startpos as None so opening-book lookup engages
     # on subsequent moves (lookup keys on move history from startpos).
@@ -352,13 +363,7 @@ def parse_fen(text: str) -> ImportedPosition:
         final_fen=board.fen(),
         side_to_move=side,
         ply=board.ply(),
-        summary={
-            "white": None,
-            "black": None,
-            "result": None,
-            "side_to_move": side,
-            "fen": board.fen(),
-        },
+        summary=_summary(None, None, None, side, fen=board.fen()),
     )
 
 
@@ -373,7 +378,7 @@ def parse_pgn(text: str) -> ImportedPosition:
         raise PositionImportError("no game found in PGN")
     headers = dict(game.headers)
     # FEN header lets the PGN start from a non-standard position.
-    start_fen_header = headers.get("FEN")
+    start_fen_header = headers.get(TAG_FEN)
     try:
         start_board = board_from(start_fen_header)
     except ValueError as e:
@@ -394,47 +399,47 @@ def parse_pgn(text: str) -> ImportedPosition:
     if board is None:
         board = start_board.copy()
     # python-chess's PGN parser is lenient: arbitrary text yields a valid
-    # game with no moves and a startpos board. Reject that — an "import"
+    # game with no moves and a startpos board. Reject that -- an "import"
     # that just gets you to startpos is the New Game button.
     if not moves_uci and not start_fen_header:
         raise PositionImportError("PGN contains no moves")
     side = side_to_move(board)
-    white = headers.get("White", "?")
-    black = headers.get("Black", "?")
-    result = headers.get("Result", "*")
-    summary = {
-        "white": white if white != "?" else None,
-        "black": black if black != "?" else None,
-        "result": result if result in DECISIVE_RESULTS else None,
-        "side_to_move": side,
-    }
+    white = headers.get(TAG_WHITE, UNKNOWN_TAG_VALUE)
+    black = headers.get(TAG_BLACK, UNKNOWN_TAG_VALUE)
+    result = headers.get(TAG_RESULT, UNKNOWN_RESULT)
+    summary = _summary(
+        white if white != UNKNOWN_TAG_VALUE else None,
+        black if black != UNKNOWN_TAG_VALUE else None,
+        result if result in DECISIVE_RESULTS else None,
+        side,
+    )
     # Reconstruct (white, black) pre-move snapshots. Prefer [%clk] (state)
     # since it's authoritative; fall back to [%emt] (per-move elapsed) when
     # only that is present, deriving remaining clocks via initial+increment
     # from the [TimeControl] header.
     clk_values = [n.clock() for n in nodes]
-    # Per-ply eval, white POV. Extracted on the same node walk so the STM
-    # flip can use the side-to-move at each ply.
-    eval_per_ply: list[dict | None] = []
+    # Per-ply eval, white POV; the STM flip uses the mover at each ply.
+    eval_per_ply: list[dict | None] = [
+        _parse_pgn_eval(node.comment, mover_white)
+        for node, mover_white in zip(nodes, movers_white)
+    ]
     clock_history: list[tuple[float, float]] | None = None
     final_white = final_black = None
     if any(v is not None for v in clk_values):
         clock_history = []
         last_w = last_b = None  # last known post-move clock per side
-        for i, (node, mover_white) in enumerate(zip(nodes, movers_white)):
-            # Pre-move snapshot for ply i = last known clocks for each side.
+        for after, mover_white in zip(clk_values, movers_white):
+            # Pre-move snapshot for this ply = last known clocks for each side.
             clock_history.append((last_w, last_b))
-            after = clk_values[i]
             if after is not None:
                 if mover_white:
                     last_w = after
                 else:
                     last_b = after
-            eval_per_ply.append(_parse_pgn_eval(node.comment, mover_white))
         final_white, final_black = last_w, last_b
     else:
         emt_values = [n.emt() for n in nodes]
-        tc_initial, tc_increment = _parse_pgn_timecontrol(headers.get("TimeControl"))
+        tc_initial, tc_increment = _parse_pgn_timecontrol(headers.get(TAG_TIME_CONTROL))
         # Third tier: cutechess/fastchess inline "<eval>/<depth> <time>".
         # Only consulted when %clk and %emt are both absent.
         if not any(v is not None for v in emt_values):
@@ -443,9 +448,8 @@ def parse_pgn(text: str) -> ImportedPosition:
             clock_history = []
             last_w = tc_initial
             last_b = tc_initial
-            for i, (node, mover_white) in enumerate(zip(nodes, movers_white)):
+            for spent, mover_white in zip(emt_values, movers_white):
                 clock_history.append((last_w, last_b))
-                spent = emt_values[i]
                 if spent is not None:
                     new_remaining = max(0.0, (last_w if mover_white else last_b)
                                         - spent + tc_increment)
@@ -453,12 +457,7 @@ def parse_pgn(text: str) -> ImportedPosition:
                         last_w = new_remaining
                     else:
                         last_b = new_remaining
-                eval_per_ply.append(_parse_pgn_eval(node.comment, mover_white))
             final_white, final_black = last_w, last_b
-        else:
-            # No clock info but we still want evals if any are present.
-            for node, mover_white in zip(nodes, movers_white):
-                eval_per_ply.append(_parse_pgn_eval(node.comment, mover_white))
     eval_history: list[dict | None] | None = (
         eval_per_ply if any(e is not None for e in eval_per_ply) else None
     )
@@ -470,16 +469,16 @@ def parse_pgn(text: str) -> ImportedPosition:
         comments_per_ply if any(c is not None for c in comments_per_ply) else None
     )
     # Root comment: pre-game prose plus the Annotator header, sanitized.
-    annotator = headers.get("Annotator", "").strip()
+    annotator = headers.get(TAG_ANNOTATOR, "").strip()
     pieces = []
-    if annotator and annotator != "?":
-        pieces.append(f"Annotator: {annotator}")
+    if annotator and annotator != UNKNOWN_TAG_VALUE:
+        pieces.append(f"{TAG_ANNOTATOR}: {annotator}")
     root_raw = (game.comment or "").strip()
     if root_raw:
         cleaned = _sanitize_comment(root_raw)
         if cleaned:
             pieces.append(cleaned)
-    root_comment = "\n\n".join(pieces) if pieces else None
+    root_comment = _PARAGRAPH_SEP.join(pieces) if pieces else None
     return ImportedPosition(
         start_fen=start_fen_header if start_fen_header else None,
         moves_uci=moves_uci,

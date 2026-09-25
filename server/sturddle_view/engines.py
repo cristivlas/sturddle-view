@@ -1,7 +1,7 @@
 """Engine registry: persistent list of UCI engines the user has registered.
 
-Storage: a single JSON file under the OS-appropriate user config dir
-(`platformdirs.user_config_dir("sturddle-view")`).
+Storage: a single JSON file under the per-instance user config dir
+(see ``app_config_dir``).
 
 The registry is in-memory once loaded; mutations are written back atomically.
 """
@@ -12,19 +12,27 @@ import json
 import logging
 import os
 import subprocess
-import sys
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import chess.engine
-from platformdirs import user_config_dir
 
-from . import app_dir_name
+from . import app_config_dir, is_windows
 from ._atomic import atomic_write_json
 from .engine_tmp import cleanup_spawn_dir, create_spawn_dir, temp_env
+from .env_utils import env_float, env_path
+from .error_detail import CODE_KEY, MESSAGE_KEY, error_detail
 
 log = logging.getLogger(__name__)
+
+_REGISTRY_FILENAME = "engines.json"
+_REGISTRY_JSON_INDENT = 2
+_KEY_ENGINES = "engines"
+_KEY_SELECTED_ID = "selected_id"
+_ENGINE_ID_HEX_CHARS = 12
+# Numbering for a deduplicated name: "Name", then "Name (2)", "Name (3)", ...
+_FIRST_DUP_SUFFIX = 2
 
 
 def default_registry_path() -> Path:
@@ -32,28 +40,38 @@ def default_registry_path() -> Path:
 
     ``SV_ENGINE_REGISTRY_PATH`` overrides the default (tests, isolated
     deployments). Defaults to platform user-config dir."""
-    override = os.environ.get("SV_ENGINE_REGISTRY_PATH")
-    if override:
-        return Path(override)
-    return Path(user_config_dir(app_dir_name(), appauthor=False)) / "engines.json"
+    return env_path("SV_ENGINE_REGISTRY_PATH", app_config_dir() / _REGISTRY_FILENAME)
 
+
+# UCI option names the app sets itself (engine defaults, tournaments).
+UCI_OPT_THREADS = "Threads"
+UCI_OPT_HASH = "Hash"
+UCI_OPT_SYZYGY_PATH = "SyzygyPath"
+UCI_OPT_PONDER = "Ponder"
+UCI_OPT_OWNBOOK = "OwnBook"
 
 # UCI options the engine manages itself; rendering them in our dialog is
 # either pointless or actively harmful. Lower-case for case-insensitive match.
-_HIDDEN_OPTIONS = {"multipv", "ponder", "uci_chess960", "uci_variant", "uci_analysemode"}
+_HIDDEN_OPTIONS = {
+    "multipv", UCI_OPT_PONDER.lower(), "uci_chess960", "uci_variant", "uci_analysemode",
+}
 
 _DEFAULT_PROBE_TIMEOUT_SEC = 3.0
+_MIN_PROBE_TIMEOUT_SEC = 0.05
 _PROBE_TIMEOUT_ENV = "SV_ENGINE_PROBE_TIMEOUT_SEC"
+
+# Probe error codes (``error_detail`` shape).
+_ERR_NOT_UCI = "engine_not_uci"
+_ERR_PROBE_FAILED = "engine_probe_failed"
+
+_NUL = "\x00"
 
 
 def _probe_timeout_sec() -> float:
-    raw = os.environ.get(_PROBE_TIMEOUT_ENV)
-    if not raw:
-        return _DEFAULT_PROBE_TIMEOUT_SEC
-    try:
-        return max(float(raw), 0.05)
-    except ValueError:
-        return _DEFAULT_PROBE_TIMEOUT_SEC
+    # Read per call so tests can shorten it via the env.
+    return env_float(
+        _PROBE_TIMEOUT_ENV, _DEFAULT_PROBE_TIMEOUT_SEC, min_value=_MIN_PROBE_TIMEOUT_SEC,
+    )
 
 
 def _popen_kwargs(env: dict[str, str] | None, tmp_dir: Path | None = None) -> dict:
@@ -72,7 +90,7 @@ def _popen_kwargs(env: dict[str, str] | None, tmp_dir: Path | None = None) -> di
         merged.update(env)
     if merged:
         out["env"] = {**os.environ, **merged}
-    if sys.platform == "win32":
+    if is_windows():
         out["creationflags"] = subprocess.CREATE_NO_WINDOW
     return out
 
@@ -85,19 +103,17 @@ def _classify_probe_exception(exc: BaseException) -> dict:
     both reach us as plain OSError.
     """
     if isinstance(exc, FileNotFoundError):
-        return {"code": "engine_path_not_found",
-                "message": "Engine file not found."}
+        return error_detail("engine_path_not_found", "Engine file not found.")
     if isinstance(exc, PermissionError):
-        return {"code": "engine_permission_denied",
-                "message": "Permission denied launching the engine."}
+        return error_detail("engine_permission_denied", "Permission denied launching the engine.")
     if isinstance(exc, chess.engine.EngineError):
-        return {"code": "engine_not_uci",
-                "message": "Engine did not respond as a UCI engine."}
+        return error_detail(_ERR_NOT_UCI, "Engine did not respond as a UCI engine.")
     if isinstance(exc, OSError):
-        return {"code": "engine_not_launchable",
-                "message": "Could not launch engine (file is not a runnable program for this system)."}
-    return {"code": "engine_probe_failed",
-            "message": "Could not probe engine."}
+        return error_detail(
+            "engine_not_launchable",
+            "Could not launch engine (file is not a runnable program for this system).",
+        )
+    return error_detail(_ERR_PROBE_FAILED, "Could not probe engine.")
 
 
 async def probe_engine(
@@ -107,7 +123,7 @@ async def probe_engine(
 ) -> tuple[str | None, dict[str, dict], dict | None]:
     """Briefly spawn the engine; return (uci_id_name, option_schema, error).
 
-    `args` and `env` mirror the launch settings stored on the engine — we
+    `args` and `env` mirror the launch settings stored on the engine -- we
     probe with the same launch profile that will run the engine in earnest,
     so option discovery reflects flags / env vars that gate UCI options.
     `env` is overlaid on top of the parent process environment (the user
@@ -143,20 +159,19 @@ async def probe_engine(
         # subprocess on cancellation. Return a friendly classification
         # instead of hanging the caller.
         log.warning("probe handshake timed out for %s (%.2fs)", engine_path, timeout)
-        return None, {}, {
-            "code": "engine_not_uci",
-            "message": "Engine did not respond to UCI handshake (timeout).",
-        }
+        return None, {}, error_detail(
+            _ERR_NOT_UCI, "Engine did not respond to UCI handshake (timeout).",
+        )
     except Exception as e:
         cleanup_spawn_dir(tmp_dir)
         err = _classify_probe_exception(e)
         # Classified failures are routine: legacy broken entries get re-probed
         # on every GET /engines, full tracebacks just spam the log. Unknown
         # exception types stay at ERROR -- those are real bug signals.
-        if err["code"] == "engine_probe_failed":
+        if err[CODE_KEY] == _ERR_PROBE_FAILED:
             log.error("could not spawn %s for probe", engine_path, exc_info=True)
         else:
-            log.warning("probe failed for %s: %s", engine_path, err["message"])
+            log.warning("probe failed for %s: %s", engine_path, err[MESSAGE_KEY])
         return None, {}, err
     try:
         uci_name = engine.id.get("name") or ""
@@ -196,10 +211,10 @@ class Engine:
     options: dict[str, str | int | bool] = field(default_factory=dict)
     # Cached UCI option list captured at registration. Schema entries:
     #   {name: {type, default, min?, max?, vars?}}
-    # type ∈ "spin" | "combo" | "check" | "string" | "button"
+    # type: "spin" | "combo" | "check" | "string" | "button"
     option_schema: dict[str, dict] = field(default_factory=dict)
     # Extra command-line argv passed to the engine on launch. One literal
-    # argv element per list entry — no shell parsing.
+    # argv element per list entry -- no shell parsing.
     args: list[str] = field(default_factory=list)
     # Per-engine environment overrides. Overlaid on top of the parent
     # process env at spawn time (parent env is always inherited).
@@ -218,9 +233,9 @@ class Engine:
         env: dict[str, str] | None = None,
         uci_name: str | None = None,
         rating: int | None = None,
-    ) -> "Engine":
+    ) -> Engine:
         return Engine(
-            id=uuid.uuid4().hex[:12],
+            id=uuid.uuid4().hex[:_ENGINE_ID_HEX_CHARS],
             name=name,
             path=path,
             uci_name=uci_name,
@@ -254,7 +269,7 @@ class InvalidLaunchProfileError(ValueError):
     """
 
 
-_ENV_KEY_FORBIDDEN_CHARS = ("=", "\x00", "\n", "\r")
+_ENV_KEY_FORBIDDEN_CHARS = ("=", _NUL, "\n", "\r")
 
 
 def validate_launch_profile(
@@ -269,7 +284,7 @@ def validate_launch_profile(
         for a in args:
             if not isinstance(a, str):
                 raise InvalidLaunchProfileError("each arg must be a string")
-            if "\x00" in a:
+            if _NUL in a:
                 raise InvalidLaunchProfileError("arg contains NUL")
     if env is not None:
         for k, v in env.items():
@@ -285,7 +300,7 @@ def validate_launch_profile(
                 raise InvalidLaunchProfileError(
                     f"env value must be a string: {k}",
                 )
-            if "\x00" in v:
+            if _NUL in v:
                 raise InvalidLaunchProfileError(f"env value contains NUL: {k}")
 
 
@@ -326,7 +341,7 @@ class EngineRegistry:
         engines: dict[str, Engine] = {}
         seen: set[str] = set()
         mutated = False
-        for entry in data.get("engines", []):
+        for entry in data.get(_KEY_ENGINES, []):
             name = entry["name"]
             unique = self._dedup_name(name, seen)
             if unique != name:
@@ -334,20 +349,21 @@ class EngineRegistry:
             seen.add(unique.casefold())
             args = list(entry.get("args", []) or [])
             env = dict(entry.get("env", {}) or {})
+            engine_id = entry["id"]
             try:
                 validate_launch_profile(args, env)
             except InvalidLaunchProfileError:
                 # Don't refuse to load the whole registry over a bad
-                # entry — drop the launch profile and keep the engine
+                # entry -- drop the launch profile and keep the engine
                 # otherwise usable. The user can re-edit via the dialog.
                 log.warning(
                     "engine %s: invalid launch profile in registry; dropping args/env",
-                    entry["id"],
+                    engine_id,
                 )
                 args, env = [], {}
                 mutated = True
             e = Engine(
-                id=entry["id"],
+                id=engine_id,
                 name=unique,
                 path=entry["path"],
                 uci_name=entry.get("uci_name"),
@@ -359,7 +375,7 @@ class EngineRegistry:
             )
             engines[e.id] = e
         self._engines = engines
-        self._selected_id = data.get("selected_id")
+        self._selected_id = data.get(_KEY_SELECTED_ID)
         if self._selected_id and self._selected_id not in self._engines:
             self._selected_id = None
         self._loaded = True
@@ -370,7 +386,7 @@ class EngineRegistry:
     def _dedup_name(desired: str, taken: set[str]) -> str:
         if desired.casefold() not in taken:
             return desired
-        n = 2
+        n = _FIRST_DUP_SUFFIX
         while f"{desired} ({n})".casefold() in taken:
             n += 1
         return f"{desired} ({n})"
@@ -393,10 +409,10 @@ class EngineRegistry:
 
     def _save(self) -> None:
         payload = {
-            "engines": [asdict(e) for e in self._engines.values()],
-            "selected_id": self._selected_id,
+            _KEY_ENGINES: [asdict(e) for e in self._engines.values()],
+            _KEY_SELECTED_ID: self._selected_id,
         }
-        atomic_write_json(self._path, payload, indent=2)
+        atomic_write_json(self._path, payload, indent=_REGISTRY_JSON_INDENT)
 
     def list(self) -> list[Engine]:
         self._ensure_loaded()
@@ -517,6 +533,16 @@ class ResolvedLaunch:
     env: dict[str, str] = field(default_factory=dict)
 
 
+def _launch_for(e: Engine) -> ResolvedLaunch:
+    return ResolvedLaunch(
+        path=e.path,
+        name=e.name,
+        options=dict(e.options or {}),
+        args=list(e.args or []),
+        env=dict(e.env or {}),
+    )
+
+
 def resolve_analysis(
     registry: EngineRegistry, settings,
 ) -> ResolvedLaunch:
@@ -527,14 +553,7 @@ def resolve_analysis(
     """
     if settings.analysis_engine_id:
         try:
-            e = registry.get(settings.analysis_engine_id)
-            return ResolvedLaunch(
-                path=e.path,
-                name=e.name,
-                options=dict(e.options or {}),
-                args=list(e.args or []),
-                env=dict(e.env or {}),
-            )
+            return _launch_for(registry.get(settings.analysis_engine_id))
         except EngineNotFoundError:
             pass
     return resolve_selected(registry, settings)
@@ -551,14 +570,7 @@ def resolve_selected(
     """
     if registry.selected_id:
         try:
-            e = registry.get(registry.selected_id)
-            return ResolvedLaunch(
-                path=e.path,
-                name=e.name,
-                options=dict(e.options or {}),
-                args=list(e.args or []),
-                env=dict(e.env or {}),
-            )
+            return _launch_for(registry.get(registry.selected_id))
         except EngineNotFoundError:
             pass
     if settings.engine_path:

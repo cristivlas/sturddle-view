@@ -14,15 +14,24 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from dataclasses import dataclass
 
-from fastapi import HTTPException, Request
+import chess
+from fastapi import HTTPException, Request, status
 
 from ..chess.board import moves_san
+from ..chess.results import UNKNOWN_RESULT
+from ..config import PROVIDER_OLLAMA
 from ..env_utils import env_int
-from ..llm import PromptMode, build_initial_user_message
+from ..llm import (
+    COACH_MODE,
+    COMMENTATOR_MODE,
+    PromptMode,
+    build_initial_user_message,
+    render_playbook,
+)
 from ..llm.ollama import DEFAULT_BASE_URL as _DEFAULT_OLLAMA_BASE_URL, OllamaProvider
+from ..play.human_vs_engine import live_hve
 from ..play.mode import Mode
 from ..play.opening_reply import book_ref_from_settings, probe_opening_reply
 
@@ -35,8 +44,11 @@ _PER_COMMENT_MAX_DEFAULT = 200
 _TOTAL_COMMENT_MAX_DEFAULT = 1500
 _PER_COMMENT_MAX_ENV = "SV_AI_ANNOTATION_PER_COMMENT_MAX"
 _TOTAL_COMMENT_MAX_ENV = "SV_AI_ANNOTATION_TOTAL_MAX"
+# A cap below one char renders nothing -- treated as a bad env value.
+_ANNOTATION_CAP_MIN = 1
 # Marker appended to a comment that was truncated mid-string.
 _TRUNCATION_MARKER = "..."
+_AI_FACTORY_MISSING = "AI provider factory not initialized"
 
 # Plies past the matched opening line that still count as "in the opening"
 # for the opening-theory directive; beyond it the game has left book and the
@@ -46,15 +58,23 @@ _OPENING_PHASE_SLACK_DEFAULT = 12
 _OPENING_PHASE_SLACK_ENV = "SV_AI_OPENING_PHASE_SLACK_PLIES"
 
 
-def _int_env(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if not raw:
-        return default
-    try:
-        v = int(raw)
-    except ValueError:
-        return default
-    return v if v > 0 else default
+def _annotation_cap(env_name: str, default: int) -> int:
+    return env_int(env_name, default, min_value=_ANNOTATION_CAP_MIN)
+
+
+def ai_coordinator(state):
+    """The app's AI coordinator, or None before it is wired."""
+    return getattr(state, "ai_coordinator", None)
+
+
+def require_ai_provider_factory(request: Request):
+    """The app's per-turn provider factory; 503 before it is wired."""
+    factory = getattr(request.app.state, "ai_provider_factory", None)
+    if factory is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_AI_FACTORY_MISSING,
+        )
+    return factory
 
 
 def _cap_annotations(
@@ -125,10 +145,6 @@ def _short_engine_name(full: str | None) -> str | None:
     return full.split()[0] or full
 
 
-_COMMENTATOR_MODE: PromptMode = "commentator"
-_COACH_MODE: PromptMode = "coach"
-
-
 def _prompt_mode_for(hve) -> PromptMode:
     """Pick the persona from where analysis was entered.
 
@@ -137,10 +153,17 @@ def _prompt_mode_for(hve) -> PromptMode:
     - Anywhere else (live play, paused) -> coach: second-person.
     """
     if hve is None:
-        return _COACH_MODE
+        return COACH_MODE
     if hve.pre_analysis_mode() is Mode.VIEWING:
-        return _COMMENTATOR_MODE
-    return _COACH_MODE
+        return COMMENTATOR_MODE
+    return COACH_MODE
+
+
+def _playbook_for(hve, board: chess.Board, mode: PromptMode) -> str:
+    """Rendered plan line (docs/ai-playbook-spec.md). "Our side" is the
+    human for the coach, the side to move for the commentator."""
+    our_color = board.turn if mode == COMMENTATOR_MODE else hve.human_color()
+    return render_playbook(hve.situation(our_color), mode, board.turn)
 
 
 @dataclass(slots=True, frozen=True)
@@ -163,9 +186,8 @@ async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
     if board is None:
         return None
     opening = hve.lookup_opening()
-    # `*` means "result unknown / unfinished" in PGN; treat as absent.
     raw_result = hve.viewed_pgn_result()
-    result = raw_result if raw_result and raw_result != "*" else None
+    result = raw_result if raw_result and raw_result != UNKNOWN_RESULT else None
     san_history = _san_history_for(hve)
     # SAN at the current ply is the move played from the position under
     # review (view mode); None in play mode where there is no future.
@@ -177,10 +199,10 @@ async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
     # Gate on the prompt persona, not Mode.VIEWING: keeps annotation
     # plumbing aligned with the commentator addendum that tells the
     # model how to weigh them.
-    if mode == _COMMENTATOR_MODE:
+    if mode == COMMENTATOR_MODE:
         raw_comments, raw_root = hve.view_game_comments()
-        per_max = _int_env(_PER_COMMENT_MAX_ENV, _PER_COMMENT_MAX_DEFAULT)
-        total_max = _int_env(_TOTAL_COMMENT_MAX_ENV, _TOTAL_COMMENT_MAX_DEFAULT)
+        per_max = _annotation_cap(_PER_COMMENT_MAX_ENV, _PER_COMMENT_MAX_DEFAULT)
+        total_max = _annotation_cap(_TOTAL_COMMENT_MAX_ENV, _TOTAL_COMMENT_MAX_DEFAULT)
         annotations, root_annotation = _cap_annotations(
             raw_comments, raw_root, per_max, total_max,
         )
@@ -220,6 +242,7 @@ async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
         root_annotation=root_annotation,
         in_opening=in_opening,
         book_reply=reply,
+        playbook=_playbook_for(hve, board, mode),
     )
     if reply is None:
         return TurnInputs(message, None, ())
@@ -231,22 +254,22 @@ async def _evict_stale_ollama_models(base_url: str, target_model: str) -> None:
     than `target_model`. All failures swallowed: worst case is the
     daemon's own "resource limits" error on the next load."""
     if not target_model:
-        log.debug("ollama: no target model selected; skipping stale-model evict")
+        log.debug("%s: no target model selected; skipping stale-model evict", PROVIDER_OLLAMA)
         return
     provider = OllamaProvider(base_url=base_url, model="")
     try:
         loaded = await provider.list_loaded_models()
     except Exception as exc:
-        log.warning("ollama: list_loaded_models failed: %s", exc)
+        log.warning("%s: list_loaded_models failed: %s", PROVIDER_OLLAMA, exc)
         return
     for name in loaded:
         if name == target_model:
             continue
         try:
             await provider.evict_model(name)
-            log.info("ollama: evicted stale model %s", name)
+            log.info("%s: evicted stale model %s", PROVIDER_OLLAMA, name)
         except Exception as exc:
-            log.warning("ollama: evict_model(%s) failed: %s", name, exc)
+            log.warning("%s: evict_model(%s) failed: %s", PROVIDER_OLLAMA, name, exc)
 
 
 def _on_turn_done(task: asyncio.Task, state) -> None:
@@ -262,7 +285,7 @@ def _on_turn_done(task: asyncio.Task, state) -> None:
     # else this stale callback tears down the live turn's mode.
     if task is not getattr(state, "ai_task", None):
         return
-    hve = getattr(state, "hve", None)
+    hve = live_hve(state)
     if hve is None:
         return
     # A turn that died never produced analysis: exit ANALYZING so the
@@ -279,14 +302,15 @@ async def start_ai_turn(request: Request) -> None:
     Raises HTTPException on configuration/provider errors so the
     /game/analysis/start endpoint can surface them as 4xx/5xx.
     """
-    coord = getattr(request.app.state, "ai_coordinator", None)
+    coord = ai_coordinator(request.app.state)
     if coord is None:
-        raise HTTPException(status_code=503, detail="AI coordinator not initialized")
-    factory = getattr(request.app.state, "ai_provider_factory", None)
-    if factory is None:
-        raise HTTPException(status_code=503, detail="AI provider factory not initialized")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI coordinator not initialized",
+        )
+    factory = require_ai_provider_factory(request)
     s = request.app.state.settings
-    if (s.ai_provider or "").lower() == "ollama":
+    if (s.ai_provider or "").lower() == PROVIDER_OLLAMA:
         base_url = s.ai_base_url or _DEFAULT_OLLAMA_BASE_URL
         await _evict_stale_ollama_models(base_url, s.ai_model or "")
     hve = request.app.state.hve
@@ -308,7 +332,9 @@ async def start_ai_turn(request: Request) -> None:
         # Surfaced to the client as HTTP 500 with the message; the stack
         # is noise (config/build failure, not an internal bug).
         log.error("AI provider factory failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"AI provider error: {e}") from e
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"AI provider error: {e}",
+        ) from e
     # Pin the task on app.state so the event loop holds a strong ref --
     # asyncio GC can otherwise reap an unreferenced task mid-flight.
     task = asyncio.create_task(
@@ -330,7 +356,7 @@ async def start_ai_turn(request: Request) -> None:
 
 async def cancel_ai_turn(request: Request) -> None:
     """Cancel any in-flight AI turn. No-op if nothing is running."""
-    coord = getattr(request.app.state, "ai_coordinator", None)
+    coord = ai_coordinator(request.app.state)
     if coord is None:
         return
     await coord.cancel()

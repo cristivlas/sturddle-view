@@ -4,6 +4,7 @@
 // the applySizes callback.
 
 import { loadJson, saveJson } from "./storage.js";
+import { applySplitColWidths } from "./split-table.js";
 
 const DRAG_LINE_CLASS = "col-drag-line";
 
@@ -153,9 +154,10 @@ export function attachColumnResize({
 
 // Build the `applySizes` callback for percentage-width columns: on a drag it
 // clamps the dragged boundary to `minPct` (stealing the deficit from the
-// neighbor), then writes every column's width. Shared by the standings,
+// neighbor), then writes every column's width to every colgroup in
+// `colElsLists` (head + body for a split table). Shared by the standings,
 // tourney, and head-to-head tables so the clamp math lives in one place.
-export function makePctApplySizes(colEls, minPct) {
+export function makePctApplySizes(colElsLists, minPct) {
   return function applySizes(sizes, rctx) {
     if (rctx) {
       const { deltaFrac, startSizes, gripIdx } = rctx;
@@ -167,6 +169,6 @@ export function makePctApplySizes(colEls, minPct) {
       sizes[gripIdx] = a;
       sizes[gripIdx + 1] = b;
     }
-    colEls.forEach((c, i) => { c.style.width = sizes[i] + "%"; });
+    applySplitColWidths(colElsLists, sizes);
   };
 }

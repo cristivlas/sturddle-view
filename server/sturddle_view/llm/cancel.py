@@ -5,7 +5,7 @@ into the tool callable. The runner flips the token on user cancel,
 giving the tool a cooperative chance to abort cleanly before the
 asyncio task is forcibly cancelled.
 
-Day-1 design for parallel-tool tolerance (spec §Triggers,
+Day-1 design for parallel-tool tolerance (spec sec. Triggers,
 Forward-looking): per-call tokens mean concurrent tools don't share
 cancellation state.
 """

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Request
 
 from ..auth import AUTH_DISABLED_LAN_WARNING, require_token
 from ..config import WILDCARD_HOST
-from ..netinfo import entry_url, is_loopback, lan_hosts
+from ..netinfo import entry_url, is_loopback, lan_hosts, preferred_host
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +54,7 @@ async def enable_lan(request: Request) -> dict:
     else:
         hosts = lan_hosts(settings.host)
     if hosts:
-        return {"qr": _qr_data_uri(entry_url(settings, hosts[0])), "reason": None}
+        host = preferred_host(hosts, settings.prefer_tailscale)
+        return {"qr": _qr_data_uri(entry_url(settings, host)), "reason": None}
     bind_failed = listener is not None and bool(lan_hosts(WILDCARD_HOST))
     return {"qr": None, "reason": REASON_BIND_FAILED if bind_failed else REASON_OFFLINE}

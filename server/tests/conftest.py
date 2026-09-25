@@ -338,6 +338,7 @@ def free_port() -> int:
 
 # Registry file under tmp_path; tests seed it before the server starts.
 REGISTRY_FILE = "engines.json"
+STARTPOS_FEN = chess.STARTING_FEN
 
 
 def e2e_env(tmp_path: Path) -> dict[str, str]:
@@ -762,6 +763,16 @@ def watch_page_errors(page) -> list[str]:
     return errors
 
 
+# A missing optional resource (404) is not a JS error.
+BENIGN_CONSOLE_ERRORS = ("Failed to load resource",)
+
+
+def assert_no_page_errors(errors: list[str]) -> None:
+    """Fail on any watched page error that isn't benign."""
+    real = [e for e in errors if not any(b in e for b in BENIGN_CONSOLE_ERRORS)]
+    assert real == [], "JS errors:\n" + "\n".join(real)
+
+
 def install_active_game(
     app, *, engine_path: str, human_white: bool = True,
     moves_uci: list[str] | None = None,
@@ -835,6 +846,7 @@ def _isolate_user_config(tmp_path, monkeypatch):
     (e.g. ``GameStore``, ``EngineRegistry(path=...)``, or
     ``Settings.tournament_root``) instead of relying on these defaults.
     """
+    import sturddle_view.api.tournaments as tournaments_api
     import sturddle_view.app as app_mod
     import sturddle_view.config as cfg
     import sturddle_view.engines as engines_mod
@@ -853,8 +865,9 @@ def _isolate_user_config(tmp_path, monkeypatch):
     monkeypatch.setattr(
         ri_mod, "default_imports_dir", lambda: tmp_path / "imports"
     )
-    # Patch both the canonical symbol and app.py's local import binding.
+    # Patch the canonical symbol and every module-level import binding.
     fake_root = tmp_path / "tournaments"
     monkeypatch.setattr(ts_mod, "default_root", lambda: fake_root)
     monkeypatch.setattr(app_mod, "default_root", lambda: fake_root)
+    monkeypatch.setattr(tournaments_api, "default_root", lambda: fake_root)
     monkeypatch.setenv("SV_ENGINE_TMP_ROOT", str(tmp_path / "engine-tmp"))

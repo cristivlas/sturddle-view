@@ -5,9 +5,10 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
+from sturddle_view import netinfo
 from sturddle_view.api import connect as connect_api
 from sturddle_view.app import create_app
-from sturddle_view.config import LOOPBACK_HOST, WILDCARD_HOST, Settings
+from sturddle_view.config import DEFAULT_PORT, LOOPBACK_HOST, WILDCARD_HOST, Settings
 from sturddle_view.engines import EngineRegistry
 from .conftest import REGISTRY_FILE
 
@@ -15,7 +16,9 @@ TOKEN = "test-token"
 LOCAL = ("127.0.0.1", 50000)
 REMOTE = ("192.168.1.9", 50000)
 LAN = ["192.168.1.5", "172.18.0.1"]
+TAILSCALE = "100.79.0.1"
 QR_URI_PREFIX = "data:image/svg+xml"
+AUTH_WARNING_MARKER = "AUTH DISABLED"
 
 
 class FakeListener:
@@ -37,9 +40,12 @@ class FakeListener:
 def make_client(tmp_path, monkeypatch):
     # The QR payload is opaque; capture the URL it would encode instead.
     monkeypatch.setattr(connect_api, "_qr_data_uri", lambda url: f"qr:{url}")
+    monkeypatch.setattr(netinfo, "tailscale_ip", lambda: None)
 
-    def _make(client_addr, *, host=LOOPBACK_HOST, auth_disabled=False, listener=None):
-        settings = Settings(token=TOKEN, host=host, auth_disabled=auth_disabled)
+    def _make(client_addr, *, host=LOOPBACK_HOST, auth_disabled=False, listener=None,
+              prefer_tailscale=True):
+        settings = Settings(token=TOKEN, host=host, auth_disabled=auth_disabled,
+                            prefer_tailscale=prefer_tailscale)
         registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
         app = create_app(settings=settings, engine_registry=registry)
         app.state.lan_listener = listener
@@ -50,7 +56,7 @@ def make_client(tmp_path, monkeypatch):
 
 
 def _qr_for(host: str) -> str:
-    return f"qr:http://{host}:8765/auth?token={TOKEN}"
+    return f"qr:http://{host}:{DEFAULT_PORT}/auth?token={TOKEN}"
 
 
 def test_qr_data_uri_is_inline_svg():
@@ -80,6 +86,14 @@ def test_enable_lan_server_mode_wildcard_bind(make_client, monkeypatch):
     monkeypatch.setattr(connect_api, "lan_hosts", lambda bind: LAN)
     with make_client(LOCAL, host=WILDCARD_HOST) as c:
         assert c.post("/connect/lan").json() == {"qr": _qr_for(LAN[0]), "reason": None}
+
+
+@pytest.mark.parametrize("prefer,expected", [(True, TAILSCALE), (False, LAN[0])])
+def test_enable_lan_qr_host_follows_prefer_tailscale(make_client, monkeypatch, prefer, expected):
+    monkeypatch.setattr(connect_api, "lan_hosts", lambda bind: [*LAN, TAILSCALE])
+    monkeypatch.setattr(netinfo, "tailscale_ip", lambda: TAILSCALE)
+    with make_client(LOCAL, host=WILDCARD_HOST, prefer_tailscale=prefer) as c:
+        assert c.post("/connect/lan").json() == {"qr": _qr_for(expected), "reason": None}
 
 
 def test_enable_lan_server_mode_offline(make_client, monkeypatch):
@@ -112,7 +126,7 @@ def test_enable_lan_warns_once_when_auth_disabled(make_client, caplog):
         with caplog.at_level(logging.WARNING, logger=connect_api.log.name):
             c.post("/connect/lan")
             c.post("/connect/lan")  # nothing newly exposed: no second warning
-    warnings = [r for r in caplog.records if "AUTH DISABLED" in r.getMessage()]
+    warnings = [r for r in caplog.records if AUTH_WARNING_MARKER in r.getMessage()]
     assert len(warnings) == 1
     assert LAN[0] in warnings[0].getMessage()
 
@@ -121,4 +135,4 @@ def test_enable_lan_no_warning_when_auth_on(make_client, caplog):
     with make_client(LOCAL, listener=FakeListener(LAN)) as c:
         with caplog.at_level(logging.WARNING, logger=connect_api.log.name):
             c.post("/connect/lan")
-    assert not [r for r in caplog.records if "AUTH DISABLED" in r.getMessage()]
+    assert not [r for r in caplog.records if AUTH_WARNING_MARKER in r.getMessage()]

@@ -16,6 +16,7 @@ import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 import { attachEngineColResize, createWrapSizer } from "./engines-list-layout.js";
 import { attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { saveRaw } from "./storage.js";
+import { wireSplitScroll } from "./split-table.js";
 
 const COL_NAME = "name";
 const COL_ACTIVE = "active";
@@ -38,21 +39,32 @@ const ENGINES_LIST_HTML = `
             <div class="engines-empty hidden">
               <p class="empty-message"></p>
             </div>
-            <table class="engines-table">
-              <colgroup>
-                <col class="engines-col-name">
-                <col class="engines-col-active">
-                <col class="engines-col-path">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>Name<span class="th-grip"></span></th>
-                  <th class="engines-col-active-hdr">Active<span class="th-grip"></span></th>
-                  <th>Path</th>
-                </tr>
-              </thead>
-              <tbody class="engines-list" role="listbox" tabindex="0"></tbody>
-            </table>
+            <div class="engines-head-scroll">
+              <table class="engines-table engines-head-table">
+                <colgroup>
+                  <col class="engines-col-name">
+                  <col class="engines-col-active">
+                  <col class="engines-col-path">
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>Name<span class="th-grip"></span></th>
+                    <th class="engines-col-active-hdr">Active<span class="th-grip"></span></th>
+                    <th>Path</th>
+                  </tr>
+                </thead>
+              </table>
+            </div>
+            <div class="engines-body-scroll">
+              <table class="engines-table engines-body-table">
+                <colgroup>
+                  <col class="engines-col-name">
+                  <col class="engines-col-active">
+                  <col class="engines-col-path">
+                </colgroup>
+                <tbody class="engines-list" role="listbox" tabindex="0"></tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -352,6 +364,7 @@ function setupEngineSearch(ctx) {
   const searchWrap = container.querySelector(".engines-search-wrap");
   const searchInput = container.querySelector(".engines-search");
   const tableWrap = container.querySelector(".engines-table-wrap");
+  const bodyScroll = container.querySelector(".engines-body-scroll");
 
   searchInput.addEventListener("input", () => {
     ctx.filterText = searchInput.value || "";
@@ -362,13 +375,13 @@ function setupEngineSearch(ctx) {
   function closeSearch() {
     searchWrap.classList.remove("open");
     searchBtn.classList.remove("is-active");
-    tableWrap.style.paddingBottom = "";
+    bodyScroll.style.paddingBottom = "";
     searchInput.value = "";
     ctx.filterText = "";
     renderList(ctx);
     // Clearing the filter re-renders the full list; keep the picked row
     // in view so the selection doesn't scroll off-screen (matches openings).
-    scrollSortedRowIntoView(tableWrap, SELECTED_ROW_SEL);
+    scrollSortedRowIntoView(bodyScroll, SELECTED_ROW_SEL);
     document.removeEventListener("pointerdown", onOutsideClick);
     document.removeEventListener("keydown", onSearchKey, true);
   }
@@ -398,7 +411,7 @@ function setupEngineSearch(ctx) {
       searchBtn.classList.add("is-active");
       // Reserve scrollable space inside the list so the bottom row is
       // not covered by the overlaid search bar.
-      tableWrap.style.paddingBottom = INLINE_SEARCH_RESERVED_PX + "px";
+      bodyScroll.style.paddingBottom = INLINE_SEARCH_RESERVED_PX + "px";
       searchInput.focus();
       document.addEventListener("pointerdown", onOutsideClick);
       document.addEventListener("keydown", onSearchKey, true);
@@ -416,7 +429,11 @@ function setupEngineSearch(ctx) {
 export function mountEngineList(container, api, opts = {}) {
   const { colPctsKey = COL_PCTS_KEY } = opts;
   container.innerHTML = ENGINES_LIST_HTML;
-  markSelectable(container.querySelector(".engines-table"));
+  markSelectable(container.querySelector(".engines-head-table"));
+  markSelectable(container.querySelector(".engines-body-table"));
+  const headScroll = container.querySelector(".engines-head-scroll");
+  const bodyScrollEl = container.querySelector(".engines-body-scroll");
+  wireSplitScroll(headScroll, bodyScrollEl);
   saveRaw(STORAGE_KEY.ENGINES_SORT_ORDER_LEGACY, null);  // clear orphaned pre-header-sort key
 
   const ctx = {
@@ -475,7 +492,7 @@ export function mountEngineList(container, api, opts = {}) {
   // ribbon Name asc/desc buttons (attachButtonSort). Both drive/read the same
   // { key, dir } through sortCtrl, so either stays in sync with the other.
   const sortCtrl = attachColumnSort({
-    table: container.querySelector(".engines-table"),
+    table: container.querySelector(".engines-head-table"),
     columns: [
       { key: COL_NAME, firstDir: "asc" },
       { key: COL_ACTIVE, firstDir: "desc" },

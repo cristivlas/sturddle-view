@@ -26,6 +26,8 @@ export const APP_EVT = {
   RECONCILED: "sturddle:reconciled",
   // A tournament workspace window closed.
   WORKSPACE_CLOSED: "sturddle:workspace-closed",
+  // Settings switched the tournaments folder; tournament lists reload.
+  TOURNAMENTS_ROOT_CHANGED: "sturddle:tournaments-root-changed",
   // Deep-link request to open the settings dialog; detail.tab.
   OPEN_SETTINGS: "sturddle:open-settings",
   // Application log line appended; detail = formatted string.
@@ -35,4 +37,10 @@ export const APP_EVT = {
   // Fired by the interactive game-view at the end of its board_update and
   // clock_tick handling, so listeners never race the bus order.
   PLAY_LINE_GATE_CHANGED: "sturddle:play-line-gate-changed",
+  // AI panel replay rehydrate finished (panel opened or skipped); fired
+  // after the buffered live events drained, so tests can await the end.
+  AI_REHYDRATED: "sturddle:ai-rehydrated",
+  // Cross-game info fetch finished (state applied or reset, toasts
+  // refreshed); tests await it instead of guessing the continuation.
+  XGAME_INFO_APPLIED: "sturddle:xgame-info-applied",
 };

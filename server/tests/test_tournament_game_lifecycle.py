@@ -13,12 +13,8 @@ import asyncio
 
 import pytest
 
-from sturddle_view.tournament.orchestrator import (
-    CoalescingQueue,
-    Orchestrator,
-    _RESULT_UNKNOWN,
-    _TERMINATION_UNKNOWN,
-)
+from sturddle_view.chess.results import UNKNOWN_RESULT, UNKNOWN_TERMINATION
+from sturddle_view.tournament.orchestrator import CoalescingQueue, Orchestrator
 from sturddle_view.tournament.runner import RunSpec
 from sturddle_view.tournament.store import TournamentStore
 
@@ -132,8 +128,8 @@ async def test_active_pairings_orientation(orch):
 async def test_same_engine_name_pair_rejected_as_phantom(orch, emitted):
     """Book-line collisions can leave two same-engine proxies (one
     white, one black, from different actual slots) sharing a FEN.
-    Pair detection must reject them — they aren't playing each other.
-    See spec § "Self-play (deferred)" for when this rule lifts."""
+    Pair detection must reject them -- they aren't playing each other.
+    See spec sec. "Self-play (deferred)" for when this rule lifts."""
     await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
     await orch.proxy_session_started(_PROXY_B, _ENGINE_A)
     await _confirm_pair(orch, _PROXY_A, _PROXY_B)
@@ -165,8 +161,8 @@ async def test_ucinewgame_dissolves_pair(orch, emitted):
     assert payload["pair_id"] == pair_id
     assert payload["tournament_id"] == "tournament-x"
     assert payload["game_n"] is None
-    assert payload["result"] == _RESULT_UNKNOWN
-    assert payload["termination"] == _TERMINATION_UNKNOWN
+    assert payload["result"] == UNKNOWN_RESULT
+    assert payload["termination"] == UNKNOWN_TERMINATION
     # `proxy_unpaired` is still emitted alongside (debug signal).
     assert len(_events_of(emitted, "proxy_unpaired")) == 1
 
@@ -201,8 +197,8 @@ async def test_dissolve_sends_ws_sentinel(orch):
     msg = q.terminal
     assert msg is not None
     assert msg["ended"] is True
-    assert msg["result"] == _RESULT_UNKNOWN
-    assert msg["termination"] == _TERMINATION_UNKNOWN
+    assert msg["result"] == UNKNOWN_RESULT
+    assert msg["termination"] == UNKNOWN_TERMINATION
 
 
 @pytest.mark.asyncio
@@ -228,7 +224,7 @@ async def test_surviving_proxy_can_repair(orch):
     await orch.proxy_session_started(_PROXY_C, _ENGINE_B)
     await _confirm_pair(orch, _PROXY_A, _PROXY_B)
 
-    # Peer B dies mid-game — pair dissolves.
+    # Peer B dies mid-game -- pair dissolves.
     await orch.proxy_session_ended(_PROXY_B)
     assert _PROXY_A not in orch._confirmed_pairs
 
@@ -257,8 +253,8 @@ async def test_dissolve_all_pairs_drains_open_pairs(orch, emitted):
 
     finished = _events_of(emitted, "game_finished")
     assert len(finished) == 1
-    assert finished[0]["result"] == _RESULT_UNKNOWN
-    assert finished[0]["termination"] == _TERMINATION_UNKNOWN
+    assert finished[0]["result"] == UNKNOWN_RESULT
+    assert finished[0]["termination"] == UNKNOWN_TERMINATION
     assert not orch._pair_proxies
 
 
@@ -270,7 +266,7 @@ async def test_dissolve_all_pairs_drains_open_pairs(orch, emitted):
 @pytest.mark.asyncio
 async def test_dissolve_with_no_moves_skips_reconcile_push(orch, emitted):
     """Pair dissolved with zero moves must not push a PendingMatch.
-    Kills `if moves:`→`if not moves:` mutation."""
+    Kills `if moves:` -> `if not moves:` mutation."""
     await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
     await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
     await _confirm_pair(orch, _PROXY_A, _PROXY_B)
@@ -312,7 +308,7 @@ async def test_subscribe_to_dissolved_pair_returns_sentinel(orch):
 @pytest.mark.asyncio
 async def test_info_burst_coalesces_to_latest(orch):
     """Fast TC: many infos arrive within the coalesce window. The
-    queue receives only the latest — earlier infos are overwritten in
+    queue receives only the latest -- earlier infos are overwritten in
     the slot before the timer fires. Non-info events are unaffected."""
     await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
     await orch.proxy_session_started(_PROXY_B, _ENGINE_B)

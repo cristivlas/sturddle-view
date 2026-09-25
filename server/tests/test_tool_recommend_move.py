@@ -11,7 +11,9 @@ the predicate alone can't show:
 - a candidate the engine beats by more than the margin is REJECTED with
   the recommendation_rejected envelope,
 - the exact-move short-circuit accepts when the engine's free best IS the
-  candidate.
+  candidate,
+- the plan-aware gate: the margin widens when the side to move is behind,
+  and a side ahead cannot submit a move that repeats the position.
 
 A fixture-local fake emits `score mate` (the stock fakes only do cp) and
 varies its reply by whether the `go` line carries `searchmoves` -- so the
@@ -29,6 +31,13 @@ from sturddle_view.events import EventBus
 from sturddle_view.llm.cancel import CancelToken
 from sturddle_view.play import tools_engine
 from sturddle_view.play.engine_supervisor import EngineSupervisor
+from sturddle_view.play.playbook import (
+    MARGIN_LOSING,
+    MARGIN_WINNING,
+    PHASE_MIDDLEGAME,
+    SOURCE_EVAL,
+    Situation,
+)
 from sturddle_view.play.tools_engine import make_recommend_move_tool
 
 from .conftest import _write_uci_stub
@@ -74,13 +83,18 @@ def _cp(centipawns: int) -> chess.engine.PovScore:
     return chess.engine.PovScore(chess.engine.Cp(centipawns), chess.WHITE)
 
 
-def _tool(engine_path: str, board: chess.Board):
+def _tool(engine_path: str, board: chess.Board, situation: Situation | None = None):
     bus = EventBus()
     return make_recommend_move_tool(
         _launcher_from_path(engine_path, bus),
         bus=bus,
         board_provider=lambda: board,
+        situation_provider=lambda: situation,
     )
+
+
+def _situation(margin: str, repeats: tuple[str, ...] = ()) -> Situation:
+    return Situation(margin, SOURCE_EVAL, PHASE_MIDDLEGAME, None, repeats)
 
 
 @pytest.mark.asyncio
@@ -266,3 +280,39 @@ async def test_illegal_pawn_move_returns_pawn_moves():
     assert out["error"] == "illegal_move", out
     assert "e4" in out["legal_moves"]  # the legal one-square push
     assert all(s[0] in "abcdefgh" for s in out["legal_moves"])
+
+
+@pytest.mark.asyncio
+async def test_behind_widens_the_margin(tmp_path: Path):
+    # Engine best beats the candidate by 70: over the 50cp midpoint (no
+    # situation) yet under the 80cp behind margin -- a practical try the
+    # plan may prefer to the top line.
+    engine_path = _make_free_vs_restricted_fake(
+        tmp_path, "rm_behind",
+        free_info="info depth 20 score cp 90 nodes 100 time 10 pv e2e4",
+        restricted_info="info depth 20 score cp 20 nodes 100 time 10 pv g1f3",
+    )
+    board = chess.Board()
+    rejected = await _tool(engine_path, board)({"move": "Nf3", "depth": 20}, cancel_token=CancelToken())
+    assert rejected.get("error") == "recommendation_rejected", rejected
+    accepted = await _tool(engine_path, board, _situation(MARGIN_LOSING))(
+        {"move": "Nf3", "depth": 20}, cancel_token=CancelToken(),
+    )
+    assert accepted.get("ok") is True, accepted
+
+
+@pytest.mark.asyncio
+async def test_ahead_rejects_a_repeating_move_without_searching():
+    # 1.Nf3 Nf6 2.Ng1 Ng8: 3.Nf3 repeats. Ahead, the gate vetoes it before
+    # any search (the launcher would fail if reached).
+    board = chess.Board()
+    for uci in ("g1f3", "g8f6", "f3g1", "f6g8"):
+        board.push_uci(uci)
+    tool = tools_engine.make_recommend_move_tool(
+        lambda: None, bus=EventBus(), board_provider=lambda: board,
+        situation_provider=lambda: _situation(MARGIN_WINNING, repeats=("Nf3",)),
+    )
+    out = await tool({"move": "Nf3"}, cancel_token=CancelToken())
+    assert out["error"] == "recommendation_rejected", out
+    assert "repeats" in out["reason"]
+    assert out["san"] == "Nf3"

@@ -144,13 +144,12 @@ earlier multi-board legality validator was removed (branch history).
 pinned" or "forks king and rook" from pattern memory, not the board.
 One shared core, `play/tactics.py`, pure functions over a board:
 
-- `absolute_pins(board, color)` -- pieces pinned to their king
-  (python-chess `is_pinned`).
-- `queen_pins(board, color)` -- slider ray hits a piece, the next piece
-  on the ray is that side's queen. King and queen shields only; no
-  rook/minor relative pins (simplicity).
+- `pins(board, color)` -- one ray walk per enemy slider: the first piece
+  met is `color`'s, the next is that side's king or queen. King and
+  queen shields only; no rook/minor relative pins (simplicity).
 - `forks(board, color)` -- one piece attacks two or more targets; a
-  target is the king, queen, a rook, or any undefended piece.
+  target is the king, queen, a rook, or any undefended piece. A king
+  attacker counts undefended targets only.
 - Each hit carries attacker square, pinned/forked squares and the shield.
 - Skewers: out of scope (rare in model prose).
 
@@ -171,17 +170,23 @@ JSON -> json-repair dependency). Prose avoids it.
 gate on its pick is `recommend_move`'s A/B dominance check; it does not
 separately validate the line behind the move. The dominance check rejects a
 move the engine's best beats by margin -- the guard that matters; deeper
-line-validation is the model's job via `delegate`.
+line-validation is the model's job via `delegate`. The margin is plan-aware
+(docs/ai-playbook-spec.md §Gate): tight when the side to move is ahead,
+wide when behind, so a practical try the plan calls for is not vetoed as
+"weaker"; a side ahead cannot submit a repetition.
 
-**Settling on a move.** The narrator weighs its candidates with one
-`top_moves` call (all candidates ranked best-first for the side to move),
-red-teams the winner via `delegate`, then submits with a single
-`recommend_move`. When the submitted move is
-meaningfully weaker than the best, `recommend_move` rejects it and names
-the stronger move in the reason -- the narrator resubmits *that* move, so
-a rejection resolves in one step rather than open-ended probing. The last
-accepted `recommend_move` is the turn's pick and drives the on-board
-arrow (via the end-of-turn `ai_recommendation` verifier search).
+**Settling on a move.** The `Plan:` line of the user message (the
+playbook) decides the pick: the narrator chooses candidates that carry it
+out, weighs them with one `top_moves` call (all candidates ranked
+best-first for the side to move), red-teams the winner via `delegate`,
+then submits with a single `recommend_move` -- among the moves the check
+accepts, the one that serves the plan, not the top score. When the
+submitted move is meaningfully weaker than the best, `recommend_move`
+rejects it and names the stronger move in the reason -- the narrator
+resubmits *that* move, so a rejection resolves in one step rather than
+open-ended probing. The last accepted `recommend_move` is the turn's pick
+and drives the on-board arrow (via the end-of-turn `ai_recommendation`
+verifier search).
 
 ### Tools (v1)
 
@@ -212,7 +217,7 @@ arrow (via the end-of-turn `ai_recommendation` verifier search).
   material claims. SHIPPED.
 - `tactics(fen)` - pins (to king or queen) and forks for both colors;
   pure board read, no engine. Grounds tactical vocabulary and feeds the
-  prose check. See §Tactical grounding. PENDING.
+  prose check. See §Tactical grounding. SHIPPED.
 - `tablebase_probe()` - wraps existing `TablebaseProber` (Syzygy WDL/DTZ);
   pending. Register conditionally on `engine_default_syzygy_path` being
   set so the tool never appears for users without tablebases.

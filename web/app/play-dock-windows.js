@@ -1150,7 +1150,9 @@ function buildUciLogBody(events, { setOff }) {
       <button type="button" class="uci-log-copy" title="Copy to clipboard">Copy</button>
       <button type="button" class="uci-log-clear">Clear</button>
     </div>
-    <div class="wb-uci-log-lines"></div>
+    <div class="wb-uci-log-scroll">
+      <div class="wb-uci-log-lines"></div>
+    </div>
   `;
 
   const lines = body.querySelector(".wb-uci-log-lines");
@@ -1178,8 +1180,7 @@ function buildUciLogBody(events, { setOff }) {
   const off = events.on((evt) => {
     if (evt.kind !== "uci_log" || paused) return;
     const { dir, line } = evt.payload;
-    // body.parentElement is wb.body when floating, .dock-slot-body when docked.
-    const scroller = body.parentElement;
+    const scroller = body.querySelector(".wb-uci-log-scroll");
     const pinned = isPinnedToBottom(scroller, AUTOSCROLL_SLACK_LINE_PX);
     const div = document.createElement("div");
     div.className = `wb-uci-log-line ${dir === ">" ? "uci-out" : "uci-in"}`;
@@ -1260,10 +1261,11 @@ function buildPvTableBody(events, { setOff }) {
     },
     cancelLine: () => pvLineBoard?.cancelLine(),
     canPlay: () => !!pvLineBoard?.canPlayLine(),
+    currentPlacement: () => pvLineBoard?.currentPlacement(),
   });
   const off = events.on((evt) => {
     if (evt.kind !== KIND.ENGINE_INFO) return;
-    pvt.update(evt.payload, evt.payload.pv?.[0], pvLineBoard?.currentPlacement());
+    pvt.update(evt.payload, evt.payload.pv?.[0]);
   });
   // Re-gate on game-view's own announcement rather than on the bus's
   // board_update: this body survives a perspective nav, so its bus slot can

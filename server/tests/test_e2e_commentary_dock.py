@@ -19,7 +19,7 @@ pytestmark = pytest.mark.e2e
 
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
-from .conftest import REGISTRY_FILE, e2e_env, run_uvicorn_subprocess  # noqa: E402
+from .conftest import REGISTRY_FILE, assert_no_page_errors, e2e_env, run_uvicorn_subprocess  # noqa: E402
 
 
 PLAY_PERSP = "#play-perspective"
@@ -69,12 +69,6 @@ async def _new_page(make_page):
     page.on("console", lambda msg: errors.append(f"console.{msg.type}: {msg.text}")
             if msg.type == "error" else None)
     return ctx, page, errors
-
-
-def _assert_no_errors(errors):
-    benign = ("Failed to load resource",)
-    real = [e for e in errors if not any(b in e for b in benign)]
-    assert real == [], "JS errors:\n" + "\n".join(real)
 
 
 def _seed_view_mode(base):
@@ -136,7 +130,7 @@ async def test_commentary_opens_docked_on_view_mode_entry(server, make_page):
     assert s["docked"] == "1"
     assert s["openFlag"] == "1"
     assert SEED_ROOT_COMMENT in (s["slotText"] or "")
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
@@ -165,7 +159,7 @@ async def test_commentary_survives_debug_window_lifecycle(server, make_page):
     )
     s = await _snapshot(page)
     assert s["slotPresent"]
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
@@ -203,7 +197,7 @@ async def test_commentary_text_updates_per_ply(server, make_page):
         f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
         f"?.textContent?.includes('{SEED_THIRD_COMMENT}')",
     )
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
@@ -222,7 +216,7 @@ async def test_undock_floats_as_winbox(server, make_page):
     assert s["wbPresent"]
     assert not s["slotPresent"]
     assert s["docked"] == "0"
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
@@ -247,7 +241,7 @@ async def test_redock_via_winbox_control(server, make_page):
     assert s["slotPresent"]
     assert not s["wbPresent"]
     assert s["docked"] == "1"
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
@@ -268,7 +262,7 @@ async def test_slot_close_clears_setting(server, make_page):
         "async () => (await (await fetch('/settings')).json()).view_show_pgn_comments"
     )
     assert v is False, f"expected setting cleared after X, got {v}"
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 # -- Regression: stale comment-nav state after game switch ----------------
@@ -337,7 +331,7 @@ async def test_comment_nav_disabled_after_switch_to_no_comments(server, make_pag
     )
     assert prev_disabled, "prev-comment must be disabled in a commentless game"
     assert next_disabled, "next-comment must be disabled in a commentless game"
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
@@ -374,7 +368,7 @@ async def test_comment_nav_targets_new_game_after_switch(server, make_page):
         f"?.textContent?.includes('{SECOND_FIRST_COMMENT}')"
     )
     assert not failed_goto, f"view/goto failed (stale ply): {failed_goto}"
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
@@ -416,7 +410,7 @@ async def test_comment_nav_recovers_after_resize_hide_show(server, make_page):
         f"() => !document.querySelector('{NAV_PREV}').disabled"
     )
     assert not gotos, f"recovery must not require navigation, saw: {gotos}"
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
@@ -435,4 +429,4 @@ async def test_setting_off_keeps_commentary_closed(server, make_page):
     s = await _snapshot(page)
     assert not s["slotPresent"]
     assert not s["wbPresent"]
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)

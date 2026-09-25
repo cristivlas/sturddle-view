@@ -52,7 +52,7 @@ from ..llm import (
     UnknownToolError,
     assemble_system_prompt,
     open_transcript,
-    split_opening_steer,
+    split_narrator_steers,
     strip_markdown_stream,
 )
 from ..llm.cancel import CancelToken
@@ -64,6 +64,7 @@ from ..llm.position_check import (
     iter_false_claim_squares,
     iter_false_file_claims,
     iter_false_file_openness,
+    iter_false_tactic_claims,
     handled_continuation_spans,
     iter_illegal_continuations,
     iter_illegal_moves,
@@ -80,6 +81,7 @@ from .tools_engine import (
     PIECE_AT_TOOL_NAME,
     RECOMMEND_MOVE_TOOL_NAME,
     REPORT_LINE_TOOL_NAME,
+    TACTICS_TOOL_NAME,
     TOP_MOVES_TOOL_NAME,
     VALIDATE_MOVE_TOOL_NAME,
     SearchCache,
@@ -96,7 +98,7 @@ RecommendVerifier = Callable[[chess.Move, int | None, CancelToken], Awaitable[di
 log = logging.getLogger(__name__)
 
 
-# Cap on agent loop rounds per turn (spec §Guardrails: "Tool call cap
+# Cap on agent loop rounds per turn (spec sec. Guardrails: "Tool call cap
 # per agent turn"). UI-settable; env is the headless/no-UI default.
 MAX_TOOL_ROUNDS = env_int("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_AI_MAX_TOOL_ROUNDS)
 
@@ -433,11 +435,16 @@ def _norm_analyze(input_: dict, board: chess.Board | None) -> tuple | None:
     return (ANALYZE_TOOL_NAME, canonical, input_.get("depth"))
 
 
-def _norm_material(input_: dict, board: chess.Board | None) -> tuple | None:
-    canonical = _canonical_fen(input_)
-    if canonical is None:
-        return None
-    return (MATERIAL_TOOL_NAME, canonical)
+def _fen_only_normalizer(
+    tool_name: str,
+) -> Callable[[dict, chess.Board | None], tuple | None]:
+    """Dedup key for a tool whose only input is a FEN (material, tactics)."""
+    def norm(input_: dict, board: chess.Board | None) -> tuple | None:
+        canonical = _canonical_fen(input_)
+        if canonical is None:
+            return None
+        return (tool_name, canonical)
+    return norm
 
 
 _NORMALIZERS: dict[str, Callable[[dict, chess.Board | None], tuple | None]] = {
@@ -447,7 +454,8 @@ _NORMALIZERS: dict[str, Callable[[dict, chess.Board | None], tuple | None]] = {
     TOP_MOVES_TOOL_NAME: _norm_top_moves,
     REPORT_LINE_TOOL_NAME: _norm_report_line,
     ANALYZE_TOOL_NAME: _norm_analyze,
-    MATERIAL_TOOL_NAME: _norm_material,
+    MATERIAL_TOOL_NAME: _fen_only_normalizer(MATERIAL_TOOL_NAME),
+    TACTICS_TOOL_NAME: _fen_only_normalizer(TACTICS_TOOL_NAME),
 }
 
 
@@ -587,7 +595,7 @@ def _tool_result_message(
     inside the same user message. Kept distinct from the tool_result
     content -- transcripts and log parsers see "data" vs "guidance"
     cleanly. Injected by the coordinator only on the first call to a
-    given tool per turn (see docs/ai-analysis-spec.md §Skills layer).
+    given tool per turn (see docs/ai-analysis-spec.md sec. Skills layer).
     """
     if not isinstance(result, str):
         # ensure_ascii=False: escaped non-ASCII (accented opening names)
@@ -677,21 +685,17 @@ class _PositionCheck:
     # Tool/engine self-references caught in the prose. Corrective-only -- not
     # struck, since the phrase is woven into the sentence (see find_tool_mentions).
     tool_mentions: list[str] = field(default_factory=list)
-    # Light/dark-squared bishop references that match no bishop present. Each
-    # carries (surface, label, fact); the fact is precomputed (square color is
-    # invariant, so there's no square to describe later).
-    bishop_triples: list[tuple[str, str, str]] = field(default_factory=list)
-    # '<piece> on the <x>-file' and open/semi-open/closed file claims that
-    # hold on no current/projected board. Same (surface, label, fact) shape
-    # as bishop refs: plain board truth with a precomputed corrective.
-    file_triples: list[tuple[str, str, str]] = field(default_factory=list)
+    # Plain board-truth claims with a precomputed corrective, each
+    # (surface, label, fact): bishop-color references, piece-on-file and
+    # file-openness claims, pin/fork claims. Never judged (see board_labels).
+    fact_triples: list[tuple[str, str, str]] = field(default_factory=list)
 
     @property
     def hit(self) -> bool:
         return bool(
             self.move_pairs or self.claim_triples
             or self.line_pairs or self.tool_mentions
-            or self.bishop_triples or self.file_triples
+            or self.fact_triples
         )
 
     @property
@@ -703,12 +707,8 @@ class _PositionCheck:
         return [label for _surface, label in self.line_pairs]
 
     @property
-    def bishop_labels(self) -> list[str]:
-        return [label for _surface, label, _fact in self.bishop_triples]
-
-    @property
-    def file_labels(self) -> list[str]:
-        return [label for _surface, label, _fact in self.file_triples]
+    def fact_labels(self) -> list[str]:
+        return [label for _surface, label, _fact in self.fact_triples]
 
     @property
     def surfaces(self) -> list[str]:
@@ -718,8 +718,7 @@ class _PositionCheck:
             [s for s, _ in self.move_pairs]
             + [s for s, _, _ in self.claim_triples]
             + [s for s, _ in self.line_pairs]
-            + [s for s, _, _ in self.bishop_triples]
-            + [s for s, _, _ in self.file_triples]
+            + [s for s, _, _ in self.fact_triples]
         )
         return sorted(set(out), key=len, reverse=True)
 
@@ -727,9 +726,9 @@ class _PositionCheck:
     def board_labels(self) -> list[str]:
         """Every board-context flag's normalized label the judge may rule on
         (moves, lines, claims). Never included: tool mentions (board-
-        independent style violations) and bishop-color / file-claim labels
-        (precomputed board facts; the judge kept clearing the bishop class
-        wrongly, so the regex verdict is final for both)."""
+        independent style violations) and fact labels (precomputed board
+        facts; the judge kept clearing the bishop class wrongly, so the
+        regex verdict is final for the whole class)."""
         return (
             self.move_labels
             + self.line_labels
@@ -747,8 +746,7 @@ class _PositionCheck:
             [(s, l, sq) for s, l, sq in self.claim_triples if l not in cleared],
             [(s, l) for s, l in self.line_pairs if l not in cleared],
             self.tool_mentions,
-            [(s, l, f) for s, l, f in self.bishop_triples if l not in cleared],
-            [(s, l, f) for s, l, f in self.file_triples if l not in cleared],
+            [(s, l, f) for s, l, f in self.fact_triples if l not in cleared],
         )
 
 
@@ -876,11 +874,10 @@ class AIAnalysisCoordinator:
             self._task = asyncio.current_task()
             self._cancel_token = CancelToken()
             self._active_provider = active
-            # turn_context grounds verifier sub-runs. Strip any narrator-only
-            # opening steer (they name tools the verifier registry lacks) so
-            # the sub-run isn't handed a dead instruction. Only opening turns
-            # carry one; others pass through untouched.
-            turn_context, self._opening_turn = split_opening_steer(
+            # turn_context grounds verifier sub-runs. Strip the narrator-only
+            # steers: opening steers name tools the verifier registry lacks,
+            # the playbook line is strategy prose that would only bias it.
+            turn_context, self._opening_turn = split_narrator_steers(
                 opening_user_content
             )
             self._turn_context = turn_context
@@ -1166,8 +1163,7 @@ class AIAnalysisCoordinator:
                     | {m.lower() for m in pc.move_labels}
                     | {ln.lower() for ln in pc.line_labels}
                     | set(pc.tool_mentions)
-                    | {b.lower() for b in pc.bishop_labels}
-                    | {f.lower() for f in pc.file_labels}
+                    | {f.lower() for f in pc.fact_labels}
                 )
                 repeat = bool(hit_keys & corrected_items)
                 corrected_items |= hit_keys
@@ -1487,9 +1483,10 @@ class AIAnalysisCoordinator:
             list(iter_false_claim_squares(text, board)),
             line_pairs,
             tool_mentions,
-            list(iter_false_bishop_color_refs(text, board)),
-            list(iter_false_file_claims(text, board))
-            + list(iter_false_file_openness(text, board)),
+            list(iter_false_bishop_color_refs(text, board))
+            + list(iter_false_file_claims(text, board))
+            + list(iter_false_file_openness(text, board))
+            + list(iter_false_tactic_claims(text, board)),
         )
 
     def _recommend_mismatch(
@@ -1597,13 +1594,12 @@ class AIAnalysisCoordinator:
         ]
         if move_facts:
             clauses.append(_POSITION_CHECK_MOVE_CLAUSE.format(facts="; ".join(move_facts)))
-        # Square, bishop-color and file claims are all plain board truth --
-        # one "restate" clause, facts joined. Bishop and file facts are
-        # precomputed (see their recognizers).
+        # Square claims and fact claims are all plain board truth -- one
+        # "restate" clause, facts joined. Fact correctives are precomputed
+        # (see their recognizers).
         claim_facts = (
             [describe_square(square, pc.board) for _surface, _label, square in pc.claim_triples]
-            + [fact for _surface, _label, fact in pc.bishop_triples]
-            + [fact for _surface, _label, fact in pc.file_triples]
+            + [fact for _surface, _label, fact in pc.fact_triples]
         )
         if claim_facts:
             clauses.append(_POSITION_CHECK_CLAIM_CLAUSE.format(facts="; ".join(claim_facts)))

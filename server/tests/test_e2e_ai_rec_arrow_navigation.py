@@ -35,6 +35,8 @@ ALT_ARROW_SEL = ".cm-chessboard .arrow-info"
 PLAY_NAV_BTN = "#perspective-nav button[data-perspective='play']"
 OTHER_NAV_BTN = "#perspective-nav button[data-perspective='engines']"
 XGAME_BY_ID_ROUTE = "**/game/recent-imports/by-id/**"
+# Mirrors APP_EVT.XGAME_INFO_APPLIED in web/app/app-events.js.
+XGAME_APPLIED_EVT = "sturddle:xgame-info-applied"
 
 _PGN = (
     '[Event "?"]\n[Site "?"]\n[Date "????.??.??"]\n[Round "?"]\n'
@@ -83,10 +85,24 @@ async def _hold_xgame_fetch_until_arrow(page) -> None:
     await page.route(XGAME_BY_ID_ROUTE, handle)
 
 
-async def _settle_xgame_apply(page) -> None:
-    """Yield two macrotasks so the page-side fetch continuation (json ->
-    cached board_update apply -> arrow restore) has run."""
-    await page.evaluate("new Promise(r => setTimeout(() => setTimeout(r, 0), 0))")
+async def _count_xgame_applies(page) -> None:
+    """Count XGAME_INFO_APPLIED on a window slot from document start, so the
+    listener exists before any page script runs (a listener added after goto
+    would miss the initial mount's fetch)."""
+    await page.add_init_script(f"""
+        window.__xgameApplied = 0;
+        window.addEventListener('{XGAME_APPLIED_EVT}', () => {{ window.__xgameApplied += 1; }});
+    """)
+
+
+async def _await_xgame_apply(page) -> None:
+    """Block until the x-game fetch continuation (json -> cached board_update
+    apply -> arrow restore) has run once since the last reset."""
+    await page.wait_for_function("() => window.__xgameApplied >= 1")
+
+
+async def _reset_xgame_apply_count(page) -> None:
+    await page.evaluate("() => { window.__xgameApplied = 0; }")
 
 
 async def _navigate_away_and_back(page) -> None:
@@ -107,16 +123,16 @@ async def test_view_mode_arrow_survives_navigation(server, make_page):
 
     _ctx, page = await make_page(viewport={"width": 1600, "height": 1000})
     await _hold_xgame_fetch_until_arrow(page)
+    await _count_xgame_applies(page)
 
-    async with page.expect_response(lambda resp: "/game/recent-imports/by-id/" in resp.url):
-        await page.goto(base + "/")
-        await page.wait_for_selector(PLAY_PERSP)
-    await _settle_xgame_apply(page)
+    await page.goto(base + "/")
+    await page.wait_for_selector(PLAY_PERSP)
+    await _await_xgame_apply(page)
     assert await page.locator(ARROW_SEL).count() > 0, "arrow lost on initial load"
 
-    async with page.expect_response(lambda resp: "/game/recent-imports/by-id/" in resp.url):
-        await _navigate_away_and_back(page)
-    await _settle_xgame_apply(page)
+    await _reset_xgame_apply_count(page)
+    await _navigate_away_and_back(page)
+    await _await_xgame_apply(page)
     assert await page.locator(ARROW_SEL).count() > 0, "arrow lost after navigation"
 
 

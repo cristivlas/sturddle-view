@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -28,40 +27,102 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
+from .. import is_windows
 from ..auth import AUTH_COOKIE, check_token_value, origin_ok, require_token
-from ..env_utils import env_bool
+from ..config import (
+    ENGINE_BOOK_ORDER_KEY,
+    ENGINE_BOOK_PATH_KEY,
+    ENGINE_BOOK_PLIES_KEY,
+    ENGINE_SYZYGY_PATH_KEY,
+)
 from ..engines import (
     EngineNotFoundError,
     EngineRegistry,
     InvalidLaunchProfileError,
     validate_launch_profile,
 )
+from ..env_utils import env_bool, env_float
+from ..error_detail import MESSAGE_KEY, REASON_KEY
 from ..events import ENVELOPE_KIND, ENVELOPE_PAYLOAD
 from ..tournament.fastchess import FastchessRunner
-from ..tournament.orchestrator import Orchestrator, TournamentBusyError, wrap_event_for_bus
-from ..tournament.rescheck import ALLOW_OVERSUBSCRIBE_KEY, RescheckError, check as rescheck_run
-from ..tournament.uci_parse import parse_uci_line
+from ..tournament.orchestrator import (
+    LINE_KEY,
+    PARSED_KEY,
+    Orchestrator,
+    TournamentBusyError,
+    wrap_event_for_bus,
+)
 from ..tournament.pgn_stats import (
+    SPRT_ALPHA,
+    SPRT_BETA,
     SPRT_CONTINUE,
+    SPRT_DEFAULT_ALPHA,
+    SPRT_DEFAULT_BETA,
+    SPRT_ELO0,
+    SPRT_ELO1,
     SPRT_H0,
     SPRT_H1,
+    SprtResult,
+    Standings,
     compute_games_list,
     compute_sprt,
     compute_standings,
     read_game_record,
 )
+from ..tournament.proxy import WANT_INFO_KEY
+from ..tournament.rescheck import DEFAULT_HASH_MB, RescheckError, check as rescheck_run
 from ..tournament.store import (
-    CorruptStateError,
-    DuplicateNameError,
+    ENGINE_DEFAULT_KEYS,
+    ENGINE_DEFAULT_PREFIX,
+    ENGINE_REF_ARGS,
+    ENGINE_REF_CMD,
+    ENGINE_REF_ENV,
+    ENGINE_REF_ID,
+    ENGINE_REF_NAME,
+    ENGINE_REF_OPTIONS,
+    ENGINE_REF_RATING,
     STATUS_DONE,
     STATUS_FAILED,
     STATUS_STOPPED,
+    CorruptStateError,
+    DuplicateNameError,
     TournamentNotFoundError,
     TournamentStore,
+    default_root,
 )
+from ..tournament.template import (
+    ALLOW_OVERSUBSCRIBE_KEY,
+    BOOK_KEYS,
+    BOOK_PATH_KEY,
+    SPRT_KEY,
+    TOURNAMENT_TYPE_KEY,
+    TYPE_ROUNDROBIN,
+)
+from ..tournament.uci_parse import parse_uci_line
+from ._http import bad_request, conflict, not_found
 
 
 log = logging.getLogger(__name__)
+
+_TOURNAMENT_NOT_FOUND = "tournament not found"
+_NAME_TAKEN = "tournament name already exists"
+_RUNNING_STOP_FIRST = "tournament is running; stop it first"
+_ROOT_LOCKED_WHILE_RUNNING = "tournaments folder can't change while a tournament is running"
+# Settings-response fields: the UI locks the folder row mid-run, confirms a
+# switch that would hide the current folder's tournaments, and disables
+# Clear when the folder is already the default.
+_TOURNAMENT_RUNNING_KEY = "tournament_running"
+_TOURNAMENTS_IN_ROOT_KEY = "tournaments_in_root"
+_ROOT_IS_DEFAULT_KEY = "tournaments_root_is_default"
+_TWO_ENGINES_REQUIRED = "at least two engines required"
+_DEFAULT_TOURNAMENT_NAME = "tournament"
+_MIN_ENGINES = 2
+# SPRT compares exactly two engines: the candidate and the baseline.
+_SPRT_ENGINES = 2
+
+_TOURNAMENTS_PATH = "/api/tournaments"
+_TOURNAMENT_PATH = f"{_TOURNAMENTS_PATH}/{{tournament_id}}"
+_SETTINGS_PATH = "/api/tournament-settings"
 
 
 router = APIRouter(tags=["tournaments"], dependencies=[Depends(require_token)])
@@ -70,6 +131,17 @@ router = APIRouter(tags=["tournaments"], dependencies=[Depends(require_token)])
 # secret). WS endpoints are authenticated by cookie / Bearer / ?token= and
 # must pass the Origin check.
 internal_router = APIRouter(tags=["tournaments-internal"])
+
+
+def _corrupt_state(e: CorruptStateError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"corrupt state: {e}",
+    )
+
+
+def _rescheck_rejected(e: RescheckError) -> HTTPException:
+    """Structured {reason, message, details} for the UI to render."""
+    return bad_request({REASON_KEY: e.reason, MESSAGE_KEY: str(e), **e.details})
 
 
 def _check_ws_auth(websocket: WebSocket, settings) -> bool:
@@ -103,7 +175,7 @@ class EngineRef(BaseModel):
     # only, so edits re-anchor past tournaments); the drift gate ignores it.
     rating: int | None = None
 
-    @field_validator("args", "env")
+    @field_validator(ENGINE_REF_ARGS, ENGINE_REF_ENV)
     @classmethod
     def _check_launch_profile(cls, v, info):
         # Reuse the registry-layer validator so a direct tournament POST
@@ -111,7 +183,7 @@ class EngineRef(BaseModel):
         # proxy spawn time. Legacy `args` as a single string is allowed
         # through unchecked (validator only enforces list-form rules).
         try:
-            if info.field_name == "args":
+            if info.field_name == ENGINE_REF_ARGS:
                 validate_launch_profile(v if isinstance(v, list) else None, None)
             else:
                 validate_launch_profile(None, v)
@@ -120,15 +192,22 @@ class EngineRef(BaseModel):
         return v
 
 
-_SPRT_DEFAULTS = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05}
+_SPRT_DEFAULT_ELO0 = 0
+_SPRT_DEFAULT_ELO1 = 10
+_SPRT_DEFAULTS = {
+    SPRT_ELO0: _SPRT_DEFAULT_ELO0,
+    SPRT_ELO1: _SPRT_DEFAULT_ELO1,
+    SPRT_ALPHA: SPRT_DEFAULT_ALPHA,
+    SPRT_BETA: SPRT_DEFAULT_BETA,
+}
 
 # LLR distance from a bound within which a STOPPED SPRT's verdict snaps to that
 # bound. A manual stop can land near a bound just as it would conclude; far from
 # both, it stays "continue" (a genuine mid-run abort). DONE needs no tolerance.
-_SPRT_CONCLUDE_TOL = float(os.environ.get("SV_SPRT_CONCLUDE_TOL", "0.05"))
+_SPRT_CONCLUDE_TOL = env_float("SV_SPRT_CONCLUDE_TOL", 0.05, min_value=0.0)
 
 
-def _snap_terminal_sprt_verdict(sprt: dict, status: str) -> dict:
+def _snap_terminal_sprt_verdict(sprt: SprtResult, status: str) -> SprtResult:
     """Reconcile our independently recomputed LLR with how the tournament ended.
 
     fastchess and our recompute drift slightly, so a concluded run can leave our
@@ -141,49 +220,40 @@ def _snap_terminal_sprt_verdict(sprt: dict, status: str) -> dict:
     fastchess.build_command), so a SPRT match never finishes by exhausting a
     round cap. If a games cap is ever added, DONE no longer implies a verdict
     and this midpoint snap would manufacture one."""
-    if sprt.get("status") != SPRT_CONTINUE:
+    if sprt.status != SPRT_CONTINUE:
         return sprt
-    llr = sprt["llr"]
+    llr = sprt.llr
     if status == STATUS_DONE:
-        midpoint = (sprt["lower_bound"] + sprt["upper_bound"]) / 2.0
-        sprt["status"] = SPRT_H1 if llr >= midpoint else SPRT_H0
+        midpoint = (sprt.lower_bound + sprt.upper_bound) / 2.0
+        sprt.status = SPRT_H1 if llr >= midpoint else SPRT_H0
     elif status == STATUS_STOPPED:
-        if llr >= sprt["upper_bound"] - _SPRT_CONCLUDE_TOL:
-            sprt["status"] = SPRT_H1
-        elif llr <= sprt["lower_bound"] + _SPRT_CONCLUDE_TOL:
-            sprt["status"] = SPRT_H0
+        if llr >= sprt.upper_bound - _SPRT_CONCLUDE_TOL:
+            sprt.status = SPRT_H1
+        elif llr <= sprt.lower_bound + _SPRT_CONCLUDE_TOL:
+            sprt.status = SPRT_H0
     return sprt
-
-# Engine-default keys frozen into a tournament at create/edit time.
-# Mirrors `Settings.engine_default_<key>` fields. Snapshotting all of
-# them (including Nones) means a tournament's behavior cannot drift
-# if global Settings change later.
-_ENGINE_DEFAULT_KEYS = (
-    "threads", "hash_mb", "syzygy_path",
-    "book_path", "book_plies", "book_order",
-)
-# Book keys are per-tournament: taken from the template payload (which the
-# dialog prefills from settings), not re-read from global Settings. The rest
-# stay frozen from Settings. Missing book keys fall back to Settings.
-_TEMPLATE_BOOK_KEYS = ("book_path", "book_plies", "book_order")
 
 
 def _freeze_engine_defaults(settings, template: dict | None = None) -> dict:
+    """Engine defaults frozen into a tournament at create/edit time.
+    Snapshotting all of them (including Nones) means a tournament's
+    behavior cannot drift if global Settings change later. Book keys are
+    per-tournament: taken from the template payload (which the dialog
+    prefills from settings); missing book keys fall back to Settings."""
     template = template or {}
     out = {
-        k: getattr(settings, f"engine_default_{k}", None)
-        for k in _ENGINE_DEFAULT_KEYS
+        k: getattr(settings, ENGINE_DEFAULT_PREFIX + k, None)
+        for k in ENGINE_DEFAULT_KEYS
     }
     # A book key present in the template overrides Settings; absent -> keep the
     # Settings fallback. An explicit empty book_path means "no book": clear the
     # dependent depth/order too so stale values don't ride along.
-    for k in _TEMPLATE_BOOK_KEYS:
+    for k in BOOK_KEYS:
         if k in template:
             out[k] = template[k]
-    if "book_path" in template and not template["book_path"]:
-        out["book_path"] = None
-        out["book_plies"] = None
-        out["book_order"] = None
+    if BOOK_PATH_KEY in template and not template[BOOK_PATH_KEY]:
+        for k in BOOK_KEYS:
+            out[k] = None
     return out
 
 
@@ -193,22 +263,22 @@ def _freeze_engines(payload_engines, request: Request) -> list[dict]:
     options and rating. An engine missing from the registry keeps
     whatever the caller round-tripped (edit after the engine was
     deleted). Keys are omitted when unset either way."""
-    reg = getattr(request.app.state, "engines", None)
+    reg = _registry(request)
     out = []
     for e in payload_engines:
         ref = e.model_dump(exclude_none=True)
         if reg is not None:
             try:
-                live = reg.get(ref["id"])
+                live = reg.get(ref[ENGINE_REF_ID])
             except EngineNotFoundError:
                 pass
             else:
-                ref["options"] = dict(live.options or {})
-                ref["rating"] = live.rating
-        if not ref.get("options"):
-            ref.pop("options", None)
-        if ref.get("rating") is None:
-            ref.pop("rating", None)
+                ref[ENGINE_REF_OPTIONS] = dict(live.options or {})
+                ref[ENGINE_REF_RATING] = live.rating
+        if not ref.get(ENGINE_REF_OPTIONS):
+            ref.pop(ENGINE_REF_OPTIONS, None)
+        if ref.get(ENGINE_REF_RATING) is None:
+            ref.pop(ENGINE_REF_RATING, None)
         out.append(ref)
     return out
 
@@ -226,11 +296,15 @@ def _resolve_ratings(t, registry: EngineRegistry | None) -> dict[str, int]:
     by_cmd = {e.path: e for e in live}
     out: dict[str, int] = {}
     for ref in t.engines or []:
-        name = ref.get("name")
+        name = ref.get(ENGINE_REF_NAME)
         if not name:
             continue
-        e = by_id.get(ref.get("id")) or by_name.get(name) or by_cmd.get(ref.get("cmd"))
-        rating = e.rating if e is not None else ref.get("rating")
+        e = (
+            by_id.get(ref.get(ENGINE_REF_ID))
+            or by_name.get(name)
+            or by_cmd.get(ref.get(ENGINE_REF_CMD))
+        )
+        rating = e.rating if e is not None else ref.get(ENGINE_REF_RATING)
         if rating is not None:
             out[name] = rating
     return out
@@ -244,8 +318,8 @@ _WIPE_REQUIRED_MESSAGE = (
     "Restarting will discard all previously recorded games. Continue?"
 )
 _WIPE_REQUIRED_DETAIL = {
-    "reason": _WIPE_REQUIRED_REASON,
-    "message": _WIPE_REQUIRED_MESSAGE,
+    REASON_KEY: _WIPE_REQUIRED_REASON,
+    MESSAGE_KEY: _WIPE_REQUIRED_MESSAGE,
 }
 
 
@@ -267,7 +341,7 @@ def _resolve_oversubscribe(template: dict) -> dict:
 
 def _resolve_sprt(template: dict, settings) -> dict:
     """If template.sprt is truthy but not a full dict, merge with sprt_defaults."""
-    sprt = template.get("sprt")
+    sprt = template.get(SPRT_KEY)
     if not sprt:
         return template
     if not isinstance(sprt, dict):
@@ -275,7 +349,7 @@ def _resolve_sprt(template: dict, settings) -> dict:
     base = dict(_SPRT_DEFAULTS)
     base.update(settings.tournament_sprt_defaults or {})
     base.update(sprt)
-    return {**template, "sprt": base}
+    return {**template, SPRT_KEY: base}
 
 
 class TournamentCreate(BaseModel):
@@ -301,6 +375,28 @@ def _store(request: Request) -> TournamentStore:
     return request.app.state.tournament_store
 
 
+def _registry(request: Request) -> EngineRegistry | None:
+    return getattr(request.app.state, "engines", None)
+
+
+def _require_engines(payload) -> None:
+    if len(payload.engines) < _MIN_ENGINES:
+        raise bad_request(_TWO_ENGINES_REQUIRED)
+
+
+def _tournament_fields(payload, request: Request) -> dict:
+    """Store fields for a created/edited tournament: trimmed name, the
+    template with SPRT defaults + oversubscribe folded in, and frozen
+    engine refs and engine defaults."""
+    settings = request.app.state.settings
+    return dict(
+        name=payload.name.strip() or _DEFAULT_TOURNAMENT_NAME,
+        template=_resolve_oversubscribe(_resolve_sprt(payload.template, settings)),
+        engines=_freeze_engines(payload.engines, request),
+        engine_defaults=_freeze_engine_defaults(settings, payload.template),
+    )
+
+
 def _orch(request: Request) -> Orchestrator:
     return request.app.state.tournament_orch
 
@@ -315,16 +411,17 @@ def _serialize(
     registry: EngineRegistry | None = None,
 ) -> dict:
     out = t.to_dict()
+    template = t.template or {}
     if (with_stats or with_standings) and store is not None:
-        tournament_type = (t.template or {}).get("tournament_type", "roundrobin")
+        tournament_type = template.get(TOURNAMENT_TYPE_KEY, TYPE_ROUNDROBIN)
         try:
             standings = compute_standings(
                 store.pgn_path(t.id), tournament_type=tournament_type,
                 ratings=_resolve_ratings(t, registry),
             ).to_dict()
         except FileNotFoundError:
-            standings = {"games": 0, "engines": []}
-        standings["tournament_type"] = tournament_type
+            standings = Standings().to_dict()
+        standings[TOURNAMENT_TYPE_KEY] = tournament_type
         out["standings"] = standings
     if with_stats and store is not None:
         out["games"] = compute_games_list(store.pgn_path(t.id))
@@ -332,27 +429,23 @@ def _serialize(
         # workspace's Schedule can seed its rows on mount, not just from
         # forward-going `proxy_started` events. Only meaningful when this
         # tournament is the running one.
-        if orch is not None and orch.active_id() == t.id:
-            out["proxies_active"] = orch.active_proxies()
-            out["pairings_active"] = orch.active_pairings()
-            out["state_seq"] = orch.event_seq()
-        else:
-            out["proxies_active"] = []
-            out["pairings_active"] = []
-            out["state_seq"] = None
-        sprt_params = (t.template or {}).get("sprt")
-        if sprt_params and len(t.engines) >= 2:
+        live = orch is not None and orch.active_id() == t.id
+        out["proxies_active"] = orch.active_proxies() if live else []
+        out["pairings_active"] = orch.active_pairings() if live else []
+        out["state_seq"] = orch.event_seq() if live else None
+        sprt_params = template.get(SPRT_KEY)
+        if sprt_params and len(t.engines) >= _SPRT_ENGINES:
             try:
                 sprt = compute_sprt(
                     store.pgn_path(t.id),
                     sprt_params,
-                    engine_a=t.engines[0]["name"],
-                    engine_b=t.engines[1]["name"],
-                ).to_dict()
-                out["sprt"] = _snap_terminal_sprt_verdict(sprt, t.status)
+                    engine_a=t.engines[0][ENGINE_REF_NAME],
+                    engine_b=t.engines[1][ENGINE_REF_NAME],
+                )
+                out[SPRT_KEY] = _snap_terminal_sprt_verdict(sprt, t.status).to_dict()
             except (KeyError, ValueError) as e:
                 log.warning("compute_sprt failed for %s: %s", t.id, e)
-                out["sprt"] = None
+                out[SPRT_KEY] = None
     return out
 
 
@@ -361,85 +454,64 @@ def _serialize(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/api/tournaments")
+@router.get(_TOURNAMENTS_PATH)
 def list_tournaments(request: Request) -> dict:
     s = _store(request)
     return {
         "active_id": _orch(request).active_id(),
         "tournaments": [
             _serialize(t, with_standings=True, store=s, orch=_orch(request),
-                       registry=getattr(request.app.state, "engines", None))
+                       registry=_registry(request))
             for t in s.list()
         ],
     }
 
 
-@router.post("/api/tournaments", status_code=201)
+@router.post(_TOURNAMENTS_PATH, status_code=status.HTTP_201_CREATED)
 def create_tournament(payload: TournamentCreate, request: Request) -> dict:
     s = _store(request)
     if not payload.engines:
-        raise HTTPException(status_code=400, detail="at least one engine required")
-    if len(payload.engines) < 2:
-        raise HTTPException(status_code=400, detail="at least two engines required")
-    name = payload.name.strip() or "tournament"
-    settings = request.app.state.settings
-    engine_defaults = _freeze_engine_defaults(settings, payload.template)
+        raise bad_request("at least one engine required")
+    _require_engines(payload)
     try:
-        t = s.create(
-            name=name,
-            template=_resolve_oversubscribe(_resolve_sprt(payload.template, settings)),
-            engines=_freeze_engines(payload.engines, request),
-            engine_defaults=engine_defaults,
-        )
+        t = s.create(**_tournament_fields(payload, request))
     except DuplicateNameError:
-        raise HTTPException(status_code=409, detail="tournament name already exists")
+        raise conflict(_NAME_TAKEN)
     return _serialize(t)
 
 
-@router.get("/api/tournaments/{tournament_id}")
+@router.get(_TOURNAMENT_PATH)
 def get_tournament(tournament_id: str, request: Request) -> dict:
     s = _store(request)
     try:
         t = s.get(tournament_id)
     except TournamentNotFoundError as e:
-        raise HTTPException(status_code=404, detail="tournament not found") from e
+        raise not_found(_TOURNAMENT_NOT_FOUND) from e
     except CorruptStateError as e:
-        raise HTTPException(status_code=500, detail=f"corrupt state: {e}") from e
+        raise _corrupt_state(e) from e
     return _serialize(t, with_stats=True, store=s, orch=_orch(request),
-                      registry=getattr(request.app.state, "engines", None))
+                      registry=_registry(request))
 
 
-@router.patch("/api/tournaments/{tournament_id}")
+@router.patch(_TOURNAMENT_PATH)
 def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Request) -> dict:
     """Replace a tournament's name, template, and engines; reset it to idle.
 
     Rejected if the tournament is currently running. Any recorded games
-    (games.pgn) are deleted — the caller must have confirmed this with
+    (games.pgn) are deleted -- the caller must have confirmed this with
     the user before posting.
     """
     orch = _orch(request)
     if orch.active_id() == tournament_id:
-        raise HTTPException(
-            status_code=409, detail="tournament is running; stop it first"
-        )
-    if len(payload.engines) < 2:
-        raise HTTPException(status_code=400, detail="at least two engines required")
+        raise conflict(_RUNNING_STOP_FIRST)
+    _require_engines(payload)
     s = _store(request)
-    name = payload.name.strip() or "tournament"
-    settings = request.app.state.settings
-    engine_defaults = _freeze_engine_defaults(settings, payload.template)
     try:
-        t = s.update(
-            tournament_id,
-            name=name,
-            template=_resolve_oversubscribe(_resolve_sprt(payload.template, settings)),
-            engines=_freeze_engines(payload.engines, request),
-            engine_defaults=engine_defaults,
-        )
+        t = s.update(tournament_id, **_tournament_fields(payload, request))
     except TournamentNotFoundError as e:
-        raise HTTPException(status_code=404, detail="tournament not found") from e
+        raise not_found(_TOURNAMENT_NOT_FOUND) from e
     except DuplicateNameError:
-        raise HTTPException(status_code=409, detail="tournament name already exists")
+        raise conflict(_NAME_TAKEN)
     # Wipe the orchestrator's in-memory event-history buffer for this
     # tournament: any post-edit live-window re-subscribe would otherwise
     # replay stale events from the pre-edit run. Mirrors delete_tournament.
@@ -447,21 +519,19 @@ def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Requ
     return _serialize(t)
 
 
-@router.delete("/api/tournaments/{tournament_id}", status_code=204)
+@router.delete(_TOURNAMENT_PATH, status_code=status.HTTP_204_NO_CONTENT)
 def delete_tournament(tournament_id: str, request: Request) -> None:
     orch = _orch(request)
     if orch.active_id() == tournament_id:
-        raise HTTPException(
-            status_code=409, detail="tournament is running; stop it first"
-        )
+        raise conflict(_RUNNING_STOP_FIRST)
     try:
         _store(request).remove(tournament_id)
     except TournamentNotFoundError as e:
-        raise HTTPException(status_code=404, detail="tournament not found") from e
+        raise not_found(_TOURNAMENT_NOT_FOUND) from e
     orch.clear_event_history(tournament_id)
 
 
-@router.get("/api/tournaments/{tournament_id}/events")
+@router.get(f"{_TOURNAMENT_PATH}/events")
 def get_tournament_events(tournament_id: str, request: Request) -> dict:
     """Recent emitted events for this tournament, oldest first.
 
@@ -481,7 +551,7 @@ def get_tournament_events(tournament_id: str, request: Request) -> dict:
     }
 
 
-@router.get("/api/tournaments/{tournament_id}/games/{game_n}/pgn")
+@router.get(f"{_TOURNAMENT_PATH}/games/{{game_n}}/pgn")
 def get_tournament_game_pgn(
     tournament_id: str,
     game_n: Annotated[int, FastApiPath(ge=1)],
@@ -497,19 +567,19 @@ def get_tournament_game_pgn(
     try:
         s.get(tournament_id)
     except TournamentNotFoundError as e:
-        raise HTTPException(status_code=404, detail="tournament not found") from e
+        raise not_found(_TOURNAMENT_NOT_FOUND) from e
     except CorruptStateError as e:
-        raise HTTPException(status_code=500, detail=f"corrupt state: {e}") from e
+        raise _corrupt_state(e) from e
     pgn_path = s.pgn_path(tournament_id)
     if not pgn_path.exists():
-        raise HTTPException(status_code=404, detail="no games recorded")
+        raise not_found("no games recorded")
     record = read_game_record(pgn_path, game_n)
     if record is None:
-        raise HTTPException(status_code=404, detail="game not found")
+        raise not_found("game not found")
     return record
 
 
-@router.post("/api/tournaments/{tournament_id}/start")
+@router.post(f"{_TOURNAMENT_PATH}/start")
 async def start_tournament(
     tournament_id: str, request: Request, confirm_wipe: bool = False,
 ) -> dict:
@@ -521,28 +591,25 @@ async def start_tournament(
     try:
         t = store.get(tournament_id)
     except TournamentNotFoundError as e:
-        raise HTTPException(status_code=404, detail="tournament not found") from e
+        raise not_found(_TOURNAMENT_NOT_FOUND) from e
     needs_wipe = t.status in (STATUS_STOPPED, STATUS_FAILED)
     if needs_wipe:
         if not confirm_wipe:
-            raise HTTPException(status_code=409, detail=_WIPE_REQUIRED_DETAIL)
+            raise conflict(_WIPE_REQUIRED_DETAIL)
         store.wipe_for_restart(tournament_id)
         # The buffered chatter describes games the wipe just deleted.
         orch.clear_event_history(tournament_id)
     try:
         t = await orch.start(tournament_id)
     except TournamentNotFoundError as e:
-        raise HTTPException(status_code=404, detail="tournament not found") from e
+        raise not_found(_TOURNAMENT_NOT_FOUND) from e
     except TournamentBusyError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
+        raise conflict(str(e)) from e
     except FileNotFoundError as e:
         # fastchess binary missing
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise bad_request(str(e)) from e
     except RescheckError as e:
-        raise HTTPException(
-            status_code=400,
-            detail={"reason": e.reason, "message": str(e), **e.details},
-        ) from e
+        raise _rescheck_rejected(e) from e
     return _serialize(t)
 
 
@@ -551,13 +618,13 @@ class RescheckRequest(BaseModel):
     UCI option_schema. Server compares against local CPU / RAM."""
     parallel: int = 1
     max_threads: int = 1
-    max_hash_mb: int = 16
+    max_hash_mb: int = DEFAULT_HASH_MB
     ponder: bool = False
     pin_affinity: bool = False
     allow_oversubscribe: bool = False
 
 
-@router.post("/api/tournaments/rescheck")
+@router.post(f"{_TOURNAMENTS_PATH}/rescheck")
 def rescheck_tournament(payload: RescheckRequest) -> dict:
     """Resource sanity check called by the New Tournament dialog before
     POSTing the template. 200 = OK (with optional warnings); 400 carries
@@ -572,29 +639,26 @@ def rescheck_tournament(payload: RescheckRequest) -> dict:
             allow_oversubscribe=payload.allow_oversubscribe or _allow_oversubscribe(),
         )
     except RescheckError as e:
-        raise HTTPException(
-            status_code=400,
-            detail={"reason": e.reason, "message": str(e), **e.details},
-        ) from e
+        raise _rescheck_rejected(e) from e
     return {"ok": True, "warnings": warnings}
 
 
-@router.post("/api/tournaments/{tournament_id}/stop")
+@router.post(f"{_TOURNAMENT_PATH}/stop")
 async def stop_tournament(tournament_id: str, request: Request) -> dict:
     orch = _orch(request)
     try:
         t = await orch.stop(tournament_id)
     except TournamentNotFoundError as e:
-        raise HTTPException(status_code=404, detail="tournament not found") from e
+        raise not_found(_TOURNAMENT_NOT_FOUND) from e
     return _serialize(t)
 
 
-@router.post("/api/tournaments/{tournament_id}/reveal", status_code=204)
+@router.post(f"{_TOURNAMENT_PATH}/reveal", status_code=status.HTTP_204_NO_CONTENT)
 def reveal_tournament_folder(tournament_id: str, request: Request) -> None:
     path = _store(request).dir_for(tournament_id)
     if not path.is_dir():
-        raise HTTPException(status_code=404, detail="tournament folder not found")
-    if sys.platform == "win32":
+        raise not_found("tournament folder not found")
+    if is_windows():
         subprocess.Popen(["explorer", str(path)])
     elif sys.platform == "darwin":
         subprocess.Popen(["open", str(path)])
@@ -607,45 +671,47 @@ def reveal_tournament_folder(tournament_id: str, request: Request) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _serialize_settings(s) -> dict:
+def _serialize_settings(request: Request) -> dict:
+    s = request.app.state.settings
     return {
+        _TOURNAMENT_RUNNING_KEY: _orch(request).active_id() is not None,
+        _TOURNAMENTS_IN_ROOT_KEY: len(_store(request).list()),
+        _ROOT_IS_DEFAULT_KEY: not s.tournament_root,
         "fastchess_path": s.tournament_fastchess_path,
         "tournaments_root": s.tournament_root or str(_default_root_for_settings()),
         "default_template": dict(s.tournament_default_template or {}),
         "sprt_defaults": dict(s.tournament_sprt_defaults or {}),
         "fastchess_detected": FastchessRunner.detect_binary(s.tournament_fastchess_path),
-        "engine_default_syzygy_path": s.engine_default_syzygy_path,
-        "engine_default_book_path": s.engine_default_book_path,
-        "engine_default_book_plies": s.engine_default_book_plies,
-        "engine_default_book_order": s.engine_default_book_order,
+        ENGINE_SYZYGY_PATH_KEY: s.engine_default_syzygy_path,
+        ENGINE_BOOK_PATH_KEY: s.engine_default_book_path,
+        ENGINE_BOOK_PLIES_KEY: s.engine_default_book_plies,
+        ENGINE_BOOK_ORDER_KEY: s.engine_default_book_order,
     }
 
 
 def _default_root_for_settings() -> Path:
-    from ..tournament.store import default_root
     return default_root()
 
 
-@router.get("/api/tournament-settings")
+@router.get(_SETTINGS_PATH)
 def get_tournament_settings(request: Request) -> dict:
-    return _serialize_settings(request.app.state.settings)
+    return _serialize_settings(request)
 
 
-@router.put("/api/tournament-settings")
+@router.put(_SETTINGS_PATH)
 def update_tournament_settings(payload: TournamentSettingsUpdate, request: Request) -> dict:
     s = request.app.state.settings
-    runner: FastchessRunner = request.app.state.tournament_runner
-    store: TournamentStore = request.app.state.tournament_store
+    store = _store(request)
+    # The store resolves the running tournament under the current root, so
+    # repointing it mid-run would lose that tournament. Refuse before any write.
+    if payload.tournaments_root is not None and _orch(request).active_id() is not None:
+        raise conflict(_ROOT_LOCKED_WHILE_RUNNING)
 
     if payload.fastchess_path is not None:
         s.tournament_fastchess_path = payload.fastchess_path or None
-        runner.set_binary_path(s.tournament_fastchess_path)
     if payload.tournaments_root is not None:
         new_root = (payload.tournaments_root or "").strip() or None
         s.tournament_root = new_root
-        # Live-update the store's root. A change while a tournament is
-        # running affects only future tournaments (the running runner
-        # has its paths frozen in RunSpec).
         store.set_root(Path(new_root) if new_root else _default_root_for_settings())
     if payload.default_template is not None:
         s.tournament_default_template = dict(payload.default_template)
@@ -655,18 +721,13 @@ def update_tournament_settings(payload: TournamentSettingsUpdate, request: Reque
     try:
         s.save_persisted()
     except OSError:
-        pass
-    return _serialize_settings(s)
+        log.warning("could not persist tournament settings", exc_info=True)
+    return _serialize_settings(request)
 
 
 # ---------------------------------------------------------------------------
 # proxy ingest + per-proxy WS subscription
 # ---------------------------------------------------------------------------
-
-
-# Response field carrying the want-info gate back to the proxy. Sent
-# only when the value flips, so steady-state responses stay empty (204).
-WANT_INFO_KEY = "want_info"
 
 
 class ProxyBatch(BaseModel):
@@ -687,7 +748,7 @@ async def ingest_proxy(payload: ProxyBatch, request: Request) -> Response:
     if not orch.verify_proxy_secret(payload.secret):
         # Stale or unknown proxy posting after tournament ended, or
         # someone unauthorized. Quietly reject.
-        raise HTTPException(status_code=401, detail="invalid proxy secret")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid proxy secret")
 
     if payload.engine_name and payload.lines == []:
         # First post from a proxy: register it.
@@ -698,14 +759,14 @@ async def ingest_proxy(payload: ProxyBatch, request: Request) -> Response:
 
     if payload.ended:
         await orch.proxy_session_ended(payload.proxy_id)
-        return Response(status_code=204)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    # Tell the proxy whether to keep tapping ``info`` -- only when the
-    # gate has flipped since we last told it, so the common case (no
-    # change) stays a bodiless 204.
+    # Tell the proxy whether to keep tapping ``info`` (WANT_INFO_KEY) --
+    # only when the gate has flipped since we last told it, so the common
+    # case (no change) stays a bodiless 204.
     signal = orch.want_info_signal(payload.proxy_id)
     if signal is None:
-        return Response(status_code=204)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     return JSONResponse({WANT_INFO_KEY: signal})
 
 
@@ -759,11 +820,10 @@ async def _stream_queue_to_websocket(websocket: WebSocket, queue) -> None:
                 break
             payload = get_task.result()
             get_task = None
-            if "parsed" not in payload:
-                line = payload.get("line", "")
-                parsed = parse_uci_line(line)
+            if PARSED_KEY not in payload:
+                parsed = parse_uci_line(payload.get(LINE_KEY, ""))
                 if parsed is not None:
-                    payload = {**payload, "parsed": parsed}
+                    payload = {**payload, PARSED_KEY: parsed}
             await websocket.send_json(payload)
     except WebSocketDisconnect:
         if term_task.done():

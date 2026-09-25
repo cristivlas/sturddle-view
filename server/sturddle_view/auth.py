@@ -11,6 +11,11 @@ from .config import Settings
 # Name of the cookie set by /auth handshake. Single source of truth for
 # the cookie reader, the /auth route, and tests.
 AUTH_COOKIE = "sv_auth"
+# The /auth handshake route and its token query parameter. Shared by the
+# route and the entry-URL builder (netinfo.entry_url).
+AUTH_PATH = "/auth"
+AUTH_TOKEN_PARAM = "token"
+INVALID_TOKEN_DETAIL = "invalid token"
 
 # Logged whenever an auth-less server becomes reachable beyond loopback:
 # at startup for a --host bind, or when desktop opens the LAN port.
@@ -42,7 +47,9 @@ def require_token(request: Request) -> None:
         return
     presented = _present_token(request)
     if presented is None or not hmac.compare_digest(presented, settings.token):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=INVALID_TOKEN_DETAIL,
+        )
 
 
 def check_token_value(settings: Settings, presented: str | None) -> bool:

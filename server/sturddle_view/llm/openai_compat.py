@@ -20,6 +20,7 @@ well-behaved cloud models.
 from __future__ import annotations
 
 import json
+from http import HTTPStatus
 from typing import Any, AsyncIterator
 
 import httpx
@@ -241,7 +242,7 @@ async def stream_openai_compat(
             json=body,
             headers=headers,
         ) as resp:
-            if resp.status_code != 200:
+            if resp.status_code != HTTPStatus.OK:
                 raw = (await resp.aread()).decode("utf-8", errors="replace")
                 await provider._tx_wire(
                     transcript, round_index, f"HTTP {resp.status_code}: {raw}"

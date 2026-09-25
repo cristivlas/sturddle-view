@@ -1,16 +1,26 @@
-"""Slice 1: TournamentStore — on-disk layout, state.json, atomic writes,
-status transitions, error paths."""
+"""TournamentStore: on-disk layout, state.json, atomic writes, status
+transitions, error paths."""
 from __future__ import annotations
 
 import json
+import os
+import uuid
+from pathlib import Path
 
 import pytest
 
+from sturddle_view import APP_NAME
+from sturddle_view.tournament import pgn_stats
 from sturddle_view.tournament.store import (
+    CONFIG_FILENAME,
+    LOGS_DIRNAME,
+    PGN_FILENAME,
+    STATE_FILENAME,
     STATUS_DONE,
     STATUS_IDLE,
     STATUS_RUNNING,
     STATUS_STOPPED,
+    TOURNAMENTS_DIRNAME,
     CorruptStateError,
     DuplicateNameError,
     Tournament,
@@ -18,11 +28,46 @@ from sturddle_view.tournament.store import (
     TournamentStore,
     default_root,
 )
+from sturddle_view.tournament.template import SEED_KEY
+
+_CORRUPT_JSON = "{not json"
+_BOGUS_STATUS = "bogus"
+_AV_LOCK_ERROR = "simulated AV lock"
+_ONE_GAME_PGN = (
+    '[Event "x"]\n[White "A"]\n[Black "B"]\n[Round "1"]\n'
+    '[Result "1-0"]\n\n1. e4 e5 1-0\n\n'
+)
+
+
+def _state_file(store: TournamentStore, tournament_id: str) -> Path:
+    return store.root / tournament_id / STATE_FILENAME
+
+
+def _read_state(store: TournamentStore, tournament_id: str) -> dict:
+    return json.loads(_state_file(store, tournament_id).read_text())
+
+
+def _write_state(store: TournamentStore, tournament_id: str, payload: dict) -> None:
+    _state_file(store, tournament_id).write_text(json.dumps(payload))
+
+
+def _memo_has(pgn: Path) -> bool:
+    return any(k[0] == pgn for k in pgn_stats._opening_memo)
+
+
+def _pgn_with_cached_games(store: TournamentStore) -> tuple[Tournament, Path]:
+    """A one-game tournament PGN whose games list pgn_stats has memoized."""
+    t = store.create(name="x", template={}, engines=[{"name": "A"}])
+    pgn = store.pgn_path(t.id)
+    pgn.write_text(_ONE_GAME_PGN)
+    pgn_stats.compute_games_list(pgn)
+    assert _memo_has(pgn)
+    return t, pgn
 
 
 @pytest.fixture
 def store(tmp_path):
-    return TournamentStore(tmp_path / "tournaments")
+    return TournamentStore(tmp_path / TOURNAMENTS_DIRNAME)
 
 
 def test_default_root_uses_platformdirs(monkeypatch):
@@ -31,8 +76,8 @@ def test_default_root_uses_platformdirs(monkeypatch):
     # one test we want the unredirected behavior, so undo the patch.
     monkeypatch.undo()
     root = default_root()
-    assert root.name == "tournaments"
-    assert "sturddle-view" in str(root)
+    assert root.name == TOURNAMENTS_DIRNAME
+    assert APP_NAME in str(root)
 
 
 def test_create_round_trip(store):
@@ -43,7 +88,7 @@ def test_create_round_trip(store):
     )
     assert t.name == "My Tournament"
     assert t.status == STATUS_IDLE
-    assert t.id and len(t.id) == 32  # uuid4 hex
+    assert t.id == uuid.UUID(t.id).hex
     assert t.template["tc"] == "10+0.1"
     assert len(t.engines) == 2
 
@@ -62,16 +107,16 @@ def test_create_makes_directory_with_logs_subdir(store):
     t = store.create(name="x", template={}, engines=[])
     d = store.root / t.id
     assert d.is_dir()
-    assert (d / "state.json").exists()
-    assert (d / "logs").is_dir()
+    assert (d / STATE_FILENAME).exists()
+    assert (d / LOGS_DIRNAME).is_dir()
     # No PGN/config until fastchess writes them
-    assert not (d / "games.pgn").exists()
-    assert not (d / "config.json").exists()
+    assert not (d / PGN_FILENAME).exists()
+    assert not (d / CONFIG_FILENAME).exists()
 
 
 def test_state_json_is_valid_json_with_expected_fields(store):
     t = store.create(name="x", template={"k": "v"}, engines=[])
-    payload = json.loads((store.root / t.id / "state.json").read_text())
+    payload = _read_state(store, t.id)
     assert payload["id"] == t.id
     assert payload["status"] == STATUS_IDLE
     assert payload["template"]["k"] == "v"
@@ -82,14 +127,14 @@ def test_state_json_is_valid_json_with_expected_fields(store):
 
 def test_create_pins_seed_when_template_omits_it(store):
     t = store.create(name="x", template={}, engines=[])
-    assert "seed" in t.template
-    assert isinstance(t.template["seed"], int)
-    assert t.template["seed"] >= 0
+    assert SEED_KEY in t.template
+    assert isinstance(t.template[SEED_KEY], int)
+    assert t.template[SEED_KEY] >= 0
 
 
 def test_create_preserves_caller_supplied_seed(store):
-    t = store.create(name="x", template={"seed": 42}, engines=[])
-    assert t.template["seed"] == 42
+    t = store.create(name="x", template={SEED_KEY: 42}, engines=[])
+    assert t.template[SEED_KEY] == 42
 
 
 def test_update_pins_seed_when_template_omits_it(store):
@@ -97,21 +142,21 @@ def test_update_pins_seed_when_template_omits_it(store):
     # update must re-pin one or the tournament runs fastchess unseeded.
     t = store.create(name="x", template={}, engines=[])
     updated = store.update(t.id, name="x", template={}, engines=[])
-    assert "seed" in updated.template
-    assert isinstance(updated.template["seed"], int)
+    assert SEED_KEY in updated.template
+    assert isinstance(updated.template[SEED_KEY], int)
 
 
 def test_update_preserves_caller_supplied_seed(store):
-    t = store.create(name="x", template={"seed": 42}, engines=[])
-    updated = store.update(t.id, name="x", template={"seed": 42}, engines=[])
-    assert updated.template["seed"] == 42
+    t = store.create(name="x", template={SEED_KEY: 42}, engines=[])
+    updated = store.update(t.id, name="x", template={SEED_KEY: 42}, engines=[])
+    assert updated.template[SEED_KEY] == 42
 
 
 def test_path_helpers(store):
     t = store.create(name="x", template={}, engines=[])
-    assert store.pgn_path(t.id).name == "games.pgn"
-    assert store.config_path(t.id).name == "config.json"
-    assert store.logs_dir(t.id).name == "logs"
+    assert store.pgn_path(t.id).name == PGN_FILENAME
+    assert store.config_path(t.id).name == CONFIG_FILENAME
+    assert store.logs_dir(t.id).name == LOGS_DIRNAME
     assert store.pgn_path(t.id).parent == store.root / t.id
 
 
@@ -145,43 +190,43 @@ def test_list_skips_directories_without_state_json(store):
 def test_list_skips_corrupt_state_json(store):
     t = store.create(name="real", template={}, engines=[])
     bad = store.create(name="will-corrupt", template={}, engines=[])
-    (store.root / bad.id / "state.json").write_text("{not json")
+    _state_file(store, bad.id).write_text(_CORRUPT_JSON)
     listed = store.list()
     assert {x.id for x in listed} == {t.id}
 
 
 def test_get_corrupt_state_json_raises(store):
     t = store.create(name="x", template={}, engines=[])
-    (store.root / t.id / "state.json").write_text("{not json")
+    _state_file(store, t.id).write_text(_CORRUPT_JSON)
     with pytest.raises(CorruptStateError):
         store.get(t.id)
 
 
 def test_get_state_with_invalid_status_raises(store):
     t = store.create(name="x", template={}, engines=[])
-    raw = json.loads((store.root / t.id / "state.json").read_text())
-    raw["status"] = "bogus"
-    (store.root / t.id / "state.json").write_text(json.dumps(raw))
+    raw = _read_state(store, t.id)
+    raw["status"] = _BOGUS_STATUS
+    _write_state(store, t.id, raw)
     with pytest.raises(CorruptStateError):
         store.get(t.id)
 
 
 def test_get_state_missing_required_field_raises(store):
     t = store.create(name="x", template={}, engines=[])
-    raw = json.loads((store.root / t.id / "state.json").read_text())
+    raw = _read_state(store, t.id)
     raw.pop("created_at")
-    (store.root / t.id / "state.json").write_text(json.dumps(raw))
+    _write_state(store, t.id, raw)
     with pytest.raises(CorruptStateError):
         store.get(t.id)
 
 
 def test_get_state_without_engine_defaults_loads(store):
     # Tournaments created before the snapshot field existed have no
-    # engine_defaults key in state.json — they must still load.
+    # engine_defaults key in state.json -- they must still load.
     t = store.create(name="x", template={}, engines=[])
-    raw = json.loads((store.root / t.id / "state.json").read_text())
+    raw = _read_state(store, t.id)
     raw.pop("engine_defaults", None)
-    (store.root / t.id / "state.json").write_text(json.dumps(raw))
+    _write_state(store, t.id, raw)
     loaded = store.get(t.id)
     assert loaded.engine_defaults == {}
 
@@ -190,7 +235,7 @@ def test_create_persists_engine_defaults(store):
     ed = {"threads": 4, "hash_mb": 256, "book_path": "/b.pgn"}
     t = store.create(name="x", template={}, engines=[], engine_defaults=ed)
     assert t.engine_defaults == ed
-    raw = json.loads((store.root / t.id / "state.json").read_text())
+    raw = _read_state(store, t.id)
     assert raw["engine_defaults"] == ed
     assert store.get(t.id).engine_defaults == ed
 
@@ -220,7 +265,7 @@ def test_update_status_running_then_stopped(store):
 def test_update_status_invalid_value_rejected(store):
     t = store.create(name="x", template={}, engines=[])
     with pytest.raises(ValueError):
-        store.update_status(t.id, "bogus")
+        store.update_status(t.id, _BOGUS_STATUS)
 
 
 def test_update_status_unknown_id_raises(store):
@@ -260,34 +305,34 @@ def test_find_by_status(store):
 def test_atomic_write_no_partial_state_visible_on_crash(store, monkeypatch):
     """If the rename step fails, the original state.json must not be replaced."""
     t = store.create(name="x", template={"k": 1}, engines=[])
-    original = json.loads((store.root / t.id / "state.json").read_text())
+    original = _read_state(store, t.id)
 
-    import os as _os
-
-    real_replace = _os.replace
-    fail = {"once": True}
+    real_replace = os.replace
+    failed = False
 
     def boom(src, dst):
-        if fail["once"]:
-            fail["once"] = False
+        nonlocal failed
+        if not failed:
+            failed = True
             raise OSError("simulated rename failure")
         return real_replace(src, dst)
 
-    monkeypatch.setattr(_os, "replace", boom)
+    monkeypatch.setattr(os, "replace", boom)
 
     with pytest.raises(OSError):
         store.update_status(t.id, STATUS_RUNNING)
 
     # state.json untouched
-    after = json.loads((store.root / t.id / "state.json").read_text())
-    assert after == original
+    assert _read_state(store, t.id) == original
     # No leftover temp files
-    leftover = [p for p in (store.root / t.id).iterdir() if p.name.startswith(".state.json.")]
+    leftover = [
+        p for p in (store.root / t.id).iterdir() if p.name.startswith(f".{STATE_FILENAME}.")
+    ]
     assert leftover == []
 
 
 def test_root_auto_created_on_first_create(tmp_path):
-    root = tmp_path / "deep" / "nested" / "tournaments"
+    root = tmp_path / "deep" / "nested" / TOURNAMENTS_DIRNAME
     assert not root.exists()
     s = TournamentStore(root)
     s.create(name="x", template={}, engines=[])
@@ -337,13 +382,11 @@ def test_update_persists_across_reload(store):
 
 
 def test_update_wipes_tournament_dir_contents(store):
-    """Any edit wipes the tournament directory clean: games.pgn,
-    fastchess config.json and its rotated backups, logs/ subdir, and
-    any stray files (we don't allowlist artifact names -- the dir is
-    ours, edits start from a clean slate). Only the freshly written
-    state.json survives."""
+    """Any edit wipes the tournament dir clean -- games.pgn, config.json and
+    its rotated backups, logs/, stray files (no allowlist: the dir is ours).
+    Only the freshly written state.json survives."""
     t = store.create(name="x", template={}, engines=[{"name": "A"}])
-    d = store._dir(t.id)
+    d = store.dir_for(t.id)
     # Lay down the artifacts produced by a real fastchess run plus a
     # nested logs dir and a stray file we never created on purpose.
     pgn = store.pgn_path(t.id)
@@ -366,7 +409,7 @@ def test_update_wipes_tournament_dir_contents(store):
     assert not logs.exists()
     assert not stray.exists()
     # State file is fresh and parseable.
-    assert store._state_path(t.id).exists()
+    assert _state_file(store, t.id).exists()
     reloaded = store.get(t.id)
     assert reloaded.status == STATUS_IDLE
 
@@ -374,48 +417,27 @@ def test_update_wipes_tournament_dir_contents(store):
 def test_wipe_forgets_pgn_stats_caches(store):
     """A dir wipe must invalidate pgn_stats' offset-keyed games-list memo,
     whose only invariant (append-only PGN bytes) breaks across a restart."""
-    from sturddle_view.tournament import pgn_stats
-
-    t = store.create(name="x", template={}, engines=[{"name": "A"}])
-    pgn = store.pgn_path(t.id)
-    pgn.write_text(
-        '[Event "x"]\n[White "A"]\n[Black "B"]\n[Round "1"]\n'
-        '[Result "1-0"]\n\n1. e4 e5 1-0\n\n'
-    )
-    pgn_stats.compute_games_list(pgn)
-    assert any(k[0] == pgn for k in pgn_stats._opening_memo)
-
+    t, pgn = _pgn_with_cached_games(store)
     store.wipe_for_restart(t.id)
-    assert not any(k[0] == pgn for k in pgn_stats._opening_memo)
+    assert not _memo_has(pgn)
 
 
 def test_wipe_forgets_caches_even_on_partial_failure(store, monkeypatch):
     """The PGN may be deleted before a later unlink trips (AV lock), so
     cache invalidation must run regardless -- forget() is in a finally."""
-    from pathlib import Path
-
-    from sturddle_view.tournament import pgn_stats
-
-    t = store.create(name="x", template={}, engines=[{"name": "A"}])
-    pgn = store.pgn_path(t.id)
-    pgn.write_text(
-        '[Event "x"]\n[White "A"]\n[Black "B"]\n[Round "1"]\n'
-        '[Result "1-0"]\n\n1. e4 e5 1-0\n\n'
-    )
-    pgn_stats.compute_games_list(pgn)
-    assert any(k[0] == pgn for k in pgn_stats._opening_memo)
+    t, pgn = _pgn_with_cached_games(store)
 
     real_unlink = Path.unlink
 
     def _boom_unlink(self, *a, **k):
-        if self.suffix == ".pgn":
-            raise OSError("simulated AV lock")
+        if self.suffix == pgn.suffix:
+            raise OSError(_AV_LOCK_ERROR)
         return real_unlink(self, *a, **k)
 
     monkeypatch.setattr(Path, "unlink", _boom_unlink)
     with pytest.raises(OSError):
         store.wipe_for_restart(t.id)
-    assert not any(k[0] == pgn for k in pgn_stats._opening_memo)
+    assert not _memo_has(pgn)
 
 
 def test_update_keeps_tournament_listable_if_wipe_partial_fails(store, monkeypatch):
@@ -426,7 +448,7 @@ def test_update_keeps_tournament_listable_if_wipe_partial_fails(store, monkeypat
     store.pgn_path(t.id).write_text("[Event \"?\"]\n\n*\n")
 
     def _boom(self, tournament_id):
-        raise OSError("simulated AV lock")
+        raise OSError(_AV_LOCK_ERROR)
 
     monkeypatch.setattr(type(store), "_wipe_dir_contents", _boom)
     with pytest.raises(OSError):

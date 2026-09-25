@@ -15,9 +15,8 @@ import secrets
 import shutil
 from pathlib import Path
 
-from platformdirs import user_data_dir
-
-from . import app_dir_name
+from . import app_data_dir
+from .env_utils import env_path
 
 log = logging.getLogger(__name__)
 
@@ -35,10 +34,7 @@ def engine_tmp_root() -> Path:
 
     ``SV_ENGINE_TMP_ROOT`` overrides the default (tests, isolated
     deployments). Defaults to platform user-data dir."""
-    override = os.environ.get(_ROOT_ENV)
-    if override:
-        return Path(override)
-    return Path(user_data_dir(app_dir_name(), appauthor=False)) / _ROOT_DIRNAME
+    return env_path(_ROOT_ENV, app_data_dir() / _ROOT_DIRNAME)
 
 
 def create_spawn_dir() -> Path:

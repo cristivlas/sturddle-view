@@ -3,14 +3,25 @@
 // behind this seam so it can be swapped later.
 
 import { APP_EVT } from "./app-events.js";
-import { attachColumnResize } from "./col-resize.js";
+import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
+import { wireSplitScroll } from "./split-table.js";
 import { attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
-import { markSelectable, rafCoalesce, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
+import { markSelectable, rafCoalesce, splitPath, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
 
-const FS_ENTRY_SEL = ".fs-entry";
-const FS_SELECTED_SEL = ".fs-entry.selected";
+const FS_ENTRY_CLASS = "fs-entry";
+const FS_SELECTED_CLASS = "selected";
+const FS_NAME_CLASS = "fs-name";
+const FS_ENTRY_SEL = `.${FS_ENTRY_CLASS}`;
+const FS_SELECTED_SEL = `${FS_ENTRY_SEL}.${FS_SELECTED_CLASS}`;
+const FS_NAME_SEL = `.${FS_NAME_CLASS}`;
+const FS_ICON_DIR = "folder";
+const FS_ICON_EXE = "gears";
+const FS_ICON_FILE = "file-lines";
+const FS_HEADERS = ["Name", "Date modified", "Size"];
+// Typing pause after which jump-to-prefix starts a fresh prefix.
+const FS_JUMP_RESET_MS = 600;
 const FS_COL_DEFAULT_PCTS = [55, 30, 15];
 const FS_MIN_COL_PCT = 8;
 // Sort keys aligned to the three columns, in header order.
@@ -225,23 +236,228 @@ function fmtDate(mtime) {
 }
 
 
+function makeIconButton(iconName, ariaLabel) {
+  const btn = document.createElement("wa-button");
+  btn.size = "small";
+  btn.className = "icon-only";
+  if (ariaLabel) btn.setAttribute("aria-label", ariaLabel);
+  const icon = document.createElement("wa-icon");
+  if (iconName) icon.setAttribute("name", iconName);
+  btn.appendChild(icon);
+  return btn;
+}
+
+function buildFsPathBar() {
+  const pathBar = document.createElement("div");
+  pathBar.className = "fs-picker-pathbar";
+  const backBtn = makeIconButton("reply", "Back to previous directory");
+  backBtn.disabled = true;
+  const upBtn = makeIconButton("arrow-up", "Up to parent directory");
+  const pathInput = document.createElement("wa-input");
+  pathInput.size = "small";
+  pathInput.className = "fs-picker-path";
+  pathBar.append(backBtn, upBtn, pathInput);
+  return { pathBar, backBtn, upBtn, pathInput };
+}
+
+// Executable pickers' filter: on (the default) hides non-executables.
+// Persisted under storageKey; onChange re-renders the listing.
+function buildExeOnlyToggle(storageKey, onChange) {
+  let on = loadRaw(storageKey) !== "false";
+  const btn = makeIconButton();
+  btn.classList.add("fs-exe-only-btn");
+  const icon = btn.querySelector("wa-icon");
+  const sync = () => {
+    btn.title = on ? "Executables only" : "All files";
+    btn.setAttribute("aria-pressed", String(on));
+    icon.setAttribute("name", on ? FS_ICON_EXE : FS_ICON_FILE);
+  };
+  sync();
+  btn.addEventListener("click", () => {
+    on = !on;
+    saveRaw(storageKey, String(on));
+    sync();
+    onChange();
+  });
+  return { btn, isOn: () => on };
+}
+
+// Real tables so the shared column-resize helper (.th-grip / .col-drag-line)
+// can size Name/Date the way the engines and openings tables do.
+// Split header/body table pattern -- see split-table.js.
+function buildFsTable() {
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "fs-picker-table-wrap";
+  const headScroll = document.createElement("div");
+  headScroll.className = "fs-picker-head-scroll";
+  const headTable = document.createElement("table");
+  headTable.className = "fs-picker-table fs-picker-head-table";
+  markSelectable(headTable);
+  const bodyScroll = document.createElement("div");
+  bodyScroll.className = "fs-picker-body-scroll";
+  const table = document.createElement("table");
+  table.className = "fs-picker-table fs-picker-body-table";
+  table.tabIndex = 0;
+  markSelectable(table);
+  suppressMultiClickSelect(table);
+
+  function makeColgroup() {
+    const colgroup = document.createElement("colgroup");
+    for (let i = 0; i < FS_HEADERS.length; i++) colgroup.append(document.createElement("col"));
+    return colgroup;
+  }
+  const headColgroup = makeColgroup();
+  const bodyColgroup = makeColgroup();
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  const grips = [];
+  FS_HEADERS.forEach((text, i) => {
+    const th = document.createElement("th");
+    th.textContent = text;
+    // No grip on the last (Size) column -- it absorbs the remainder.
+    if (i < FS_HEADERS.length - 1) {
+      const grip = document.createElement("span");
+      grip.className = "th-grip";
+      th.append(grip);
+      grips.push(grip);
+    }
+    headRow.append(th);
+  });
+  thead.append(headRow);
+  const listing = document.createElement("tbody");
+  headTable.append(headColgroup, thead);
+  table.append(bodyColgroup, listing);
+  headScroll.append(headTable);
+  bodyScroll.append(table);
+  tableWrap.append(headScroll, bodyScroll);
+  wireSplitScroll(headScroll, bodyScroll);
+
+  const headColEls = Array.from(headColgroup.querySelectorAll("col"));
+  const bodyColEls = Array.from(bodyColgroup.querySelectorAll("col"));
+  attachColumnResize({
+    table: headTable,
+    grips,
+    overlayHost: tableWrap,
+    storageKey: STORAGE_KEY.FS_PICKER_COL_PCTS,
+    sizes: FS_COL_DEFAULT_PCTS.slice(),
+    unit: "pct",
+    applySizes: makePctApplySizes([headColEls, bodyColEls], FS_MIN_COL_PCT),
+  });
+  return { tableWrap, headTable, table, listing };
+}
+
+function buildFsRow(entry, dim) {
+  const row = document.createElement("tr");
+  row.className = FS_ENTRY_CLASS;
+  if (dim) row.classList.add("dim");
+  row.dataset.path = entry.path;
+
+  const nameCell = document.createElement("td");
+  nameCell.className = "fs-name-cell";
+  const icon = document.createElement("wa-icon");
+  icon.name = entry.is_dir ? FS_ICON_DIR : entry.is_executable ? FS_ICON_EXE : FS_ICON_FILE;
+  const name = document.createElement("span");
+  name.className = FS_NAME_CLASS;
+  name.textContent = entry.name;
+  nameCell.append(icon, name);
+
+  const date = document.createElement("td");
+  date.className = "fs-date";
+  date.textContent = fmtDate(entry.mtime);
+
+  const size = document.createElement("td");
+  size.className = "fs-size";
+  size.textContent = entry.is_dir ? "" : fmtSize(entry.size);
+
+  row.append(nameCell, date, size);
+  return row;
+}
+
+// Selecting through the row's own click keeps currentSelection and the
+// Select button's enabled state in one place (the row click handler).
+function selectFsRow(row) {
+  row.click();
+  row.scrollIntoView({ block: "nearest" });
+}
+
+// Arrows walk rows; Enter opens the selected (else first) row; typed chars
+// jump to the next row whose name starts with them, a repeated single key
+// cycling matches. Returns a reset for when the listing changes.
+function wireFsTableKeys(table, listing) {
+  wireArrowKeyNav(table, {
+    rows: FS_ENTRY_SEL,
+    selected: FS_SELECTED_SEL,
+    select: (row) => row.click(),
+  });
+
+  let prefix = "";
+  let lastPrefix = "";
+  let cycleIdx = -1;
+  let timer = null;
+  const reset = () => { prefix = ""; lastPrefix = ""; cycleIdx = -1; };
+
+  table.addEventListener("keydown", (ev) => {
+    if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      const target = listing.querySelector(FS_SELECTED_SEL) ?? listing.querySelector(FS_ENTRY_SEL);
+      target?.dispatchEvent(new MouseEvent("dblclick"));
+      return;
+    }
+    if (ev.key.length !== 1) return;
+    ev.preventDefault();
+    clearTimeout(timer);
+    prefix += ev.key.toLowerCase();
+    const entries = Array.from(listing.querySelectorAll(FS_ENTRY_SEL));
+    const names = entries.map(r => (r.querySelector(FS_NAME_SEL)?.textContent || "").toLowerCase());
+    const isCycle = prefix === lastPrefix && prefix.length === 1;
+    let hitIdx = -1;
+    if (isCycle) {
+      const start = (cycleIdx + 1) % entries.length;
+      for (let i = 0; i < entries.length; i++) {
+        const idx = (start + i) % entries.length;
+        if (names[idx].startsWith(prefix)) { hitIdx = idx; break; }
+      }
+    } else {
+      hitIdx = names.findIndex(n => n.startsWith(prefix));
+    }
+    if (hitIdx !== -1) {
+      cycleIdx = hitIdx;
+      selectFsRow(entries[hitIdx]);
+    }
+    lastPrefix = prefix;
+    timer = setTimeout(reset, FS_JUMP_RESET_MS);
+  });
+  return reset;
+}
+
 /** Modal file/directory picker (browses server FS via /fs).
- *  Resolves to selected path or null. mode: "file" | "directory" | "executable". */
+ *  Resolves to selected path or null. mode: "file" | "directory" | "executable".
+ *  currentPath: the associated field's value, used as the starting point. */
 export function pickFile({
   api,
   title = "Pick a file",
   mode = "file",
-  startPath = null,
+  currentPath = null,
+  extensions = null,
 } = {}) {
   if (!api) throw new Error("pickFile requires an api function");
 
   const wantsExec = mode === "executable";
   const wantsDir = mode === "directory";
-  // Per-context recall, keyed by dialog title: each call site passes a
-  // distinct title (e.g. "Pick fastchess binary" vs "Add engine"), so two
-  // executable pickers don't bleed into each other. Explicit startPath wins.
+  const extSet = extensions
+    ? new Set(extensions.map((e) => e.toLowerCase()))
+    : null;
+  const hasExt = (name) => {
+    const dot = name.lastIndexOf(".");
+    return dot >= 0 && extSet.has(name.slice(dot).toLowerCase());
+  };
+  // Open at currentPath's parent with it preselected. An empty or bare-name
+  // value falls back to recall, keyed by dialog title (same-titled pickers,
+  // e.g. the two opening-book rows, share one).
   const recallKey = title;
-  const initialPath = startPath ?? recallLastDir(recallKey);
+  const { dir: currentDir, name: currentName } = splitPath((currentPath || "").trim());
+  const initialPath = currentDir || recallLastDir(recallKey);
 
   return showDialog({
     label: title,
@@ -251,163 +467,13 @@ export function pickFile({
       // Layout: path bar at top, listing in the middle, footer with select/cancel.
       const wrap = document.createElement("div");
       wrap.className = "fs-picker";
-
-      const pathBar = document.createElement("div");
-      pathBar.className = "fs-picker-pathbar";
-      const pathInput = document.createElement("wa-input");
-      pathInput.size = "small";
-      pathInput.className = "fs-picker-path";
-
-      const backBtn = document.createElement("wa-button");
-      backBtn.size = "small";
-      backBtn.className = "icon-only";
-      backBtn.setAttribute("aria-label", "Back to previous directory");
-      const backIcon = document.createElement("wa-icon");
-      backIcon.setAttribute("name", "reply");
-      backBtn.appendChild(backIcon);
-      backBtn.disabled = true;
-
-      const upBtn = document.createElement("wa-button");
-      upBtn.size = "small";
-      upBtn.className = "icon-only";
-      upBtn.setAttribute("aria-label", "Up to parent directory");
-      const upIcon = document.createElement("wa-icon");
-      upIcon.setAttribute("name", "arrow-up");
-      upBtn.appendChild(upIcon);
-
-      pathBar.append(backBtn, upBtn, pathInput);
-
-      // Exe-only toggle: only shown for executable pickers. Default on (hide
-      // non-executables); the button reveals all files when toggled off.
-      let exeOnly = wantsExec
-        ? (loadRaw(EXE_ONLY_KEY_PREFIX + recallKey) !== "false")
-        : false;
-
-      let exeOnlyBtn = null;
-      if (wantsExec) {
-        exeOnlyBtn = document.createElement("wa-button");
-        exeOnlyBtn.size = "small";
-        exeOnlyBtn.className = "icon-only fs-exe-only-btn";
-        const exeOnlyIcon = document.createElement("wa-icon");
-        exeOnlyBtn.appendChild(exeOnlyIcon);
-        const syncExeBtn = () => {
-          exeOnlyBtn.title = exeOnly ? "Executables only" : "All files";
-          exeOnlyBtn.setAttribute("aria-pressed", String(exeOnly));
-          exeOnlyIcon.setAttribute("name", exeOnly ? "gears" : "file-lines");
-        };
-        syncExeBtn();
-        exeOnlyBtn.addEventListener("click", () => {
-          exeOnly = !exeOnly;
-          saveRaw(EXE_ONLY_KEY_PREFIX + recallKey, String(exeOnly));
-          syncExeBtn();
-          applySort(sortCtrl.current());
-        });
-        pathBar.append(exeOnlyBtn);
-      }
-
-      // Real table so the shared column-resize helper (.th-grip / .col-drag-line)
-      // can size Name/Date the way the engines and openings tables do.
-      const tableWrap = document.createElement("div");
-      tableWrap.className = "fs-picker-table-wrap";
-      const table = document.createElement("table");
-      table.className = "fs-picker-table";
-      table.tabIndex = 0;
-      markSelectable(table);
-      suppressMultiClickSelect(table);
-      const colgroup = document.createElement("colgroup");
-      for (let i = 0; i < 3; i++) colgroup.append(document.createElement("col"));
-      const thead = document.createElement("thead");
-      const headRow = document.createElement("tr");
-      const HEADERS = ["Name", "Date modified", "Size"];
-      HEADERS.forEach((text, i) => {
-        const th = document.createElement("th");
-        th.textContent = text;
-        // No grip on the last (Size) column -- it absorbs the remainder.
-        if (i < HEADERS.length - 1) {
-          const grip = document.createElement("span");
-          grip.className = "th-grip";
-          th.append(grip);
-        }
-        headRow.append(th);
-      });
-      thead.append(headRow);
-      const listing = document.createElement("tbody");
-      table.append(colgroup, thead, listing);
-      tableWrap.append(table);
-
-      const colEls = Array.from(colgroup.querySelectorAll("col"));
-      const fsColPcts = FS_COL_DEFAULT_PCTS.slice();
-      attachColumnResize({
-        table,
-        grips: Array.from(thead.querySelectorAll(".th-grip")),
-        overlayHost: tableWrap,
-        storageKey: STORAGE_KEY.FS_PICKER_COL_PCTS,
-        sizes: fsColPcts,
-        unit: "pct",
-        applySizes(sizes, ctx) {
-          if (ctx) {
-            const { deltaFrac, startSizes, gripIdx } = ctx;
-            const dPct = deltaFrac * 100;
-            let a = startSizes[gripIdx] + dPct;
-            let b = startSizes[gripIdx + 1] - dPct;
-            if (a < FS_MIN_COL_PCT) { b -= FS_MIN_COL_PCT - a; a = FS_MIN_COL_PCT; }
-            if (b < FS_MIN_COL_PCT) { a -= FS_MIN_COL_PCT - b; b = FS_MIN_COL_PCT; }
-            sizes[gripIdx] = a;
-            sizes[gripIdx + 1] = b;
-          }
-          colEls.forEach((c, i) => { c.style.width = sizes[i] + "%"; });
-        },
-      });
-
-      // Jump-to-prefix: type chars while the table has focus to select the
-      // next matching row. Repeated same key cycles through matches.
-      const JUMP_RESET_MS = 600;
-      let jumpPrefix = "";
-      let jumpTimer = null;
-      let jumpLastPrefix = "";
-      let jumpCycleIdx = -1;
-
-      // Selecting through the row's own click keeps currentSelection and the
-      // Select button's enabled state in one place (the row click handler).
-      wireArrowKeyNav(table, {
-        rows: FS_ENTRY_SEL,
-        selected: FS_SELECTED_SEL,
-        select: (row) => row.click(),
-      });
-
-      table.addEventListener("keydown", (ev) => {
-        if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
-        if (ev.key === "Enter") {
-          ev.preventDefault();
-          const target = listing.querySelector(FS_SELECTED_SEL) ?? listing.querySelector(FS_ENTRY_SEL);
-          target?.dispatchEvent(new MouseEvent("dblclick"));
-          return;
-        }
-        if (ev.key.length !== 1) return;
-        ev.preventDefault();
-        clearTimeout(jumpTimer);
-        jumpPrefix += ev.key.toLowerCase();
-        const entries = Array.from(listing.querySelectorAll(FS_ENTRY_SEL));
-        const names = entries.map(r => (r.querySelector(".fs-name")?.textContent || "").toLowerCase());
-        const isCycle = jumpPrefix === jumpLastPrefix && jumpPrefix.length === 1;
-        let hitIdx = -1;
-        if (isCycle) {
-          const start = (jumpCycleIdx + 1) % entries.length;
-          for (let i = 0; i < entries.length; i++) {
-            const idx = (start + i) % entries.length;
-            if (names[idx].startsWith(jumpPrefix)) { hitIdx = idx; break; }
-          }
-        } else {
-          hitIdx = names.findIndex(n => n.startsWith(jumpPrefix));
-        }
-        if (hitIdx !== -1) {
-          jumpCycleIdx = hitIdx;
-          entries[hitIdx].click();
-          entries[hitIdx].scrollIntoView({ block: "nearest" });
-        }
-        jumpLastPrefix = jumpPrefix;
-        jumpTimer = setTimeout(() => { jumpPrefix = ""; jumpLastPrefix = ""; jumpCycleIdx = -1; }, JUMP_RESET_MS);
-      });
+      const { pathBar, backBtn, upBtn, pathInput } = buildFsPathBar();
+      const exeToggle = wantsExec
+        ? buildExeOnlyToggle(EXE_ONLY_KEY_PREFIX + recallKey, () => applySort(sortCtrl.current()))
+        : null;
+      if (exeToggle) pathBar.append(exeToggle.btn);
+      const { tableWrap, headTable, table, listing } = buildFsTable();
+      const resetJump = wireFsTableKeys(table, listing);
 
       const selectBtn = document.createElement("wa-button");
       selectBtn.slot = "footer";
@@ -417,6 +483,13 @@ export function pickFile({
       selectBtn.disabled = true;
 
       let currentSelection = null;
+      function setSelection(path) {
+        currentSelection = path;
+        selectBtn.disabled = path === null;
+      }
+      // Server-resolved listed dir and its parent, as of the last navigate.
+      let listedDir = null;
+      let parentDir = null;
       // Browser-style history: stack of visited paths. The current dir
       // sits at the top; Back pops one and re-navigates without pushing.
       const history = [];
@@ -425,7 +498,13 @@ export function pickFile({
         if (entry.error) return false;
         if (wantsDir) return entry.is_dir;
         if (wantsExec) return entry.is_file && entry.is_executable;
+        if (extSet) return entry.is_file && hasExt(entry.name);
         return entry.is_file;
+      }
+
+      function pick(path) {
+        rememberLastDir(recallKey, listedDir);
+        resolve(path);
       }
 
       // Entries for the current dir, kept so a sort can re-render without
@@ -434,82 +513,59 @@ export function pickFile({
 
       function renderRows(entries) {
         listing.innerHTML = "";
+        // Directory mode, exe-only mode, and extension filters hide
+        // ineligible files; otherwise they show dimmed.
+        const hideIneligible = wantsDir || extSet || exeToggle?.isOn();
         for (const entry of entries) {
-          // In exe-only mode, skip non-eligible files entirely (dirs still show).
-          if (exeOnly && !entry.is_dir && !eligible(entry)) continue;
-          const li = document.createElement("tr");
-          li.className = "fs-entry";
-          if (!eligible(entry) && !entry.is_dir) li.classList.add("dim");
-          li.dataset.path = entry.path;
-          li.dataset.isDir = String(entry.is_dir);
-
-          const nameCell = document.createElement("td");
-          nameCell.className = "fs-name-cell";
-          const icon = document.createElement("wa-icon");
-          icon.name = entry.is_dir ? "folder" : entry.is_executable ? "gears" : "file-lines";
-          const name = document.createElement("span");
-          name.className = "fs-name";
-          name.textContent = entry.name;
-          nameCell.append(icon, name);
-          li.append(nameCell);
-
-          const date = document.createElement("td");
-          date.className = "fs-date";
-          date.textContent = fmtDate(entry.mtime);
-          li.append(date);
-
-          const size = document.createElement("td");
-          size.className = "fs-size";
-          size.textContent = entry.is_dir ? "" : fmtSize(entry.size);
-          li.append(size);
-
-          li.addEventListener("click", () => {
-            for (const sel of listing.querySelectorAll(".selected")) {
-              sel.classList.remove("selected");
+          const ineligibleFile = !entry.is_dir && !eligible(entry);
+          if (ineligibleFile && hideIneligible) continue;
+          const row = buildFsRow(entry, ineligibleFile);
+          // Dirs are eligible only in directory mode; elsewhere a click just
+          // highlights one for navigation and a double click descends.
+          row.addEventListener("click", () => {
+            for (const sel of listing.querySelectorAll(FS_SELECTED_SEL)) {
+              sel.classList.remove(FS_SELECTED_CLASS);
             }
-            li.classList.add("selected");
+            row.classList.add(FS_SELECTED_CLASS);
             table.focus({ preventScroll: true });
-            if (entry.is_dir && !wantsDir) {
-              // Single click selects the dir for navigation; double click descends.
-              currentSelection = null;
-              selectBtn.disabled = true;
-            } else {
-              currentSelection = eligible(entry) ? entry.path : null;
-              selectBtn.disabled = currentSelection === null;
-            }
+            setSelection(eligible(entry) ? entry.path : null);
           });
-
-          li.addEventListener("dblclick", () => {
-            if (entry.is_dir) {
-              navigate(entry.path);
-            } else if (eligible(entry)) {
-              rememberLastDir(recallKey, pathInput.value);
-              resolve(entry.path);
-            }
+          row.addEventListener("dblclick", () => {
+            if (entry.is_dir) navigate(entry.path);
+            else if (eligible(entry)) pick(entry.path);
           });
-
-          listing.append(li);
+          listing.append(row);
         }
+      }
+
+      function rowByPath(path) {
+        return listing.querySelector(`${FS_ENTRY_SEL}[data-path="${CSS.escape(path)}"]`);
+      }
+
+      function selectRowByName(name) {
+        const entry = currentEntries.find((e) => e.name === name);
+        const row = entry && rowByPath(entry.path);
+        if (row) selectFsRow(row);
       }
 
       // Re-render currentEntries under the active sort (or server default if
       // none). Preserves any active selection by path.
       function applySort(state) {
-        const selected = listing.querySelector(".selected")?.dataset.path;
+        const selected = listing.querySelector(FS_SELECTED_SEL)?.dataset.path;
         const rows = currentEntries.slice();
         if (state) rows.sort(fsCompare(state.key, state.dir));
         renderRows(rows);
         if (selected) {
-          const row = listing.querySelector(`.fs-entry[data-path="${CSS.escape(selected)}"]`);
+          const row = rowByPath(selected);
           if (row) {
-            row.classList.add("selected");
-            scrollSortedRowIntoView(listing, ".selected");
+            row.classList.add(FS_SELECTED_CLASS);
+            scrollSortedRowIntoView(listing, FS_SELECTED_SEL);
           }
         }
       }
 
       const sortCtrl = attachColumnSort({
-        table,
+        table: headTable,
         columns: [
           { key: FS_COL_NAME, firstDir: "asc" },
           { key: FS_COL_DATE, firstDir: "desc" },
@@ -519,7 +575,8 @@ export function pickFile({
         onSort: applySort,
       });
 
-      async function navigate(path, { push = true } = {}) {
+      // quiet: fail without a toast, for callers with their own fallback.
+      async function navigate(path, { push = true, quiet = false } = {}) {
         let body;
         try {
           const params = new URLSearchParams({ show_hidden: "true" });
@@ -527,20 +584,19 @@ export function pickFile({
           const url = `/fs?${params.toString()}`;
           body = await api("GET", url);
         } catch (e) {
-          toast(`Cannot list ${path}: ${e.message}`, { variant: "danger" });
+          if (!quiet) toast(`Cannot list ${path}: ${e.message}`, { variant: "danger" });
           return false;
         }
+        listedDir = body.path;
+        parentDir = body.parent;
         pathInput.value = body.path;
-        currentSelection = wantsDir ? body.path : null;
-        selectBtn.disabled = !wantsDir;
-        upBtn.disabled = !body.parent;
+        setSelection(wantsDir ? body.path : null);
+        upBtn.disabled = !parentDir;
         if (push && history[history.length - 1] !== body.path) {
           history.push(body.path);
         }
         backBtn.disabled = history.length < 2;
-        jumpPrefix = "";
-        jumpLastPrefix = "";
-        jumpCycleIdx = -1;
+        resetJump();
         currentEntries = body.entries;
         applySort(sortCtrl.current());
         table.focus({ preventScroll: true });
@@ -548,11 +604,7 @@ export function pickFile({
       }
 
       upBtn.addEventListener("click", () => {
-        if (pathInput.value) {
-          api("GET", `/fs?path=${encodeURIComponent(pathInput.value)}`).then((b) => {
-            if (b.parent) navigate(b.parent);
-          });
-        }
+        if (parentDir) navigate(parentDir);
       });
 
       backBtn.addEventListener("click", async () => {
@@ -571,27 +623,17 @@ export function pickFile({
       });
 
       selectBtn.addEventListener("click", () => {
-        if (currentSelection) {
-          // For file/exec mode, pathInput.value is the containing dir; for
-          // directory mode, currentSelection IS a dir. Either is valid recall.
-          rememberLastDir(recallKey, wantsDir ? currentSelection : pathInput.value);
-          resolve(currentSelection);
-        }
+        if (currentSelection) pick(currentSelection);
       });
 
       wrap.append(pathBar, tableWrap);
       dialog.append(wrap, selectBtn);
-      // Open at the recalled dir; if it's gone (deleted/renamed since the
-      // last pick), silently fall back to home rather than show a toast.
+      // If the initial dir is gone (deleted/renamed since), silently fall
+      // back to home rather than show a toast.
       (async () => {
-        if (initialPath) {
-          try {
-            await api("GET", `/fs?path=${encodeURIComponent(initialPath)}`);
-            navigate(initialPath);
-            return;
-          } catch {
-            // fall through to default
-          }
+        if (initialPath && await navigate(initialPath, { quiet: true })) {
+          if (currentDir) selectRowByName(currentName);
+          return;
         }
         navigate(null);
       })();

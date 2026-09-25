@@ -2,9 +2,10 @@
 
 Speaks two wire formats. The OpenAI-compatible chat-completions path is
 the default and shares its translation + SSE loop with every other
-OpenAI-compat provider via `openai_compat` (canonical = Anthropic, spec
-§Providers). The native `/api/chat` path is Ollama-specific and used only
-when `think=true` is requested (the compat layer ignores thinking).
+OpenAI-compat provider via `openai_compat` (canonical = Anthropic, see the
+spec's Providers section). The native `/api/chat` path is Ollama-specific
+and used only when `think=true` is requested (the compat layer ignores
+thinking).
 
 Endpoints: `{base_url}/v1/chat/completions` (compat) and
 `{base_url}/api/chat` (native). Both stream; both translate to/from the
@@ -15,19 +16,28 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from http import HTTPStatus
 from typing import Any, AsyncIterator
 
 import httpx
 
+from ..config import PROVIDER_OLLAMA
 from ._errors import ThinkingUnsupported, extract_error_message, is_thinking_unsupported
-from .base import LLMProvider, Message, ProviderChunk, ProviderUsage, ToolWireSpec
+from .base import (
+    CONTROL_TIMEOUT_S,
+    JSON_HEADERS,
+    LLMProvider,
+    Message,
+    ProviderChunk,
+    ProviderUsage,
+    ToolWireSpec,
+    with_system_message,
+)
 from .harmony_strip import flush_harmony_carry, strip_harmony_text
 from .inline_recovery import recover_inline_tool_calls
 from .openai_compat import (
     inline_recovery_args,
-    malformed_tool_args_detail,
     messages_anthropic_to_openai,
-    openai_tool_call_to_provider_chunk,
     stream_openai_compat,
     tools_anthropic_to_openai,
 )
@@ -35,17 +45,6 @@ from .transcript import Transcript
 
 
 log = logging.getLogger(__name__)
-
-# Re-exported for back-compat: tests and callers import these from the
-# ollama module. The implementations now live in openai_compat.
-__all__ = [
-    "DEFAULT_BASE_URL",
-    "OllamaProvider",
-    "malformed_tool_args_detail",
-    "messages_anthropic_to_openai",
-    "openai_tool_call_to_provider_chunk",
-    "tools_anthropic_to_openai",
-]
 
 
 DEFAULT_BASE_URL = "http://localhost:11434"
@@ -55,11 +54,6 @@ DEFAULT_BASE_URL = "http://localhost:11434"
 # models pulled. Cheap calls (single-digit ms each); the cap mostly
 # keeps things polite.
 _LIST_MODELS_SHOW_CONCURRENCY = 8
-
-# Per-request timeout for the daemon's control-plane endpoints
-# (/api/generate keep_alive, /api/ps, /v1/models, /api/show). Streaming
-# chat has its own (much longer) timeout elsewhere in this module.
-_CONTROL_TIMEOUT_S = 10.0
 
 # ----- Native (/api/chat) translation helpers ------------------------
 # The OpenAI-compat translation lives in openai_compat.py (shared). The
@@ -151,7 +145,7 @@ def ollama_native_tool_call_to_provider_chunk(
 
 
 class OllamaProvider(LLMProvider):
-    provider_name = "ollama"
+    provider_name = PROVIDER_OLLAMA
 
     def __init__(
         self,
@@ -168,15 +162,14 @@ class OllamaProvider(LLMProvider):
         """Force the daemon to unload `model` from VRAM.
 
         Ollama's native /api/generate accepts `keep_alive: 0` with an
-        empty prompt as the documented eviction signal. Fire-and-forget
-        from the caller's side: failures are swallowed (the daemon may
-        not have the model loaded, may be unreachable, etc.); callers
-        log a warning if they care.
+        empty prompt as the documented eviction signal. Transport errors
+        propagate (the daemon may be unreachable); callers treat eviction
+        as best-effort and log them.
         """
         if not model:
             return
         url = f"{self._base_url}/api/generate"
-        async with httpx.AsyncClient(timeout=_CONTROL_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(timeout=CONTROL_TIMEOUT_S) as client:
             await client.post(url, json={"model": model, "keep_alive": 0})
 
     async def list_loaded_models(self) -> list[str]:
@@ -184,11 +177,11 @@ class OllamaProvider(LLMProvider):
         Raises RuntimeError on HTTP/parse failure so callers can decide
         whether to skip eviction or surface the error."""
         url = f"{self._base_url}/api/ps"
-        async with httpx.AsyncClient(timeout=_CONTROL_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(timeout=CONTROL_TIMEOUT_S) as client:
             resp = await client.get(url)
-            if resp.status_code != 200:
+            if resp.status_code != HTTPStatus.OK:
                 raise RuntimeError(
-                    f"ollama /api/ps returned {resp.status_code}: "
+                    f"{PROVIDER_OLLAMA} /api/ps returned {resp.status_code}: "
                     f"{extract_error_message(resp.text)}"
                 )
             body = resp.json()
@@ -203,11 +196,11 @@ class OllamaProvider(LLMProvider):
         RuntimeError on HTTP / parse failure so the API layer can
         surface a useful error to the UI."""
         url = f"{self._base_url}/v1/models"
-        async with httpx.AsyncClient(timeout=_CONTROL_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(timeout=CONTROL_TIMEOUT_S) as client:
             resp = await client.get(url)
-            if resp.status_code != 200:
+            if resp.status_code != HTTPStatus.OK:
                 raise RuntimeError(
-                    f"ollama /v1/models returned {resp.status_code}: "
+                    f"{PROVIDER_OLLAMA} /v1/models returned {resp.status_code}: "
                     f"{extract_error_message(resp.text)}"
                 )
             body = resp.json()
@@ -232,23 +225,23 @@ class OllamaProvider(LLMProvider):
                 try:
                     resp = await client.post(show_url, json={"name": model_id})
                 except Exception as exc:
-                    log.debug("ollama /api/show %s raised: %s", model_id, exc)
+                    log.debug("%s /api/show %s raised: %s", PROVIDER_OLLAMA, model_id, exc)
                     return model_id, False
-            if resp.status_code != 200:
-                log.debug("ollama /api/show %s -> %s", model_id, resp.status_code)
+            if resp.status_code != HTTPStatus.OK:
+                log.debug("%s /api/show %s -> %s", PROVIDER_OLLAMA, model_id, resp.status_code)
                 return model_id, False
             try:
                 body = resp.json()
             except Exception as exc:
-                log.debug("ollama /api/show %s: bad json: %s", model_id, exc)
+                log.debug("%s /api/show %s: bad json: %s", PROVIDER_OLLAMA, model_id, exc)
                 return model_id, False
             caps = body.get("capabilities")
             if caps is None:
                 log.warning(
-                    "ollama /api/show for %s returned no `capabilities` field; "
+                    "%s /api/show for %s returned no `capabilities` field; "
                     "model will be hidden from the tool-capable list. "
                     "Upgrade Ollama if the dropdown is unexpectedly empty.",
-                    model_id,
+                    PROVIDER_OLLAMA, model_id,
                 )
                 return model_id, False
             caps_lower = {str(c).lower() for c in caps}
@@ -312,14 +305,9 @@ class OllamaProvider(LLMProvider):
         # first message in OpenAI's API; coordinator passes it as a
         # bare string so we wrap it here. The SSE loop + translation back
         # to ProviderChunks is shared (openai_compat).
-        wire_messages: list[dict] = []
-        if system:
-            wire_messages.append({"role": "system", "content": system})
-        wire_messages.extend(messages_anthropic_to_openai(messages))
-
         body: dict[str, Any] = {
             "model": self._model,
-            "messages": wire_messages,
+            "messages": with_system_message(system, messages_anthropic_to_openai(messages)),
             "stream": True,
             # Ask for the usage-bearing final chunk (OpenAI semantics).
             # Ollama versions predating stream_options ignore unknown
@@ -337,8 +325,8 @@ class OllamaProvider(LLMProvider):
             self,
             url=f"{self._base_url}/v1/chat/completions",
             body=body,
-            headers={"Content-Type": "application/json"},
-            error_label="ollama",
+            headers=JSON_HEADERS,
+            error_label=PROVIDER_OLLAMA,
             transcript=transcript,
             round_index=round_index,
         )
@@ -356,14 +344,9 @@ class OllamaProvider(LLMProvider):
         # "system"} entry like OpenAI, but tool messages drop tool_call_id
         # and tool_calls carry no id. NDJSON streaming (one full message
         # snapshot per line), not SSE.
-        wire_messages: list[dict] = []
-        if system:
-            wire_messages.append({"role": "system", "content": system})
-        wire_messages.extend(messages_anthropic_to_ollama_native(messages))
-
         body: dict[str, Any] = {
             "model": self._model,
-            "messages": wire_messages,
+            "messages": with_system_message(system, messages_anthropic_to_ollama_native(messages)),
             "stream": True,
             "think": True,
         }
@@ -388,9 +371,9 @@ class OllamaProvider(LLMProvider):
                 "POST",
                 url,
                 json=body,
-                headers={"Content-Type": "application/json"},
+                headers=JSON_HEADERS,
             ) as resp:
-                if resp.status_code != 200:
+                if resp.status_code != HTTPStatus.OK:
                     raw = (await resp.aread()).decode("utf-8", errors="replace")
                     await self._tx_wire(transcript, round_index, f"HTTP {resp.status_code}: {raw}")
                     # Reaching this path means the body carried think:true, so
@@ -403,7 +386,8 @@ class OllamaProvider(LLMProvider):
                             f'"{self._model}" does not support extended thinking'
                         )
                     raise RuntimeError(
-                        f"ollama API error {resp.status_code}: {extract_error_message(raw)}"
+                        f"{PROVIDER_OLLAMA} API error {resp.status_code}: "
+                        f"{extract_error_message(raw)}"
                     )
                 async for line in resp.aiter_lines():
                     if not line:
@@ -413,7 +397,7 @@ class OllamaProvider(LLMProvider):
                         evt = json.loads(line)
                     except json.JSONDecodeError as exc:
                         raise RuntimeError(
-                            f"ollama: malformed NDJSON line: {line!r} ({exc})"
+                            f"{PROVIDER_OLLAMA}: malformed NDJSON line: {line!r} ({exc})"
                         ) from exc
                     msg = evt.get("message") or {}
                     thinking = msg.get("thinking")
@@ -449,7 +433,5 @@ class OllamaProvider(LLMProvider):
         # so the coordinator's tool_use_id pipeline keeps working; Ollama
         # never sees the id on subsequent turns.
         for i, tc in enumerate(emitted_tool_calls):
-            synthetic_id = f"ollama-{round_index}-{i}"
+            synthetic_id = f"{PROVIDER_OLLAMA}-{round_index}-{i}"
             yield ollama_native_tool_call_to_provider_chunk(tc, synthetic_id)
-
-

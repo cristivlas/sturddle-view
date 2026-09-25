@@ -1578,6 +1578,7 @@ export function mountTournaments({ container, api, events, log, token }) {
   ctx.onWorkspaceClosed = () => { syncWindowMenu(ctx); syncRibbon(ctx); };
   window.addEventListener(APP_EVT.SETTINGS_CHANGED, ctx.onSettingsChanged);
   window.addEventListener(APP_EVT.WORKSPACE_CLOSED, ctx.onWorkspaceClosed);
+  window.addEventListener(APP_EVT.TOURNAMENTS_ROOT_CHANGED, ctx.loadList);
 
   const pollIntervalId = window.setInterval(() => pollTick(ctx), POLL_INTERVAL_MS);
 
@@ -1626,6 +1627,7 @@ export function mountTournaments({ container, api, events, log, token }) {
       window.clearInterval(pollIntervalId);
       window.removeEventListener(APP_EVT.SETTINGS_CHANGED, ctx.onSettingsChanged);
       window.removeEventListener(APP_EVT.WORKSPACE_CLOSED, ctx.onWorkspaceClosed);
+      window.removeEventListener(APP_EVT.TOURNAMENTS_ROOT_CHANGED, ctx.loadList);
       mqMobile.removeEventListener("change", ctx.onViewportChange);
       mqMobileH.removeEventListener("change", ctx.onViewportChange);
       mqMobileHPlay.removeEventListener("change", ctx.onViewportChange);

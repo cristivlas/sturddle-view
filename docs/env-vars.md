@@ -1,8 +1,9 @@
 # Environment variables
 
 Runtime configuration knobs and debug toggles. All recognized
-variables use the `SV_` prefix. Defaults are sized for typical
-tournaments; override only when telemetry justifies it.
+variables use the `SV_` prefix (test-only knobs use `SVTEST_`; see
+[Test-only](#test-only)). Defaults are sized for typical tournaments;
+override only when telemetry justifies it.
 
 ## Core
 
@@ -22,6 +23,13 @@ by the CLI or by `desktop.py`.
 | `SV_ENGINE_PATH` | `--engine` | Fallback engine when registry has no selection. |
 | `SV_INSTANCE` | `--instance` | Instance suffix isolating config/data dirs (`SV_INSTANCE=2` -> `sturddle-view-2`). Empty = default. |
 
+## Network and auth
+
+| Var | Default | Effect | Where |
+|---|---|---|---|
+| `SV_PREFER_TAILSCALE` | `1` | The QR carries the Tailscale address when its interface is up (matched by name; macOS `utunN` is missed); `0` keeps the default-route LAN address. | `server/sturddle_view/config.py` |
+| `SV_AUTH_COOKIE_MAX_AGE_S` | `604800` | Lifetime (seconds) of the auth cookie set by the `/auth` handshake; one week. | `server/sturddle_view/app.py` |
+
 ## Paths and storage
 
 Override the default config/data file locations (chiefly for tests and
@@ -31,20 +39,20 @@ isolated instances). Each falls back to the platform default when unset.
 |---|---|---|
 | `SV_SETTINGS_FILE` | platform config dir | Path to the persisted user settings JSON. |
 | `SV_ENGINE_REGISTRY_PATH` | platform config dir | Path to the persisted engine registry JSON. |
-| `SV_GAME_STATE_PATH` | platform data dir | Path to the live game-state snapshot. |
+| `SV_GAME_STATE_PATH` | platform config dir | Path to the live game-state snapshot. |
 | `SV_IMPORTS_DIR` | platform data dir | Directory for the imported PGN/FEN history store. |
-| `SV_INSTANCE_LOCK_PATH` | platform data dir | Override the single-instance lock-file location (chiefly tests and isolated instances). |
+| `SV_INSTANCE_LOCK_PATH` | platform config dir | Override the single-instance lock-file location (chiefly tests and isolated instances). |
 | `SV_ENGINE_TMP_ROOT` | platform data dir | Root for per-spawn engine temp dirs (TMP/TEMP/TMPDIR injection; see [engine-temp-cleanup-spec.md](engine-temp-cleanup-spec.md)). |
-| `SV_ENGINE_PROBE_TIMEOUT_SEC` | `3.0` | Timeout for the engine UCI handshake probe (floored at `0.05`). |
+| `SV_ENGINE_PROBE_TIMEOUT_SEC` | `3.0` | Timeout for the engine UCI handshake probe; values below `0.05` fall back to the default. |
 | `SV_MAX_IMPORT_BYTES` | `2097152` | Cap on `/game/import` payload size (2 MiB). |
 | `SV_MAX_ANNOTATION_LENGTH` | `10000` | Cap on individual move-annotation text length. |
 | `SV_BOOK_INDEX_MAX_PLIES` | `40` | Plies tokenized per line when indexing an HVE opening book; also the hard cap on book depth (the plies setting is clamped to it). |
 
 ## Debug flags
 
-Boolean: `0` (default) or `1`. Output is gated on `--debug` (i.e. the
-`sturddle_view` logger at DEBUG level) -- enabling these without
-`--debug` does nothing.
+Boolean, default off; `1`/`true`/`yes`/`on` enable. Output is gated on
+`--debug` (i.e. the `sturddle_view` logger at DEBUG level) -- enabling
+these without `--debug` does nothing.
 
 | Var | Default | Effect | Where |
 |---|---|---|---|
@@ -63,13 +71,28 @@ the workload.
 | `SV_RECONCILE_QUEUE_MAX` | `256` | Per-side ring-buffer cap (pending dissolutions, parsed PGN records). | [pgn-reconciliation.md](pgn-reconciliation.md) |
 | `SV_EVENT_HISTORY_MAX` | `200` | Per-tournament event ring depth used by workspace `/events` backfill. | [pgn-reconciliation.md](pgn-reconciliation.md) |
 | `SV_PGN_TAIL_POLL_S` | `1.0` | PGN file poll interval. Lower for faster matching at higher syscall cost. | [pgn-reconciliation.md](pgn-reconciliation.md) |
+| `SV_PGN_TAIL_STOP_TIMEOUT_S` | `5.0` | How long stopping the PGN tailer waits for its task before cancelling it. | `server/sturddle_view/tournament/pgn_tail.py` |
+| `SV_PGN_TAIL_MAX_DELTA_BYTES` | `262144` | Bytes parsed per poll; a larger backlog drains across polls. | `server/sturddle_view/tournament/pgn_tail.py` |
+| `SV_SUBSCRIBER_QUEUE_MAX` | `512` | Per-subscriber bound on the live-view (proxy/game) WebSocket queue. | `server/sturddle_view/tournament/orchestrator.py` |
+| `SV_INFO_COALESCE_MS` | `100` | Window over which a proxy's `info` lines coalesce (latest wins) for live-view subscribers. | `server/sturddle_view/tournament/orchestrator.py` |
+| `SV_OPENING_PLIES` | `24` | Plies replayed per game to name its opening in the tournament games list. | `server/sturddle_view/tournament/pgn_stats.py` |
+| `SV_SPRT_CONCLUDE_TOL` | `0.05` | LLR distance from a bound within which a stopped SPRT's verdict snaps to that bound. | `server/sturddle_view/api/tournaments.py` |
+| `SV_RESCHECK_ENGINE_OVERHEAD_MB` | `256` | Per-engine memory assumed beyond Hash when checking a tournament's RAM budget. | `server/sturddle_view/tournament/rescheck.py` |
+| `SV_RESCHECK_RAM_HEADROOM` | `0.75` | Share of total RAM a tournament's engines may use. | `server/sturddle_view/tournament/rescheck.py` |
+| `SV_ALLOW_OVERSUBSCRIBE` | `0` | Boolean: lets tournaments exceed host CPU/RAM (rescheck blockers become warnings; fastchess gets `-force-concurrency`). The affinity check still blocks. Don't use for SPRT. | `server/sturddle_view/api/tournaments.py` |
+| `SV_FASTCHESS_STOP_GRACE_S` | `2.0` | POSIX: SIGTERM -> SIGKILL grace when stopping fastchess. | `server/sturddle_view/tournament/fastchess.py` |
+| `SV_FASTCHESS_DRAIN_TIMEOUT_S` | `2.0` | Wait for each fastchess output drain after it exits. | `server/sturddle_view/tournament/fastchess.py` |
+| `SV_FASTCHESS_LOG_LEVEL` | `info` | fastchess log level for `logs/fastchess.log`: `trace`, `info`, `warn`, `err` or `fatal`. | `server/sturddle_view/tournament/fastchess.py` |
+| `SV_ANALYSIS_STOP_GRACE_S` | `2.0` | How long a stopped engine analysis may wind down before its task is cancelled. | `server/sturddle_view/play/human_vs_engine.py` |
+| `SV_DESKTOP_STARTUP_TIMEOUT_S` | `5.0` | Desktop mode: wait for the local server to come up before showing an error. | `server/sturddle_view/desktop.py` |
+| `SV_DESKTOP_SHUTDOWN_TIMEOUT_S` | `5.0` | Desktop mode: wait for the local server thread to stop. | `server/sturddle_view/desktop.py` |
 
 Algorithm constants (e.g. `_MAX_CAPTURED_OVERRUN_PLIES`,
 `MIN_PLIES_FOR_MATCH`) are not env-overridable; they encode
 properties of the fastchess + UCI protocol, not operator tunables.
 
-Invalid (non-numeric) overrides log a warning and fall back to the
-default.
+Invalid overrides (non-numeric, below a knob's minimum, or not one of
+its allowed values) log a warning and fall back to the default.
 
 ## HvE difficulty
 
@@ -95,7 +118,11 @@ Set on the proxy subprocess environment, not via the CLI.
 | Var | Default | Effect | Where |
 |---|---|---|---|
 | `SV_PROXY_SECRET` | per-run random | Per-tournament secret for the engine-proxy stdio broadcast; passed via env (never argv) and popped on read. | [tournament-spec.md](tournament-spec.md) |
-| `SV_BROADCAST_INFO` | `1` | Kill-switch: `0` suppresses UCI `info` lines from the broadcast tap. | [tournament-spec.md](tournament-spec.md) |
+| `SV_BROADCAST_INFO` | `1` | Kill-switch: `0` (or `false`/`no`/`off`) suppresses UCI `info` lines from the broadcast tap. | [tournament-spec.md](tournament-spec.md) |
+| `SV_PROXY_BATCH_INTERVAL_S` | `0.05` | Max time a proxy buffers engine lines before posting them. | `server/sturddle_view/tournament/proxy.py` |
+| `SV_PROXY_BATCH_MAX_LINES` | `32` | Lines that trigger an immediate post. | `server/sturddle_view/tournament/proxy.py` |
+| `SV_PROXY_POST_TIMEOUT_S` | `2.0` | Per-post HTTP timeout to the server. | `server/sturddle_view/tournament/proxy.py` |
+| `SV_PROXY_END_DRAIN_S` | `2.0` | On engine exit, how long queued posts may drain. | `server/sturddle_view/tournament/proxy.py` |
 
 ## AI agent
 
@@ -112,15 +139,30 @@ source; check the file when a precise value matters.
 | `SV_AI_VERIFIER_MAX_ROUNDS` | `8` | Round cap for a verifier sub-run (one move, a tool call or two, a verdict). | `server/sturddle_view/play/ai_analysis.py` |
 | `SV_AI_SEMANTIC_CHECK` | `1` | LLM judge that clears regex position-check flags the prose meant about a past/hypothetical/alternate position. Only drops flags, never adds; off reverts to regex-only. Accepts `1`/`true`/`yes`/`on`. | `server/sturddle_view/play/ai_analysis.py` |
 | `SV_AI_THINKING_BUDGET_TOKENS` | `4096` | Default Anthropic extended-thinking budget; UI override persists per-settings. | `server/sturddle_view/config.py` |
+| `SV_AI_MAX_TOKENS` | `4096` | Anthropic visible-output cap per round (`max_tokens`); an extended-thinking budget is added on top. | `server/sturddle_view/llm/anthropic.py` |
+| `SV_AI_CONTROL_TIMEOUT_S` | `10.0` | Per-request timeout for providers' control-plane calls (model listing, Ollama housekeeping). Streaming chat has no timeout. | `server/sturddle_view/llm/base.py` |
 | `SV_AI_MAX_RECOMMEND_FAILURES` | `2` | Consecutive failed `recommend_move` calls before the loop nudges the model to `top_moves`. | `server/sturddle_view/play/ai_analysis.py` |
 | `SV_AI_ANALYZE_MAX_DEPTH` | `30` | `analyze`/`top_moves` per-call depth cap; caller's `depth` clamped down. Searches are depth-only (no time limit) for determinism. | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_MIN_DEPTH` | `10` | `analyze`/`top_moves` per-call depth floor; caller's `depth` clamped up (then capped at `SV_AI_ANALYZE_MAX_DEPTH` if lower). Shallow searches rank candidates poorly. | `server/sturddle_view/play/tools_engine.py` |
-| `SV_AI_RECOMMEND_MARGIN` | `50` | Centipawn dominance margin for `recommend_move` to accept the model's pick over the engine's top line. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_RECOMMEND_MARGIN_MIN` | `20` | `recommend_move` dominance margin (cp) when the side to move is ahead; the engine's best must beat the pick by more than this to reject it. Even/unclassified positions use the MIN/MAX midpoint. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_RECOMMEND_MARGIN_MAX` | `80` | `recommend_move` dominance margin (cp) when the side to move is behind -- room for the plan's practical try. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_PLAYBOOK_EDGE_CP` | `100` | Playbook margin bucket: `better`/`worse` at this many cp (our POV). | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_DECISIVE_CP` | `300` | Playbook margin bucket: `winning`/`losing`. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_RESIGN_CP` | `900` | Playbook margin bucket: `crushing`/`lost`; mate scores map here. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_OPENING_MIN_PAWNS` | `13` | Playbook phase: pawns on board at or above this -> `opening`. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_MIDDLEGAME_MIN_PAWNS` | `9` | Playbook phase: lower pawn bound of `middlegame`. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_LATE_MIN_PAWNS` | `5` | Playbook phase: lower pawn bound of `late`; fewer -> `endgame`. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_CLOSED_MIN_LOCKED` | `3` | Playbook structure: locked pawn pairs needed for `closed`. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_CLOSED_MAX_OPEN_FILES` | `1` | Playbook structure: most open files a `closed` position may have. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_OPEN_MIN_FILES` | `4` | Playbook structure: open + half-open files needed for `open`. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_MAX_FRAGMENTS` | `3` | Cap on plan fragments per turn (the repetition note rides outside it). | `server/sturddle_view/llm/playbook.py` |
 | `SV_AI_VERIFICATION_DEPTH` | `25` | Floor depth for the end-of-turn recommendation check; searches at least this deep (deeper if the model asked for more). | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_TOP_MOVES_MAX_N` | `5` | Hard cap on `top_moves` candidate count; over-large `n` clamped. | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_REPORT_LINE_MAX_PLIES` | `40` | Hard cap on `report_line` continuation length; bounds payload size (no engine search). | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_RELATED_OPENINGS_MAX_N` | `8` | Cap on sibling variations returned per `related_openings` call; a broad family would otherwise flood context. | `server/sturddle_view/play/tools_openings.py` |
 | `SV_AI_OPENING_PHASE_SLACK_PLIES` | `12` | Plies of slack past the book line before the commentary opening-theory directive (mandating a `related_openings` call) switches off. | `server/sturddle_view/api/_ai_kick.py` |
+| `SV_AI_OPENING_THEORY_MIN_SHARE` | `0.04` | An ECO move counts as theory only when its named lines reach this share of the top continuation's (tricks sit below `0.01`). | `server/sturddle_view/play/opening_reply.py` |
+| `SV_AI_OPENING_ALTERNATIVES_MAX` | `3` | Sibling theory moves carried alongside a book reply for the prose to name. | `server/sturddle_view/play/opening_reply.py` |
 | `SV_AI_ANNOTATION_PER_COMMENT_MAX` | `200` | Max characters per PGN annotation before truncation. | `server/sturddle_view/api/_ai_kick.py` |
 | `SV_AI_ANNOTATION_TOTAL_MAX` | `1500` | Max total characters across annotations before trailing entries are dropped. | `server/sturddle_view/api/_ai_kick.py` |
 | `SV_AI_INLINE_TOOL_ID_LEN` | module const | Synthetic `tool_use_id` length for inline-tool-call recovery. | `server/sturddle_view/llm/inline_tool_calls.py` |
@@ -130,5 +172,18 @@ source; check the file when a precise value matters.
 | Var | Default | Effect | Where |
 |---|---|---|---|
 | `SV_AI_TRANSCRIPT` | unset | Opt-in: write per-turn transcripts to disk. | `server/sturddle_view/llm/transcript.py` |
-| `SV_AI_DEBUG` | `0` | Flip AI loggers to DEBUG when `--debug` is also on. | `server/sturddle_view/app.py` |
+| `SV_AI_DEBUG` | `0` | Flip AI loggers to DEBUG when `--debug` is also on. Accepts `1`/`true`/`yes`/`on`. | `server/sturddle_view/app.py` |
 | `SV_AI_FORCE_INLINE_CALLS` | `0` | Force the model to emit tool calls as inline text (exercises the inline-call recovery path). Accepts `1`/`true`/`yes`/`on`. | `server/sturddle_view/llm/prompts.py` |
+
+## Test-only
+
+Set or read only by the test suite; the app reads just `SV_READY_PORT`.
+
+| Var | Default | Effect | Where |
+|---|---|---|---|
+| `SV_READY_PORT` | unset | Harness-owned loopback port the app connects to once after startup, a deterministic ready signal. | `server/sturddle_view/app.py` |
+| `SVTEST_SYZYGY_PATH` | unset | Syzygy tablebase directory; tablebase tests skip without it (or `--syzygy-path`). | `server/tests/test_tablebase.py` |
+| `SVTEST_WS_STRESS` | unset | Opt in to the WebSocket shutdown stress repro. | `server/tests/test_ws_shutdown_repro.py` |
+| `SVTEST_WS_STRESS_ITERS` | `20` | Stress iterations. | `server/tests/test_ws_shutdown_repro.py` |
+| `SVTEST_WS_STRESS_CLIENTS` | `12` | WebSocket clients per iteration. | `server/tests/test_ws_shutdown_repro.py` |
+| `SVTEST_WS_STRESS_BYPASS_GUARD` | unset | Remove the app's shutdown guard to confirm the repro still fires. | `server/tests/test_ws_shutdown_repro.py` |

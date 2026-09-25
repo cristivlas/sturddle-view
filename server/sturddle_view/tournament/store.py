@@ -1,6 +1,6 @@
 """On-disk tournament persistence under ``<tournaments-root>/<id>/``.
 
-Pure persistence — the single-active invariant lives in the orchestrator,
+Pure persistence -- the single-active invariant lives in the orchestrator,
 which distinguishes a stale ``running`` on disk from a real live process.
 """
 from __future__ import annotations
@@ -10,16 +10,15 @@ import secrets
 import shutil
 import threading
 import uuid
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import MISSING, asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import platformdirs
-
-from .. import app_dir_name
+from .. import app_data_dir
 from .._atomic import atomic_write_json
 from . import pgn_stats
+from .template import BOOK_KEYS, SEED_KEY
 
 
 # Allowed status values. `failed` is distinct from `stopped`: the
@@ -33,6 +32,31 @@ STATUS_FAILED = "failed"
 _VALID_STATUSES = frozenset({
     STATUS_IDLE, STATUS_RUNNING, STATUS_STOPPED, STATUS_DONE, STATUS_FAILED,
 })
+
+TOURNAMENTS_DIRNAME = "tournaments"
+STATE_FILENAME = "state.json"
+PGN_FILENAME = "games.pgn"
+CONFIG_FILENAME = "config.json"
+LOGS_DIRNAME = "logs"
+_STATE_JSON_INDENT = 2
+
+# 63 bits keeps the fastchess -srand seed a non-negative signed 64-bit value.
+_SEED_BITS = 63
+
+# Tournament.engine_defaults keys. Each freezes the Settings (and RunSpec)
+# field ENGINE_DEFAULT_PREFIX + key; book keys may come from the template.
+ENGINE_DEFAULT_PREFIX = "engine_default_"
+ENGINE_DEFAULT_KEYS = ("threads", "hash_mb", "syzygy_path", *BOOK_KEYS)
+
+# Tournament.engines entry keys (the API's EngineRef fields).
+ENGINE_REF_ID = "id"
+ENGINE_REF_NAME = "name"
+ENGINE_REF_CMD = "cmd"
+ENGINE_REF_ARGS = "args"
+ENGINE_REF_ENV = "env"
+ENGINE_REF_DIR = "dir"
+ENGINE_REF_OPTIONS = "options"
+ENGINE_REF_RATING = "rating"
 
 
 class StoreError(Exception):
@@ -74,9 +98,16 @@ class Tournament:
         return asdict(self)
 
 
+_KNOWN_FIELDS = frozenset(f.name for f in fields(Tournament))
+_REQUIRED_FIELDS = frozenset(
+    f.name for f in fields(Tournament)
+    if f.default is MISSING and f.default_factory is MISSING
+)
+
+
 def default_root() -> Path:
     """Default tournaments root using platformdirs (cross-platform)."""
-    return Path(platformdirs.user_data_dir(app_dir_name(), appauthor=False)) / "tournaments"
+    return app_data_dir() / TOURNAMENTS_DIRNAME
 
 
 def _now() -> str:
@@ -89,17 +120,20 @@ def _frozen_template(template: dict) -> dict:
     reproducible for the tournament's lifetime. Caller-supplied seed wins
     (deterministic tests, round-tripped edits)."""
     frozen = dict(template)
-    frozen.setdefault("seed", secrets.randbits(63))
+    frozen.setdefault(SEED_KEY, secrets.randbits(_SEED_BITS))
     return frozen
 
 
-def _validate_state(payload: dict) -> None:
-    required = {"id", "name", "status", "created_at"}
-    missing = required - payload.keys()
+def _parse_state(payload: dict) -> Tournament:
+    missing = _REQUIRED_FIELDS - payload.keys()
     if missing:
-        raise CorruptStateError(f"state.json missing required fields: {sorted(missing)}")
-    if payload["status"] not in _VALID_STATUSES:
-        raise CorruptStateError(f"invalid status: {payload['status']!r}")
+        raise CorruptStateError(f"{STATE_FILENAME} missing required fields: {sorted(missing)}")
+    # Drop fields that no longer exist on the dataclass (forward-compat
+    # with old state files written by prior versions).
+    t = Tournament(**{k: v for k, v in payload.items() if k in _KNOWN_FIELDS})
+    if t.status not in _VALID_STATUSES:
+        raise CorruptStateError(f"invalid status: {t.status!r}")
+    return t
 
 
 class TournamentStore:
@@ -130,22 +164,24 @@ class TournamentStore:
         """Path to the tournament's directory (may not exist yet)."""
         return self._root / tournament_id
 
-    # Backwards-compat alias used by the orchestrator and tests.
-    _dir = dir_for
-
     def _state_path(self, tournament_id: str) -> Path:
-        return self._dir(tournament_id) / "state.json"
+        return self.dir_for(tournament_id) / STATE_FILENAME
+
+    def _write_state(self, t: Tournament) -> None:
+        atomic_write_json(self._state_path(t.id), t.to_dict(), indent=_STATE_JSON_INDENT)
 
     def pgn_path(self, tournament_id: str) -> Path:
-        return self._dir(tournament_id) / "games.pgn"
+        return self.dir_for(tournament_id) / PGN_FILENAME
 
     def config_path(self, tournament_id: str) -> Path:
-        return self._dir(tournament_id) / "config.json"
+        return self.dir_for(tournament_id) / CONFIG_FILENAME
 
     def logs_dir(self, tournament_id: str) -> Path:
-        return self._dir(tournament_id) / "logs"
+        return self.dir_for(tournament_id) / LOGS_DIRNAME
 
-    def create(self, name: str, template: dict, engines: list, engine_defaults: dict | None = None) -> Tournament:
+    def create(
+        self, name: str, template: dict, engines: list, engine_defaults: dict | None = None,
+    ) -> Tournament:
         """Create a new tournament directory and persist its initial state.json.
 
         Raises ``DuplicateNameError`` if another tournament already has
@@ -158,9 +194,8 @@ class TournamentStore:
             if any(t.name == name for t in self.list()):
                 raise DuplicateNameError(name)
             tournament_id = uuid.uuid4().hex
-            d = self._dir(tournament_id)
-            d.mkdir(parents=True, exist_ok=False)
-            (d / "logs").mkdir(parents=True, exist_ok=True)
+            self.dir_for(tournament_id).mkdir(parents=True, exist_ok=False)
+            self.logs_dir(tournament_id).mkdir(parents=True, exist_ok=True)
 
             t = Tournament(
                 id=tournament_id,
@@ -171,7 +206,7 @@ class TournamentStore:
                 engines=list(engines),
                 engine_defaults=dict(engine_defaults or {}),
             )
-            atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
+            self._write_state(t)
             return t
 
     def get(self, tournament_id: str) -> Tournament:
@@ -181,18 +216,15 @@ class TournamentStore:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
-            raise CorruptStateError(f"state.json unparseable for {tournament_id}: {e}") from e
-        _validate_state(payload)
-        # Drop fields that no longer exist on the dataclass (forward-compat
-        # with old state.json files written by prior versions).
-        known = {f.name for f in fields(Tournament)}
-        payload = {k: v for k, v in payload.items() if k in known}
-        return Tournament(**payload)
+            raise CorruptStateError(
+                f"{STATE_FILENAME} unparseable for {tournament_id}: {e}"
+            ) from e
+        return _parse_state(payload)
 
     def list(self) -> list[Tournament]:
         """Return all tournaments under the root, sorted by ``created_at``.
 
-        Skips directories without a parseable ``state.json`` (logs a
+        Skips directories without a parseable ``state.json`` (raising
         ``CorruptStateError`` would be too aggressive at list time;
         callers can call ``get(id)`` directly to surface the corruption).
         """
@@ -202,7 +234,7 @@ class TournamentStore:
         for child in self._root.iterdir():
             if not child.is_dir():
                 continue
-            if not (child / "state.json").exists():
+            if not (child / STATE_FILENAME).exists():
                 continue
             try:
                 out.append(self.get(child.name))
@@ -212,7 +244,7 @@ class TournamentStore:
         return out
 
     def remove(self, tournament_id: str) -> None:
-        d = self._dir(tournament_id)
+        d = self.dir_for(tournament_id)
         if not d.exists():
             raise TournamentNotFoundError(tournament_id)
         shutil.rmtree(d)
@@ -238,7 +270,7 @@ class TournamentStore:
             t.stopped_at = stopped_at
         if last_error is not self._UNSET:
             t.last_error = last_error
-        atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
+        self._write_state(t)
         return t
 
     def update(
@@ -249,7 +281,7 @@ class TournamentStore:
         template: dict,
         engines: list,
         engine_defaults: dict | None = None,
-    ) -> "Tournament":
+    ) -> Tournament:
         """Replace name/template/engines and reset the tournament to idle.
 
         ``engine_defaults`` re-freezes the global engine_default_* snapshot
@@ -281,11 +313,11 @@ class TournamentStore:
             t.stopped_at = None
             t.last_error = None
             # state.json first so a wipe failure can't vanish the row.
-            atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
+            self._write_state(t)
             self._wipe_dir_contents(tournament_id)
             return t
 
-    def wipe_for_restart(self, tournament_id: str) -> "Tournament":
+    def wipe_for_restart(self, tournament_id: str) -> Tournament:
         """Wipe the tournament directory and reset runtime state, keeping
         name/template/engines/engine_defaults intact. Used when restarting
         from a stopped/failed tournament -- fastchess's resume contract is
@@ -301,7 +333,7 @@ class TournamentStore:
             # Reversed order can vanish a tournament: if rmtree trips on a
             # locked file (AV scan, dangling handle) after state.json is
             # already gone, get() raises TournamentNotFoundError forever.
-            atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
+            self._write_state(t)
             self._wipe_dir_contents(tournament_id)
             return t
 
@@ -311,13 +343,12 @@ class TournamentStore:
         can't claim the path between rmtree + recreate. Skipping state.json
         preserves the tournament's listing identity through partial failures
         -- callers must write state.json before invoking this."""
-        d = self._dir(tournament_id)
+        d = self.dir_for(tournament_id)
         if not d.exists():
             return
-        state_name = self._state_path(tournament_id).name
         try:
             for child in d.iterdir():
-                if child.name == state_name:
+                if child.name == STATE_FILENAME:
                     continue
                 if child.is_dir() and not child.is_symlink():
                     shutil.rmtree(child)

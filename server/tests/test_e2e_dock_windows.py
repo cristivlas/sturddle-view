@@ -12,7 +12,7 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from .conftest import e2e_env, run_uvicorn_subprocess  # noqa: E402
+from .conftest import assert_no_page_errors, e2e_env, run_uvicorn_subprocess  # noqa: E402
 
 
 PLAY_PERSP = "#play-perspective"
@@ -37,12 +37,6 @@ async def _new_page(make_page):
     page.on("console", lambda msg: errors.append(f"console.{msg.type}: {msg.text}")
             if msg.type == "error" else None)
     return ctx, page, errors
-
-
-def _assert_no_errors(errors):
-    benign = ("Failed to load resource",)
-    real = [e for e in errors if not any(b in e for b in benign)]
-    assert real == [], "JS errors:\n" + "\n".join(real)
 
 
 async def _goto_play(page, base):
@@ -115,7 +109,7 @@ async def test_default_docked_on_first_open(server, make_page):
     s = await _snapshot(page)
     assert s["ucilogOpen"] == "1" and s["pvtableOpen"] == "1"
     assert s["wbs"] == []
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
@@ -130,7 +124,7 @@ async def test_undock_via_slot_button(server, make_page):
     s = await _snapshot(page)
     assert not any(x["title"] == "UCI Log" for x in s["slots"])
     assert s["ucilogDocked"] == "0"
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
@@ -151,7 +145,7 @@ async def test_redock_via_winbox_control(server, make_page):
     assert titles == ["Search Lines", "UCI Log"], titles
     s = await _snapshot(page)
     assert s["ucilogDocked"] == "1"
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
@@ -169,7 +163,7 @@ async def test_close_via_ribbon_tears_down(server, make_page):
     assert s["slots"] == []
     assert s["dockEmpty"] is True
     assert s["pvtableOpen"] == "0"
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
@@ -196,4 +190,4 @@ async def test_nav_away_and_back_restores(server, make_page):
     await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot")
     titles = await _slot_titles(page)
     assert titles == ["Search Lines", "UCI Log"], titles
-    _assert_no_errors(errors)
+    assert_no_page_errors(errors)

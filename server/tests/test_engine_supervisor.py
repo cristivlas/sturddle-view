@@ -137,8 +137,7 @@ async def test_spawn_includes_overrides_for_analysis(supervisor, stub_engine):
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only creationflag")
 async def test_spawn_uses_windows_creation_flag(supervisor):
-    with patch("sturddle_view.engines.sys") as mock_sys:
-        mock_sys.platform = "win32"
+    with patch("sturddle_view.engines.is_windows", return_value=True):
         await supervisor.spawn()
     kwargs = supervisor._popen_uci.last_kwargs
     import subprocess
@@ -146,8 +145,7 @@ async def test_spawn_uses_windows_creation_flag(supervisor):
 
 
 async def test_spawn_no_creation_flag_on_posix(supervisor):
-    with patch("sturddle_view.engines.sys") as mock_sys:
-        mock_sys.platform = "linux"
+    with patch("sturddle_view.engines.is_windows", return_value=False):
         await supervisor.spawn()
     kwargs = supervisor._popen_uci.last_kwargs
     assert "creationflags" not in kwargs

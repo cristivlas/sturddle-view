@@ -13,6 +13,7 @@ const HINT_BY_REASON = {
   [REASON_LOOPBACK_BIND]: HINT_LAN_OFF,
   [REASON_BIND_FAILED]: HINT_BIND_FAILED,
 };
+const REPO_URL = "https://github.com/cristivlas/sturddle-view";
 const WA_AFTER_SHOW = "wa-after-show";
 // Touch-only device = the phone itself; its own QR is useless.
 const TOUCH_ONLY_MQ = "(hover: none) and (pointer: coarse)";
@@ -29,6 +30,19 @@ function textDiv(className, text) {
   const div = document.createElement("div");
   div.className = className;
   div.textContent = text;
+  return div;
+}
+
+function repoLink() {
+  const div = document.createElement("div");
+  div.className = "about-meta";
+  const a = document.createElement("a");
+  a.href = REPO_URL;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  const { host, pathname } = new URL(REPO_URL);
+  a.textContent = host + pathname;
+  div.append(a);
   return div;
 }
 
@@ -77,6 +91,7 @@ export async function openAboutDialog({ api, events }) {
         textDiv("about-name", "SturddleView"),
         textDiv("about-meta", `Version ${version}`),
         textDiv("about-meta", `(c) ${copyright}`),
+        repoLink(),
       );
       if (!window.matchMedia(TOUCH_ONLY_MQ).matches) wrap.append(buildConnectSection(api));
       dialog.append(wrap);

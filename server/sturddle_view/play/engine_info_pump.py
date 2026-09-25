@@ -19,6 +19,7 @@ import chess
 import chess.engine
 
 from ..chess.engine_info import serialize_info
+from ..chess.score import SCORE_CP, SCORE_DEPTH, SCORE_MATE
 from ..events import EVT_ENGINE_INFO, Event, EventBus
 from ..llm.cancel import CancelToken
 
@@ -99,11 +100,11 @@ async def pump_engine_info(
                     side = info["score"].pov(chess.WHITE)
                     entry: dict
                     if side.is_mate():
-                        entry = {"mate": side.mate()}
+                        entry = {SCORE_MATE: side.mate()}
                     else:
-                        entry = {"cp": side.score()}
+                        entry = {SCORE_CP: side.score()}
                     if "depth" in info:
-                        entry["depth"] = info["depth"]
+                        entry[SCORE_DEPTH] = info["depth"]
                     capture_score.clear()
                     capture_score.update(entry)
                 await bus.publish(

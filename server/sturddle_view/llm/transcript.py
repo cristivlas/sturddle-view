@@ -26,11 +26,9 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, AsyncIterator
 
-import platformdirs
-
-from .. import app_dir_name
+from .. import app_data_dir
 from ..env_utils import env_bool
 from .base import ProviderChunk
 
@@ -40,10 +38,13 @@ TRANSCRIPT_ENV_VAR = "SV_AI_TRANSCRIPT"
 
 TURN_SEPARATOR = "=" * 78
 
+_JSON_INDENT = 2
+_TOOL_USE_ID_KEY = "tool_use_id"
+
 
 def default_transcript_path() -> Path:
     """Where the rolling transcript file lives by default."""
-    return Path(platformdirs.user_data_dir(app_dir_name(), appauthor=False)) / TRANSCRIPT_FILENAME
+    return app_data_dir() / TRANSCRIPT_FILENAME
 
 
 def transcript_enabled() -> bool:
@@ -81,7 +82,7 @@ class Transcript:
                 self._fh.flush()
                 self._fh.close()
 
-    async def __aenter__(self) -> "Transcript":
+    async def __aenter__(self) -> Transcript:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -99,7 +100,7 @@ class Transcript:
         await self._write_block("user", text)
 
     async def request(self, round_index: int, body: dict[str, Any]) -> None:
-        await self._write_block(f"round {round_index} request", _json(body))
+        await self._write_block(_round_label(round_index, "request"), _json(body))
 
     async def wire_line(self, round_index: int, line: str) -> None:
         """Raw bytes off the wire (SSE line, raw chunk, etc.).
@@ -108,18 +109,16 @@ class Transcript:
         point: if the provider crashes on a payload, the operator can
         read what came back.
         """
-        await self._write_block(f"round {round_index} wire", line)
+        await self._write_block(_round_label(round_index, "wire"), line)
 
     async def chunk(self, round_index: int, chunk: ProviderChunk) -> None:
-        await self._write_block(
-            f"round {round_index} chunk", _chunk_repr(chunk)
-        )
+        await self._write_block(_round_label(round_index, "chunk"), _chunk_repr(chunk))
 
     async def tool_result(
         self, round_index: int, tool_use_id: str, result: Any
     ) -> None:
-        body = _json({"tool_use_id": tool_use_id, "result": result})
-        await self._write_block(f"round {round_index} tool_result", body)
+        body = _json({_TOOL_USE_ID_KEY: tool_use_id, "result": result})
+        await self._write_block(_round_label(round_index, "tool_result"), body)
 
     async def turn_end(self, payload: dict[str, Any]) -> None:
         await self._write_block("turn_end", _json(payload))
@@ -150,7 +149,7 @@ class NullTranscript(Transcript):
     same. Every method is a no-op coroutine.
     """
 
-    def __init__(self) -> None:  # noqa: D401 - intentional shadow
+    def __init__(self) -> None:
         # Skip Transcript.__init__: we have no file to open.
         self._path = Path()
         self._fh = None  # type: ignore[assignment]
@@ -178,7 +177,7 @@ class NullTranscript(Transcript):
 @asynccontextmanager
 async def open_transcript(
     *, path: Path | None = None, enabled: bool | None = None
-) -> Iterator[Transcript]:
+) -> AsyncIterator[Transcript]:
     """Yield a Transcript (real or null) and ensure it is closed.
 
     - `enabled=None` (the default) reads `SV_AI_TRANSCRIPT` from the env.
@@ -206,11 +205,15 @@ async def open_transcript(
 # ---------- Helpers ----------------------------------------------------
 
 
+def _round_label(round_index: int, what: str) -> str:
+    return f"round {round_index} {what}"
+
+
 def _json(obj: Any) -> str:
     """Pretty-print a dict/list as JSON, falling back to repr for the
     weird stuff a provider might hand us."""
     try:
-        return json.dumps(obj, indent=2, default=str, ensure_ascii=False)
+        return json.dumps(obj, indent=_JSON_INDENT, default=str, ensure_ascii=False)
     except (TypeError, ValueError):
         return repr(obj)
 
@@ -219,7 +222,7 @@ def _chunk_repr(chunk: ProviderChunk) -> str:
     body = {
         "kind": chunk.kind,
         "text": chunk.text,
-        "tool_use_id": chunk.tool_use_id,
+        _TOOL_USE_ID_KEY: chunk.tool_use_id,
         "tool_name": chunk.tool_name,
         "tool_input": chunk.tool_input,
     }

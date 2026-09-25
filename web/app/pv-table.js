@@ -4,7 +4,8 @@
 //
 // Feed-agnostic: callers subscribe to their own event source and push
 // unified engine_info payloads via update(). The PV cell text differs by
-// caller (SAN in play, joined UCI in tournaments), so it's passed in.
+// caller (SAN in play, joined UCI in tournaments), so it's passed in; the
+// searched position is sampled from `currentPlacement` (play only).
 //
 // `onActivate` (play only) turns showable rows into a double-click-to-play
 // affordance; see docs/pv-play-spec.md. Tables created without it (the
@@ -13,6 +14,7 @@
 import { attachColumnResize } from "./col-resize.js";
 import { fmtCount, fmtScore, markSelectable, rafCoalesce } from "./wb-utils.js";
 import { pvFrames } from "./pv-walk.js";
+import { applySplitColWidths, wireSplitScroll } from "./split-table.js";
 
 const COL_MIN_PX = 30;
 const DEFAULT_COL_WIDTHS = [50, 50, 55, 45];
@@ -96,7 +98,7 @@ function hasPlayableFrames(tr) {
 // would otherwise misalign until recreated).
 const syncRegistry = new Map(); // colWidthsKey -> Set<{applyExternal}>
 
-export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay }) {
+export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, currentPlacement }) {
   // Showable requires both a playable line AND the board currently willing
   // to play one (not analyzing, not editing) -- gating here, not just at
   // activation, means a row never becomes double-click-able (hover, tooltip)
@@ -113,40 +115,77 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay })
     else tr.removeAttribute("title");
   }
 
+  function writePvRow(tr, placement, pvUci, text) {
+    rowState.get(tr).pvRow = { placement, pvUci, text, frames: pvFrames(placement, pvUci) };
+  }
+
+  // A row written with no board to sample (the view unmounted; this body
+  // outlives a perspective nav) has no frames. The gate is re-announced on
+  // remount, so resample it against the live board then; pvFrames truncates
+  // if the position has moved on.
+  function resampleUnsampled(tr) {
+    const st = rowState.get(tr);
+    if (st.pvRow.placement) return;
+    const placement = currentPlacement?.();
+    if (placement) writePvRow(tr, placement, st.pvRow.pvUci, st.pvRow.text);
+  }
+
   function refreshShowability() {
     for (const tr of tbody.rows) {
-      if (rowState.get(tr)?.pvRow) applyShowability(tr);
+      if (!rowState.get(tr)?.pvRow) continue;
+      resampleUnsampled(tr);
+      applyShowability(tr);
     }
   }
 
+  // Split header/body table pattern -- see split-table.js.
   const el = document.createElement("div");
   el.className = "wb-pvtable";
   el.innerHTML = `
-    <table class="wb-table wb-pvtable-tbl">
-      <colgroup>
-        <col class="wb-pvtable-col-depth">
-        <col class="wb-pvtable-col-score">
-        <col class="wb-pvtable-col-nodes">
-        <col class="wb-pvtable-col-nps">
-        <col class="wb-pvtable-col-pv">
-      </colgroup>
-      <thead>
-        <tr>
-          <th>Depth<span class="th-grip"></span></th>
-          <th>Eval<span class="th-grip"></span></th>
-          <th>Nodes<span class="th-grip"></span></th>
-          <th>NPS<span class="th-grip"></span></th>
-          <th>PV</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+    <div class="wb-pvtable-head-scroll">
+      <table class="wb-table wb-pvtable-head-tbl">
+        <colgroup>
+          <col class="wb-pvtable-col-depth">
+          <col class="wb-pvtable-col-score">
+          <col class="wb-pvtable-col-nodes">
+          <col class="wb-pvtable-col-nps">
+          <col class="wb-pvtable-col-pv">
+        </colgroup>
+        <thead>
+          <tr>
+            <th>Depth<span class="th-grip"></span></th>
+            <th>Eval<span class="th-grip"></span></th>
+            <th>Nodes<span class="th-grip"></span></th>
+            <th>NPS<span class="th-grip"></span></th>
+            <th>PV</th>
+          </tr>
+        </thead>
+      </table>
+    </div>
+    <div class="wb-pvtable-scroll">
+      <table class="wb-table wb-pvtable-tbl">
+        <colgroup>
+          <col class="wb-pvtable-col-depth">
+          <col class="wb-pvtable-col-score">
+          <col class="wb-pvtable-col-nodes">
+          <col class="wb-pvtable-col-nps">
+          <col class="wb-pvtable-col-pv">
+        </colgroup>
+        <tbody></tbody>
+      </table>
+    </div>
   `;
 
   const tbody = el.querySelector("tbody");
+  const headScrollEl = el.querySelector(".wb-pvtable-head-scroll");
+  const headTableEl = el.querySelector(".wb-pvtable-head-tbl");
   const tableEl = el.querySelector(".wb-pvtable-tbl");
+  const scrollEl = el.querySelector(".wb-pvtable-scroll");
+  wireSplitScroll(headScrollEl, scrollEl);
   markSelectable(tableEl);
-  const colEls = Array.from(el.querySelectorAll("col"));
+  markSelectable(headTableEl);
+  const headColEls = Array.from(headTableEl.querySelectorAll("col"));
+  const colEls = Array.from(tableEl.querySelectorAll("col"));
   const grips = Array.from(el.querySelectorAll(".th-grip"));
   const colWidths = DEFAULT_COL_WIDTHS.slice();
 
@@ -164,11 +203,11 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay })
       }
     }
     // First 4 cols are fixed px; last col (PV) is auto to fill remaining space.
-    colEls.slice(0, 4).forEach((c, i) => { c.style.width = sizes[i] + "px"; });
-    colEls[4].style.width = "auto";
+    applySplitColWidths([headColEls.slice(0, 4), colEls.slice(0, 4)], sizes, "px");
+    headColEls[4].style.width = colEls[4].style.width = "auto";
     const fixedW = sizes.reduce((s, w) => s + w, 0);
-    tableEl.style.width = "100%";
-    tableEl.style.minWidth = fixedW + "px";
+    headTableEl.style.width = tableEl.style.width = "100%";
+    headTableEl.style.minWidth = tableEl.style.minWidth = fixedW + "px";
     fitTableToPvContent();
   }
 
@@ -183,7 +222,7 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay })
   siblings.add(syncEntry);
 
   const colResize = attachColumnResize({
-    table: tableEl,
+    table: headTableEl,
     grips,
     overlayHost: el,
     storageKey: colWidthsKey,
@@ -301,13 +340,13 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay })
       if (cell && cell.scrollWidth > pvMax) pvMax = cell.scrollWidth;
     }
     const fixedW = colWidths.reduce((s, w) => s + w, 0);
-    tableEl.style.minWidth = (fixedW + pvMax) + "px";
+    tableEl.style.minWidth = headTableEl.style.minWidth = (fixedW + pvMax) + "px";
   }
   // Coalesced: scrollWidth is a layout probe; per-info-event sync reads
   // would force a reflow on every engine info line.
   const fit = rafCoalesce(fitTableToPvContent);
 
-  function update(info, pvText, placement) {
+  function update(info, pvText) {
     const { depth, seldepth, score, nodes, nps, pv_uci } = info;
     if (depth == null) return;
     // depth === 1 after maxDepth > 1 signals a new search (single-PV assumption;
@@ -349,7 +388,7 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay })
     // an info that carries pv_uci -- infos without one update depth/score/
     // nodes/nps only, so the triple never disagrees with itself.
     if (pv_uci && pv_uci.length) {
-      rowState.get(tr).pvRow = { placement, pvUci: pv_uci, text: pvText, frames: pvFrames(placement, pv_uci) };
+      writePvRow(tr, currentPlacement?.(), pv_uci, pvText);
       applyShowability(tr);
     }
     fit();

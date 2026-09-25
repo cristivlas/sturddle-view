@@ -10,52 +10,64 @@ from __future__ import annotations
 import json
 import logging
 import math
-import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import chess
 import chess.pgn
 
-from ..play.canonical_hash import canonical_hash_from_game
-from ..chess.pgn_walk import walk_mainline
-from ..chess.results import (
-    BLACK_WIN as _BLACK_WIN,
-    DECISIVE_RESULTS,
-    WHITE_WIN as _WHITE_WIN,
+from ..chess.pgn_tags import (
+    TAG_BLACK,
+    TAG_RESULT,
+    TAG_ROUND,
+    TAG_TERMINATION,
+    TAG_WHITE,
+    UNKNOWN_TAG_VALUE,
 )
+from ..chess.pgn_walk import walk_mainline
+from ..chess.results import BLACK_WIN, DECISIVE_RESULTS, UNKNOWN_RESULT, WHITE_WIN
+from ..env_utils import env_int
 from ..openings import OpeningBook
+from ..play.canonical_hash import canonical_hash_from_game
+from .template import TYPE_GAUNTLET, TYPE_ROUNDROBIN
 
 log = logging.getLogger(__name__)
 
-_DECISIVE_RESULTS = DECISIVE_RESULTS
-
-# PGN tag line: [Name "value"]. Non-greedy value match — we don't honor
+# PGN tag line: [Name "value"]. Non-greedy value match -- we don't honor
 # \"-escapes; the four headers we read never contain quotes in fastchess output.
 _TAG_RE = re.compile(r'\[(\w+)\s+"(.*?)"\]\s*$')
 _TAG_RE_BLOCK = re.compile(r'^\[(\w+)\s+"(.*?)"\]', re.MULTILINE)
 
-# PGN header tag names.
-_TAG_WHITE = "White"
-_TAG_BLACK = "Black"
-_TAG_RESULT = "Result"
-_TAG_ROUND = "Round"
-_TAG_TERMINATION = "Termination"
-
 # Tags we actually use; ignore the rest to skip a dict write per line.
-_WANTED_TAGS = frozenset({_TAG_WHITE, _TAG_BLACK, _TAG_RESULT, _TAG_ROUND})
-
-# Placeholder for a missing tag value (White/Black/Round).
-_UNKNOWN = "?"
-# The non-decisive Result tag (ongoing game); never passes the decisive filter.
-_NONDECISIVE = "*"
+_WANTED_TAGS = frozenset({TAG_WHITE, TAG_BLACK, TAG_RESULT, TAG_ROUND})
 
 # games-list / summary wire keys.
 _KEY_WHITE = "white"
 _KEY_BLACK = "black"
 _KEY_RESULT = "result"
 _KEY_OPENING = "opening"
+_KEY_GAMES = "games"
+
+_ENCODING = "utf-8"
+
+# Score of a drawn game, and the expected score between equal engines.
+_DRAW_SCORE = 0.5
+_EQUAL_SCORE = 0.5
+# Logistic Elo: a 400-point gap means 10:1 odds.
+_ELO_SCALE = 400.0
+_LN10 = math.log(10.0)
+# Two-sided 95% normal quantile.
+_Z95 = 1.96
+# Head-to-head Elo needs exactly two engines; a gauntlet needs a leader
+# plus at least two challengers. A variance needs two samples.
+_HEAD_TO_HEAD_ENGINES = 2
+_MIN_GAUNTLET_ENGINES = 3
+_MIN_VARIANCE_SAMPLES = 2
+
+
+def _open_pgn(pgn_path: Path):
+    return pgn_path.open("r", encoding=_ENCODING, errors="replace")
 
 
 @dataclass
@@ -89,7 +101,7 @@ class EngineRecord:
 
     @property
     def points(self) -> float:
-        return self.wins + 0.5 * self.draws
+        return self.wins + _DRAW_SCORE * self.draws
 
     @property
     def score_pct(self) -> float:
@@ -99,18 +111,10 @@ class EngineRecord:
 
     def to_dict(self) -> dict:
         return {
-            "name": self.name,
-            "wins": self.wins,
-            "losses": self.losses,
-            "draws": self.draws,
-            "games": self.games,
+            **asdict(self),
+            _KEY_GAMES: self.games,
             "points": self.points,
             "score_pct": self.score_pct,
-            "elo": self.elo,
-            "elo_margin_95": self.elo_margin_95,
-            "elo_ordo": self.elo_ordo,
-            "elo_ordo_margin_95": self.elo_ordo_margin_95,
-            "elo_anchored": self.elo_anchored,
         }
 
 
@@ -121,7 +125,7 @@ class Standings:
 
     def to_dict(self) -> dict:
         return {
-            "games": self.games,
+            _KEY_GAMES: self.games,
             "engines": [e.to_dict() for e in sorted(
                 self.engines, key=lambda r: (-r.points, r.name)
             )],
@@ -134,15 +138,28 @@ SPRT_H0 = "H0"
 SPRT_H1 = "H1"
 SPRT_CONTINUE = "continue"
 
+# SPRT parameter keys (a template's ``sprt`` dict) and shared defaults.
+SPRT_ELO0 = "elo0"
+SPRT_ELO1 = "elo1"
+SPRT_ALPHA = "alpha"
+SPRT_BETA = "beta"
+SPRT_MODEL = "model"
+SPRT_DEFAULT_ALPHA = 0.05
+SPRT_DEFAULT_BETA = 0.05
+# Normalized pentanomial is the default; "pentanomial" is accepted as an
+# alias. Logistic is honored for legacy templates.
+SPRT_MODEL_NORMALIZED = "normalized"
+SPRT_MODEL_LOGISTIC = "logistic"
+
 
 @dataclass
 class SprtResult:
     """Outcome of a Sequential Probability Ratio Test on the PGN to date.
 
     ``status`` is one of:
-      - ``SPRT_H1``       — accept H1 (engine A is stronger by `elo1` or more)
-      - ``SPRT_H0``       — accept H0 (engine A is no stronger than `elo0`)
-      - ``SPRT_CONTINUE`` — neither bound reached; keep playing
+      - ``SPRT_H1``       -- accept H1 (engine A is stronger by `elo1` or more)
+      - ``SPRT_H0``       -- accept H0 (engine A is no stronger than `elo0`)
+      - ``SPRT_CONTINUE`` -- neither bound reached; keep playing
     """
     llr: float
     lower_bound: float
@@ -153,15 +170,7 @@ class SprtResult:
     elo1: float
 
     def to_dict(self) -> dict:
-        return {
-            "llr": self.llr,
-            "lower_bound": self.lower_bound,
-            "upper_bound": self.upper_bound,
-            "status": self.status,
-            "pairs": self.pairs,
-            "elo0": self.elo0,
-            "elo1": self.elo1,
-        }
+        return asdict(self)
 
 
 # Cache: pgn_path -> (mtime_ns, size, keyed_games_tuple). Entries are
@@ -189,7 +198,16 @@ _opening_memo: dict[tuple[Path, int], dict] = {}
 
 # Plies replayed per game to identify its opening. ECO lines rarely exceed
 # ~12 moves, so 24 plies covers them while bounding replay cost on big PGNs.
-_OPENING_PLIES = int(os.environ.get("SV_OPENING_PLIES", "24"))
+_OPENING_PLIES = env_int("SV_OPENING_PLIES", 24, min_value=1)
+
+
+def _cache_hit(cache: dict, pgn_path: Path, st):
+    """Cached data for ``pgn_path`` while its (mtime, size) key matches."""
+    entry = cache.get(pgn_path)
+    if entry is None:
+        return None
+    mtime_ns, size, data = entry
+    return data if (mtime_ns, size) == (st.st_mtime_ns, st.st_size) else None
 
 
 def _iter_games_keyed(pgn_path: Path):
@@ -205,9 +223,9 @@ def _iter_games_keyed(pgn_path: Path):
         _iter_games_cache.pop(pgn_path, None)
         _game_offsets_cache.pop(pgn_path, None)
         return
-    cached = _iter_games_cache.get(pgn_path)
-    if cached is not None and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
-        yield from cached[2]
+    cached = _cache_hit(_iter_games_cache, pgn_path, st)
+    if cached is not None:
+        yield from cached
         return
     games = tuple(_iter_games_uncached(pgn_path))
     _iter_games_cache[pgn_path] = (st.st_mtime_ns, st.st_size, games)
@@ -242,18 +260,18 @@ def _iter_games_uncached(pgn_path: Path):
     def emit():
         if not cur:
             return None
-        result = cur.get(_TAG_RESULT, _NONDECISIVE)
-        if result in _DECISIVE_RESULTS:
-            white = cur.get(_TAG_WHITE, _UNKNOWN)
-            black = cur.get(_TAG_BLACK, _UNKNOWN)
-            round_tag = cur.get(_TAG_ROUND, "")
+        result = cur.get(TAG_RESULT, UNKNOWN_RESULT)
+        if result in DECISIVE_RESULTS:
+            white = cur.get(TAG_WHITE, UNKNOWN_TAG_VALUE)
+            black = cur.get(TAG_BLACK, UNKNOWN_TAG_VALUE)
+            round_tag = cur.get(TAG_ROUND, "")
             value = (round_tag, white, black, result)
             cur.clear()
             return value
         cur.clear()
         return None
 
-    with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
+    with _open_pgn(pgn_path) as f:
         for line in f:
             m = _TAG_RE.match(line)
             if m is not None:
@@ -271,9 +289,6 @@ def _iter_games_uncached(pgn_path: Path):
             yield v
 
 
-# Indices into the 4-tuples yielded by ``_iter_games_keyed`` (round, white,
-# black, result). Used by ``_form_pairs`` callers that also need the
-# original index back into the input sequence.
 def _form_pairs(
     keyed: list[tuple[str, str, str, str]],
     *,
@@ -309,7 +324,7 @@ def _form_pairs(
     buckets: dict[tuple[str, frozenset[str]], list[int]] = {}
     no_round: list[int] = []
     for i, (round_tag, white, black, _result) in enumerate(keyed):
-        if not round_tag or round_tag == _UNKNOWN:
+        if not round_tag or round_tag == UNKNOWN_TAG_VALUE:
             no_round.append(i)
             continue
         key = (round_tag, frozenset((white, black)))
@@ -350,17 +365,6 @@ def _form_pairs(
     return pairs, orphans
 
 
-def read_game_pgn(pgn_path: Path, game_n: int) -> str | None:
-    """Return the PGN text of the 1-based Nth completed game, or None.
-
-    Counts only games with a decisive Result, matching ``pgn_tail``'s
-    ``game_n`` so a Replay click resolves to the same game the
-    reconciliation event identified.
-    """
-    record = read_game_record(pgn_path, game_n)
-    return record["pgn"] if record else None
-
-
 def _build_game_offsets(pgn_path: Path, f) -> list[int]:
     """Scan open text file and return byte offsets of decisive games."""
     offsets: list[int] = []
@@ -370,16 +374,16 @@ def _build_game_offsets(pgn_path: Path, f) -> list[int]:
         headers = chess.pgn.read_headers(f)
         if headers is None:
             break
-        if headers.get(_TAG_RESULT, _NONDECISIVE) in _DECISIVE_RESULTS:
+        if headers.get(TAG_RESULT, UNKNOWN_RESULT) in DECISIVE_RESULTS:
             offsets.append(offset)
     return offsets
 
 
 def _get_game_offsets(pgn_path: Path, st) -> list[int]:
-    cached = _game_offsets_cache.get(pgn_path)
-    if cached is not None and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
-        return cached[2]
-    with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
+    cached = _cache_hit(_game_offsets_cache, pgn_path, st)
+    if cached is not None:
+        return cached
+    with _open_pgn(pgn_path) as f:
         offsets = _build_game_offsets(pgn_path, f)
     _game_offsets_cache[pgn_path] = (st.st_mtime_ns, st.st_size, offsets)
     return offsets
@@ -395,6 +399,9 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
 
     Result keys: ``pgn``, ``hash``, ``final_fen``, ``last_move`` (uci or None),
     ``engine_white``, ``engine_black``, ``result``, ``termination``.
+    Counts only games with a decisive Result, matching ``pgn_tail``'s
+    ``game_n`` so a Replay click resolves to the same game the
+    reconciliation event identified.
     Used to rehydrate a frozen tournament game window with no live WS.
     ``hash`` matches the SHA-256 produced by recent_imports so the client
     can compare against the currently viewed game's view_hash.
@@ -408,7 +415,7 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
     offsets = _get_game_offsets(pgn_path, st)
     if game_n > len(offsets):
         return None
-    with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
+    with _open_pgn(pgn_path) as f:
         game = _read_game_at_offset(f, offsets[game_n - 1])
     if game is None:
         return None
@@ -420,13 +427,13 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
         board = game.board()
     pgn_hash = canonical_hash_from_game(game)
     pgn_text = str(game)
-    white = game.headers.get(_TAG_WHITE, _UNKNOWN)
-    black = game.headers.get(_TAG_BLACK, _UNKNOWN)
+    white = game.headers.get(TAG_WHITE, UNKNOWN_TAG_VALUE)
+    black = game.headers.get(TAG_BLACK, UNKNOWN_TAG_VALUE)
     # _get_game_offsets only indexes decisive games, so Result is always decisive here.
-    result = game.headers[_TAG_RESULT]
+    result = game.headers[TAG_RESULT]
     summary = {
-        _KEY_WHITE: white if white != _UNKNOWN else None,
-        _KEY_BLACK: black if black != _UNKNOWN else None,
+        _KEY_WHITE: white if white != UNKNOWN_TAG_VALUE else None,
+        _KEY_BLACK: black if black != UNKNOWN_TAG_VALUE else None,
         _KEY_RESULT: result,
         "side_to_move": None,
     }
@@ -436,10 +443,10 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
         "summary": summary,
         "final_fen": board.fen(),
         "last_move": last_move_uci,
-        "engine_white": game.headers.get(_TAG_WHITE, ""),
-        "engine_black": game.headers.get(_TAG_BLACK, ""),
-        _KEY_RESULT: game.headers.get(_TAG_RESULT, _NONDECISIVE),
-        "termination": game.headers.get(_TAG_TERMINATION, ""),
+        "engine_white": game.headers.get(TAG_WHITE, ""),
+        "engine_black": game.headers.get(TAG_BLACK, ""),
+        _KEY_RESULT: result,
+        "termination": game.headers.get(TAG_TERMINATION, ""),
     }
 
 
@@ -454,10 +461,10 @@ def _game_record_at_offset(f, offset: int) -> dict | None:
             break
     opening = OpeningBook.load().lookup(uci)
     return {
-        _KEY_WHITE: game.headers.get(_TAG_WHITE, _UNKNOWN),
-        _KEY_BLACK: game.headers.get(_TAG_BLACK, _UNKNOWN),
+        _KEY_WHITE: game.headers.get(TAG_WHITE, UNKNOWN_TAG_VALUE),
+        _KEY_BLACK: game.headers.get(TAG_BLACK, UNKNOWN_TAG_VALUE),
         # _get_game_offsets only indexes decisive games -> Result always set.
-        _KEY_RESULT: game.headers[_TAG_RESULT],
+        _KEY_RESULT: game.headers[TAG_RESULT],
         _KEY_OPENING: opening.name if opening is not None else "",
     }
 
@@ -481,11 +488,11 @@ def compute_games_list(pgn_path: Path) -> list[dict]:
     except FileNotFoundError:
         forget(pgn_path)
         return []
-    cached = _games_list_cache.get(pgn_path)
-    if cached is not None and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
-        return cached[2]
+    cached = _cache_hit(_games_list_cache, pgn_path, st)
+    if cached is not None:
+        return cached
     offsets = _get_game_offsets(pgn_path, st)
-    with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
+    with _open_pgn(pgn_path) as f:
         games = []
         for offset in offsets:
             rec = _opening_memo.get((pgn_path, offset))
@@ -507,28 +514,30 @@ def elo_from_score(score: float) -> float | None:
     """
     if score <= 0.0 or score >= 1.0:
         return None
-    return -400.0 * math.log10(1.0 / score - 1.0)
+    return -_ELO_SCALE * math.log10(1.0 / score - 1.0)
 
 
 def elo_margin_from_wld(wins: int, losses: int, draws: int) -> float | None:
     """95% Elo half-width from a W/L/D record (head-to-head only).
 
-    Per-game scores x_i ∈ {1, 0, 0.5}. With sample variance V on x_i,
-    SE(score) = sqrt(V/n). Propagate to Elo via dElo/dscore = 400/(ln(10)·s·(1−s)).
+    Per-game scores x_i in {1, 0, 0.5}. With sample variance V on x_i,
+    SE(score) = sqrt(V/n). Propagate to Elo via dElo/dscore = 400/(ln(10)*s*(1-s)).
     Returns ``None`` if score is 0/1 or n<2 (CI undefined).
     """
     n = wins + losses + draws
-    if n < 2:
+    if n < _MIN_VARIANCE_SAMPLES:
         return None
-    s = (wins + 0.5 * draws) / n
+    s = (wins + _DRAW_SCORE * draws) / n
     if s <= 0.0 or s >= 1.0:
         return None
-    var = (wins * (1 - s) ** 2 + losses * (0 - s) ** 2 + draws * (0.5 - s) ** 2) / (n - 1)
+    var = (
+        wins * (1 - s) ** 2 + losses * (0 - s) ** 2 + draws * (_DRAW_SCORE - s) ** 2
+    ) / (n - 1)
     if var <= 0.0:
         return 0.0
     se_score = math.sqrt(var / n)
-    delo_dscore = 400.0 / (math.log(10.0) * s * (1.0 - s))
-    return 1.96 * se_score * delo_dscore
+    delo_dscore = _ELO_SCALE / (_LN10 * s * (1.0 - s))
+    return _Z95 * se_score * delo_dscore
 
 
 # ordo's BETA: P(score) = 1/(1 + exp((rB - rA)*BETA)).
@@ -536,6 +545,17 @@ def elo_margin_from_wld(wins: int, losses: int, draws: int) -> float | None:
 # default -z 202 and `xpect(a, b, beta) = 1/(1+exp((b-a)*beta))` in xpect.c.
 _ORDO_INV_BETA = 202.0 / math.log(0.76 / 0.24)  # ~175.25
 _ORDO_BETA = 1.0 / _ORDO_INV_BETA
+# Iterative-fit schedule (ordo's): initial Elo step, saturation constant,
+# step halving on each non-improving round until below the min step, with
+# caps on both loops. 80 halvings cover any practical input.
+_ORDO_START_STEP = 200.0
+_ORDO_KAPPA = 0.05
+_ORDO_STEP_DECAY = 0.5
+_ORDO_MIN_STEP = 0.001
+_ORDO_MAX_HALVINGS = 80
+_ORDO_MAX_STEPS = 20000
+# Gauss-Jordan pivot below this counts as singular.
+_SINGULAR_PIVOT_EPS = 1e-12
 
 
 def _ordo_connected_groups(
@@ -594,7 +614,7 @@ def _ordo_iterative_fit(
     (the default), which is the typical case for engine tournaments.
     """
     n = len(engine_names)
-    if n < 2:
+    if n < _HEAD_TO_HEAD_ENGINES:
         return {}
     idx = {name: i for i, name in enumerate(engine_names)}
 
@@ -608,8 +628,7 @@ def _ordo_iterative_fit(
         played[ib] += np_
 
     r = [0.0] * n
-    delta = 200.0
-    kappa = 0.05
+    delta = _ORDO_START_STEP
 
     def compute_dev(ratings: list[float]) -> tuple[float, list[float]]:
         expected = [0.0] * n
@@ -622,17 +641,16 @@ def _ordo_iterative_fit(
         return dev, expected
 
     # Outer loop halves ``delta`` whenever an inner step makes things
-    # worse; convergence is reached when ``delta`` shrinks below 0.001 Elo.
-    # 80 halvings cover any practical input.
-    for _outer in range(80):
-        for _inner in range(20000):
+    # worse; convergence is reached when ``delta`` shrinks below the min step.
+    for _outer in range(_ORDO_MAX_HALVINGS):
+        for _inner in range(_ORDO_MAX_STEPS):
             dev, expected = compute_dev(r)
             new_r = list(r)
             for j in range(n):
                 d = obtained[j] - expected[j]
                 if played[j] == 0:
                     continue
-                ratio = abs(d) / (kappa * played[j] + abs(d))
+                ratio = abs(d) / (_ORDO_KAPPA * played[j] + abs(d))
                 step = delta * (1.0 if d > 0 else -1.0) * ratio
                 new_r[j] += step
             m = sum(new_r) / n
@@ -641,8 +659,8 @@ def _ordo_iterative_fit(
             if dev2 >= dev:
                 break
             r = new_r
-        delta *= 0.5
-        if delta < 0.001:
+        delta *= _ORDO_STEP_DECAY
+        if delta < _ORDO_MIN_STEP:
             break
 
     return {engine_names[i]: r[i] for i in range(n)}
@@ -674,9 +692,9 @@ def _ordo_fit_margins(
     ordo's CI is unambiguous up to a scale factor.
     """
     n = len(engine_names)
-    if n < 2:
+    if n < _HEAD_TO_HEAD_ENGINES:
         return {name: None for name in engine_names}
-    if n == 2:
+    if n == _HEAD_TO_HEAD_ENGINES:
         margins = {}
         info = 0.0
         for w, b, _ws, np_ in encounters:
@@ -687,7 +705,8 @@ def _ordo_fit_margins(
         if info <= 0.0:
             return {name: None for name in engine_names}
         se_diff = 1.0 / math.sqrt(info)
-        m = 1.96 * se_diff / 2.0
+        # Mean-centered: each rating sits half the difference from zero.
+        m = _Z95 * se_diff / 2.0
         for name in engine_names:
             margins[name] = m
         return margins
@@ -715,7 +734,7 @@ def _ordo_fit_margins(
         for r2 in range(col, size):
             if abs(aug[r2][col]) > abs(aug[piv][col]):
                 piv = r2
-        if abs(aug[piv][col]) < 1e-12:
+        if abs(aug[piv][col]) < _SINGULAR_PIVOT_EPS:
             return {name: None for name in engine_names}
         aug[col], aug[piv] = aug[piv], aug[col]
         pv = aug[col][col]
@@ -732,13 +751,13 @@ def _ordo_fit_margins(
     margins: dict[str, float | None] = {}
     for i in range(size):
         v = inv[i][i]
-        margins[engine_names[i]] = 1.96 * math.sqrt(v) if v >= 0 else None
+        margins[engine_names[i]] = _Z95 * math.sqrt(v) if v >= 0 else None
     # Last engine's variance under constraint: Var(-sum others) = sum_{i,j} Cov(r_i, r_j)
     var_last = 0.0
     for i in range(size):
         for j in range(size):
             var_last += inv[i][j]
-    margins[engine_names[size]] = 1.96 * math.sqrt(var_last) if var_last >= 0 else None
+    margins[engine_names[size]] = _Z95 * math.sqrt(var_last) if var_last >= 0 else None
     return margins
 
 
@@ -818,7 +837,7 @@ def games_played_from_config(config_path: Path) -> int | None:
     if not config_path.exists():
         return None
     try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
+        data = json.loads(config_path.read_text(encoding=_ENCODING))
     except (OSError, json.JSONDecodeError):
         return None
     stats = data.get("stats")
@@ -839,7 +858,7 @@ def games_played_from_config(config_path: Path) -> int | None:
 
 def compute_standings(
     pgn_path: Path,
-    tournament_type: str = "roundrobin",
+    tournament_type: str = TYPE_ROUNDROBIN,
     ratings: dict[str, int] | None = None,
 ) -> Standings:
     """Tally W/L/D per engine across all games in ``games.pgn``.
@@ -871,13 +890,13 @@ def compute_standings(
         b = rec(black)
         enc = encounters.setdefault((white, black), [0.0, 0])
         enc[1] += 1
-        if result == _WHITE_WIN:
+        if result == WHITE_WIN:
             w.wins += 1
             b.losses += 1
             wld.setdefault(white, {}).setdefault(black, [0, 0, 0])[0] += 1
             wld.setdefault(black, {}).setdefault(white, [0, 0, 0])[1] += 1
             enc[0] += 1.0
-        elif result == _BLACK_WIN:
+        elif result == BLACK_WIN:
             b.wins += 1
             w.losses += 1
             wld.setdefault(black, {}).setdefault(white, [0, 0, 0])[0] += 1
@@ -888,15 +907,15 @@ def compute_standings(
             b.draws += 1
             wld.setdefault(white, {}).setdefault(black, [0, 0, 0])[2] += 1
             wld.setdefault(black, {}).setdefault(white, [0, 0, 0])[2] += 1
-            enc[0] += 0.5
+            enc[0] += _DRAW_SCORE
 
     engines = list(records.values())
-    if len(engines) == 2:
+    if len(engines) == _HEAD_TO_HEAD_ENGINES:
         # Head-to-head Elo is well-defined for any 2-engine tournament.
         for e in engines:
             e.elo = elo_from_score(e.score_pct) if e.games else None
             e.elo_margin_95 = elo_margin_from_wld(e.wins, e.losses, e.draws)
-    elif len(engines) >= 3 and tournament_type == "gauntlet":
+    elif len(engines) >= _MIN_GAUNTLET_ENGINES and tournament_type == TYPE_GAUNTLET:
         # Leader plays every other engine; auto-detect by max game count.
         # Per-challenger Elo is head-to-head vs the leader only.
         leader = max(engines, key=lambda e: e.games)
@@ -905,7 +924,7 @@ def compute_standings(
             if vs is None or not sum(vs):
                 continue
             wi, li, di = vs
-            score = (wi + 0.5 * di) / sum(vs)
+            score = (wi + _DRAW_SCORE * di) / sum(vs)
             e.elo = elo_from_score(score)
             e.elo_margin_95 = elo_margin_from_wld(wi, li, di)
 
@@ -913,7 +932,7 @@ def compute_standings(
     # Per-engine `elo_ordo` is the mean-centered rating; engines purged
     # from the fit (all-wins/all-losses) get None. Cross-checks against
     # an external ordo run (-a 0 -M -D) to within rounding.
-    if len(engines) >= 2:
+    if len(engines) >= _HEAD_TO_HEAD_ENGINES:
         names = [e.name for e in engines]
         encs = [(w, b, ws, p) for (w, b), (ws, p) in encounters.items()]
         wins_map = {e.name: e.wins for e in engines}
@@ -968,7 +987,9 @@ _PENTA_SCORES = (0.0, 0.25, 0.5, 0.75, 1.0)
 # fastchess regularizes empty bins to this so log-likelihoods stay finite.
 _PENTA_REGULARIZE = 1e-3
 # Normalized-Elo -> t conversion constant (800 / ln 10), per fastchess.
-_NELO_DIVISOR = 800.0 / math.log(10.0)
+_NELO_DIVISOR = 800.0 / _LN10
+# Pentanomial pairs scale the normalized t-statistic by sqrt(2).
+_PENTA_T_FACTOR = math.sqrt(2.0)
 # ITP root-finder tuning (Oliveira & Takahashi 2020), verbatim from fastchess
 # sprt.cpp -- algorithm constants, not knobs; changing them breaks the match.
 _ITP_K1, _ITP_K2, _ITP_N0 = 0.1, 2.0, 0.99
@@ -1022,7 +1043,7 @@ def _iter_pairs(
         log.debug(
             "SPRT %s: round %s has orphan game (expected 2-game color-flipped "
             "pair) -- skipped",
-            pgn_path.name, rd or _UNKNOWN,
+            pgn_path.name, rd or UNKNOWN_TAG_VALUE,
         )
 
     pairs: list[tuple[str, str, float]] = []
@@ -1034,17 +1055,17 @@ def _iter_pairs(
             log.warning(
                 "SPRT %s: round %s skipped (engines %s vs %s, "
                 "expected %s vs %s)",
-                pgn_path.name, _rdi or _UNKNOWN, wi, bi, a_name, b_name,
+                pgn_path.name, _rdi or UNKNOWN_TAG_VALUE, wi, bi, a_name, b_name,
             )
             continue
         score = 0.0
         for white, black, result in ((wi, bi, ri), (wj, bj, rj)):
-            if result == _WHITE_WIN:
+            if result == WHITE_WIN:
                 score += 1.0 if white == a_name else 0.0
-            elif result == _BLACK_WIN:
+            elif result == BLACK_WIN:
                 score += 1.0 if black == a_name else 0.0
             else:
-                score += 0.5
+                score += _DRAW_SCORE
         pairs.append((a_name, b_name, score))
     return pairs
 
@@ -1128,8 +1149,8 @@ def _gllr_normalized(total, scores, probs, t0, t1):
                 break
         return p
 
-    p0 = mle(0.5, t0)
-    p1 = mle(0.5, t1)
+    p0 = mle(_EQUAL_SCORE, t0)
+    p1 = mle(_EQUAL_SCORE, t1)
     return total * sum((math.log(p1[i]) - math.log(p0[i])) * probs[i] for i in range(n))
 
 
@@ -1157,7 +1178,7 @@ def _gllr_logistic(total, scores, probs, s0, s1):
 
 def _lelo_to_score(lelo):
     """Logistic Elo -> per-game expected score (fastchess SPRT::leloToScore)."""
-    return 1.0 / (1.0 + 10.0 ** (-lelo / 400.0))
+    return 1.0 / (1.0 + 10.0 ** (-lelo / _ELO_SCALE))
 
 
 def compute_sprt(
@@ -1179,11 +1200,11 @@ def compute_sprt(
     the per-game-score model -- matched to whatever fastchess ran so the LLR
     agrees). "pentanomial" is an accepted alias for "normalized".
     """
-    elo0 = float(params["elo0"])
-    elo1 = float(params["elo1"])
-    alpha = float(params.get("alpha", 0.05))
-    beta = float(params.get("beta", 0.05))
-    model = params.get("model") or "normalized"
+    elo0 = float(params[SPRT_ELO0])
+    elo1 = float(params[SPRT_ELO1])
+    alpha = float(params.get(SPRT_ALPHA, SPRT_DEFAULT_ALPHA))
+    beta = float(params.get(SPRT_BETA, SPRT_DEFAULT_BETA))
+    model = params.get(SPRT_MODEL) or SPRT_MODEL_NORMALIZED
     if elo0 >= elo1:
         raise ValueError(f"SPRT requires elo0 < elo1; got elo0={elo0}, elo1={elo1}")
     if not 0.0 < alpha < 1.0:
@@ -1203,20 +1224,20 @@ def compute_sprt(
     # Pentanomial bins LL/LD/(WL+DD)/WD/WW. Pair score s is an exact multiple
     # of 0.5 (sum of two game scores in {0, 0.5, 1}), so s/0.5 is an exact
     # integer 0..4; round() just casts it. WL and DD both score 1.0 -> bin 2.
-    counts = [0, 0, 0, 0, 0]
+    counts = [0] * len(_PENTA_SCORES)
     for _a, _b, s in pairs:
-        counts[round(s / 0.5)] += 1
+        counts[round(s / _DRAW_SCORE)] += 1
     reg = [c if c != 0 else _PENTA_REGULARIZE for c in counts]
     total = sum(reg)
     probs = [c / total for c in reg]
 
-    if model == "logistic":
+    if model == SPRT_MODEL_LOGISTIC:
         llr = _gllr_logistic(
             total, _PENTA_SCORES, probs, _lelo_to_score(elo0), _lelo_to_score(elo1))
     else:
         # Normalized t-statistic from logistic Elo (penta uses the sqrt(2) factor).
-        t0 = math.sqrt(2.0) * elo0 / _NELO_DIVISOR
-        t1 = math.sqrt(2.0) * elo1 / _NELO_DIVISOR
+        t0 = _PENTA_T_FACTOR * elo0 / _NELO_DIVISOR
+        t1 = _PENTA_T_FACTOR * elo1 / _NELO_DIVISOR
         llr = _gllr_normalized(total, _PENTA_SCORES, probs, t0, t1)
 
     # A non-finite LLR (degenerate fit) carries no decision -- treat as continue.
@@ -1234,5 +1255,3 @@ def compute_sprt(
         llr=llr, lower_bound=lower, upper_bound=upper,
         status=status, pairs=n, elo0=elo0, elo1=elo1,
     )
-
-

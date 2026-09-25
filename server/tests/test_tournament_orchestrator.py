@@ -617,7 +617,7 @@ async def test_integration_real_runner_clean_exit(tmp_path, monkeypatch):
     """End-to-end: orchestrator → FastchessRunner → fake fastchess process →
     store reflects DONE on natural exit."""
     store = TournamentStore(tmp_path / "tournaments")
-    runner = FastchessRunner(binary_path=sys.executable)
+    runner = FastchessRunner(binary_path=lambda: sys.executable)
     monkeypatch.setattr(
         FastchessRunner, "detect_binary",
         staticmethod(lambda configured: configured),
@@ -659,7 +659,7 @@ async def test_integration_real_runner_stop(tmp_path, monkeypatch):
     """End-to-end: orchestrator.stop() → FastchessRunner kills process →
     store reflects STOPPED."""
     store = TournamentStore(tmp_path / "tournaments")
-    runner = FastchessRunner(binary_path=sys.executable)
+    runner = FastchessRunner(binary_path=lambda: sys.executable)
     monkeypatch.setattr(
         FastchessRunner, "detect_binary",
         staticmethod(lambda configured: configured),

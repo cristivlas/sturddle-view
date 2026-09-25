@@ -748,7 +748,7 @@ def patched_runner(monkeypatch):
     set_argv)`` — ``set_argv`` swaps in the fake-fastchess argv."""
 
     def make(extra_argv: list[str]):
-        runner = FastchessRunner(binary_path=sys.executable)
+        runner = FastchessRunner(binary_path=lambda: sys.executable)
         # Force detect_binary to accept whatever we pass.
         monkeypatch.setattr(
             FastchessRunner, "detect_binary",
@@ -1024,7 +1024,7 @@ async def test_runner_binary_missing_raises(tmp_path, monkeypatch):
         FastchessRunner, "detect_binary",
         staticmethod(lambda configured: None),
     )
-    runner = FastchessRunner(binary_path=None)
+    runner = FastchessRunner(binary_path=lambda: None)
     spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
     with pytest.raises(FileNotFoundError):
         await runner.start(spec, _Recorder())
