@@ -25,6 +25,7 @@ const SETTINGS_PATH = "/settings";
 const TOURNAMENT_SETTINGS_PATH = "/api/tournament-settings";
 const ENGINES_TAB = "engines";
 const PUT_DEBOUNCE_MS = 400;
+const FOOTER_INSET_VAR = "--settings-footer-inset";
 const DIALOG_WIDTH = "min(690px, 94vw)";
 // Top-tab layouts get the full vertical share; side-tab layouts cap high
 // enough that the Tournament tab's disclosure area fits without body scroll.
@@ -286,6 +287,18 @@ export async function openSettingsDialog({
       };
       tabs.addEventListener("wa-tab-show", (ev) => showGeneralFooter(ev.detail?.name === generalPanel.name));
       showGeneralFooter(startTab === generalTab);
+      // Line the footer label up with the panels' left edge (side rail only).
+      // The rail is content-sized; observing layout sets it before first paint.
+      if (!topTabs) {
+        const alignFooter = new ResizeObserver(() => {
+          const nav = tabs.shadowRoot.querySelector('[part~="nav"]');
+          const panelBase = generalPanel.shadowRoot.querySelector('[part~="base"]');
+          const inset = nav.offsetWidth + parseFloat(getComputedStyle(panelBase).paddingInlineStart);
+          dialog.style.setProperty(FOOTER_INSET_VAR, `${inset}px`);
+        });
+        alignFooter.observe(tabs);
+        dialogClosed.signal.addEventListener("abort", () => alignFooter.disconnect());
+      }
       // Engines as the start tab mounts only once the dialog is in the
       // document: mountEngineList measures the dialog body to size its
       // table, and a detached host yields a collapsed list.

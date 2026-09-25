@@ -17,6 +17,7 @@ const BOOK_PLIES_KEY = "engine_default_book_plies";
 const BOOK_ORDER_KEY = "engine_default_book_order";
 const OPTION_MIN = "1";
 const RESET_PATH = "/settings/reset";
+const RESET_LABEL = "Restore application defaults";
 const RESET_CONFIRM_MESSAGE =
   "Reset all settings to defaults? Engines, API keys and window layouts are kept.";
 
@@ -128,11 +129,14 @@ export function buildCommonTab({ api, initial, putSettings, putSettingsDebounced
   }
 
   // Resets the server settings file; the reload repaints every consumer.
-  function resetAllButton() {
+  function resetAllRow() {
+    const row = document.createElement("div");
+    row.slot = "footer";
+    row.className = "settings-reset-row";
+    const lbl = document.createElement("label");
+    lbl.textContent = RESET_LABEL;
     const btn = document.createElement("wa-button");
-    btn.slot = "footer";
     btn.size = "small";
-    btn.variant = "brand";
     btn.className = "settings-reset-btn";
     btn.textContent = "Reset all settings";
     btn.addEventListener("click", async () => {
@@ -148,7 +152,8 @@ export function buildCommonTab({ api, initial, putSettings, putSettingsDebounced
       }
       location.reload();
     });
-    return btn;
+    row.append(lbl, btn);
+    return row;
   }
 
   const { row: bookOptionsRow, setEnabled: setBookOptionsEnabled } = bookPliesAndOrderRow();
@@ -177,5 +182,5 @@ export function buildCommonTab({ api, initial, putSettings, putSettingsDebounced
     bookOptionsRow,
   );
 
-  return { tab: generalTab, panel: generalPanel, footer: resetAllButton() };
+  return { tab: generalTab, panel: generalPanel, footer: resetAllRow() };
 }

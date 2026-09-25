@@ -2484,13 +2484,39 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   }
 }
 wa-dialog:has(.engine-settings-tabs)::part(footer),
-wa-dialog:has(> .settings-reset-btn)::part(footer) {
+wa-dialog:has(> .settings-reset-row)::part(footer) {
   border-top: 1px solid rgba(255, 255, 255, 0.12);
   padding-top: 12px;
 }
 /* Settings Reset: the gap above the button mirrors the one below it. */
-wa-dialog:has(> .settings-reset-btn)::part(footer) {
+wa-dialog:has(> .settings-reset-row)::part(footer) {
   padding-top: var(--spacing);
+}
+/* Label at the panels' left edge (JS-measured inset), button fills the rest. */
+.settings-reset-row {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--wa-space-s);
+  margin-inline-start: var(--settings-footer-inset, 0px);
+}
+.settings-reset-row .settings-reset-btn { flex: 1; }
+/* Input-field fill at rest so the wide button reads as part of the form;
+   hover lights it up in the brand (loud) fill. ::part() beats the shadow
+   :hover/:active rules, so both states are restated here. */
+.settings-reset-row .settings-reset-btn::part(base) {
+  background-color: var(--wa-form-control-background-color);
+}
+.settings-reset-row .settings-reset-btn:not([disabled]):hover::part(base) {
+  background-color: var(--wa-color-brand-fill-loud);
+  color: var(--wa-color-brand-on-loud);
+}
+.settings-reset-row .settings-reset-btn:not([disabled]):active::part(base) {
+  background-color: color-mix(in oklab, var(--wa-color-brand-fill-loud), var(--wa-color-mix-active));
+}
+.settings-reset-row label {
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 wa-dialog:has(.engine-settings-tabs)::part(body) {
   padding-block-end: 0;
@@ -2800,6 +2826,12 @@ wa-dialog[no-header]::part(dialog) {
   min-width: 16rem;
   background-color: var(--dialog-bg-raised);
 }
+/* The tight --spacing above crowds the X into the corner; WA's header
+   inset formula at one step up (--wa-space-m) gives it room. */
+wa-dialog[no-header]::part(header) {
+  padding-block-start: calc(var(--wa-space-m) - var(--wa-form-control-padding-block));
+  padding-inline-end: calc(var(--wa-space-m) - var(--wa-form-control-padding-block));
+}
 /* Darken the default (cancel-style) button fill in confirm/alert popups
    only, leaving settings' Browse/Clear buttons on the shared default.
    ::part() from the light DOM beats the shadow tree's own :hover/:active
@@ -2889,7 +2921,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="general"] > * + * {
 }
 /* Side-tab panels pad their right edge by --wa-space-xl (WA tab-group), so
    inset the footer Reset button to line up with the panel's controls. */
-wa-dialog:has(.settings-tabs:not(.settings-top-tabs)) > .settings-reset-btn {
+wa-dialog:has(.settings-tabs:not(.settings-top-tabs)) > .settings-reset-row {
   margin-inline-end: var(--wa-space-xl);
 }
 /* Settings uses top tabs below --bp-settings-top-tabs (wider than the
