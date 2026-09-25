@@ -26,6 +26,8 @@ export const APP_EVT = {
   RECONCILED: "sturddle:reconciled",
   // A tournament workspace window closed.
   WORKSPACE_CLOSED: "sturddle:workspace-closed",
+  // Settings switched the tournaments folder; tournament lists reload.
+  TOURNAMENTS_ROOT_CHANGED: "sturddle:tournaments-root-changed",
   // Deep-link request to open the settings dialog; detail.tab.
   OPEN_SETTINGS: "sturddle:open-settings",
   // Application log line appended; detail = formatted string.

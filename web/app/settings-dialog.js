@@ -179,12 +179,15 @@ export async function openSettingsDialog({
       };
 
       // PUT a partial update; broadcast on success, toast on failure.
+      // Resolves to the server's response, or null on failure.
       const putAndNotify = async (path, patch) => {
         try {
-          await api("PUT", path, patch);
+          const saved = await api("PUT", path, patch);
           window.dispatchEvent(new CustomEvent(APP_EVT.SETTINGS_CHANGED));
+          return saved;
         } catch (e) {
           toast(`Save failed: ${apiErrorDetail(e)}`, { variant: "danger" });
+          return null;
         }
       };
       const putSettings = (patch) => putAndNotify(SETTINGS_PATH, patch);

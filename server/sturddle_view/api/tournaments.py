@@ -108,8 +108,12 @@ _TOURNAMENT_NOT_FOUND = "tournament not found"
 _NAME_TAKEN = "tournament name already exists"
 _RUNNING_STOP_FIRST = "tournament is running; stop it first"
 _ROOT_LOCKED_WHILE_RUNNING = "tournaments folder can't change while a tournament is running"
-# Settings-GET flag so the UI can lock the folder row up front.
+# Settings-response fields: the UI locks the folder row mid-run, confirms a
+# switch that would hide the current folder's tournaments, and disables
+# Clear when the folder is already the default.
 _TOURNAMENT_RUNNING_KEY = "tournament_running"
+_TOURNAMENTS_IN_ROOT_KEY = "tournaments_in_root"
+_ROOT_IS_DEFAULT_KEY = "tournaments_root_is_default"
 _TWO_ENGINES_REQUIRED = "at least two engines required"
 _DEFAULT_TOURNAMENT_NAME = "tournament"
 _MIN_ENGINES = 2
@@ -671,6 +675,8 @@ def _serialize_settings(request: Request) -> dict:
     s = request.app.state.settings
     return {
         _TOURNAMENT_RUNNING_KEY: _orch(request).active_id() is not None,
+        _TOURNAMENTS_IN_ROOT_KEY: len(_store(request).list()),
+        _ROOT_IS_DEFAULT_KEY: not s.tournament_root,
         "fastchess_path": s.tournament_fastchess_path,
         "tournaments_root": s.tournament_root or str(_default_root_for_settings()),
         "default_template": dict(s.tournament_default_template or {}),
@@ -695,7 +701,7 @@ def get_tournament_settings(request: Request) -> dict:
 @router.put(_SETTINGS_PATH)
 def update_tournament_settings(payload: TournamentSettingsUpdate, request: Request) -> dict:
     s = request.app.state.settings
-    store: TournamentStore = request.app.state.tournament_store
+    store = _store(request)
     # The store resolves the running tournament under the current root, so
     # repointing it mid-run would lose that tournament. Refuse before any write.
     if payload.tournaments_root is not None and _orch(request).active_id() is not None:

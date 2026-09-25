@@ -101,6 +101,10 @@ export function makePathRow(api) {
     row.pathField = field;
     row.browseBtn = browse;
     row.clearBtn = clear;
+    row.setValue = (v) => {
+      field.value = v;
+      syncClear();
+    };
     return row;
   };
 }

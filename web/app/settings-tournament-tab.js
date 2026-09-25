@@ -4,13 +4,19 @@
 // putTournamentSettings.
 
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
-import { toast } from "./dialogs.js";
+import { confirm, toast } from "./dialogs.js";
+import { APP_EVT } from "./app-events.js";
 
 const TOURNAMENT_TAB = "tournament";
 const TEMPLATE_PUT_DEBOUNCE_MS = 400;
 // The server refuses a root change mid-run (it would lose the running
 // tournament); the UI locks the row to match.
 const ROOT_LOCKED_TITLE = "Stop the running tournament to change the folder";
+
+function rootSwitchMessage(count) {
+  const noun = count === 1 ? "tournament" : "tournaments";
+  return `${count} ${noun} in the current folder won't be listed until you switch back.`;
+}
 
 export function buildTournamentTab({ tournamentInitial, putTournamentSettings, pathRow, debounce }) {
   const tournamentTab = document.createElement("wa-tab");
@@ -27,13 +33,41 @@ export function buildTournamentTab({ tournamentInitial, putTournamentSettings, p
   fastchessLink.textContent = "Fastchess";
   fastchessLabel.append(fastchessLink, document.createTextNode(" binary"));
 
+  // The folder the lists read from, its tournament count, and whether it is
+  // the default (then Clear has nothing to clear and stays disabled).
+  const rootFrom = (s) => ({
+    path: s.tournaments_root || "",
+    count: s.tournaments_in_root || 0,
+    isDefault: !!s.tournaments_root_is_default,
+  });
+  let root = rootFrom(tournamentInitial);
+  const showRoot = () => {
+    rootRow.setValue(root.path);
+    if (root.isDefault) rootRow.clearBtn.disabled = true;
+  };
+  // Switching away hides the current folder's tournaments: confirm first,
+  // revert the field on Cancel or a failed save.
+  const changeRoot = async (p) => {
+    if (p === root.path) return;
+    if (root.count > 0 && !(await confirm({ message: rootSwitchMessage(root.count), okLabel: "Switch" }))) {
+      showRoot();
+      return;
+    }
+    const saved = await putTournamentSettings({ tournaments_root: p });
+    if (saved) {
+      root = rootFrom(saved);
+      window.dispatchEvent(new CustomEvent(APP_EVT.TOURNAMENTS_ROOT_CHANGED));
+    }
+    showRoot();
+  };
   const rootRow = pathRow(
     "Tournaments root",
-    tournamentInitial.tournaments_root || "",
+    root.path,
     "directory",
     "Pick tournaments root",
-    (p) => putTournamentSettings({ tournaments_root: p }),
+    changeRoot,
   );
+  showRoot();
   if (tournamentInitial.tournament_running) {
     rootRow.browseBtn.disabled = true;
     rootRow.clearBtn.disabled = true;

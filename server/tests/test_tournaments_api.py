@@ -475,6 +475,26 @@ def test_put_settings_updates(client, tmp_path):
     assert body["default_template"] == {"tc": "60+0.6"}
 
 
+def test_settings_report_tournaments_in_root(client, tmp_path):
+    """GET and PUT both count the tournaments under the current root, so the
+    UI can warn before switching away from a non-empty folder."""
+    assert client.get("/api/tournament-settings").json()["tournaments_in_root"] == 0
+    client.post("/api/tournaments", json={"name": "x", "engines": _engines_payload()})
+    assert client.get("/api/tournament-settings").json()["tournaments_in_root"] == 1
+    r = client.put("/api/tournament-settings", json={
+        "tournaments_root": str(tmp_path / "alt-root"),
+    })
+    assert r.json()["tournaments_in_root"] == 0
+
+
+def test_settings_report_root_is_default(client):
+    """Clearing the root falls back to the default folder; the flag lets the
+    UI disable Clear there instead of warning about a no-op switch."""
+    assert client.get("/api/tournament-settings").json()["tournaments_root_is_default"] is False
+    r = client.put("/api/tournament-settings", json={"tournaments_root": ""})
+    assert r.json()["tournaments_root_is_default"] is True
+
+
 def test_root_change_refused_while_running(client, settings, monkeypatch, tmp_path):
     """Changing the tournaments folder mid-run would lose the running
     tournament, so it is refused and the tournament stays listed."""

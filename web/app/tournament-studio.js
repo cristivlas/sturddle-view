@@ -1462,6 +1462,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   // Reload the list on any tournament event (coalesced); initial load now.
   ctx.reload = debounce(() => studioLoadList(ctx), LIST_RELOAD_DEBOUNCE_MS);
   ctx.offEvents = ctx.events.on((evt) => { toastRunnerCrash(ctx, evt); ctx.reload(); });
+  window.addEventListener(APP_EVT.TOURNAMENTS_ROOT_CHANGED, ctx.reload);
 
   // `ready` gates the router's reveal until built: first list load (table +
   // wall), then any restored boards drawn (boardsRestored), then a flushed
@@ -1480,6 +1481,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
 
 function unmountStudio(ctx) {
   ctx.offEvents?.();
+  window.removeEventListener(APP_EVT.TOURNAMENTS_ROOT_CHANGED, ctx.reload);
   // Kill the pending-dim timer before the panes go away, so a late fire
   // can't touch detached nodes.
   setSelPending(ctx, false);
