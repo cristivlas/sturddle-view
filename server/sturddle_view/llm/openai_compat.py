@@ -38,6 +38,8 @@ from .transcript import Transcript
 TOOL_SIGNATURE_KEY = "tool_signature"
 # Gemini's OpenAI-compat location for the same value.
 _GEMINI_SIG_PATH = ("extra_content", "google", "thought_signature")
+# OpenAI-compat request field selecting reasoning depth (or "none").
+REASONING_EFFORT_KEY = "reasoning_effort"
 
 
 def _read_gemini_signature(tool_call: dict) -> str:

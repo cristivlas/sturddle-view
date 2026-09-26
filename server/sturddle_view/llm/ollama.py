@@ -4,8 +4,9 @@ Speaks two wire formats. The OpenAI-compatible chat-completions path is
 the default and shares its translation + SSE loop with every other
 OpenAI-compat provider via `openai_compat` (canonical = Anthropic, see the
 spec's Providers section). The native `/api/chat` path is Ollama-specific
-and used only when `think=true` is requested (the compat layer ignores
-thinking).
+and used only when `think=true` is requested; thinking-off requests go
+through compat with `reasoning_effort: "none"`, except for models a
+one-time probe finds leaking reasoning into visible text.
 
 Endpoints: `{base_url}/v1/chat/completions` (compat) and
 `{base_url}/api/chat` (native). Both stream; both translate to/from the
@@ -16,12 +17,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from contextlib import aclosing
 from http import HTTPStatus
 from typing import Any, AsyncIterator
 
 import httpx
 
 from ..config import PROVIDER_OLLAMA
+from ..env_utils import env_int
 from ._errors import ThinkingUnsupported, extract_error_message, is_thinking_unsupported
 from .base import (
     CONTROL_TIMEOUT_S,
@@ -36,6 +39,7 @@ from .base import (
 from .harmony_strip import flush_harmony_carry, strip_harmony_text
 from .inline_recovery import recover_inline_tool_calls
 from .openai_compat import (
+    REASONING_EFFORT_KEY,
     inline_recovery_args,
     messages_anthropic_to_openai,
     stream_openai_compat,
@@ -54,6 +58,34 @@ DEFAULT_BASE_URL = "http://localhost:11434"
 # models pulled. Cheap calls (single-digit ms each); the cap mostly
 # keeps things polite.
 _LIST_MODELS_SHOW_CONCURRENCY = 8
+
+# Thinking-capable models (e.g. granite4.2) reason by default when the
+# request is silent; "none" switches that off on the compat path.
+_REASONING_EFFORT_OFF = "none"
+# Native /api/chat request field enabling thinking.
+_THINK_KEY = "think"
+# Request-body fields shared by the compat and native endpoints.
+_MODEL_KEY = "model"
+_MESSAGES_KEY = "messages"
+_STREAM_KEY = "stream"
+_TOOLS_KEY = "tools"
+
+# /api/show capability names.
+_CAP_TOOLS = "tools"
+_CAP_THINKING = "thinking"
+
+# Some thinking-only models ignore "none" and reason into visible text,
+# ending it with a bare `</think>` (the template opened the block). A
+# one-time probe per model detects this; leaky models get no "none".
+_THINK_CLOSE_TAG = "</think>"
+_THINK_PROBE_PROMPT = "Reply with only: OK"
+_DEFAULT_THINK_PROBE_MAX_TOKENS = 2048
+_THINK_PROBE_MAX_TOKENS = env_int(
+    "SV_OLLAMA_THINK_PROBE_MAX_TOKENS", _DEFAULT_THINK_PROBE_MAX_TOKENS, min_value=1,
+)
+# (base_url, model) -> leaks. Process-lifetime; a restart re-probes.
+_think_leak_cache: dict[tuple[str, str], bool] = {}
+_think_probe_locks: dict[tuple[str, str], asyncio.Lock] = {}
 
 # ----- Native (/api/chat) translation helpers ------------------------
 # The OpenAI-compat translation lives in openai_compat.py (shared). The
@@ -141,6 +173,38 @@ def ollama_native_tool_call_to_provider_chunk(
     )
 
 
+class _ThinkCloseWatch:
+    """Spots `</think>` in streamed text, including across delta splits."""
+
+    def __init__(self) -> None:
+        self._tail = ""
+
+    def feed(self, text: str) -> bool:
+        buf = self._tail + text
+        if _THINK_CLOSE_TAG in buf:
+            return True
+        self._tail = buf[-(len(_THINK_CLOSE_TAG) - 1):]
+        return False
+
+
+async def _flag_think_leak(
+    inner: AsyncIterator[ProviderChunk], key: tuple[str, str],
+) -> AsyncIterator[ProviderChunk]:
+    """Pass-through that marks `key` leaky if a reasoning-off reply still
+    carries `</think>` -- backstop for a probe that missed it."""
+    watch = _ThinkCloseWatch()
+    flagged = False
+    async for chunk in inner:
+        if not flagged and chunk.kind == "text" and chunk.text and watch.feed(chunk.text):
+            flagged = True
+            _think_leak_cache[key] = True
+            log.warning(
+                "%s: %s wrote %s with reasoning off; no longer disabling it",
+                PROVIDER_OLLAMA, key[1], _THINK_CLOSE_TAG,
+            )
+        yield chunk
+
+
 # ----- Provider -----
 
 
@@ -170,7 +234,7 @@ class OllamaProvider(LLMProvider):
             return
         url = f"{self._base_url}/api/generate"
         async with httpx.AsyncClient(timeout=CONTROL_TIMEOUT_S) as client:
-            await client.post(url, json={"model": model, "keep_alive": 0})
+            await client.post(url, json={_MODEL_KEY: model, "keep_alive": 0})
 
     async def list_loaded_models(self) -> list[str]:
         """Return models currently resident in the daemon (via /api/ps).
@@ -217,38 +281,101 @@ class OllamaProvider(LLMProvider):
         omits capabilities is dropped (cannot prove tool support)."""
         if not ids:
             return []
-        show_url = f"{self._base_url}/api/show"
         sem = asyncio.Semaphore(_LIST_MODELS_SHOW_CONCURRENCY)
 
         async def _capable(model_id: str) -> tuple[str, bool]:
             async with sem:
-                try:
-                    resp = await client.post(show_url, json={"name": model_id})
-                except Exception as exc:
-                    log.debug("%s /api/show %s raised: %s", PROVIDER_OLLAMA, model_id, exc)
-                    return model_id, False
-            if resp.status_code != HTTPStatus.OK:
-                log.debug("%s /api/show %s -> %s", PROVIDER_OLLAMA, model_id, resp.status_code)
-                return model_id, False
-            try:
-                body = resp.json()
-            except Exception as exc:
-                log.debug("%s /api/show %s: bad json: %s", PROVIDER_OLLAMA, model_id, exc)
-                return model_id, False
-            caps = body.get("capabilities")
-            if caps is None:
-                log.warning(
-                    "%s /api/show for %s returned no `capabilities` field; "
-                    "model will be hidden from the tool-capable list. "
-                    "Upgrade Ollama if the dropdown is unexpectedly empty.",
-                    PROVIDER_OLLAMA, model_id,
-                )
-                return model_id, False
-            caps_lower = {str(c).lower() for c in caps}
-            return model_id, "tools" in caps_lower
+                caps = await self._show_capabilities(client, model_id)
+            return model_id, caps is not None and _CAP_TOOLS in caps
 
         results = await asyncio.gather(*(_capable(i) for i in ids))
         return [mid for mid, ok in results if ok]
+
+    async def _show_capabilities(
+        self, client: "httpx.AsyncClient", model_id: str,
+    ) -> set[str] | None:
+        """Lower-cased /api/show capabilities of `model_id`; None when the
+        call fails or the daemon omits the field (capabilities unknown)."""
+        show_url = f"{self._base_url}/api/show"
+        try:
+            resp = await client.post(show_url, json={"name": model_id})
+        except Exception as exc:
+            log.debug("%s /api/show %s raised: %s", PROVIDER_OLLAMA, model_id, exc)
+            return None
+        if resp.status_code != HTTPStatus.OK:
+            log.debug("%s /api/show %s -> %s", PROVIDER_OLLAMA, model_id, resp.status_code)
+            return None
+        try:
+            body = resp.json()
+        except Exception as exc:
+            log.debug("%s /api/show %s: bad json: %s", PROVIDER_OLLAMA, model_id, exc)
+            return None
+        caps = body.get("capabilities")
+        if caps is None:
+            log.warning(
+                "%s /api/show for %s returned no `capabilities` field; "
+                "treating its capabilities as unknown (it will not be "
+                "listed as tool-capable). Upgrade Ollama.",
+                PROVIDER_OLLAMA, model_id,
+            )
+            return None
+        return {str(c).lower() for c in caps}
+
+    async def _leaks_think_when_off(self) -> bool:
+        """True when the model ignores reasoning "none" and reasons into
+        visible text. Probed once per (base_url, model); a failed probe is
+        logged, not cached, and reads as not leaky."""
+        key = (self._base_url, self._model)
+        cached = _think_leak_cache.get(key)
+        if cached is not None:
+            return cached
+        async with _think_probe_locks.setdefault(key, asyncio.Lock()):
+            cached = _think_leak_cache.get(key)
+            if cached is not None:
+                return cached
+            try:
+                leaks = await self._probe_think_leak()
+            except Exception as exc:
+                log.warning(
+                    "%s: think-leak probe failed for %s; disabling reasoning: %s",
+                    PROVIDER_OLLAMA, self._model, exc,
+                )
+                return False
+            _think_leak_cache[key] = leaks
+            log.info(
+                "%s: %s think-leak probe: %s",
+                PROVIDER_OLLAMA, self._model, "leaks" if leaks else "clean",
+            )
+            return leaks
+
+    async def _probe_think_leak(self) -> bool:
+        """One tiny reasoning-off request; leaky iff `</think>` shows up in
+        the visible text. Stops reading as soon as it does."""
+        async with httpx.AsyncClient(timeout=CONTROL_TIMEOUT_S) as client:
+            caps = await self._show_capabilities(client, self._model)
+        if caps is not None and _CAP_THINKING not in caps:
+            return False
+        body: dict[str, Any] = {
+            _MODEL_KEY: self._model,
+            _MESSAGES_KEY: [{"role": "user", "content": _THINK_PROBE_PROMPT}],
+            _STREAM_KEY: True,
+            "max_tokens": _THINK_PROBE_MAX_TOKENS,
+            REASONING_EFFORT_KEY: _REASONING_EFFORT_OFF,
+        }
+        watch = _ThinkCloseWatch()
+        async with aclosing(stream_openai_compat(
+            self,
+            url=f"{self._base_url}/v1/chat/completions",
+            body=body,
+            headers=JSON_HEADERS,
+            error_label=PROVIDER_OLLAMA,
+            transcript=None,
+            round_index=0,
+        )) as chunks:
+            async for chunk in chunks:
+                if chunk.kind == "text" and chunk.text and watch.feed(chunk.text):
+                    return True
+        return False
 
     async def stream(
         self,
@@ -261,11 +388,10 @@ class OllamaProvider(LLMProvider):
         thinking: bool | None = None,
         force_tool_call: bool = False,
     ) -> AsyncIterator[ProviderChunk]:
-        # Branch by thinking support. /v1/chat/completions (OpenAI-compat)
-        # is the default; /api/chat (Ollama native) is required when the
-        # caller asked for `think=true` since the compat layer ignores it.
-        # `thinking=False` forces the compat path (verifier sub-runs) so no
-        # <think> reasoning is generated or leaks into the verdict.
+        # Thinking on => /api/chat (Ollama native) with `think=true`; off
+        # => /v1/chat/completions (OpenAI-compat) with reasoning disabled,
+        # unless the model leaks it (then its reasoning channel is dropped).
+        # `thinking=False` forces the off path (verifier sub-runs).
         # `force_tool_call` only reaches the compat path -- /api/chat has no
         # tool_choice, and the verifier (the only forcing caller) always
         # runs thinking-off, i.e. compat. Best-effort either way: local
@@ -276,11 +402,15 @@ class OllamaProvider(LLMProvider):
                 transcript=transcript, round_index=round_index,
             )
         else:
+            reasoning_off = not await self._leaks_think_when_off()
             inner = self._stream_openai_compat(
                 system, messages, tools,
                 transcript=transcript, round_index=round_index,
                 force_tool_call=force_tool_call,
+                reasoning_off=reasoning_off,
             )
+            if reasoning_off:
+                inner = _flag_think_leak(inner, (self._base_url, self._model))
         # Some local models stream tool calls as prose -- recover them
         # transparently. XML shape handled unconditionally; call-syntax
         # and positional bare-JSON shapes need the tool names + ordered
@@ -299,6 +429,7 @@ class OllamaProvider(LLMProvider):
         *,
         transcript: Transcript | None,
         round_index: int,
+        reasoning_off: bool,
         force_tool_call: bool = False,
     ) -> AsyncIterator[ProviderChunk]:
         # Assemble OpenAI-shaped request. System prompt is a separate
@@ -306,16 +437,18 @@ class OllamaProvider(LLMProvider):
         # bare string so we wrap it here. The SSE loop + translation back
         # to ProviderChunks is shared (openai_compat).
         body: dict[str, Any] = {
-            "model": self._model,
-            "messages": with_system_message(system, messages_anthropic_to_openai(messages)),
-            "stream": True,
+            _MODEL_KEY: self._model,
+            _MESSAGES_KEY: with_system_message(system, messages_anthropic_to_openai(messages)),
+            _STREAM_KEY: True,
             # Ask for the usage-bearing final chunk (OpenAI semantics).
             # Ollama versions predating stream_options ignore unknown
             # request fields, so this degrades to no usage chunk.
             "stream_options": {"include_usage": True},
         }
+        if reasoning_off:
+            body[REASONING_EFFORT_KEY] = _REASONING_EFFORT_OFF
         if tools:
-            body["tools"] = tools_anthropic_to_openai(tools)
+            body[_TOOLS_KEY] = tools_anthropic_to_openai(tools)
             if force_tool_call:
                 # OpenAI-compat spelling of "must call a tool this round"
                 # (verifier first rounds). See LLMProvider.stream().
@@ -345,13 +478,13 @@ class OllamaProvider(LLMProvider):
         # and tool_calls carry no id. NDJSON streaming (one full message
         # snapshot per line), not SSE.
         body: dict[str, Any] = {
-            "model": self._model,
-            "messages": with_system_message(system, messages_anthropic_to_ollama_native(messages)),
-            "stream": True,
-            "think": True,
+            _MODEL_KEY: self._model,
+            _MESSAGES_KEY: with_system_message(system, messages_anthropic_to_ollama_native(messages)),
+            _STREAM_KEY: True,
+            _THINK_KEY: True,
         }
         if tools:
-            body["tools"] = tools_anthropic_to_openai(tools)
+            body[_TOOLS_KEY] = tools_anthropic_to_openai(tools)
 
         await self._tx_request(transcript, round_index, body)
 
