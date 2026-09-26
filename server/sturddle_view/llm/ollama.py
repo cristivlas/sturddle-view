@@ -79,7 +79,7 @@ _CAP_THINKING = "thinking"
 # one-time probe per model detects this; leaky models get no "none".
 _THINK_CLOSE_TAG = "</think>"
 _THINK_PROBE_PROMPT = "Reply with only: OK"
-_DEFAULT_THINK_PROBE_MAX_TOKENS = 2048
+_DEFAULT_THINK_PROBE_MAX_TOKENS = 512
 _THINK_PROBE_MAX_TOKENS = env_int(
     "SV_OLLAMA_THINK_PROBE_MAX_TOKENS", _DEFAULT_THINK_PROBE_MAX_TOKENS, min_value=1,
 )
@@ -274,7 +274,7 @@ class OllamaProvider(LLMProvider):
             return await self._filter_tool_capable(client, ids)
 
     async def _filter_tool_capable(
-        self, client: "httpx.AsyncClient", ids: list[str],
+        self, client: httpx.AsyncClient, ids: list[str],
     ) -> list[str]:
         """Return the subset of `ids` whose /api/show capabilities
         include `tools`. Best-effort: a model whose /api/show fails or
@@ -292,7 +292,7 @@ class OllamaProvider(LLMProvider):
         return [mid for mid, ok in results if ok]
 
     async def _show_capabilities(
-        self, client: "httpx.AsyncClient", model_id: str,
+        self, client: httpx.AsyncClient, model_id: str,
     ) -> set[str] | None:
         """Lower-cased /api/show capabilities of `model_id`; None when the
         call fails or the daemon omits the field (capabilities unknown)."""
