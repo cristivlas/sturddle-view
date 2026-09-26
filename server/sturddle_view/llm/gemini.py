@@ -34,6 +34,7 @@ from .base import (
 )
 from .inline_recovery import recover_inline_tool_calls
 from .openai_compat import (
+    REASONING_EFFORT_KEY,
     inline_recovery_args,
     messages_anthropic_to_openai,
     stream_openai_compat,
@@ -168,7 +169,7 @@ class GeminiProvider(LLMProvider):
         # `thinking=False` forces it off for this call (verifier sub-runs);
         # otherwise honor the provider default.
         if thinking is not False and self._thinking_enabled:
-            body["reasoning_effort"] = _REASONING_EFFORT_ON
+            body[REASONING_EFFORT_KEY] = _REASONING_EFFORT_ON
 
         inner = stream_openai_compat(
             self,

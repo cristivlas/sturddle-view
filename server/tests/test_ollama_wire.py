@@ -12,6 +12,7 @@ to stub without pulling in a new dep like respx.
 """
 from __future__ import annotations
 
+import json
 from typing import AsyncIterator
 
 import pytest
@@ -91,6 +92,86 @@ def install_fake_httpx(monkeypatch):
     return install
 
 
+_FAKE_URL = "http://fake"
+_CLEAN_MODEL = "m"
+_PROBED_MODEL = "thinker"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_think_probe_state(monkeypatch):
+    # Isolate the process-lifetime probe cache per test. The shared model
+    # "m" is pre-seeded clean so wire tests never trigger a probe.
+    monkeypatch.setattr(
+        ollama_mod, "_think_leak_cache", {(_FAKE_URL, _CLEAN_MODEL): False},
+    )
+    monkeypatch.setattr(ollama_mod, "_think_probe_locks", {})
+
+
+class _ShowResponse:
+    def __init__(self, caps: list[str]) -> None:
+        self.status_code = 200
+        self._caps = caps
+
+    def json(self) -> dict:
+        return {"capabilities": self._caps}
+
+
+class _SequenceClient:
+    """Answers /api/show with `caps`; each stream() call pops the next
+    scripted response and records the request body."""
+
+    def __init__(self, caps: list[str], responses: list[_FakeResponse]) -> None:
+        self._caps = caps
+        self._responses = list(responses)
+        self.bodies: list[dict] = []
+
+    async def __aenter__(self) -> "_SequenceClient":
+        return self
+
+    async def __aexit__(self, *args) -> None:
+        return
+
+    async def post(self, url, *, json=None):
+        return _ShowResponse(self._caps)
+
+    def stream(self, method, url, *, json=None, headers=None):
+        self.bodies.append(json)
+        return _StreamCM(self._responses.pop(0))
+
+
+@pytest.fixture
+def install_sequence(monkeypatch):
+    def install(caps: list[str], responses: list[_FakeResponse]) -> _SequenceClient:
+        client = _SequenceClient(caps, responses)
+
+        class _ShimHttpx:
+            AsyncClient = lambda *a, **kw: client  # noqa: E731
+
+        monkeypatch.setattr(ollama_mod, "httpx", _ShimHttpx)
+        monkeypatch.setattr(openai_compat_mod, "httpx", _ShimHttpx)
+        return client
+
+    return install
+
+
+def _sse(*texts: str) -> _FakeResponse:
+    lines = [
+        'data: {"choices":[{"delta":{"content":%s}}]}' % json.dumps(t) for t in texts
+    ]
+    return _FakeResponse(200, lines + ["data: [DONE]"])
+
+
+async def _drain(provider: OllamaProvider) -> list:
+    return [
+        c async for c in provider.stream(
+            system="", messages=[{"role": "user", "content": "x"}],
+        )
+    ]
+
+
+_KEY = openai_compat_mod.REASONING_EFFORT_KEY
+
+
 # ---------- Tests ----------------------------------------------------
 
 
@@ -132,6 +213,121 @@ async def test_compat_body_opts_into_usage_reporting(install_fake_httpx):
         pass
     client = install_fake_httpx.holder["client"]
     assert client.last_body["stream_options"] == {"include_usage": True}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("thinking_enabled", "thinking"),
+    [(False, None), (True, False)],
+    ids=["setting-off", "forced-off"],
+)
+async def test_thinking_off_disables_reasoning(
+    install_fake_httpx, thinking_enabled, thinking,
+):
+    # Thinking-capable models reason by default when the request is
+    # silent; both off routes must say "none" explicitly.
+    install_fake_httpx(lines=["data: [DONE]"])
+    provider = OllamaProvider(
+        base_url="http://fake", model="m", thinking_enabled=thinking_enabled,
+    )
+    async for _ in provider.stream(
+        system="", messages=[{"role": "user", "content": "x"}],
+        thinking=thinking,
+    ):
+        pass
+    body = install_fake_httpx.holder["client"].last_body
+    assert body[_KEY] == ollama_mod._REASONING_EFFORT_OFF
+
+
+@pytest.mark.asyncio
+async def test_thinking_on_sends_think_without_reasoning_effort(install_fake_httpx):
+    install_fake_httpx(lines=['{"done":true,"message":{}}'])
+    provider = OllamaProvider(
+        base_url="http://fake", model="m", thinking_enabled=True,
+    )
+    async for _ in provider.stream(
+        system="", messages=[{"role": "user", "content": "x"}],
+    ):
+        pass
+    body = install_fake_httpx.holder["client"].last_body
+    assert body[ollama_mod._THINK_KEY] is True
+    assert _KEY not in body
+
+
+@pytest.mark.asyncio
+async def test_leaky_probe_stops_disabling_reasoning(install_sequence):
+    # Tag split across deltas: the watcher must still see it.
+    client = install_sequence([ollama_mod._CAP_TOOLS, ollama_mod._CAP_THINKING], [
+        _sse("Okay, reply OK.\n</thi", "nk>\n\nOK"),
+        _sse("answer"),
+    ])
+    provider = OllamaProvider(base_url=_FAKE_URL, model=_PROBED_MODEL)
+    await _drain(provider)
+
+    probe, real = client.bodies
+    assert probe[_KEY] == ollama_mod._REASONING_EFFORT_OFF
+    assert probe["messages"] == [
+        {"role": "user", "content": ollama_mod._THINK_PROBE_PROMPT},
+    ]
+    assert _KEY not in real
+    assert ollama_mod._think_leak_cache[(_FAKE_URL, _PROBED_MODEL)] is True
+
+
+@pytest.mark.asyncio
+async def test_clean_probe_runs_once_and_disables_reasoning(install_sequence):
+    client = install_sequence([ollama_mod._CAP_TOOLS, ollama_mod._CAP_THINKING], [
+        _sse("OK"), _sse("first"), _sse("second"),
+    ])
+    provider = OllamaProvider(base_url=_FAKE_URL, model=_PROBED_MODEL)
+    await _drain(provider)
+    await _drain(provider)
+
+    assert len(client.bodies) == 3  # one probe, two real requests
+    assert all(
+        b[_KEY] == ollama_mod._REASONING_EFFORT_OFF for b in client.bodies[1:]
+    )
+    assert ollama_mod._think_leak_cache[(_FAKE_URL, _PROBED_MODEL)] is False
+
+
+@pytest.mark.asyncio
+async def test_non_thinking_model_skips_probe_stream(install_sequence):
+    client = install_sequence([ollama_mod._CAP_TOOLS], [_sse("answer")])
+    provider = OllamaProvider(base_url=_FAKE_URL, model=_PROBED_MODEL)
+    await _drain(provider)
+
+    (real,) = client.bodies
+    assert real[_KEY] == ollama_mod._REASONING_EFFORT_OFF
+
+
+@pytest.mark.asyncio
+async def test_failed_probe_disables_reasoning_and_is_not_cached(install_sequence):
+    client = install_sequence([ollama_mod._CAP_TOOLS, ollama_mod._CAP_THINKING], [
+        _FakeResponse(500, [], body=b"boom"),
+        _sse("answer"),
+    ])
+    provider = OllamaProvider(base_url=_FAKE_URL, model=_PROBED_MODEL)
+    await _drain(provider)
+
+    assert client.bodies[1][_KEY] == ollama_mod._REASONING_EFFORT_OFF
+    assert (_FAKE_URL, _PROBED_MODEL) not in ollama_mod._think_leak_cache
+
+
+@pytest.mark.asyncio
+async def test_leak_in_real_reply_flags_model(install_sequence):
+    # Probe said clean (seeded), but a real reply leaks: text passes
+    # through untouched and the next request stops disabling reasoning.
+    client = install_sequence([ollama_mod._CAP_TOOLS, ollama_mod._CAP_THINKING], [
+        _sse("reasoning\n</think>\n\nanswer"), _sse("next"),
+    ])
+    provider = OllamaProvider(base_url=_FAKE_URL, model=_CLEAN_MODEL)
+    chunks = await _drain(provider)
+    await _drain(provider)
+
+    assert "".join(c.text for c in chunks if c.kind == "text") == (
+        "reasoning\n</think>\n\nanswer"
+    )
+    assert ollama_mod._think_leak_cache[(_FAKE_URL, _CLEAN_MODEL)] is True
+    assert _KEY not in client.bodies[1]
 
 
 @pytest.mark.asyncio

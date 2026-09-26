@@ -140,6 +140,7 @@ source; check the file when a precise value matters.
 | `SV_AI_SEMANTIC_CHECK` | `1` | LLM judge that clears regex position-check flags the prose meant about a past/hypothetical/alternate position. Only drops flags, never adds; off reverts to regex-only. Accepts `1`/`true`/`yes`/`on`. | `server/sturddle_view/play/ai_analysis.py` |
 | `SV_AI_THINKING_BUDGET_TOKENS` | `4096` | Default Anthropic extended-thinking budget; UI override persists per-settings. | `server/sturddle_view/config.py` |
 | `SV_AI_MAX_TOKENS` | `4096` | Anthropic visible-output cap per round (`max_tokens`); an extended-thinking budget is added on top. | `server/sturddle_view/llm/anthropic.py` |
+| `SV_OLLAMA_THINK_PROBE_MAX_TOKENS` | `512` | Token cap for the one-time per-model Ollama probe that checks whether thinking-off (`reasoning_effort: "none"`) leaks reasoning into visible text; hitting the cap reads as clean. | `server/sturddle_view/llm/ollama.py` |
 | `SV_AI_CONTROL_TIMEOUT_S` | `10.0` | Per-request timeout for providers' control-plane calls (model listing, Ollama housekeeping). Streaming chat has no timeout. | `server/sturddle_view/llm/base.py` |
 | `SV_AI_MAX_RECOMMEND_FAILURES` | `2` | Consecutive failed `recommend_move` calls before the loop nudges the model to `top_moves`. | `server/sturddle_view/play/ai_analysis.py` |
 | `SV_AI_ANALYZE_MAX_DEPTH` | `30` | `analyze`/`top_moves` per-call depth cap; caller's `depth` clamped down. Searches are depth-only (no time limit) for determinism. | `server/sturddle_view/play/tools_engine.py` |

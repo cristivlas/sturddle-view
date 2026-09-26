@@ -547,6 +547,8 @@ async def test_ollama_stream_error_message_is_extracted_not_wrapped(monkeypatch)
 
     # Streaming now runs through openai_compat; patch its httpx.
     monkeypatch.setattr(openai_compat_mod, "httpx", _ShimHttpx)
+    # Known-clean model: skip the think-leak probe (no /api/show fake here).
+    monkeypatch.setitem(ollama_mod._think_leak_cache, ("http://fake", "m"), False)
 
     provider = OllamaProvider(base_url="http://fake", model="m")
     with pytest.raises(RuntimeError) as ei:

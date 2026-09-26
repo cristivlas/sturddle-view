@@ -367,6 +367,15 @@ surface, harder cancellation, and Ollama needs a translation shim.
 Accepted cost: one HTTP/TLS connection per round (pool later if
 warranted).
 
+**Ollama thinking off = explicit `reasoning_effort: "none"`.**
+Thinking-capable models (e.g. granite4.2) reason by default when the
+request is silent, so off requests say "none". Some thinking-only models (e.g.
+qwen3:4b) ignore it and write their reasoning into visible text ending
+in a bare `</think>`. A lazy one-time probe per (base URL, model) --
+tiny prompt, stopped at the tag -- detects them; they get no "none", so
+their reasoning stays on the dropped `reasoning` channel. A real reply
+carrying the tag flags the model too. Failed probes are not cached.
+
 ### Configuration
 
 - All major settings editable from UI (no server-only requirement)
