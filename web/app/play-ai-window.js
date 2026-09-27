@@ -764,7 +764,7 @@ const REVISION_ITEMS_MAX = 48;
 // every opener is distinct. The original wording is the first row. Pick is
 // deterministic on the round (stable across panel rehydration -- never random).
 const REVISION_PHRASES = [
-  ["Actually, let me reconsider.", "Actually, {} isn't right.",  "Wait, {} look wrong."],
+  ["Actually, let me reconsider.", "Actually, {} isn't right.",  "Wait, {} may be wrong."],
   ["Scratch that.",               "Scratch that -- {} is wrong.", "Hold on -- {} are off."],
   ["Let me correct myself.",      "Correcting myself: {} is off.", "My mistake -- {} are wrong."],
   ["One moment.",                 "I had {} wrong.",              "{} -- incorrect."],
