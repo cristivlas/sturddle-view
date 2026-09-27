@@ -4,6 +4,7 @@
   --muted: #9a9a9a;
   --muted-bright: #aaa;
   --scrollbar-thumb: rgba(255, 255, 255, 0.18);
+  --scrollbar-thumb-min-h: 50px;
   --wb-outline: rgba(136, 136, 136, 0.4);
   --wb-radius: 8px;
   /* Minimized-WinBox dock strip; tournament-workspace.js reads it as
@@ -3801,6 +3802,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tabs wa-tab-panel { height: 100%; --padding: 0; }
 .studio-tabs wa-tab-panel::part(base) { height: 100%; box-sizing: border-box; }
 .studio-pane { height: 100%; overflow: auto; }
+/* Chromium/WebKit only; Firefox has no thumb-length control. */
+@media (min-width: 801px) {
+  .studio-tabs *::-webkit-scrollbar-thumb:vertical { min-height: var(--scrollbar-thumb-min-h); }
+}
 /* Standings/Tourneys/History own their scroll internally (split-table
    pattern above), so their pane must not also scroll or the header
    scrolls out of view with it. */
