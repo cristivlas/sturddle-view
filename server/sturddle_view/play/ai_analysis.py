@@ -136,7 +136,6 @@ ERROR_DETAIL_MAX_LEN = 500
 # accepts "..." or a move number), but a square's content is plain truth.
 _POSITION_CHECK_PREFIX = "[position check] "
 _POSITION_CHECK_LEAD = "Quick check on the current position."
-_POSITION_CHECK_REPEAT_LEAD = "Still doesn't fit the current position."
 # Move/line clause: offer the outs the checker honors before asking to restate.
 _POSITION_CHECK_MOVE_CLAUSE = (
     "{facts}. If you meant one of black's moves, write it with a leading "
@@ -673,6 +672,44 @@ class _LoopResult:
     text_published: bool = False
 
 
+def _sort_surfaces(surfaces: list[str]) -> list[str]:
+    """Longest first so a span isn't half-matched by a shorter one nested
+    inside it; deduped."""
+    return sorted(set(surfaces), key=len, reverse=True)
+
+
+# Repeat keys: square for claims (reworded claims match), else lowercased
+# label. Type-prefixed so claim e4 != pawn move e4; moves and lines share a
+# prefix (a move in a line and standalone is one error).
+_MOVE_KEY_PREFIX = "mv:"
+_CLAIM_KEY_PREFIX = "sq:"
+_FACT_KEY_PREFIX = "fact:"
+_TOOL_KEY_PREFIX = "tool:"
+
+
+def _move_key(item: tuple[str, str]) -> str:
+    return _MOVE_KEY_PREFIX + item[1].lower()
+
+
+def _claim_key(item: tuple[str, str, str]) -> str:
+    return _CLAIM_KEY_PREFIX + item[2]
+
+
+def _fact_key(item: tuple[str, str, str]) -> str:
+    return _FACT_KEY_PREFIX + item[1].lower()
+
+
+def _tool_key(item: str) -> str:
+    return _TOOL_KEY_PREFIX + item
+
+
+def _split_by_key(items, key, corrected: set[str]) -> tuple[list, list]:
+    """(new, repeat): items whose key is / isn't in `corrected`."""
+    new = [it for it in items if key(it) not in corrected]
+    rep = [it for it in items if key(it) in corrected]
+    return new, rep
+
+
 @dataclass(slots=True)
 class _PositionCheck:
     """One round's prose-check result. Each flagged item carries both its
@@ -707,20 +744,37 @@ class _PositionCheck:
         return [label for _surface, label in self.line_pairs]
 
     @property
-    def fact_labels(self) -> list[str]:
-        return [label for _surface, label, _fact in self.fact_triples]
-
-    @property
     def surfaces(self) -> list[str]:
-        # Exact prose spans for the client to strike, longest first so a
-        # span isn't half-matched by a shorter one nested inside it.
-        out = (
+        # Exact prose spans for the client to strike.
+        return _sort_surfaces(
             [s for s, _ in self.move_pairs]
             + [s for s, _, _ in self.claim_triples]
             + [s for s, _ in self.line_pairs]
             + [s for s, _, _ in self.fact_triples]
         )
-        return sorted(set(out), key=len, reverse=True)
+
+    @property
+    def keys(self) -> set[str]:
+        """Repeat keys of every flagged item (see _move_key and friends)."""
+        return (
+            set(map(_move_key, self.move_pairs))
+            | set(map(_claim_key, self.claim_triples))
+            | set(map(_move_key, self.line_pairs))
+            | set(map(_tool_key, self.tool_mentions))
+            | set(map(_fact_key, self.fact_triples))
+        )
+
+    def partition(self, corrected: set[str]) -> tuple[_PositionCheck, _PositionCheck]:
+        """Split into (new, repeat) by repeat key against `corrected`."""
+        moves = _split_by_key(self.move_pairs, _move_key, corrected)
+        claims = _split_by_key(self.claim_triples, _claim_key, corrected)
+        lines = _split_by_key(self.line_pairs, _move_key, corrected)
+        tools = _split_by_key(self.tool_mentions, _tool_key, corrected)
+        facts = _split_by_key(self.fact_triples, _fact_key, corrected)
+        return (
+            _PositionCheck(self.board, moves[0], claims[0], lines[0], tools[0], facts[0]),
+            _PositionCheck(self.board, moves[1], claims[1], lines[1], tools[1], facts[1]),
+        )
 
     @property
     def board_labels(self) -> list[str]:
@@ -1028,7 +1082,7 @@ class AIAnalysisCoordinator:
                     self._active_delegate_id = None
 
     # oversized-ok: cohesive agent state machine -- one round loop over ~15
-    # interdependent flags (nudge gating, position-check escalation, tool
+    # interdependent flags (nudge gating, position-check repeats, tool
     # dedup, recommend tracking). The branches are each distinct logic, not
     # repetition; splitting would scatter the round-exit gating.
     async def _run_loop(
@@ -1080,8 +1134,9 @@ class AIAnalysisCoordinator:
         round_cap_hit = True  # flipped to False on natural exit
         text_published = False  # flips on first non-whitespace text chunk
         final_text = ""  # last round's prose only (verifier verdict)
-        # Position-check items already corrected this turn; a re-flagged item
-        # escalates the corrective wording (weak models loop otherwise).
+        # Position-check items already corrected this turn. A re-flagged item
+        # is struck without another corrective: the model's acknowledgment
+        # repeats the wrong phrase, so re-prompting loops until the round cap.
         corrected_items: set[str] = set()
         for round_index in range(config.max_rounds):
             round_chunks: list[ProviderChunk] = []
@@ -1140,34 +1195,26 @@ class AIAnalysisCoordinator:
             round_had_text = any(
                 c.kind == "text" and c.text for c in round_chunks
             )
-            # Single-board prose check, every round. A hit surfaces a self-
-            # correction note and (below) injects a fact-anchored corrective.
-            pc = self._position_check(round_chunks)
+            # Single-board prose check, every round. A new hit surfaces a
+            # self-correction note and (below) injects a fact-anchored
+            # corrective; a repeat is only struck.
+            pc, repeat_pc = self._position_check(round_chunks).partition(corrected_items)
             # Clear regex false positives (moves/claims the prose meant about
             # another position) before acting on the hit; only drops flags.
+            # Repeats were already ruled on, so they skip the judge.
             pc = await self._apply_semantic_check(pc, round_chunks, config, round_index)
-            if pc.hit:
-                # Tool-mention-only hits carry no surface to strike; skip the
-                # UI note (it would mark nothing) but still inject the
-                # corrective below so the model rewrites the sentence.
-                if pc.surfaces:
-                    await self._emit_position_note(
-                        emit=emit, game_id=game_id, round_index=round_index,
-                        surfaces=pc.surfaces,
-                    )
-                # Repeat key is the square (claims) or the token (moves/lines),
-                # so "white knight on d3" and "knight on d3" count as the same
-                # error and a reworded repeat still escalates.
-                hit_keys = (
-                    {sq for _surface, _label, sq in pc.claim_triples}
-                    | {m.lower() for m in pc.move_labels}
-                    | {ln.lower() for ln in pc.line_labels}
-                    | set(pc.tool_mentions)
-                    | {f.lower() for f in pc.fact_labels}
+            # Tool-mention-only hits carry no surface to strike; skip the UI
+            # note (it would mark nothing) but still inject the corrective
+            # below so the model rewrites the sentence.
+            surfaces = _sort_surfaces(pc.surfaces + repeat_pc.surfaces)
+            if surfaces:
+                await self._emit_position_note(
+                    emit=emit, game_id=game_id, round_index=round_index,
+                    surfaces=surfaces,
                 )
-                repeat = bool(hit_keys & corrected_items)
-                corrected_items |= hit_keys
-                pc_message = self._position_check_message(pc, repeat=repeat)
+            if pc.hit:
+                corrected_items |= pc.keys
+                pc_message = self._position_check_message(pc)
             if pending_tool is None and pc.hit:
                 # A mismatch blocks natural exit: append the round's prose and
                 # inject the corrective so the model self-corrects next round.
@@ -1580,11 +1627,11 @@ class AIAnalysisCoordinator:
         )
 
     @staticmethod
-    def _position_check_message(pc: _PositionCheck, *, repeat: bool) -> str:
+    def _position_check_message(pc: _PositionCheck) -> str:
         """Fact-anchored correction with separate asks per error type. Illegal
         moves/lines get the "..."/move-number outs (they may be another side or
         ply); false piece claims state the square's real content and ask only
-        for a restate. `repeat` swaps in firmer lead-ins on re-assertion."""
+        for a restate."""
         clauses: list[str] = []
         # Dedup: a move named both in a broken line and standalone in the prose
         # would otherwise repeat its fact. Order-preserving via dict.fromkeys.
@@ -1606,8 +1653,7 @@ class AIAnalysisCoordinator:
         if pc.tool_mentions:
             quoted = ", ".join(f'"{m}"' for m in pc.tool_mentions)
             clauses.append(_POSITION_CHECK_TOOL_CLAUSE.format(mentions=quoted))
-        lead = _POSITION_CHECK_REPEAT_LEAD if repeat else _POSITION_CHECK_LEAD
-        return _POSITION_CHECK_PREFIX + " ".join([lead, *clauses])
+        return _POSITION_CHECK_PREFIX + " ".join([_POSITION_CHECK_LEAD, *clauses])
 
     @staticmethod
     def _needs_nudge(

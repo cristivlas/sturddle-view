@@ -137,8 +137,12 @@ A light post-hoc prose check (`llm/position_check.py`) runs over the
 single current board only: piece-on-square, file, bishop-color,
 file-openness and line claims, plus pin/fork claims (see §Tactical
 grounding). A flag becomes a clarifying question to the model ("do you
-mean a past or hypothetical position?"), never a rewrite demand. The
-earlier multi-board legality validator was removed (branch history).
+mean a past or hypothetical position?"), never a rewrite demand. Each
+flagged item draws that question once per turn: a re-flag (the model's
+acknowledgment repeats the wrong phrase) is struck in the UI but skips the
+judge and the corrective, so the turn ends instead of looping to the round
+cap. The earlier multi-board legality validator was removed (branch
+history).
 
 **Tactical grounding (pins and forks).** Models write "the knight is
 pinned" or "forks king and rook" from pattern memory, not the board.
