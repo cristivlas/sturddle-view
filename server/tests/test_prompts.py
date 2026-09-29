@@ -144,6 +144,21 @@ def test_user_message_side_to_move_derived_from_fen():
     assert "Side to move: black\n" in black
 
 
+def test_user_message_names_player_and_engine_sides():
+    # Coach mode: who plays which color, and whose move it is.
+    black = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
+    out = build_initial_user_message(
+        fen=black, san_history=["e4", "e5"], player_side="black",
+    )
+    assert "Sides: the player plays black; the opponent plays white.\n" in out
+    assert "Side to move: black (the player)\n" in out
+    out = build_initial_user_message(
+        fen=black, san_history=["e4", "e5"], player_side="white",
+    )
+    assert "Sides: the player plays white; the opponent plays black.\n" in out
+    assert "Side to move: black (the opponent)\n" in out
+
+
 def test_user_message_malformed_fen_falls_back_to_white():
     out = build_initial_user_message(fen="not-a-real-fen", san_history=[])
     assert "Side to move: white\n" in out

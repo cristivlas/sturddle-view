@@ -307,6 +307,16 @@ def _side_to_move_from_fen(fen: str) -> str:
     return SIDE_WHITE
 
 
+# Live-play personas: the human the coach speaks to, and their opponent
+# (never "the engine" -- prose would parrot it, a flagged tool mention).
+_PLAYER_PERSONA = "the player"
+_OPPONENT_PERSONA = "the opponent"
+
+
+def _other_side(side: str) -> str:
+    return SIDE_BLACK if side == SIDE_WHITE else SIDE_WHITE
+
+
 _BOOK_REPLY_LABEL = "Book reply here"
 _BOOK_REPLY_FILE_NOTE = "configured opening book"
 _BOOK_REPLY_ALSO = "also standard"
@@ -412,6 +422,7 @@ def build_initial_user_message(
     in_opening: bool = False,
     book_reply: "OpeningReply | None" = None,
     playbook: str | None = None,
+    player_side: str | None = None,
 ) -> str:
     """Build the user message that opens an agent turn. Carries the FEN,
     the explicit side-to-move (so the model does not re-derive it), the
@@ -449,6 +460,11 @@ def build_initial_user_message(
     with PLAYBOOK_LEAD; it decides the pick. Narrator-only, last on the
     message.
 
+    `player_side` ('white' / 'black') is the human's color in live play
+    (coach mode). Names who plays which side and whose move it is, so a
+    weak model doesn't take the engine's side or the side to move for the
+    player's.
+
     Optional fields are omitted entirely when not provided."""
     lines: list[str] = []
     if engine_name:
@@ -457,7 +473,17 @@ def build_initial_user_message(
         eco_prefix = f"[{opening_eco}] " if opening_eco else ""
         lines.append(f"Opening: {eco_prefix}{opening_name}")
     lines.append(f"Current position (FEN): {fen}")
-    lines.append(f"Side to move: {_side_to_move_from_fen(fen)}")
+    side_to_move = _side_to_move_from_fen(fen)
+    if player_side is None:
+        lines.append(f"Side to move: {side_to_move}")
+    else:
+        opponent_side = _other_side(player_side)
+        lines.append(
+            f"Sides: {_PLAYER_PERSONA} plays {player_side}; "
+            f"{_OPPONENT_PERSONA} plays {opponent_side}."
+        )
+        mover = _PLAYER_PERSONA if side_to_move == player_side else _OPPONENT_PERSONA
+        lines.append(f"Side to move: {side_to_move} ({mover})")
     lines.append(f"Position under review: {_position_under_review(fen)}")
     lines.append(f"Game moves: {_render_san_pairs(san_history)}")
     if move_played:
