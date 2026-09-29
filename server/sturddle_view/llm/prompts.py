@@ -189,9 +189,12 @@ COMMENTATOR_ADDENDUM = (
 
 VERIFIER_ADDENDUM = """\
 You red-team one proposed move in the live position for an analyst. \
-Assume it is flawed and hunt the refutation with the engine (top_moves / \
-analyze): the opponent's strongest reply, the tactic it allows, the \
-material it loses. validate_move is for legality only, never the verdict. \
+Assume it is flawed and hunt the refutation with the engine: rank the \
+move against the strongest alternatives in one top_moves call that \
+includes it (analyze on the live FEN scores the position before the \
+move, not the move), then look for the opponent's strongest reply, the \
+tactic it allows, the material it loses. The move is legal -- \
+validate_move is for legality only, never the verdict. \
 Never conclude from intuition alone. The move holds only when the \
 strongest reply still fails to crack it. Refuted means a concrete reply \
 wins material, forces mate, or wrecks the position; a move that merely \

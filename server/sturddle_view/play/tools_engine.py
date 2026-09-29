@@ -116,6 +116,10 @@ BookMoveProvider = Callable[[], str | None]
 # Live-position Situation (play/playbook.py) for the plan-aware gate.
 SituationProvider = Callable[[], Situation | None]
 AnalyzeTool = Callable[..., Awaitable[dict[str, Any]]]
+# Delegate's refutation check: True when the engine confirms the move is
+# dominated (recommend_move would reject it), False when it isn't, None
+# when the search failed or was cancelled.
+RefuteCheck = Callable[[chess.Move, CancelToken], Awaitable[bool | None]]
 
 
 def _settings_int(
@@ -197,6 +201,9 @@ _ENGINE_BEST_SAN_KEY = "engine_best_san"
 _DETAIL_KEY = "detail"
 # top_moves ranks on this, then pops it before returning.
 _SORT_KEY = "_sort_key"
+# top_moves result keys; public so the verifier gate can read the ranking.
+CANDIDATES_KEY = "candidates"
+MOVE_UCI_KEY = "move_uci"
 
 # Error codes and details repeated across the tools.
 _NO_LIVE_POSITION = "no_live_position"
@@ -813,7 +820,7 @@ def make_top_moves_tool(
                 )
             except _SearchError as err:
                 return _tool_error(err.kind, err.detail)
-            entry: dict = {"move_uci": move.uci(), "move_san": board.san(move)}
+            entry: dict = {MOVE_UCI_KEY: move.uci(), "move_san": board.san(move)}
             score = last_info.get(_SCORE_KEY)
             entry.update(_score_to_cp(score))
             depth = last_info.get(_DEPTH_KEY)
@@ -840,7 +847,7 @@ def make_top_moves_tool(
         out: dict = {
             "side_to_move": SIDE_WHITE if stm_is_white else SIDE_BLACK,
             _LIMITS_USED_KEY: limits_used,
-            "candidates": entries,
+            CANDIDATES_KEY: entries,
         }
         if errors:
             out["errors"] = errors
@@ -1115,6 +1122,65 @@ def _better_for_stm(
     return (rival_cp - cand_cp) > margin_cp
 
 
+async def _dominance_searches(
+    cache: SearchCache,
+    engine_launcher: EngineLauncher,
+    board: chess.Board,
+    move: chess.Move,
+    limit: chess.engine.Limit,
+    *,
+    bus: EventBus,
+    game_id: str,
+    cancel_token: CancelToken,
+    settings_provider: SettingsProvider | None,
+) -> tuple[dict, dict] | None:
+    """(best_info, cand_info): the engine's free best on `board`, then the
+    search restricted to `move`. None when cancelled before both finish.
+    Raises _SearchError."""
+    best_info, _ = await cache.get_or_search(
+        engine_launcher, board.copy(stack=False), limit,
+        bus=bus, game_id=game_id, cancel_token=cancel_token,
+        settings_provider=settings_provider,
+    )
+    if cancel_token.cancelled:
+        return None
+    cand_info, _ = await cache.get_or_search(
+        engine_launcher, board.copy(stack=False), limit,
+        bus=bus, game_id=game_id, cancel_token=cancel_token,
+        root_moves=[move],
+        settings_provider=settings_provider,
+    )
+    if cancel_token.cancelled:
+        return None
+    return best_info, cand_info
+
+
+def _best_move(best_info: dict) -> chess.Move | None:
+    pv = best_info.get(_PV_KEY)
+    return pv[0] if pv else None
+
+
+def _is_dominated(
+    move: chess.Move,
+    best_info: dict,
+    cand_info: dict,
+    turn: chess.Color,
+    margin_cp: int,
+) -> bool:
+    """True when the engine's free best beats `move` by more than
+    `margin_cp` for `turn`. Never for the engine's own pick (search scores
+    are mildly non-deterministic) or a move that forces mate for `turn` (a
+    faster engine mate doesn't make it a mistake)."""
+    if _best_move(best_info) == move:
+        return False
+    cand_score = cand_info.get(_SCORE_KEY)
+    if cand_score is not None:
+        cand_mate = cand_score.pov(turn).mate()
+        if cand_mate is not None and cand_mate > 0:
+            return False
+    return _better_for_stm(cand_score, best_info.get(_SCORE_KEY), turn, margin_cp)
+
+
 def make_recommend_move_tool(
     engine_launcher: EngineLauncher,
     bus: EventBus,
@@ -1194,43 +1260,24 @@ def make_recommend_move_tool(
         limit = chess.engine.Limit(depth=depth)
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
 
-        scratch_live = board.copy(stack=False)
-
-        # Search A: engine's free best move on the live position.
         try:
-            best_info, _ = await cache.get_or_search(
-                engine_launcher, scratch_live, limit,
+            searched = await _dominance_searches(
+                cache, engine_launcher, board, parsed, limit,
                 bus=bus, game_id=game_id, cancel_token=cancel_token,
                 settings_provider=settings_provider,
             )
         except _SearchError as err:
             return _tool_error(err.kind, err.detail)
-        if cancel_token.cancelled:
+        if searched is None:
             # Accept as-is; we couldn't finish verification.
             return {
                 _OK_KEY: True, _UCI_KEY: uci, _SAN_KEY: san,
                 _POST_MOVE_FEN_KEY: scratch.fen(), _CANCELLED_KEY: True,
             }
-
-        # Search B: same board, restricted to the candidate.
-        try:
-            cand_info, _ = await cache.get_or_search(
-                engine_launcher, board.copy(stack=False), limit,
-                bus=bus, game_id=game_id, cancel_token=cancel_token,
-                root_moves=[parsed],
-                settings_provider=settings_provider,
-            )
-        except _SearchError as err:
-            return _tool_error(err.kind, err.detail)
-        if cancel_token.cancelled:
-            return {
-                _OK_KEY: True, _UCI_KEY: uci, _SAN_KEY: san,
-                _POST_MOVE_FEN_KEY: scratch.fen(), _CANCELLED_KEY: True,
-            }
-
+        best_info, cand_info = searched
         best_score = best_info.get(_SCORE_KEY)
         cand_score = cand_info.get(_SCORE_KEY)
-        best_move = best_info.get(_PV_KEY, [None])[0] if best_info.get(_PV_KEY) else None
+        best_move = _best_move(best_info)
 
         result_common: dict = {
             _UCI_KEY: uci,
@@ -1241,23 +1288,9 @@ def make_recommend_move_tool(
         }
         if best_move is not None:
             result_common["engine_best_move"] = best_move.uci()
-            result_common[_ENGINE_BEST_SAN_KEY] = scratch_live.san(best_move)
+            result_common[_ENGINE_BEST_SAN_KEY] = board.san(best_move)
 
-        # Exact-move match short-circuits: search scores are mildly
-        # non-deterministic, so don't reject a move the engine itself
-        # just picked as best.
-        if best_move is not None and best_move == parsed:
-            return {_OK_KEY: True, _POST_MOVE_FEN_KEY: scratch.fen(), **result_common}
-
-        # A move that forces mate for the side to move is a won game; a
-        # faster engine mate doesn't make it a mistake. Accept it (mate
-        # against STM isn't winning, so it falls through to the check below).
-        if cand_score is not None:
-            cand_mate = cand_score.pov(board.turn).mate()
-            if cand_mate is not None and cand_mate > 0:
-                return {_OK_KEY: True, _POST_MOVE_FEN_KEY: scratch.fen(), **result_common}
-
-        if _better_for_stm(cand_score, best_score, board.turn, margin_cp):
+        if _is_dominated(parsed, best_info, cand_info, board.turn, margin_cp):
             best_san = result_common.get(_ENGINE_BEST_SAN_KEY) or "a stronger move"
             return {
                 **_tool_error(_RECOMMENDATION_REJECTED),
@@ -1271,6 +1304,46 @@ def make_recommend_move_tool(
         return {_OK_KEY: True, _POST_MOVE_FEN_KEY: scratch.fen(), **result_common}
 
     return recommend_move
+
+
+def make_refute_check(
+    engine_launcher: EngineLauncher,
+    bus: EventBus,
+    board_provider: BoardProvider,
+    game_id_provider: GameIdProvider | None = None,
+    settings_provider: SettingsProvider | None = None,
+    search_cache: SearchCache | None = None,
+    situation_provider: SituationProvider | None = None,
+) -> RefuteCheck:
+    """Build the delegate's refutation check: the same dominance test
+    recommend_move applies (plan-aware margin, verification-depth search),
+    so a "refuted" verdict stands only when the final gate would reject the
+    move too. `search_cache`: see make_analyze_tool."""
+    cache = search_cache or SearchCache()
+
+    async def refute_check(move: chess.Move, cancel_token: CancelToken) -> bool | None:
+        board = board_provider()
+        if board is None or move not in board.legal_moves:
+            return None
+        situation = situation_provider() if situation_provider is not None else None
+        depth = min(_verification_depth(settings_provider), _max_depth(settings_provider))
+        game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
+        try:
+            searched = await _dominance_searches(
+                cache, engine_launcher, board, move, chess.engine.Limit(depth=depth),
+                bus=bus, game_id=game_id, cancel_token=cancel_token,
+                settings_provider=settings_provider,
+            )
+        except _SearchError:
+            return None
+        if searched is None:
+            return None
+        best_info, cand_info = searched
+        return _is_dominated(
+            move, best_info, cand_info, board.turn, recommend_margin_cp(situation),
+        )
+
+    return refute_check
 
 
 def make_recommend_verifier(

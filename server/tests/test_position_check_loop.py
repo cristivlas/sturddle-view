@@ -11,7 +11,7 @@ import chess
 import pytest
 
 from sturddle_view.events import EVT_AI_POSITION_NOTE, EventBus
-from sturddle_view.llm import ProviderChunk, ScriptedProvider, ToolRegistry
+from sturddle_view.llm import ProviderChunk, ScriptedProvider, ToolRegistry, ToolSpec
 from sturddle_view.play.ai_analysis import (
     AIAnalysisCoordinator,
     _PositionCheck,
@@ -368,3 +368,94 @@ async def test_false_file_openness_emits_note_and_injects_corrective():
         and "the c-file is open: no pawns on it" in t
         for t in injected
     )
+
+
+# Black to move; Re6 is legal and e6 is empty (the live repro).
+_RE6_FEN = "1rb1r1k1/ppp2pp1/2n2q1p/4p3/2Pp3N/3P2PP/PP1QPPB1/2R1K2R b K - 1 14"
+
+
+@pytest.mark.asyncio
+async def test_false_illegality_claim_emits_note_and_injects_legal_fact():
+    board = chess.Board(_RE6_FEN)
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="Re6 is illegal, so the rook stays.")],
+        [ProviderChunk(kind="text", text="Corrected.")],
+    ])
+    coord, bus = _coord(provider, board)
+    queue = await bus.subscribe()
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    notes = [e for e in events if e.kind == EVT_AI_POSITION_NOTE]
+    assert [n.payload["surfaces"] for n in notes] == [["Re6 is illegal"]]
+    injected = _last_user_texts(provider)
+    assert any(
+        t.startswith(_POSITION_CHECK_PREFIX) and "Re6 is legal here" in t
+        for t in injected
+    )
+
+
+@pytest.mark.asyncio
+async def test_false_occupancy_claim_emits_note_and_injects_square_fact():
+    board = chess.Board(_RE6_FEN)
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="The rook cannot land because e6 is occupied.")],
+        [ProviderChunk(kind="text", text="Corrected.")],
+    ])
+    coord, bus = _coord(provider, board)
+    queue = await bus.subscribe()
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    notes = [e for e in events if e.kind == EVT_AI_POSITION_NOTE]
+    assert [n.payload["surfaces"] for n in notes] == [["e6 is occupied"]]
+    injected = _last_user_texts(provider)
+    assert any("e6 is empty" in t for t in injected)
+
+
+@pytest.mark.asyncio
+async def test_tool_label_leak_corrected_once_then_struck_and_shipped():
+    # The live leak: a "Verdict:" label copied from the delegate result. The
+    # first draws a corrective; the repeat is struck and the turn ends.
+    board = chess.Board(_FEN)
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="Verdict: holds, the knight on f6 guards d5.")],
+        [ProviderChunk(kind="text", text="Verdict: the knight on f6 guards d5.")],
+        [ProviderChunk(kind="text", text="Never reached.")],
+    ])
+    coord, bus = _coord(provider, board)
+    queue = await bus.subscribe()
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    notes = [e for e in events if e.kind == EVT_AI_POSITION_NOTE]
+    assert [n.payload["surfaces"] for n in notes] == [["Verdict:"], ["Verdict:"]]
+    assert provider.stream_calls == 2
+    injected = _last_user_texts(provider)
+    assert any(
+        t.startswith(_POSITION_CHECK_PREFIX) and '"Verdict:"' in t for t in injected
+    )
+
+
+async def _noop_tool(_input, *, cancel_token):
+    return {"ok": True}
+
+
+def test_registered_tool_names_are_leak_names():
+    board = chess.Board(_FEN)
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="recommend_move", description="d", input_schema={"type": "object"}),
+        _noop_tool,
+    )
+    coord = AIAnalysisCoordinator(
+        EventBus(), None, registry=registry, board_provider=lambda: board,
+    )
+    pc = coord._position_check([
+        ProviderChunk(kind="text", text="Recommend Move: Nxd5 wins a pawn."),
+    ])
+    assert pc.tool_leaks == [("Recommend Move:", "recommend_move")]
+    assert pc.surfaces == ["Recommend Move:"]

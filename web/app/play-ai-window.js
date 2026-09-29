@@ -660,11 +660,13 @@ function attachVerdictProse(line, output) {
   if (!line.querySelector(`:scope > .play-ai-tool-head > .${DELEGATE_DOT_CLASS}`)) return;
   const verdict = output && typeof output === "object" ? output.verdict : null;
   if (typeof verdict !== "string" || !verdict.trim()) return;
-  // Server flagged the prose as possibly wrong (a non-LLM validator hit): hide
-  // it entirely rather than risk a false claim. The badge and raw OUT stay.
-  if (output.prose_flagged) return;
   if (line.querySelector(`:scope > .${VERDICT_PROSE_CLASS}`)) return;
   const kind = verdictKind(output);
+  // Drop the leading verdict word (now the summary) so the prose isn't
+  // redundant: "Refuted. After 11...O-O" -> "After 11...O-O". A bare verdict
+  // ("holds") leaves nothing to fold: the row badge says it all.
+  const prose = kind ? stripVerdictLead(verdict) : verdict.trim();
+  if (!prose) return;
   const details = document.createElement("details");
   details.className = `play-ai-revision ${VERDICT_PROSE_CLASS}`;
   const summary = document.createElement("summary");
@@ -674,9 +676,7 @@ function attachVerdictProse(line, output) {
   body.className = "play-ai-revision-body";
   const para = document.createElement("p");
   para.className = "play-ai-prose";
-  // Drop the leading verdict word (now the summary) so the prose isn't
-  // redundant: "Refuted. After 11...O-O" -> "After 11...O-O".
-  para.textContent = kind ? stripVerdictLead(verdict) : verdict.trim();
+  para.textContent = prose;
   body.append(para);
   details.append(summary, body);
   line.append(details);

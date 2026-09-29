@@ -103,10 +103,13 @@ its pick with `delegate(move, question)`; each call spawns a verifier
 sub-run (`AIAnalysisCoordinator._run_verifier`, verifier prompt +
 registry, no `delegate` -- one level deep). The verifier is an
 adversary: it assumes the move is flawed and hunts the refutation with
-the engine, must call a tool before concluding (structurally forced on
-its first round via `tool_choice` where the provider honors it --
-Anthropic `any`, OpenAI-compat `required`; a no-tool verdict draws one
-nudge as the fallback), and returns a one/two sentence holds/refuted
+the engine, must call a tool on its first round (structurally forced via
+`tool_choice` where the provider honors it -- Anthropic `any`,
+OpenAI-compat `required`), must rank the move under test in a
+`top_moves` call before concluding (`analyze` on the live FEN scores the
+position before the move, so it can't judge the move; an unsearched
+verdict draws one nudge, then is dropped as `no_verdict`), and returns a
+one/two sentence holds/refuted
 conclusion that lands as the delegate tool_result. The canonical SAN is prefixed to the
 delegated question ("Move under test: ...") so the verifier knows the
 move under attack regardless of the narrator's phrasing. The narrator
@@ -117,6 +120,12 @@ the reader-facing rules (voice, length, audience) for an output rule (the
 reply is parsed by a program; no questions or conversation). The server
 enforces it: a reply not opening with "holds"/"refuted" draws one nudge,
 then is dropped (the narrator gets `no_verdict`), never shown or passed on.
+`delegate` then withholds (as `no_verdict`) a verdict whose reason
+misstates the board -- a board-check flag, or any illegality claim (the
+move under test is legal by construction) -- and a "refuted" the engine
+doesn't confirm: the same dominance test `recommend_move` applies (plan-
+aware margin, verification depth), so a refutation stands only when the
+final gate would reject the move too.
 
 **Red-team hold.** The first accepted `recommend_move` of a turn with no
 prior delegate verdict is held once (`error=red_team_first`) and the
@@ -136,13 +145,15 @@ adds latency x fan-out and risks Ollama `<think>` leaking into the verdict).
 model can consult: `piece_at` settles a square, `report_line` replays a
 line's legality, `top_moves`/`recommend_move` score moves, `tactics`
 lists the pins and forks actually on the board. Wrong tactical
-judgment is caught by forcing a tool call before a verdict (the verifier
-must call a tool before concluding).
+judgment is caught by requiring a search of the move before a verdict
+(the verifier must rank it with `top_moves` before concluding).
 
 A light post-hoc prose check (`llm/position_check.py`) runs over the
 single current board only: piece-on-square, file, bishop-color,
-file-openness and line claims, plus pin/fork claims (see §Tactical
-grounding). A flag becomes a clarifying question to the model ("do you
+file-openness, square-occupancy, "<move> is illegal" and line claims,
+plus pin/fork claims (see §Tactical grounding). Board-independent: tool
+names and result keys leaked into prose (`recommend_move`, "Recommend
+Move:", "Verdict:") draw the same corrective and are struck whole. A flag becomes a clarifying question to the model ("do you
 mean a past or hypothetical position?"), never a rewrite demand. Each
 flagged item draws that question once per turn: a re-flag (the model's
 acknowledgment repeats the wrong phrase) is struck in the UI but skips the

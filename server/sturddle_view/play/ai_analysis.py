@@ -65,6 +65,8 @@ from ..llm.position_check import (
     iter_false_claim_squares,
     iter_false_file_claims,
     iter_false_file_openness,
+    iter_false_illegality_claims,
+    iter_false_occupancy_claims,
     iter_false_tactic_claims,
     handled_continuation_spans,
     iter_illegal_continuations,
@@ -73,18 +75,22 @@ from ..llm.position_check import (
     iter_illegal_piece_moves,
     iter_illegal_square_moves,
     iter_stm_moves,
+    iter_tool_label_leaks,
     truncate_at_future_line,
 )
 from ..llm.position_judge import POSITION_JUDGE_CALL_NAME, clear_false_positives
 from .tools_engine import (
     ANALYZE_TOOL_NAME,
+    CANDIDATES_KEY,
     MATERIAL_TOOL_NAME,
+    MOVE_UCI_KEY,
     PIECE_AT_TOOL_NAME,
     RECOMMEND_MOVE_TOOL_NAME,
     REPORT_LINE_TOOL_NAME,
     TACTICS_TOOL_NAME,
     TOP_MOVES_TOOL_NAME,
     VALIDATE_MOVE_TOOL_NAME,
+    RefuteCheck,
     SearchCache,
     parse_move_canonical,
     parse_move_reporting,
@@ -207,11 +213,12 @@ _RED_TEAM_FIRST_NUDGE = (
     "submit again once the verdict holds." + _NO_ACK_CLAUSE
 )
 
-# Verifier completeness nudge: if it issues a verdict without ever
-# calling a tool, force one tool call before it concludes. One-shot per
-# sub-run (same loop guard as the recommend nudge) so it can't loop.
-_VERIFIER_TOOL_NUDGE = (
-    "A verdict needs a tool check first, not intuition." + _NO_ACK_CLAUSE
+# Verifier completeness nudge: a verdict before any top_moves ranking that
+# includes the move under test. One-shot per sub-run; a repeat unsearched
+# verdict is dropped (no_verdict).
+_VERIFIER_SEARCH_NUDGE = (
+    "A verdict needs a search of the move under test first: call "
+    "`top_moves` with it and the strongest alternatives." + _NO_ACK_CLAUSE
 )
 
 # A verifier reply must open with one of these (the client badges off the
@@ -220,9 +227,12 @@ _VERIFIER_TOOL_NUDGE = (
 _VERDICT_HOLDS = "holds"
 _VERDICT_REFUTED = "refuted"
 _VERDICT_LEAD_RE = re.compile(
-    rf"^[^A-Za-z0-9]*(?:{_VERDICT_HOLDS}|{_VERDICT_REFUTED})(?![A-Za-z0-9])",
+    rf"^[^A-Za-z0-9]*(?P<kind>{_VERDICT_HOLDS}|{_VERDICT_REFUTED})(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
+# Delegate result key carrying the verdict prose; also a label the
+# narrator must never copy into its prose ("Verdict:").
+_VERDICT_KEY = "verdict"
 
 # One-shot: the verifier replied with something other than a verdict. A
 # second non-verdict is dropped (no verdict), never passed on.
@@ -236,9 +246,28 @@ _VERIFIER_VERDICT_NUDGE = (
 _VERIFIER_QUESTION_LABEL = "Question to verify:"
 
 
-# Delegate tool invokes this: narrator question in, verdict prose out.
-# No cancel token -- the sub-run shares the turn's self._cancel_token.
-VerifierRunner = Callable[[str], Awaitable[str]]
+# Delegate tool invokes this: narrator question and the parsed move under
+# test in, verdict prose out. No cancel token -- the sub-run shares the
+# turn's self._cancel_token.
+VerifierRunner = Callable[[str, chess.Move], Awaitable[str]]
+
+
+# A delegate with no usable verdict. The narrator reads the detail, so it
+# names neither the engine nor the tools.
+_NO_VERDICT_ERROR = "no_verdict"
+_NO_CONCLUSION_DETAIL = 'no conclusion. Try increasing "Max subagent rounds"'
+_FALSE_FACT_DETAIL = "discarded: the verdict misstated the position"
+_UNCONFIRMED_REFUTATION_DETAIL = "discarded: the refutation does not hold up"
+
+
+def _no_verdict(detail: str) -> dict:
+    return {"error": _NO_VERDICT_ERROR, "detail": detail}
+
+
+def _verdict_kind(verdict: str) -> str | None:
+    """'holds' / 'refuted' from the verdict's lead word, else None."""
+    m = _VERDICT_LEAD_RE.match(verdict)
+    return m.group("kind").lower() if m else None
 
 
 # `delegate` is defined in this module (DELEGATE_TOOL_SPEC); the engine
@@ -292,12 +321,16 @@ DELEGATE_TOOL_SPEC = ToolSpec(
 
 
 def make_delegate_tool(
-    runner: VerifierRunner, board_provider: BoardProvider,
+    runner: VerifierRunner,
+    board_provider: BoardProvider,
+    refute_check: RefuteCheck | None = None,
 ) -> Callable:
     """Build the `delegate` tool. Parses `move` to canonical UCI against
     the live board, dispatches the narrator's question to a verifier
     sub-run, and echoes the canonical `move_uci` back. Malformed input
-    returns a structured error so the narrator can recover."""
+    returns a structured error so the narrator can recover. A verdict that
+    misstates the board, or a "refuted" the engine (`refute_check`) doesn't
+    confirm, is withheld as no_verdict; None skips the engine check."""
     async def delegate(input_: dict, *, cancel_token: CancelToken) -> dict:
         question = input_.get("question")
         if not isinstance(question, str) or not question.strip():
@@ -315,29 +348,33 @@ def make_delegate_tool(
         if move is None:
             return {"error": kind, "detail": detail, "fen": board.fen()}
         verdict = await runner(
-            f"{_MOVE_UNDER_TEST_PREFIX} {board.san(move)}. {question.strip()}"
+            f"{_MOVE_UNDER_TEST_PREFIX} {board.san(move)}. {question.strip()}",
+            move,
         )
         if not verdict:
-            return {
-                "error": "no_verdict",
-                "detail": 'no conclusion. Try increasing "Max subagent rounds"',
-            }
+            return _no_verdict(_NO_CONCLUSION_DETAIL)
         # Strict non-LLM validation of the verdict prose. The verdict restates
         # the move under test (legal pre-move) and reasons about its replies
         # (legal post-move), so it straddles the move boundary; validate against
         # both boards and flag only a claim wrong on NEITHER -- a real illegal
-        # move/false claim, not a boundary artifact. A hit hides the prose
-        # client-side; the holds/refuted badge still stands on the engine
-        # verdict. Full stack on the copy so numbered history refs keep their
-        # replay free-pass.
+        # move/false claim, not a boundary artifact. A false reason discredits
+        # the verdict word too, so the narrator never sees it. Full stack on
+        # the copy so numbered history refs keep their replay free-pass.
         after = board.copy()
         after.push(move)
-        prose_flagged = has_position_flags(verdict, board, after)
-        return {
-            "move_uci": move.uci(),
-            "verdict": verdict,
-            "prose_flagged": prose_flagged,
-        }
+        if has_position_flags(verdict, board, after):
+            log.info("delegate verdict misstates the board; withheld: %r", verdict)
+            return _no_verdict(_FALSE_FACT_DETAIL)
+        # A refutation must survive the engine: the same dominance test the
+        # final recommend_move gate applies. Search failures pass it through.
+        if (
+            refute_check is not None
+            and _verdict_kind(verdict) == _VERDICT_REFUTED
+            and await refute_check(move, cancel_token) is False
+        ):
+            log.info("delegate refutation of %s not confirmed; withheld", move.uci())
+            return _no_verdict(_UNCONFIRMED_REFUTATION_DETAIL)
+        return {MOVE_UCI_KEY: move.uci(), _VERDICT_KEY: verdict}
 
     return delegate
 
@@ -588,6 +625,24 @@ def _is_accepted_recommend(output) -> bool:
     )
 
 
+def _ranks_move(
+    tool: ProviderChunk, output, move: chess.Move | None,
+) -> bool:
+    """True when `tool` is a top_moves ranking whose candidates include
+    `move` -- the verifier's evidence it searched the move under test."""
+    if move is None or tool.tool_name != TOP_MOVES_TOOL_NAME:
+        return False
+    if not isinstance(output, dict):
+        return False
+    candidates = output.get(CANDIDATES_KEY)
+    if not isinstance(candidates, list):
+        return False
+    return any(
+        isinstance(c, dict) and c.get(MOVE_UCI_KEY) == move.uci()
+        for c in candidates
+    )
+
+
 def _inject_nudge(
     messages: list[Message], round_chunks: list[ProviderChunk], content: str,
 ) -> None:
@@ -678,6 +733,10 @@ class _LoopConfig:
     # Verifier: the final reply must open with holds/refuted; a non-verdict
     # draws one nudge, then is dropped (empty final_text -> no_verdict).
     require_verdict: bool = False
+    # Verifier: the move under test. A verdict counts only after a top_moves
+    # ranking that includes it -- analyze on the live FEN scores the position
+    # before the move, so it can't judge the move.
+    move_under_test: chess.Move | None = None
 
 
 @dataclass(slots=True)
@@ -724,6 +783,10 @@ def _tool_key(item: str) -> str:
     return _TOOL_KEY_PREFIX + item
 
 
+def _leak_key(item: tuple[str, str]) -> str:
+    return _TOOL_KEY_PREFIX + item[1]
+
+
 def _split_by_key(items, key, corrected: set[str]) -> tuple[list, list]:
     """(new, repeat): items whose key is / isn't in `corrected`."""
     new = [it for it in items if key(it) not in corrected]
@@ -747,13 +810,16 @@ class _PositionCheck:
     # (surface, label, fact): bishop-color references, piece-on-file and
     # file-openness claims, pin/fork claims. Never judged (see board_labels).
     fact_triples: list[tuple[str, str, str]] = field(default_factory=list)
+    # Tool names / result keys written into the prose, each (surface, name):
+    # 'recommend_move', 'Verdict:'. Standalone, so struck whole.
+    tool_leaks: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def hit(self) -> bool:
         return bool(
             self.move_pairs or self.claim_triples
             or self.line_pairs or self.tool_mentions
-            or self.fact_triples
+            or self.fact_triples or self.tool_leaks
         )
 
     @property
@@ -772,6 +838,7 @@ class _PositionCheck:
             + [s for s, _, _ in self.claim_triples]
             + [s for s, _ in self.line_pairs]
             + [s for s, _, _ in self.fact_triples]
+            + [s for s, _ in self.tool_leaks]
         )
 
     @property
@@ -783,6 +850,7 @@ class _PositionCheck:
             | set(map(_move_key, self.line_pairs))
             | set(map(_tool_key, self.tool_mentions))
             | set(map(_fact_key, self.fact_triples))
+            | set(map(_leak_key, self.tool_leaks))
         )
 
     def partition(self, corrected: set[str]) -> tuple[_PositionCheck, _PositionCheck]:
@@ -792,9 +860,14 @@ class _PositionCheck:
         lines = _split_by_key(self.line_pairs, _move_key, corrected)
         tools = _split_by_key(self.tool_mentions, _tool_key, corrected)
         facts = _split_by_key(self.fact_triples, _fact_key, corrected)
+        leaks = _split_by_key(self.tool_leaks, _leak_key, corrected)
         return (
-            _PositionCheck(self.board, moves[0], claims[0], lines[0], tools[0], facts[0]),
-            _PositionCheck(self.board, moves[1], claims[1], lines[1], tools[1], facts[1]),
+            _PositionCheck(
+                self.board, moves[0], claims[0], lines[0], tools[0], facts[0], leaks[0],
+            ),
+            _PositionCheck(
+                self.board, moves[1], claims[1], lines[1], tools[1], facts[1], leaks[1],
+            ),
         )
 
     @property
@@ -812,7 +885,8 @@ class _PositionCheck:
 
     def without_labels(self, cleared: set[str]) -> _PositionCheck:
         """A copy with every flag whose label is in `cleared` dropped. Tool
-        mentions pass through (never judged). Empty `cleared` is a no-op."""
+        mentions and leaks pass through (never judged). Empty `cleared` is a
+        no-op."""
         if not cleared:
             return self
         return _PositionCheck(
@@ -822,6 +896,7 @@ class _PositionCheck:
             [(s, l) for s, l in self.line_pairs if l not in cleared],
             self.tool_mentions,
             [(s, l, f) for s, l, f in self.fact_triples if l not in cleared],
+            self.tool_leaks,
         )
 
 
@@ -1129,7 +1204,8 @@ class AIAnalysisCoordinator:
         # SAN of the accepted move -- what the nudges and the mismatch
         # corrective name, since prose speaks SAN, not uci.
         recommended_san: str | None = None
-        any_tool_called = False
+        # Verifier: flips once a top_moves ranking includes the move under test.
+        move_searched = False
         nudge_sent = False
         # Narrator: re-nudge toward an accepted recommend_move each clean
         # exit until one lands, but stop once a nudge draws no new attempt.
@@ -1245,9 +1321,9 @@ class AIAnalysisCoordinator:
             if pending_tool is None:
                 # Natural exit. Completeness nudge: narrator re-nudges each
                 # clean exit until a move is accepted (stopping on a stall);
-                # verifier nudges once to call a tool before concluding.
+                # verifier nudges once to search the move before concluding.
                 if self._needs_nudge(
-                    config, nudge_sent, recommended_uci, any_tool_called,
+                    config, nudge_sent, recommended_uci, move_searched,
                     recommend_attempts, attempts_at_last_nudge,
                 ) and _round_produced_output(round_chunks):
                     # Gated on real output: a silent round ends the turn
@@ -1329,14 +1405,25 @@ class AIAnalysisCoordinator:
                         continue
                     log.warning("verifier reply is not a verdict; dropped: %r", round_text)
                     round_text = ""
+                # Past the one search nudge: a verdict on a move never searched
+                # is invented, so it is dropped rather than passed on.
+                if (
+                    config.move_under_test is not None
+                    and round_text.strip()
+                    and not move_searched
+                ):
+                    log.warning(
+                        "verifier verdict without a search of %s; dropped: %r",
+                        config.move_under_test.uci(), round_text,
+                    )
+                    round_text = ""
                 round_cap_hit = False
                 await _flush_think(emit, think_timer, game_id, round_index)
                 final_text = round_text
                 break
-            messages.append(_assistant_message(round_chunks))
             # Only a tool_use round reaches here -- the natural-exit branch
             # above always continues or breaks.
-            any_tool_called = True
+            messages.append(_assistant_message(round_chunks))
             # Single-slot dedup. Cache hit returns the prior result
             # without re-dispatching and without a duplicate UI dot.
             key = self._dedup_key(pending_tool)
@@ -1435,6 +1522,8 @@ class AIAnalysisCoordinator:
                 and not tool_output.get("error")
             ):
                 red_teamed = True
+            if _ranks_move(pending_tool, tool_output, config.move_under_test):
+                move_searched = True
             # An accepted recommend_move is the turn's pick. Safe to read a
             # cached result: the cached uci matches a fresh dispatch's.
             if config.track_recommend and pending_tool.tool_name == RECOMMEND_MOVE_TOOL_NAME:
@@ -1526,16 +1615,21 @@ class AIAnalysisCoordinator:
         # full prose, not the truncated board view, so a leak after a future
         # line still counts.
         tool_mentions = find_tool_mentions(full_text)
+        tool_leaks = list(iter_tool_label_leaks(full_text, self._leak_names()))
         # Opening turns discuss off-board alternatives (sibling variations,
         # earlier-ply moves), so the board-legality/claim recognizers misfire.
-        # Keep only the board-independent tool-mention guard.
+        # Keep only the board-independent tool guards.
         if self._opening_turn:
-            return _PositionCheck(board, [], [], [], tool_mentions)
+            return _PositionCheck(
+                board, [], [], [], tool_mentions, tool_leaks=tool_leaks,
+            )
         # Stop at the first move number past the live ply: beyond it the model
         # is in a hypothetical line, not describing the board.
         text = truncate_at_future_line(full_text, board)
         if not text.strip():
-            return _PositionCheck(board, [], [], [], tool_mentions)
+            return _PositionCheck(
+                board, [], [], [], tool_mentions, tool_leaks=tool_leaks,
+            )
         # SAN moves ('Bxe4') and prose moves ('bishop to a1') are the same
         # kind of error -- an impossible move -- so they share one bucket.
         # One shared dedup set across the move recognizers: a move flagged by
@@ -1568,8 +1662,18 @@ class AIAnalysisCoordinator:
             list(iter_false_bishop_color_refs(text, board))
             + list(iter_false_file_claims(text, board))
             + list(iter_false_file_openness(text, board))
-            + list(iter_false_tactic_claims(text, board)),
+            + list(iter_false_tactic_claims(text, board))
+            + list(iter_false_illegality_claims(text, board))
+            + list(iter_false_occupancy_claims(text, board)),
+            tool_leaks,
         )
+
+    def _leak_names(self) -> list[str]:
+        """Tool names and result keys the prose must never carry."""
+        names = self._registry.names() + [_VERDICT_KEY]
+        if self._verifier_registry is not None:
+            names += self._verifier_registry.names()
+        return list(dict.fromkeys(names))
 
     def _recommend_mismatch(
         self,
@@ -1685,8 +1789,9 @@ class AIAnalysisCoordinator:
         )
         if claim_facts:
             clauses.append(_POSITION_CHECK_CLAIM_CLAUSE.format(facts="; ".join(claim_facts)))
-        if pc.tool_mentions:
-            quoted = ", ".join(f'"{m}"' for m in pc.tool_mentions)
+        mentions = pc.tool_mentions + [surface for surface, _name in pc.tool_leaks]
+        if mentions:
+            quoted = ", ".join(f'"{m}"' for m in mentions)
             clauses.append(_POSITION_CHECK_TOOL_CLAUSE.format(mentions=quoted))
         return _POSITION_CHECK_PREFIX + " ".join([_POSITION_CHECK_LEAD, *clauses])
 
@@ -1695,7 +1800,7 @@ class AIAnalysisCoordinator:
         config: _LoopConfig,
         nudge_sent: bool,
         recommended_uci: str | None,
-        any_tool_called: bool,
+        move_searched: bool,
         recommend_attempts: int,
         attempts_at_last_nudge: int,
     ) -> bool:
@@ -1703,7 +1808,7 @@ class AIAnalysisCoordinator:
         accepted recommend_move on every clean exit until one lands,
         stopping only when a prior nudge drew no new attempt (the model is
         ignoring it -- round_cap is the remaining backstop). Verifier nudge
-        stays one-shot: call a tool before concluding."""
+        stays one-shot: search the move under test before concluding."""
         if config.completeness_nudge is None:
             return False
         if config.track_recommend:
@@ -1714,7 +1819,7 @@ class AIAnalysisCoordinator:
             if not nudge_sent:
                 return True
             return recommend_attempts > attempts_at_last_nudge
-        return not nudge_sent and not any_tool_called
+        return not nudge_sent and not move_searched
 
     def turn_book_move(self) -> str | None:
         """The in-flight turn's book move (UCI), for recommend_move's
@@ -1754,8 +1859,9 @@ class AIAnalysisCoordinator:
         method to build the narrator's `delegate` tool."""
         return self._run_verifier
 
-    async def _run_verifier(self, question: str) -> str:
-        """Run one verifier sub-run for the narrator's `delegate` call.
+    async def _run_verifier(self, question: str, move: chess.Move) -> str:
+        """Run one verifier sub-run for the narrator's `delegate` call on
+        `move` (parsed against the live board).
 
         Forwards only its tool-call events to the UI (via `_verifier_emit`,
         nested under the delegate row) and suppresses its prose/thinking;
@@ -1805,13 +1911,14 @@ class AIAnalysisCoordinator:
                 game_id=self._turn_game_id,
                 provider=provider,
                 transcript=transcript,
-                completeness_nudge=_VERIFIER_TOOL_NUDGE,
+                completeness_nudge=_VERIFIER_SEARCH_NUDGE,
                 track_recommend=False,
                 # Engine does the reasoning; model thinking only adds
                 # latency (x fan-out) and risks Ollama <think> in verdicts.
                 thinking_override=False,
                 force_first_round_tool=True,
                 require_verdict=True,
+                move_under_test=move,
             )
             # done_payload feeds the transcript turn_end only -- a verifier
             # sub-run emits no user-facing done event (it's internal).
