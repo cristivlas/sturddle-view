@@ -112,6 +112,12 @@ delegated question ("Move under test: ...") so the verifier knows the
 move under attack regardless of the narrator's phrasing. The narrator
 synthesizes and calls `recommend_move`.
 
+**Verdict gate.** The verifier never talks to the user: its prompt drops
+the reader-facing rules (voice, length, audience) for an output rule (the
+reply is parsed by a program; no questions or conversation). The server
+enforces it: a reply not opening with "holds"/"refuted" draws one nudge,
+then is dropped (the narrator gets `no_verdict`), never shown or passed on.
+
 **Red-team hold.** The first accepted `recommend_move` of a turn with no
 prior delegate verdict is held once (`error=red_team_first`) and the
 model is asked to red-team the move first; a stalled model still gets

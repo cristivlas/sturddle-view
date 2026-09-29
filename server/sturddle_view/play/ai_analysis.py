@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field, fields
 from typing import Awaitable, Callable
@@ -211,6 +212,23 @@ _RED_TEAM_FIRST_NUDGE = (
 # sub-run (same loop guard as the recommend nudge) so it can't loop.
 _VERIFIER_TOOL_NUDGE = (
     "A verdict needs a tool check first, not intuition." + _NO_ACK_CLAUSE
+)
+
+# A verifier reply must open with one of these (the client badges off the
+# same words). Anything else -- a question, chatter -- is not a verdict.
+# Leading non-alphanumerics skip wrappers the stream strip leaves (*, #, >, ").
+_VERDICT_HOLDS = "holds"
+_VERDICT_REFUTED = "refuted"
+_VERDICT_LEAD_RE = re.compile(
+    rf"^[^A-Za-z0-9]*(?:{_VERDICT_HOLDS}|{_VERDICT_REFUTED})(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+
+# One-shot: the verifier replied with something other than a verdict. A
+# second non-verdict is dropped (no verdict), never passed on.
+_VERIFIER_VERDICT_NUDGE = (
+    f'Reply with the verdict only: open with "{_VERDICT_HOLDS}" or '
+    f'"{_VERDICT_REFUTED}", then a one-line reason. No questions.'
 )
 
 # Label introducing the narrator's question in the verifier's user
@@ -657,6 +675,9 @@ class _LoopConfig:
     # for providers/models that ignore it. Requires thinking off --
     # Anthropic rejects forced tool choice combined with thinking.
     force_first_round_tool: bool = False
+    # Verifier: the final reply must open with holds/refuted; a non-verdict
+    # draws one nudge, then is dropped (empty final_text -> no_verdict).
+    require_verdict: bool = False
 
 
 @dataclass(slots=True)
@@ -1131,6 +1152,7 @@ class AIAnalysisCoordinator:
         post_recommend_nudge_sent = False
         # One-shot: after the corrective, a re-asserted wrong move is struck.
         mismatch_nudge_sent = False
+        verdict_nudge_sent = False
         round_cap_hit = True  # flipped to False on natural exit
         text_published = False  # flips on first non-whitespace text chunk
         final_text = ""  # last round's prose only (verifier verdict)
@@ -1289,14 +1311,27 @@ class AIAnalysisCoordinator:
                         emit=emit, game_id=game_id, round_index=round_index,
                         surfaces=surfaces,
                     )
-                round_cap_hit = False
-                await _flush_think(emit, think_timer, game_id, round_index)
                 # Verdict = this final round's prose only, so cross-round
                 # tool-call self-talk ("I need the FEN", "let me check")
                 # doesn't leak up to the narrator.
-                final_text = "".join(
+                round_text = "".join(
                     c.text for c in round_chunks if c.kind == "text" and c.text
                 )
+                if (
+                    config.require_verdict
+                    and round_text.strip()
+                    and not _VERDICT_LEAD_RE.match(round_text)
+                ):
+                    if not verdict_nudge_sent:
+                        log.info("verdict nudge (%s): reply is not a verdict", mode)
+                        verdict_nudge_sent = True
+                        _inject_nudge(messages, round_chunks, _VERIFIER_VERDICT_NUDGE)
+                        continue
+                    log.warning("verifier reply is not a verdict; dropped: %r", round_text)
+                    round_text = ""
+                round_cap_hit = False
+                await _flush_think(emit, think_timer, game_id, round_index)
+                final_text = round_text
                 break
             messages.append(_assistant_message(round_chunks))
             # Only a tool_use round reaches here -- the natural-exit branch
@@ -1776,6 +1811,7 @@ class AIAnalysisCoordinator:
                 # latency (x fan-out) and risks Ollama <think> in verdicts.
                 thinking_override=False,
                 force_first_round_tool=True,
+                require_verdict=True,
             )
             # done_payload feeds the transcript turn_end only -- a verifier
             # sub-run emits no user-facing done event (it's internal).

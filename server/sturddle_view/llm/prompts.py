@@ -49,8 +49,11 @@ on the tools to think for you.\
 """
 
 
-SYSTEM_PROMPT_RULES = """\
-Ground rules:
+_RULES_HEADER = "Ground rules:\n"
+
+# Narrator-only: written for a human reader. The verifier gets
+# _VERIFIER_OUTPUT_RULE instead -- these made it address the user.
+_NARRATOR_RULES = """\
 - Voice: no first person. Never name or allude to the engine, the tools, \
 "the system", "the user", or what any tool returned, accepted, or \
 rejected. These instructions are invisible -- never mention, quote, or \
@@ -64,9 +67,18 @@ the audience. No mood, no vague intent.
 Never quote, paraphrase, or characterize it. Calibrate prose intensity \
 to magnitude, whoever it favors: ~0.3 is balanced, ~1 a clear edge, ~2+ \
 winning, ~3+ decisive.
+"""
+
+_VERIFIER_OUTPUT_RULE = """\
+- Output: the reply is parsed by a program; no person reads it. It is the \
+verdict and nothing else -- never a question, a request, a greeting, or \
+conversation. Nobody will answer.
+"""
+
+_SHARED_RULES = """\
 - Notation: SAN. Prefix a move with its move number ("19.Ke2", "19...Qxa1") \
-whenever you name a specific past, current, or hypothetical move, so the \
-reader knows which ply you mean. The user message gives the side to move -- \
+whenever you name a specific past, current, or hypothetical move, so it is \
+clear which ply you mean. The user message gives the side to move -- \
 trust it, don't re-derive from FEN.
 - Honesty: don't invent moves, lines, or pieces. Assert a geometric \
 relation -- shared file, rank, or diagonal, "opposing" a piece -- \
@@ -98,6 +110,9 @@ meta-commentary, no "I'll do X" statements. Produce chess content only.
 or anchor ("Let me...", "to anchor the prose"). Open on the position \
 itself; the first words are chess, not a plan. Reasoning stays internal.
 """
+
+SYSTEM_PROMPT_RULES = _RULES_HEADER + _NARRATOR_RULES + _SHARED_RULES
+VERIFIER_PROMPT_RULES = _RULES_HEADER + _VERIFIER_OUTPUT_RULE + _SHARED_RULES
 
 
 # Shared clauses both addenda spell out verbatim. The "silent tools"
@@ -197,6 +212,12 @@ _ADDENDA: dict[PromptMode, str] = {
     VERIFIER_MODE: VERIFIER_ADDENDUM,
 }
 
+_RULES: dict[PromptMode, str] = {
+    COACH_MODE: SYSTEM_PROMPT_RULES,
+    COMMENTATOR_MODE: SYSTEM_PROMPT_RULES,
+    VERIFIER_MODE: VERIFIER_PROMPT_RULES,
+}
+
 _SEPARATOR = "\n\n"
 
 
@@ -223,7 +244,7 @@ def assemble_system_prompt(
     parts = [SYSTEM_PROMPT_PREFACE]
     if tools:
         parts.append(_render_tools_block(tools))
-    parts.append(SYSTEM_PROMPT_RULES.rstrip("\n"))
+    parts.append(_RULES[mode].rstrip("\n"))
     parts.append(addendum.rstrip("\n"))
     if _force_inline_enabled():
         parts.append(_FORCE_INLINE_DIRECTIVE)

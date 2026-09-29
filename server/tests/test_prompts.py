@@ -28,6 +28,7 @@ from sturddle_view.llm.prompts import (
     PLAYBOOK_LEAD,
     SYSTEM_PROMPT_PREFACE,
     SYSTEM_PROMPT_RULES,
+    VERIFIER_PROMPT_RULES,
     split_narrator_steers,
 )
 from sturddle_view.play.ai_analysis import AIAnalysisCoordinator
@@ -56,6 +57,17 @@ def test_commentator_prompt_contains_commentator_addendum_only():
     assert SYSTEM_PROMPT_RULES.rstrip("\n") in out
     assert COMMENTATOR_ADDENDUM in out
     assert COACH_ADDENDUM not in out
+
+
+def test_verifier_prompt_gets_output_rule_not_narrator_rules():
+    # Reader-facing rules made the verifier address the user; it gets the
+    # program-output rule and the shared chess rules instead.
+    out = assemble_system_prompt("verifier")
+    assert VERIFIER_PROMPT_RULES.rstrip("\n") in out
+    assert "- Voice:" not in out
+    assert "- Length:" not in out
+    assert "- Output:" in out
+    assert "- Honesty:" in out
 
 
 def test_unknown_mode_raises_value_error():

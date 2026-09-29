@@ -41,6 +41,7 @@ from sturddle_view.play.ai_analysis import (
     AIAnalysisCoordinator,
     DELEGATE_TOOL_SPEC,
     _EMPTY_TURN_PLACEHOLDER,
+    _VERDICT_LEAD_RE,
     _assistant_message,
     make_delegate_tool,
 )
@@ -180,7 +181,7 @@ async def test_verifier_inherits_turn_position_context():
             kind="tool_use", tool_use_id="v1",
             tool_name="piece_at", tool_input={"square": "e2"},
         )],
-        [ProviderChunk(kind="text", text="e4 is sound.")],  # verifier round 1: verdict
+        [ProviderChunk(kind="text", text="Holds: e4 is sound.")],  # verifier round 1: verdict
         [ProviderChunk(kind="text", text="Done.")],         # narrator round 1
     ])
     bus = EventBus()
@@ -216,7 +217,7 @@ async def test_verifier_first_round_forces_tool_call_narrator_never():
             kind="tool_use", tool_use_id="v1",
             tool_name="piece_at", tool_input={"square": "e2"},
         )],
-        [ProviderChunk(kind="text", text="e4 is sound.")],  # verifier round 1: verdict
+        [ProviderChunk(kind="text", text="Holds: e4 is sound.")],  # verifier round 1: verdict
         [ProviderChunk(kind="text", text="Done.")],         # narrator round 1
     ])
     bus = EventBus()
@@ -261,7 +262,7 @@ async def test_verifier_usage_rolls_into_narrator_turn_totals():
             ),
         ],
         [                                                   # verifier round 1: verdict
-            ProviderChunk(kind="text", text="e4 is sound."),
+            ProviderChunk(kind="text", text="Holds: e4 is sound."),
             ProviderChunk(kind="usage", usage=ProviderUsage(
                 input_tokens=25, output_tokens=2,
             )),
@@ -335,7 +336,7 @@ async def test_verifier_thinking_forced_off_narrator_inherits():
             kind="tool_use", tool_use_id="v1",
             tool_name="piece_at", tool_input={"square": "e2"},
         )],
-        [ProviderChunk(kind="text", text="sound.")],        # verifier: verdict
+        [ProviderChunk(kind="text", text="Holds.")],        # verifier: verdict
         [ProviderChunk(kind="text", text="done.")],         # narrator
     ])
     bus = EventBus()
@@ -370,7 +371,7 @@ async def test_verifier_verdict_is_final_round_prose_only():
                 tool_name="piece_at", tool_input={"square": "e2"},
             ),
         ],
-        [ProviderChunk(kind="text", text="e4 is sound.")],       # verifier r1
+        [ProviderChunk(kind="text", text="Holds: e4 is sound.")],  # verifier r1
         [ProviderChunk(kind="text", text="Conclusion.")],        # narrator
     ])
     bus = EventBus()
@@ -404,7 +405,7 @@ async def test_verifier_tool_events_carry_parent_id_and_prose_suppressed():
                 tool_name="piece_at", tool_input={"square": "e2"},
             ),
         ],
-        [ProviderChunk(kind="text", text="e4 sound.")],       # verifier concludes
+        [ProviderChunk(kind="text", text="Holds: e4 sound.")],  # verifier concludes
         [ProviderChunk(kind="text", text="done.")],           # narrator
     ])
     bus = EventBus()
@@ -1172,7 +1173,7 @@ async def test_verifier_concluding_without_tool_gets_one_nudge():
             kind="tool_use", tool_use_id="v1",
             tool_name="piece_at", tool_input={"square": "e2"},
         )],
-        [ProviderChunk(kind="text", text="e4 is sound.")],  # verifier: verdict
+        [ProviderChunk(kind="text", text="Holds: e4 is sound.")],  # verifier: verdict
         [ProviderChunk(kind="text", text="done.")],         # narrator
     ])
     bus = EventBus()
@@ -1192,6 +1193,81 @@ async def test_verifier_concluding_without_tool_gets_one_nudge():
         m for m in reversed(nudged["messages"]) if m["role"] == "user"
     )
     assert "tool" in last_user["content"].lower()
+
+
+def _verifier_rounds_then_narrator(*verifier_texts: str) -> _RecordingScriptedProvider:
+    """Narrator delegates, verifier calls a tool then replies with each of
+    `verifier_texts` in turn, narrator concludes."""
+    return _RecordingScriptedProvider(rounds=[
+        [_delegate_chunk("d1", "check e4")],                # narrator
+        [ProviderChunk(                                     # verifier: tool
+            kind="tool_use", tool_use_id="v1",
+            tool_name="piece_at", tool_input={"square": "e2"},
+        )],
+        *[[ProviderChunk(kind="text", text=t)] for t in verifier_texts],
+        [ProviderChunk(kind="text", text="done.")],         # narrator
+    ])
+
+
+def _delegate_output(events) -> dict:
+    return next(
+        e.payload["output"] for e in events
+        if e.kind == "ai_tool_call_complete" and e.payload.get("tool_use_id") == "d1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_verifier_non_verdict_nudged_once_then_complies():
+    # A question instead of a verdict draws one verdict nudge; the compliant
+    # reply is the verdict the narrator gets.
+    provider = _verifier_rounds_then_narrator(
+        "Would you like me to check d5 as well?",
+        "Refuted: d5 wins a pawn.",
+    )
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider)
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert _delegate_output(events)["verdict"] == "Refuted: d5 wins a pawn."
+    assert len(provider.calls) == 5
+
+
+@pytest.mark.parametrize("wrapped", [
+    "*Refuted*: d5 wins a pawn.",
+    "_Holds_ -- nothing cracks it.",
+    "# Refuted: d5 wins a pawn.",
+    "> Holds: nothing cracks it.",
+    '"Refuted": d5 wins a pawn.',
+])
+def test_verdict_lead_accepts_markdown_wrappers(wrapped):
+    # Wrappers the stream's markdown strip leaves must not drop a real verdict.
+    assert _VERDICT_LEAD_RE.match(wrapped)
+
+
+def test_verdict_lead_rejects_non_verdicts():
+    assert not _VERDICT_LEAD_RE.match("Should I also look at d5?")
+    assert not _VERDICT_LEAD_RE.match("It holds.")
+
+
+@pytest.mark.asyncio
+async def test_verifier_repeated_non_verdict_is_dropped():
+    # A second non-verdict is never passed on: the narrator gets no_verdict,
+    # and the question text reaches neither the narrator nor the UI.
+    question = "Should I also look at d5?"
+    provider = _verifier_rounds_then_narrator(question, question)
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider)
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert _delegate_output(events)["error"] == "no_verdict"
+    assert question not in str(provider.calls[-1]["messages"])
+    assert len(provider.calls) == 5
 
 
 @pytest.mark.asyncio
@@ -1231,13 +1307,13 @@ async def test_two_delegates_each_get_their_own_parent_id():
             kind="tool_use", tool_use_id="vA",
             tool_name="piece_at", tool_input={"square": "e2"},
         )],
-        [ProviderChunk(kind="text", text="e4 sound.")],    # verifier A: verdict
+        [ProviderChunk(kind="text", text="Holds: e4 sound.")],  # verifier A: verdict
         [_delegate_chunk("dB", "check d4")],               # narrator: delegate B
         [ProviderChunk(                                    # verifier B: tool
             kind="tool_use", tool_use_id="vB",
             tool_name="piece_at", tool_input={"square": "d2"},
         )],
-        [ProviderChunk(kind="text", text="d4 sound.")],    # verifier B: verdict
+        [ProviderChunk(kind="text", text="Holds: d4 sound.")],  # verifier B: verdict
         [ProviderChunk(kind="text", text="done.")],        # narrator
     ])
     bus = EventBus()
