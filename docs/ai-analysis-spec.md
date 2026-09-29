@@ -108,7 +108,7 @@ the engine, must call a tool on its first round (structurally forced via
 OpenAI-compat `required`), must rank the move under test in a
 `top_moves` call before concluding (`analyze` on the live FEN scores the
 position before the move, so it can't judge the move; an unsearched
-verdict draws one nudge, then is dropped as `no_verdict`), and returns a
+verdict draws one nudge, then is dropped as `verdict_withheld`), and returns a
 one/two sentence holds/refuted
 conclusion that lands as the delegate tool_result. The canonical SAN is prefixed to the
 delegated question ("Move under test: ...") so the verifier knows the
@@ -119,8 +119,11 @@ synthesizes and calls `recommend_move`.
 the reader-facing rules (voice, length, audience) for an output rule (the
 reply is parsed by a program; no questions or conversation). The server
 enforces it: a reply not opening with "holds"/"refuted" draws one nudge,
-then is dropped (the narrator gets `no_verdict`), never shown or passed on.
-`delegate` then withholds (as `no_verdict`) a verdict whose reason
+then is dropped (the narrator gets `verdict_withheld`), never shown or
+passed on. `no_verdict` is reserved for a sub-run the round cap cut short
+(the client's gear deep-links to "Max subagent rounds"; more rounds won't
+fix a withheld verdict). `delegate` then withholds (as `verdict_withheld`)
+a verdict whose reason
 misstates the board -- a board-check flag, or any illegality claim (the
 move under test is legal by construction) -- and a "refuted" the engine
 doesn't confirm: the same dominance test `recommend_move` applies (plan-

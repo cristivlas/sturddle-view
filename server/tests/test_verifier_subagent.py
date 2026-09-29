@@ -40,10 +40,12 @@ from sturddle_view.llm.prompts import VERIFIER_ADDENDUM
 from sturddle_view.play.ai_analysis import (
     AIAnalysisCoordinator,
     DELEGATE_TOOL_SPEC,
+    VerifierResult,
     _EMPTY_TURN_PLACEHOLDER,
     _FALSE_FACT_DETAIL,
     _RECOMMEND_FAILURE_NUDGE,
     _UNCONFIRMED_REFUTATION_DETAIL,
+    _UNUSABLE_REPLY_DETAIL,
     _VERDICT_LEAD_RE,
     _VERIFIER_SEARCH_NUDGE,
     _assistant_message,
@@ -343,6 +345,9 @@ async def test_verifier_round_cap_surfaces_on_done_payload():
     assert done.payload.get("verifier_round_cap") is True
     # The narrator itself finished cleanly -- this is advisory, not a failure.
     assert not done.payload.get("round_cap")
+    # Only a capped sub-run reports no_verdict (the client's gear points at
+    # the rounds setting).
+    assert _delegate_output(events)["error"] == "no_verdict"
 
 
 @pytest.mark.asyncio
@@ -1225,7 +1230,9 @@ async def test_verifier_verdict_without_searching_the_move_is_dropped():
     events = await _drain_until_done(queue)
 
     assert _last_user_content(provider.calls[3]) == _VERIFIER_SEARCH_NUDGE
-    assert _delegate_output(events)["error"] == "no_verdict"
+    assert _delegate_output(events) == {
+        "error": "verdict_withheld", "detail": _UNUSABLE_REPLY_DETAIL,
+    }
     assert refutation not in str(provider.calls[-1]["messages"])
     assert len(provider.calls) == 5
 
@@ -1255,7 +1262,7 @@ async def test_verifier_ranking_without_the_move_does_not_count():
 
 def _verdict_runner(verdict: str):
     async def runner(_question, _move):
-        return verdict
+        return VerifierResult(verdict)
     return runner
 
 
@@ -1283,14 +1290,14 @@ async def test_delegate_withholds_verdict_that_calls_the_move_illegal():
     # Live repro: "Refuted -- the move is illegal (target square e6 is
     # occupied)" about a legal move. The narrator must never see it.
     out = await _delegate_e4(_verdict_runner("Refuted: the move is illegal."))
-    assert out == {"error": "no_verdict", "detail": _FALSE_FACT_DETAIL}
+    assert out == {"error": "verdict_withheld", "detail": _FALSE_FACT_DETAIL}
 
 
 @pytest.mark.asyncio
 async def test_delegate_withholds_refutation_the_engine_does_not_confirm():
     check, calls = _refute_check_returning(False)
     out = await _delegate_e4(_verdict_runner("Refuted: e4 drops the pawn."), check)
-    assert out == {"error": "no_verdict", "detail": _UNCONFIRMED_REFUTATION_DETAIL}
+    assert out == {"error": "verdict_withheld", "detail": _UNCONFIRMED_REFUTATION_DETAIL}
     assert calls == [chess.Move.from_uci("e2e4")]
 
 
@@ -1367,7 +1374,7 @@ def test_verdict_lead_rejects_non_verdicts():
 
 @pytest.mark.asyncio
 async def test_verifier_repeated_non_verdict_is_dropped():
-    # A second non-verdict is never passed on: the narrator gets no_verdict,
+    # A second non-verdict is never passed on: the narrator gets verdict_withheld,
     # and the question text reaches neither the narrator nor the UI.
     question = "Should I also look at d5?"
     provider = _verifier_rounds_then_narrator(question, question)
@@ -1378,7 +1385,7 @@ async def test_verifier_repeated_non_verdict_is_dropped():
     await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
     events = await _drain_until_done(queue)
 
-    assert _delegate_output(events)["error"] == "no_verdict"
+    assert _delegate_output(events)["error"] == "verdict_withheld"
     assert question not in str(provider.calls[-1]["messages"])
     assert len(provider.calls) == 5
 

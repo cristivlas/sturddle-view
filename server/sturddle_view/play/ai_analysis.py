@@ -215,7 +215,7 @@ _RED_TEAM_FIRST_NUDGE = (
 
 # Verifier completeness nudge: a verdict before any top_moves ranking that
 # includes the move under test. One-shot per sub-run; a repeat unsearched
-# verdict is dropped (no_verdict).
+# verdict is dropped (verdict_withheld).
 _VERIFIER_SEARCH_NUDGE = (
     "A verdict needs a search of the move under test first: call "
     "`top_moves` with it and the strongest alternatives." + _NO_ACK_CLAUSE
@@ -246,22 +246,34 @@ _VERIFIER_VERDICT_NUDGE = (
 _VERIFIER_QUESTION_LABEL = "Question to verify:"
 
 
+@dataclass(frozen=True, slots=True)
+class VerifierResult:
+    """A verifier sub-run's outcome: the verdict prose ("" when none
+    survived the verdict gates) and whether the round cap cut it short."""
+    verdict: str
+    round_cap: bool = False
+
+
 # Delegate tool invokes this: narrator question and the parsed move under
-# test in, verdict prose out. No cancel token -- the sub-run shares the
-# turn's self._cancel_token.
-VerifierRunner = Callable[[str, chess.Move], Awaitable[str]]
+# test in, the sub-run's outcome out. No cancel token -- the sub-run shares
+# the turn's self._cancel_token.
+VerifierRunner = Callable[[str, chess.Move], Awaitable[VerifierResult]]
 
 
-# A delegate with no usable verdict. The narrator reads the detail, so it
-# names neither the engine nor the tools.
+# A delegate with no usable verdict. no_verdict: the round cap cut the
+# sub-run short (the client's gear deep-links to that setting).
+# verdict_withheld: a reply the gates rejected -- more rounds won't help.
+# The narrator reads the detail, so it names neither the engine nor tools.
 _NO_VERDICT_ERROR = "no_verdict"
+_VERDICT_WITHHELD_ERROR = "verdict_withheld"
 _NO_CONCLUSION_DETAIL = 'no conclusion. Try increasing "Max subagent rounds"'
+_UNUSABLE_REPLY_DETAIL = "discarded: the reply was not a usable verdict"
 _FALSE_FACT_DETAIL = "discarded: the verdict misstated the position"
 _UNCONFIRMED_REFUTATION_DETAIL = "discarded: the refutation does not hold up"
 
 
-def _no_verdict(detail: str) -> dict:
-    return {"error": _NO_VERDICT_ERROR, "detail": detail}
+def _delegate_error(kind: str, detail: str) -> dict:
+    return {"error": kind, "detail": detail}
 
 
 def _verdict_kind(verdict: str) -> str | None:
@@ -330,7 +342,7 @@ def make_delegate_tool(
     sub-run, and echoes the canonical `move_uci` back. Malformed input
     returns a structured error so the narrator can recover. A verdict that
     misstates the board, or a "refuted" the engine (`refute_check`) doesn't
-    confirm, is withheld as no_verdict; None skips the engine check."""
+    confirm, is withheld; None skips the engine check."""
     async def delegate(input_: dict, *, cancel_token: CancelToken) -> dict:
         question = input_.get("question")
         if not isinstance(question, str) or not question.strip():
@@ -347,12 +359,15 @@ def make_delegate_tool(
         move, kind, detail = parse_move_reporting(board, raw_move)
         if move is None:
             return {"error": kind, "detail": detail, "fen": board.fen()}
-        verdict = await runner(
+        result = await runner(
             f"{_MOVE_UNDER_TEST_PREFIX} {board.san(move)}. {question.strip()}",
             move,
         )
+        verdict = result.verdict
         if not verdict:
-            return _no_verdict(_NO_CONCLUSION_DETAIL)
+            if result.round_cap:
+                return _delegate_error(_NO_VERDICT_ERROR, _NO_CONCLUSION_DETAIL)
+            return _delegate_error(_VERDICT_WITHHELD_ERROR, _UNUSABLE_REPLY_DETAIL)
         # Strict non-LLM validation of the verdict prose. The verdict restates
         # the move under test (legal pre-move) and reasons about its replies
         # (legal post-move), so it straddles the move boundary; validate against
@@ -364,7 +379,7 @@ def make_delegate_tool(
         after.push(move)
         if has_position_flags(verdict, board, after):
             log.info("delegate verdict misstates the board; withheld: %r", verdict)
-            return _no_verdict(_FALSE_FACT_DETAIL)
+            return _delegate_error(_VERDICT_WITHHELD_ERROR, _FALSE_FACT_DETAIL)
         # A refutation must survive the engine: the same dominance test the
         # final recommend_move gate applies. Search failures pass it through.
         if (
@@ -373,7 +388,7 @@ def make_delegate_tool(
             and await refute_check(move, cancel_token) is False
         ):
             log.info("delegate refutation of %s not confirmed; withheld", move.uci())
-            return _no_verdict(_UNCONFIRMED_REFUTATION_DETAIL)
+            return _delegate_error(_VERDICT_WITHHELD_ERROR, _UNCONFIRMED_REFUTATION_DETAIL)
         return {MOVE_UCI_KEY: move.uci(), _VERDICT_KEY: verdict}
 
     return delegate
@@ -731,7 +746,7 @@ class _LoopConfig:
     # Anthropic rejects forced tool choice combined with thinking.
     force_first_round_tool: bool = False
     # Verifier: the final reply must open with holds/refuted; a non-verdict
-    # draws one nudge, then is dropped (empty final_text -> no_verdict).
+    # draws one nudge, then is dropped (empty final_text -> verdict_withheld).
     require_verdict: bool = False
     # Verifier: the move under test. A verdict counts only after a top_moves
     # ranking that includes it -- analyze on the live FEN scores the position
@@ -1589,7 +1604,7 @@ class AIAnalysisCoordinator:
             await _flush_think(emit, think_timer, game_id, round_index)
         # On round-cap the narrator falls back to all-rounds text (consumer
         # is recommended_uci). The verifier must NOT -- its prose IS the
-        # verdict; cross-round self-talk would poison it. Empty -> no_verdict.
+        # verdict; cross-round self-talk would poison it. Empty -> no verdict.
         final = final_text or ("".join(text_parts) if config.track_recommend else "")
         return _LoopResult(
             final_text=final,
@@ -1859,7 +1874,7 @@ class AIAnalysisCoordinator:
         method to build the narrator's `delegate` tool."""
         return self._run_verifier
 
-    async def _run_verifier(self, question: str, move: chess.Move) -> str:
+    async def _run_verifier(self, question: str, move: chess.Move) -> VerifierResult:
         """Run one verifier sub-run for the narrator's `delegate` call on
         `move` (parsed against the live board).
 
@@ -1867,15 +1882,15 @@ class AIAnalysisCoordinator:
         nested under the delegate row) and suppresses its prose/thinking;
         the verdict is returned, not streamed. Uses the verifier registry
         (engine tools, no `delegate` -- one level deep, no recursion) and
-        the verifier prompt. Returns the assembled verdict prose (empty
-        string when the model produced none).
+        the verifier prompt. Returns the verdict prose (empty when none
+        survived the gates) and whether the round cap cut the run short.
 
         Runs inline within the narrator's turn, sharing its cancel token
         (self._cancel_token); no lock re-entry. Opens its own transcript
         turn for traceability.
         """
         if self._verifier_registry is None:
-            return ""
+            return VerifierResult("")
         provider = self._active_provider or self._provider
         system_prompt = assemble_system_prompt(
             _VERIFIER_MODE, tools=self._verifier_registry.specs()
@@ -1935,7 +1950,7 @@ class AIAnalysisCoordinator:
                         "verifier sub-run hit round cap (%d) without a verdict; question=%r",
                         self._verifier_max_rounds, question,
                     )
-                return result.final_text
+                return VerifierResult(result.final_text, result.round_cap_hit)
             except Exception as exc:
                 done_payload["error"] = type(exc).__name__
                 done_payload["error_detail"] = str(exc)[:ERROR_DETAIL_MAX_LEN]
