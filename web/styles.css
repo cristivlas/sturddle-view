@@ -2483,6 +2483,17 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
     width: 100%;
     box-sizing: border-box;
   }
+  /* The active tab's bar has margin-inline-end: -track-width to sit on the
+     track, but an explicit width ignores that margin; widen by the track
+     width plus the optional bar overhang. */
+  wa-dialog .settings-tabs:not(.settings-top-tabs) wa-tab {
+    width: calc(
+      100% + var(--side-track-line) + var(--side-bar-overhang)
+    );
+  }
+  wa-dialog .settings-tabs:not(.settings-top-tabs)::part(tabs) {
+    border-inline-end-width: var(--side-track-line);
+  }
 }
 wa-dialog:has(.engine-settings-tabs)::part(footer),
 wa-dialog:has(> .settings-reset-row)::part(footer) {
@@ -2883,6 +2894,11 @@ wa-dialog wa-tab-group {
 }
 wa-dialog .settings-tabs {
   --track-width: 0.1875rem;
+  --side-track-line: 1px;
+  --side-bar-overhang: 1px;
+  --track-color: var(--border-subtle);
+  /* --track-color: var(--wa-form-control-background-color); */
+  /* --track-color: var(--row-bg-hover); */
 }
 wa-dialog::part(dialog) {
   overflow: visible !important;
@@ -3804,7 +3820,11 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-pane { height: 100%; overflow: auto; }
 /* Chromium/WebKit only; Firefox has no thumb-length control. */
 @media (min-width: 801px) {
-  .studio-tabs *::-webkit-scrollbar-thumb:vertical { min-height: var(--scrollbar-thumb-min-h); }
+  .studio-tabs *::-webkit-scrollbar-thumb:vertical,
+  .import-pos-tabs .openings-body-scroll::-webkit-scrollbar-thumb:vertical {
+    min-height: var(--scrollbar-thumb-min-h);
+  }
+  .import-pos-tabs .openings-body-scroll { --scrollbar-thumb-min-h: 100px; }
 }
 /* Standings/Tourneys/History own their scroll internally (split-table
    pattern above), so their pane must not also scroll or the header
