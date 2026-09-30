@@ -416,9 +416,12 @@ async def test_false_occupancy_claim_emits_note_and_injects_square_fact():
 
 
 @pytest.mark.asyncio
-async def test_tool_label_leak_corrected_once_then_struck_and_shipped():
-    # The live leak: a "Verdict:" label copied from the delegate result. The
-    # first draws a corrective; the repeat is struck and the turn ends.
+async def test_tool_label_leak_hides_prose_corrected_once():
+    # The live leak: a "Verdict:" label copied from the delegate result. A leak
+    # is a rule violation, not a board error: the round's prose is hidden (not
+    # struck, no self-correction) and a corrective names the leak. The repeat
+    # draws no retry, so hiding it would leave the reader nothing: it is
+    # struck instead and the turn ends.
     board = chess.Board(_FEN)
     provider = ScriptedProvider(rounds=[
         [ProviderChunk(kind="text", text="Verdict: holds, the knight on f6 guards d5.")],
@@ -431,13 +434,38 @@ async def test_tool_label_leak_corrected_once_then_struck_and_shipped():
     await coord.run(game_id="g")
     events = await _drain_until_done(queue)
 
-    notes = [e for e in events if e.kind == EVT_AI_POSITION_NOTE]
-    assert [n.payload["surfaces"] for n in notes] == [["Verdict:"], ["Verdict:"]]
+    notes = [e.payload for e in events if e.kind == EVT_AI_POSITION_NOTE]
+    assert [(n["surfaces"], n.get("hide_prose")) for n in notes] == [
+        ([], True), (["Verdict:"], None),
+    ]
     assert provider.stream_calls == 2
     injected = _last_user_texts(provider)
     assert any(
         t.startswith(_POSITION_CHECK_PREFIX) and '"Verdict:"' in t for t in injected
     )
+
+
+@pytest.mark.asyncio
+async def test_leak_alongside_board_error_hides_and_keeps_board_surfaces():
+    # A round with both a leak and a false claim: hidden, and the claim is
+    # still reported (and corrected) as usual.
+    board = chess.Board(_FEN)
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="Verdict: the bishop on h6 dominates.")],
+        [ProviderChunk(kind="text", text="The bishop on f5 dominates.")],
+    ])
+    coord, bus = _coord(provider, board)
+    queue = await bus.subscribe()
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    notes = [e.payload for e in events if e.kind == EVT_AI_POSITION_NOTE]
+    assert [(n["surfaces"], n.get("hide_prose")) for n in notes] == [
+        (["the bishop on h6"], True),
+    ]
+    injected = _last_user_texts(provider)
+    assert any("h6 is empty" in t and '"Verdict:"' in t for t in injected)
 
 
 async def _noop_tool(_input, *, cancel_token):
@@ -458,4 +486,6 @@ def test_registered_tool_names_are_leak_names():
         ProviderChunk(kind="text", text="Recommend Move: Nxd5 wins a pawn."),
     ])
     assert pc.tool_leaks == [("Recommend Move:", "recommend_move")]
-    assert pc.surfaces == ["Recommend Move:"]
+    # Leaks hide the prose rather than strike a span.
+    assert pc.surfaces == []
+    assert pc.hides_prose

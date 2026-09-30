@@ -159,6 +159,14 @@ _POSITION_CHECK_TOOL_CLAUSE = (
     "The reader sees chess only -- never name the tools or engine. Remove "
     "{mentions} and rewrite that sentence to describe only the position."
 )
+# Leak clause: a tool name / result key written into prose breaks the ground
+# rules; the round's prose was hidden, so ask for the analysis again.
+_POSITION_CHECK_LEAK_CLAUSE = (
+    "Rule violation: you wrote {leaks} in the prose. Tool names and result "
+    "fields never appear there -- the reader sees chess only -- so that "
+    "analysis was withheld from the reader. Write it again as chess analysis "
+    "only, with no tool names."
+)
 # Joined fact line when an illegal move is flagged (no square to describe).
 _ILLEGAL_MOVE_FACT = "{move} isn't legal for the side to move"
 # Rephrase clause: items the judge placed in another position. Not wrong, but
@@ -838,7 +846,8 @@ class _PositionCheck:
     # file-openness claims, pin/fork claims. Never judged (see judge_items).
     fact_triples: list[tuple[str, str, str]] = field(default_factory=list)
     # Tool names / result keys written into the prose, each (surface, name):
-    # 'recommend_move', 'Verdict:'. Standalone, so struck whole.
+    # 'recommend_move', 'Verdict:'. A rule violation, not a board error: a new
+    # leak hides the round's prose from the reader; a repeat is struck.
     tool_leaks: list[tuple[str, str]] = field(default_factory=list)
 
     @property
@@ -865,8 +874,15 @@ class _PositionCheck:
             + [s for s, _, _ in self.claim_triples]
             + [s for s, _ in self.line_pairs]
             + [s for s, _, _ in self.fact_triples]
-            + [s for s, _ in self.tool_leaks]
         )
+
+    @property
+    def hides_prose(self) -> bool:
+        return bool(self.tool_leaks)
+
+    @property
+    def leak_surfaces(self) -> list[str]:
+        return [s for s, _ in self.tool_leaks]
 
     @property
     def keys(self) -> set[str]:
@@ -1355,12 +1371,17 @@ class AIAnalysisCoordinator:
             needs_correction = pc.hit or bool(rephrase)
             # Tool-mention-only hits carry no surface to strike; skip the UI
             # note (it would mark nothing) but still inject the corrective
-            # below so the model rewrites the sentence.
-            surfaces = _sort_surfaces(pc.surfaces + repeat_pc.surfaces)
-            if surfaces:
+            # below so the model rewrites the sentence. A new leak hides the
+            # round's prose (the corrective asks for it again); a repeat draws
+            # no retry, so hiding would leave the reader nothing -- strike it.
+            surfaces = _sort_surfaces(
+                pc.surfaces + repeat_pc.surfaces + repeat_pc.leak_surfaces
+            )
+            hide_prose = pc.hides_prose
+            if surfaces or hide_prose:
                 await self._emit_position_note(
                     emit=emit, game_id=game_id, round_index=round_index,
-                    surfaces=surfaces,
+                    surfaces=surfaces, hide_prose=hide_prose,
                 )
             if pc.hit:
                 corrected_items |= pc.keys
@@ -1809,17 +1830,19 @@ class AIAnalysisCoordinator:
         game_id: str | None,
         round_index: int,
         surfaces: list[str],
+        hide_prose: bool = False,
     ) -> None:
         """Surface a position-check hit to the UI. `surfaces` are the exact
-        prose spans the client strikes in the round's folded prose."""
-        log.info("position check round %d: surfaces=%s", round_index, surfaces)
-        await emit(
-            Event(
-                kind=EVT_AI_POSITION_NOTE,
-                game_id=game_id,
-                payload={"round": round_index, "surfaces": surfaces},
-            )
+        prose spans the client strikes in the round's folded prose;
+        `hide_prose` (a tool leak) hides that prose from the reader instead."""
+        log.info(
+            "position check round %d: surfaces=%s hide_prose=%s",
+            round_index, surfaces, hide_prose,
         )
+        payload: dict = {"round": round_index, "surfaces": surfaces}
+        if hide_prose:
+            payload["hide_prose"] = True
+        await emit(Event(kind=EVT_AI_POSITION_NOTE, game_id=game_id, payload=payload))
 
     @staticmethod
     def _position_check_message(pc: _PositionCheck, rephrase: Sequence[str] = ()) -> str:
@@ -1846,9 +1869,10 @@ class AIAnalysisCoordinator:
         )
         if claim_facts:
             clauses.append(_POSITION_CHECK_CLAIM_CLAUSE.format(facts="; ".join(claim_facts)))
-        mentions = pc.tool_mentions + [surface for surface, _name in pc.tool_leaks]
-        if mentions:
-            clauses.append(_POSITION_CHECK_TOOL_CLAUSE.format(mentions=_quote_join(mentions)))
+        if pc.tool_mentions:
+            clauses.append(_POSITION_CHECK_TOOL_CLAUSE.format(mentions=_quote_join(pc.tool_mentions)))
+        if pc.tool_leaks:
+            clauses.append(_POSITION_CHECK_LEAK_CLAUSE.format(leaks=_quote_join(pc.leak_surfaces)))
         if rephrase:
             clauses.append(_POSITION_CHECK_REPHRASE_CLAUSE.format(items=_quote_join(rephrase)))
         return _POSITION_CHECK_PREFIX + " ".join([_POSITION_CHECK_LEAD, *clauses])

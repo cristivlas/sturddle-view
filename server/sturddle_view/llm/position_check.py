@@ -1397,8 +1397,8 @@ def find_tool_mentions(text: str) -> list[str]:
 
 # Tool machinery written into prose: a snake_case tool name as-is, or any
 # name (or tool result key) as a "Title Case:" label ("Recommend Move:",
-# "Verdict:"). Unlike the woven phrases above, both stand apart from the
-# sentence, so they are struck whole.
+# "Verdict:"). Unlike the woven phrases above, both betray process talk, so
+# the coordinator hides the whole round's prose from the reader.
 _SNAKE_SEP = "_"
 _WORD_GAP = r"\s+"
 _LABEL_TAIL = r"\s*:"

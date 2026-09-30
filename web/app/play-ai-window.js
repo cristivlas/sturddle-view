@@ -964,10 +964,16 @@ function strikeProseItems(para, items) {
   return struck;
 }
 
-export function noteAiPosition({ round, surfaces }) {
+export function noteAiPosition({ round, surfaces, hideProse = false }) {
   if (!inst.body) return;
   const entry = inst.body._roundPanels.get(round);
   if (!entry || !entry.revision) return;
+  // Tool-name leak: process talk, not a chess slip -- withhold the prose
+  // outright, no self-correction. The next round restates it cleanly.
+  if (hideProse) {
+    entry.para.hidden = true;
+    return;
+  }
   if (!surfaces || !surfaces.length) return;
   // Strike the flagged spans (exact prose), then tuck the flawed prose into
   // the revision body so the clean (next-round) prose reads on its own.
@@ -1093,7 +1099,7 @@ export function markAiDone({
       // Skip when the last round's prose was folded into its revision -- the
       // border would land on text tucked inside the collapsed disclosure.
       const folded = last && last.para.parentNode === last.revision?.body;
-      if (last && !folded) last.para.classList.add("play-ai-prose-final");
+      if (last && !folded && !last.para.hidden) last.para.classList.add("play-ai-prose-final");
     }
     // Token breakdown first (before the marker blocks' early returns) so
     // it renders on every terminal path that keeps the panel alive.

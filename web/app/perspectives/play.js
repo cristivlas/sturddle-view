@@ -471,7 +471,9 @@ function dispatchAiEvent(aiCtx, evt) {
     }
     case KIND.AI_POSITION_NOTE: {
       const p = evt.payload || {};
-      noteAiPosition({ round: p.round ?? 0, surfaces: p.surfaces || [] });
+      noteAiPosition({
+        round: p.round ?? 0, surfaces: p.surfaces || [], hideProse: !!p.hide_prose,
+      });
       return true;
     }
     case KIND.AI_USAGE: {
