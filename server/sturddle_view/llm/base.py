@@ -173,11 +173,11 @@ class LLMProvider(ABC):
           (verifier first rounds -- a tool-free verdict becomes structurally
           impossible instead of nudge-discouraged; the narrator round after
           a completeness nudge, so it must attempt a move). Providers translate to
-          their wire shape (Anthropic `tool_choice: any`, OpenAI-compat
-          `tool_choice: required`); providers/models without support ignore
-          it, and the coordinator's nudge remains the fallback. No-op when
-          `tools` is empty. Only pass alongside `thinking=False` -- Anthropic
-          rejects forced tool choice combined with thinking.
+          their wire shape (OpenAI-compat `tool_choice: required`);
+          providers/models without support ignore it (Anthropic always
+          does), and the coordinator's nudge remains the fallback. No-op
+          when `tools` is empty. Ollama and Gemini drop thinking for that
+          round (Ollama can force only on its thinking-off path).
 
         Subclasses MUST be cancel-safe -- a cancelled task on the
         consumer side must not leak provider state or HTTP connections.

@@ -299,17 +299,10 @@ class AnthropicProvider(LLMProvider):
         if system:
             body["system"] = system
         if tools:
+            # `force_tool_call` is ignored: newer models 400 on forced
+            # tool_choice and the Models API exposes no flag to detect it.
+            # The coordinator's nudge covers a tool-free reply.
             body["tools"] = tools
-            if force_tool_call:
-                # Verifier first rounds and the nudged narrator round: a
-                # tool call is structurally required.
-                # Sequential: one call per round (coordinator loop is v1
-                # sequential). Caller guarantees thinking is off -- the
-                # API rejects forced tool choice with thinking enabled.
-                body["tool_choice"] = {
-                    "type": "any",
-                    "disable_parallel_tool_use": True,
-                }
         # `thinking=False` forces it off for this call (verifier sub-runs).
         if thinking is not False and self._thinking_enabled:
             param = self._thinking_param(await self._resolve_thinking_mode())

@@ -71,10 +71,11 @@ Round body, in order:
      completeness nudge fires: with no accepted `recommend_move` yet, the
      narrator is re-nudged on every clean exit until one lands, stopping
      when a nudge drew no new attempt (stall). The nudged round forces a
-     tool call (`tool_choice`, thinking off -- Anthropic rejects the
-     combination), so the model can't exit in prose again without
-     attempting a move. A silent round ends the turn, except once: silent
-     right after a fresh rejected attempt draws one more forced nudge.
+     tool call where the provider honors `tool_choice` (Ollama and Gemini
+     drop thinking for it), so the model can't exit in prose again
+     without attempting a move. A silent round ends the turn, except
+     once: silent right after a fresh rejected attempt draws one more
+     forced nudge.
    - Tool_use pending -> append the assistant message; continue.
 4. If a tool_use is pending: dispatch via the registry, append the
    `tool_result` user message (matching `tool_use_id`). Failures
@@ -111,8 +112,9 @@ sub-run (`AIAnalysisCoordinator._run_verifier`, verifier prompt +
 registry, no `delegate` -- one level deep). The verifier is an
 adversary: it assumes the move is flawed and hunts the refutation with
 the engine, must call a tool on its first round (structurally forced via
-`tool_choice` where the provider honors it -- Anthropic `any`,
-OpenAI-compat `required`), must rank the move under test in a
+OpenAI-compat `tool_choice: required`; Anthropic is never forced -- newer
+models reject it and no capability flag detects it -- so the nudge
+covers it), must rank the move under test in a
 `top_moves` call before concluding (`analyze` on the live FEN scores the
 position before the move, so it can't judge the move; an unsearched
 verdict draws one nudge, then is dropped as `verdict_withheld`), and returns a
@@ -493,8 +495,7 @@ carrying the tag flags the model too. Failed probes are not cached.
 - Cancel aborts both engine and LLM as a single user-facing task
 - Cancel is hard-stop: kill current tool + LLM stream, drop agent loop;
   no cooperative wrap-up turn (UI shows partial prose as-is)
-- Tool use is sequential only in v1 (no parallel tool calls); Anthropic
-  provider sets `disable_parallel_tool_use: true`
+- Tool use is sequential only in v1 (no parallel tool calls)
 - Forward-looking: parallel tool use is desirable later (latency + token
   savings). Design the tool dispatcher and cancellation to tolerate
   concurrent tool execution from day one even though v1 runs one at a

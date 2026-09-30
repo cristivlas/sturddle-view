@@ -768,8 +768,7 @@ class _LoopConfig:
     # Require a tool call on round 0 (verifier: a tool-free verdict is
     # structurally impossible where the provider honors tool_choice, so
     # the no-tool nudge round never runs). Nudge stays as the fallback
-    # for providers/models that ignore it. Requires thinking off --
-    # Anthropic rejects forced tool choice combined with thinking.
+    # for providers/models that ignore it.
     force_first_round_tool: bool = False
     # Verifier: the final reply must open with holds/refuted; a non-verdict
     # draws one nudge, then is dropped (empty final_text -> verdict_withheld).
@@ -1362,8 +1361,7 @@ class AIAnalysisCoordinator:
                 tools=config.tool_schemas,
                 transcript=config.transcript,
                 round_index=round_index,
-                # Anthropic rejects forced tool choice with thinking on.
-                thinking=False if force_tool else config.thinking_override,
+                thinking=config.thinking_override,
                 force_tool_call=force_tool,
             )
             # Strip paired markdown (**, __, `) so the panel renders clean

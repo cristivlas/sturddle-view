@@ -1538,11 +1538,11 @@ async def test_silent_round_after_prose_ends_turn_without_renudging():
 
 
 @pytest.mark.asyncio
-async def test_round_after_completeness_nudge_forces_tool_call_thinking_off():
+async def test_round_after_completeness_nudge_forces_tool_call():
     # A prose-only exit without recommend_move draws the completeness nudge;
     # the next round must call a tool (so it can't answer in prose again),
-    # with thinking off (Anthropic rejects forced tool choice with thinking).
-    # The round after that is back to auto.
+    # keeping the narrator's thinking setting (providers own any thinking
+    # constraint). The round after that is back to auto.
     reg = ToolRegistry()
     reg.register(
         ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
@@ -1569,7 +1569,7 @@ async def test_round_after_completeness_nudge_forces_tool_call_thinking_off():
     flags = [(c["thinking"], c["force_tool_call"]) for c in provider.calls]
     assert flags[:3] == [
         (None, False),   # r0: auto
-        (False, True),   # r1: forced after the nudge, thinking off
+        (None, True),    # r1: forced after the nudge, thinking unchanged
         (None, False),   # r2: back to auto
     ]
 

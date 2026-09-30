@@ -306,6 +306,16 @@ async def test_thinking_false_override_forces_off(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_forced_tool_call_drops_reasoning(monkeypatch):
+    cls = _install_stream(monkeypatch)
+    p = GeminiProvider(api_key="k", model="m", thinking_enabled=True)
+    tools = [{"name": "t", "description": "d", "input_schema": {"type": "object"}}]
+    await _drain(p, tools=tools, force_tool_call=True)
+    assert cls.last_body["tool_choice"] == "required"
+    assert "reasoning_effort" not in cls.last_body
+
+
+@pytest.mark.asyncio
 async def test_custom_base_url_trailing_slash_trimmed(monkeypatch):
     cls = _install_stream(monkeypatch)
     p = GeminiProvider(api_key="k", model="m", base_url="http://proxy/v1beta/openai/")
