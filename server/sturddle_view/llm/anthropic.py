@@ -301,8 +301,8 @@ class AnthropicProvider(LLMProvider):
         if tools:
             body["tools"] = tools
             if force_tool_call:
-                # Verifier first rounds: a tool call is structurally
-                # required, so the no-tool-verdict nudge round never runs.
+                # Verifier first rounds and the nudged narrator round: a
+                # tool call is structurally required.
                 # Sequential: one call per round (coordinator loop is v1
                 # sequential). Caller guarantees thinking is off -- the
                 # API rejects forced tool choice with thinking enabled.

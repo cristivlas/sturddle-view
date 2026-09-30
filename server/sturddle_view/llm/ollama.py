@@ -393,9 +393,9 @@ class OllamaProvider(LLMProvider):
         # unless the model leaks it (then its reasoning channel is dropped).
         # `thinking=False` forces the off path (verifier sub-runs).
         # `force_tool_call` only reaches the compat path -- /api/chat has no
-        # tool_choice, and the verifier (the only forcing caller) always
-        # runs thinking-off, i.e. compat. Best-effort either way: local
-        # models may ignore it, and the coordinator's nudge backstops.
+        # tool_choice, and every forcing caller (verifier first rounds, the
+        # nudged narrator round) runs thinking-off, i.e. compat. Best-effort
+        # either way: local models may ignore it.
         if thinking is not False and self._thinking_enabled:
             inner = self._stream_native(
                 system, messages, tools,
@@ -451,7 +451,7 @@ class OllamaProvider(LLMProvider):
             body[_TOOLS_KEY] = tools_anthropic_to_openai(tools)
             if force_tool_call:
                 # OpenAI-compat spelling of "must call a tool this round"
-                # (verifier first rounds). See LLMProvider.stream().
+                # (verifier first rounds, nudged narrator round). See LLMProvider.stream().
                 body["tool_choice"] = "required"
 
         return stream_openai_compat(

@@ -164,7 +164,7 @@ class GeminiProvider(LLMProvider):
             body["tools"] = tools_anthropic_to_openai(tools)
             if force_tool_call:
                 # OpenAI-compat spelling of "must call a tool this round"
-                # (verifier first rounds). See LLMProvider.stream().
+                # (verifier first rounds, nudged narrator round). See LLMProvider.stream().
                 body["tool_choice"] = "required"
         # `thinking=False` forces it off for this call (verifier sub-runs);
         # otherwise honor the provider default.

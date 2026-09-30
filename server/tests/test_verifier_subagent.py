@@ -235,7 +235,7 @@ async def test_verifier_first_round_forces_tool_call_narrator_never():
     # The verifier's round 0 must carry force_tool_call so a tool-free
     # verdict is structurally impossible where tool_choice is honored.
     # Later verifier rounds go back to auto (the model must be able to
-    # conclude), and narrator rounds never force.
+    # conclude), and un-nudged narrator rounds never force.
     provider = _RecordingScriptedProvider(rounds=[
         [_delegate_chunk("d1", "Is e4 sound?")],            # narrator round 0
         [_search_chunk("v1")],                              # verifier round 0: search
@@ -1479,6 +1479,85 @@ async def test_silent_round_after_prose_ends_turn_without_renudging():
     done = events[-1]
     assert done.payload.get("no_recommendation") is True
     assert done.payload.get("rounds") == 2
+
+
+@pytest.mark.asyncio
+async def test_round_after_completeness_nudge_forces_tool_call_thinking_off():
+    # A prose-only exit without recommend_move draws the completeness nudge;
+    # the next round must call a tool (so it can't answer in prose again),
+    # with thinking off (Anthropic rejects forced tool choice with thinking).
+    # The round after that is back to auto.
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        _noop_tool,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="The center is contested.")],  # r0: prose -> nudge
+        [ProviderChunk(                                                 # r1: forced
+            kind="tool_use", tool_use_id="r1",
+            tool_name="recommend_move", tool_input={"move": "e4"},
+        )],
+        [ProviderChunk(kind="text", text="e4 claims the center.")],     # r2: auto
+        [],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=(lambda: None),
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    await _drain_until_done(queue)
+
+    flags = [(c["thinking"], c["force_tool_call"]) for c in provider.calls]
+    assert flags[:3] == [
+        (None, False),   # r0: auto
+        (False, True),   # r1: forced after the nudge, thinking off
+        (None, False),   # r2: back to auto
+    ]
+
+
+@pytest.mark.asyncio
+async def test_silent_round_after_rejected_attempt_draws_one_forced_renudge():
+    # The live miss (qwen3.5:9b): nudged, the model attempted recommend_move
+    # (rejected), then went silent -- which ended the turn with no move. A
+    # silent round after a fresh attempt gets one more forced nudge; a second
+    # silent round still ends the turn (no loop).
+    async def recommend(_input, *, cancel_token):
+        return {"error": "recommendation_rejected", "reason": "Engine prefers Nf3."}
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        recommend,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="The center is contested.")],  # r0: prose -> nudge
+        [ProviderChunk(                                                 # r1: forced attempt
+            kind="tool_use", tool_use_id="a1",
+            tool_name="recommend_move", tool_input={"move": "e4"},
+        )],
+        [],                                                             # r2: silent -> re-nudge
+        [ProviderChunk(                                                 # r3: forced attempt
+            kind="tool_use", tool_use_id="a2",
+            tool_name="recommend_move", tool_input={"move": "d4"},
+        )],
+        [],                                                             # r4: silent -> end
+        [ProviderChunk(kind="text", text="Should never run.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=(lambda: None),
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert len(provider.calls) == 5
+    assert provider.calls[3]["force_tool_call"] is True
+    assert events[-1].payload.get("no_recommendation") is True
 
 
 @pytest.mark.asyncio

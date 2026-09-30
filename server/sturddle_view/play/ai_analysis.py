@@ -1293,6 +1293,10 @@ class AIAnalysisCoordinator:
         # about a past position can't be phrased past the regex, so a re-tag
         # must not re-ask forever.
         rephrase_asked: set[str] = set()
+        # Set by the narrator's completeness nudge: the next round is forced.
+        force_tool_next = False
+        # One-shot: a silent round after a fresh attempt still gets nudged.
+        silent_renudge_used = False
         rounds = 0
         for round_index in range(config.max_rounds):
             rounds = round_index + 1
@@ -1302,16 +1306,19 @@ class AIAnalysisCoordinator:
             # event so the client shows it correctly on replay (a client-side
             # Date.now() delta collapses to ~0 when replay fires at once).
             think_timer = _ThinkTimer()
+            force_tool = force_tool_next or (
+                config.force_first_round_tool and round_index == 0
+            )
+            force_tool_next = False
             provider_stream = config.provider.stream(
                 system=config.system_prompt,
                 messages=messages,
                 tools=config.tool_schemas,
                 transcript=config.transcript,
                 round_index=round_index,
-                thinking=config.thinking_override,
-                force_tool_call=(
-                    config.force_first_round_tool and round_index == 0
-                ),
+                # Anthropic rejects forced tool choice with thinking on.
+                thinking=False if force_tool else config.thinking_override,
+                force_tool_call=force_tool,
             )
             # Strip paired markdown (**, __, `) so the panel renders clean
             # prose rather than raw emphasis markers.
@@ -1396,16 +1403,30 @@ class AIAnalysisCoordinator:
                 # Natural exit. Completeness nudge: narrator re-nudges each
                 # clean exit until a move is accepted (stopping on a stall);
                 # verifier nudges once to search the move before concluding.
+                # Gated on real output: a silent round ends the turn (a model
+                # that produced nothing won't comply with one more prompt)
+                # rather than burning rounds re-nudging it. Exception, once:
+                # the narrator went silent right after a fresh (rejected)
+                # attempt -- it is still engaged, so force one more try.
+                produced = _round_produced_output(round_chunks)
+                silent_retry = (
+                    not produced
+                    and config.track_recommend
+                    and not silent_renudge_used
+                    and nudge_sent
+                    and recommend_attempts > attempts_at_last_nudge
+                )
                 if self._needs_nudge(
                     config, nudge_sent, recommended_uci, move_searched,
                     recommend_attempts, attempts_at_last_nudge,
-                ) and _round_produced_output(round_chunks):
-                    # Gated on real output: a silent round ends the turn
-                    # (a model that produced nothing won't comply with one
-                    # more prompt) rather than burning rounds re-nudging it.
+                ) and (produced or silent_retry):
+                    silent_renudge_used = silent_renudge_used or silent_retry
                     log.info("completeness nudge (%s): injecting nudge", mode)
                     nudge_sent = True
                     attempts_at_last_nudge = recommend_attempts
+                    # Narrator: the nudged round must call a tool, so it can't
+                    # exit in prose again without attempting a move.
+                    force_tool_next = config.track_recommend
                     _inject_nudge(messages, round_chunks, config.completeness_nudge)
                     continue
                 # Prose in a post-acceptance round is the conclusion we

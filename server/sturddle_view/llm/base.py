@@ -171,7 +171,8 @@ class LLMProvider(ABC):
           (enabling requires per-instance budget config).
         - `force_tool_call`: require the model to call a tool this round
           (verifier first rounds -- a tool-free verdict becomes structurally
-          impossible instead of nudge-discouraged). Providers translate to
+          impossible instead of nudge-discouraged; the narrator round after
+          a completeness nudge, so it must attempt a move). Providers translate to
           their wire shape (Anthropic `tool_choice: any`, OpenAI-compat
           `tool_choice: required`); providers/models without support ignore
           it, and the coordinator's nudge remains the fallback. No-op when
