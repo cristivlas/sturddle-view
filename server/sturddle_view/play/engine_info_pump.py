@@ -24,6 +24,16 @@ from ..events import EVT_ENGINE_INFO, Event, EventBus
 from ..llm.cancel import CancelToken
 
 
+def is_interesting_info(info: chess.engine.InfoDict) -> bool:
+    """True for the chunks worth showing: those carrying pv / depth / score."""
+    return "pv" in info or "depth" in info or "score" in info
+
+
+async def publish_engine_info(payload: dict, *, bus: EventBus, game_id: str) -> None:
+    """Publish one serialized info chunk; drives the PV window and the arrow."""
+    await bus.publish(Event(kind=EVT_ENGINE_INFO, game_id=game_id, payload=payload))
+
+
 async def pump_engine_info(
     analysis: chess.engine.SimpleAnalysisResult,
     *,
@@ -92,7 +102,7 @@ async def pump_engine_info(
                 last = info
                 if first_info_event is not None and not first_info_event.is_set():
                     first_info_event.set()
-            if "pv" in info or "depth" in info or "score" in info:
+            if is_interesting_info(info):
                 payload = serialize_info(info, board=board, pov=pov)
                 if on_payload is not None:
                     on_payload(payload)
@@ -107,9 +117,7 @@ async def pump_engine_info(
                         entry[SCORE_DEPTH] = info["depth"]
                     capture_score.clear()
                     capture_score.update(entry)
-                await bus.publish(
-                    Event(kind=EVT_ENGINE_INFO, game_id=game_id, payload=payload)
-                )
+                await publish_engine_info(payload, bus=bus, game_id=game_id)
         if cancelled:
             try:
                 analysis.stop()

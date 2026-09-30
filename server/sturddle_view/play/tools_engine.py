@@ -20,6 +20,7 @@ from typing import Any, Awaitable, Callable
 import chess
 import chess.engine
 
+from ..chess.engine_info import serialize_info
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
 from ..chess.score import SCORE_MATE
 from ..config import (
@@ -39,7 +40,7 @@ from .engine_analysis import (
     resolve_eval_pov_white_or_stm,
     spawn_analysis_engine,
 )
-from .engine_info_pump import pump_engine_info
+from .engine_info_pump import is_interesting_info, publish_engine_info, pump_engine_info
 from .engine_supervisor import EngineSupervisor
 from .playbook import AHEAD_MARGINS, BEHIND_MARGINS, Situation
 from .tactics import all_forks, all_pins, piece_label
@@ -122,13 +123,22 @@ AnalyzeTool = Callable[..., Awaitable[dict[str, Any]]]
 RefuteCheck = Callable[[chess.Move, CancelToken], Awaitable[bool | None]]
 
 
+def _settings(settings_provider: SettingsProvider | None):
+    return settings_provider() if settings_provider else None
+
+
+def _search_pov(settings_provider: SettingsProvider | None, board: chess.Board) -> chess.Color:
+    """Eval POV a tool search's engine_info is serialized in (live or reused)."""
+    return resolve_eval_pov_white_or_stm(_settings(settings_provider), board.turn)
+
+
 def _settings_int(
     settings_provider: SettingsProvider | None, attr: str, fallback: int,
 ) -> int:
     """Read an int setting via the provider, falling back to the module
     const when no provider/setting is wired. One source for the
     settings-or-default depth-cap lookup the tools share."""
-    settings = settings_provider() if settings_provider else None
+    settings = _settings(settings_provider)
     value = getattr(settings, attr, None) if settings is not None else None
     return int(value) if isinstance(value, int) else fallback
 
@@ -536,7 +546,14 @@ class SearchCache:
         cached = self._entries.get(key)
         if cached is not None and cached[0] >= requested:
             log.info("search cache hit: depth %d >= %d, key=%s", cached[0], requested, key)
-            return cached[1], False
+            info = cached[1]
+            # Show the reused result like a live search's final chunk, so the
+            # arrow and Search Lines follow the move now under consideration.
+            if is_interesting_info(info):
+                pov = _search_pov(settings_provider, board)
+                payload = serialize_info(info, board=board, pov=pov)
+                await publish_engine_info(payload, bus=bus, game_id=game_id)
+            return info, False
         last_info, cancelled = await _run_one_search(
             engine_launcher, board, limit,
             bus=bus, game_id=game_id, cancel_token=cancel_token,
@@ -570,7 +587,7 @@ async def _run_one_search(
 
     Emits engine_info but NOT engine_search_start -- the caller clears the
     panel (analyze once; top_moves once for the whole batch)."""
-    settings = settings_provider() if settings_provider else None
+    settings = _settings(settings_provider)
     try:
         # Build inside the try: the launcher (make_analysis_supervisor) can
         # raise NoAnalysisEngine before spawn -- it must come out as a clean
@@ -590,7 +607,7 @@ async def _run_one_search(
                 bus=bus,
                 game_id=game_id,
                 board=board,
-                pov=resolve_eval_pov_white_or_stm(settings, board.turn),
+                pov=_search_pov(settings_provider, board),
                 cancel_token=cancel_token,
             )
         return last_info, cancelled
