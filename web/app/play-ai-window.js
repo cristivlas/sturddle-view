@@ -677,9 +677,7 @@ export function appendAiToolCall({
     const raw = args ? `${name}(${args})` : `${name}()`;
     const toggle = document.createElement("span");
     toggle.className = "play-ai-tool-toggle";
-    // One glyph, rotated via CSS when open -- guarantees the open/closed
-    // caret are identical size (the unicode triangles aren't).
-    toggle.textContent = "\u25b6";
+    // CSS-drawn triangle, rotated when open (see .play-ai-tool-toggle).
     head.append(toggle);
     const details = document.createElement("div");
     details.className = TOOL_DETAILS_BODY_CLASS;

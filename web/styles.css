@@ -770,14 +770,17 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
   cursor: pointer;
   user-select: none;
   flex: 0 0 auto;
-  /* One caret glyph rotated open/closed (identical size both ways).
-     inline-block so the transform applies; nudged to the label baseline. */
+  /* A clip-path triangle in a fixed box, rotated about the box center
+     (a text glyph's ink is off-center in its advance box, so it drifts). */
   display: inline-block;
-  transform: translateY(2px);
+  width: 0.8em;
+  height: 1em;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
   transition: transform 0.12s ease;
 }
 .play-ai-tool-toggle.is-open {
-  transform: translateY(2px) rotate(90deg);
+  transform: rotate(90deg);
 }
 .play-ai-tool-details-body {
   flex: 1 1 100%;
