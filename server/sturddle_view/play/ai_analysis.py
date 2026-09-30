@@ -16,7 +16,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field, fields
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Sequence
 
 import chess
 
@@ -78,7 +78,7 @@ from ..llm.position_check import (
     iter_tool_label_leaks,
     truncate_at_future_line,
 )
-from ..llm.position_judge import POSITION_JUDGE_CALL_NAME, clear_false_positives
+from ..llm.position_judge import POSITION_JUDGE_CALL_NAME, judge_other_position
 from .tools_engine import (
     ANALYZE_TOOL_NAME,
     CANDIDATES_KEY,
@@ -161,6 +161,16 @@ _POSITION_CHECK_TOOL_CLAUSE = (
 )
 # Joined fact line when an illegal move is flagged (no square to describe).
 _ILLEGAL_MOVE_FACT = "{move} isn't legal for the side to move"
+# Rephrase clause: items the judge placed in another position. Not wrong, but
+# they read as claims about the current board. Forward guidance only (the
+# prose stays unstruck, so a restatement would repeat it): the anchor the
+# checker honors (a numbered line) or an explicit earlier-move reference.
+_POSITION_CHECK_REPHRASE_CLAUSE = (
+    "{items} read as the current position, though you meant a different one. "
+    "Don't restate it; from here on, name any other position you discuss: "
+    "give the moves that reach it with move numbers (like 24...Bd7), or the "
+    "earlier move it came before."
+)
 
 # Sent once at end-of-turn if the model never called recommend_move; a
 # completeness nudge. Trailing _NO_ACK_CLAUSE suppresses the
@@ -825,7 +835,7 @@ class _PositionCheck:
     tool_mentions: list[str] = field(default_factory=list)
     # Plain board-truth claims with a precomputed corrective, each
     # (surface, label, fact): bishop-color references, piece-on-file and
-    # file-openness claims, pin/fork claims. Never judged (see board_labels).
+    # file-openness claims, pin/fork claims. Never judged (see judge_items).
     fact_triples: list[tuple[str, str, str]] = field(default_factory=list)
     # Tool names / result keys written into the prose, each (surface, name):
     # 'recommend_move', 'Verdict:'. Standalone, so struck whole.
@@ -888,16 +898,19 @@ class _PositionCheck:
         )
 
     @property
-    def board_labels(self) -> list[str]:
-        """Every board-context flag's normalized label the judge may rule on
-        (moves, lines, claims). Never included: tool mentions (board-
-        independent style violations) and fact labels (precomputed board
-        facts; the judge kept clearing the bishop class wrongly, so the
-        regex verdict is final for the whole class)."""
+    def judge_items(self) -> list[tuple[str, str]]:
+        """(label, board fact) for every board-context flag the judge may rule
+        on (moves, lines, claims); the fact is what makes it false now. Never
+        included: tool mentions (board-independent style violations) and fact
+        labels (precomputed board facts; the judge kept clearing the bishop
+        class wrongly, so the regex verdict is final for the whole class)."""
+        if self.board is None:
+            return []
         return (
-            self.move_labels
-            + self.line_labels
-            + [label for _surface, label, _square in self.claim_triples]
+            [(label, _ILLEGAL_MOVE_FACT.format(move=label))
+             for label in self.move_labels + self.line_labels]
+            + [(label, describe_square(square, self.board))
+               for _surface, label, square in self.claim_triples]
         )
 
     def without_labels(self, cleared: set[str]) -> _PositionCheck:
@@ -915,6 +928,11 @@ class _PositionCheck:
             [(s, l, f) for s, l, f in self.fact_triples if l not in cleared],
             self.tool_leaks,
         )
+
+
+def _quote_join(items: Sequence[str]) -> str:
+    """'"a", "b"' -- prose spans named back to the model."""
+    return ", ".join(f'"{item}"' for item in items)
 
 
 def _judge_summary(labels: list[str], cleared: set[str]) -> str:
@@ -1255,6 +1273,10 @@ class AIAnalysisCoordinator:
         # is struck without another corrective: the model's acknowledgment
         # repeats the wrong phrase, so re-prompting loops until the round cap.
         corrected_items: set[str] = set()
+        # Labels already asked to name their other position. One-shot: prose
+        # about a past position can't be phrased past the regex, so a re-tag
+        # must not re-ask forever.
+        rephrase_asked: set[str] = set()
         rounds = 0
         for round_index in range(config.max_rounds):
             rounds = round_index + 1
@@ -1318,10 +1340,19 @@ class AIAnalysisCoordinator:
             # self-correction note and (below) injects a fact-anchored
             # corrective; a repeat is only struck.
             pc, repeat_pc = self._position_check(round_chunks).partition(corrected_items)
-            # Clear regex false positives (moves/claims the prose meant about
-            # another position) before acting on the hit; only drops flags.
+            # Split off flags the prose placed in another position: not struck,
+            # but the narrator is asked (once per item) to name such positions.
             # Repeats were already ruled on, so they skip the judge.
-            pc = await self._apply_semantic_check(pc, round_chunks, config, round_index)
+            pc, other = await self._apply_semantic_check(pc, round_chunks, config, round_index)
+            # The ask rides along only when a round follows anyway (a corrective
+            # or a pending tool call): a round forced for it would repeat the
+            # unstruck prose.
+            rephrase = (
+                sorted(other - rephrase_asked)
+                if pc.hit or pending_tool is not None else []
+            )
+            rephrase_asked.update(rephrase)
+            needs_correction = pc.hit or bool(rephrase)
             # Tool-mention-only hits carry no surface to strike; skip the UI
             # note (it would mark nothing) but still inject the corrective
             # below so the model rewrites the sentence.
@@ -1333,7 +1364,8 @@ class AIAnalysisCoordinator:
                 )
             if pc.hit:
                 corrected_items |= pc.keys
-                pc_message = self._position_check_message(pc)
+            if needs_correction:
+                pc_message = self._position_check_message(pc, rephrase)
             if pending_tool is None and pc.hit:
                 # A mismatch blocks natural exit: append the round's prose and
                 # inject the corrective so the model self-corrects next round.
@@ -1590,7 +1622,7 @@ class AIAnalysisCoordinator:
             )
             # Correct a mismatch in this round's prose. After the tool_result
             # so the assistant tool_use is paired before this user message.
-            if pc.hit:
+            if needs_correction:
                 messages.append({"role": "user", "content": pc_message})
             # Force a top_moves call after enough failed recommend attempts.
             # After the tool_result (every tool_use needs a matching result
@@ -1731,15 +1763,17 @@ class AIAnalysisCoordinator:
         chunks: list[ProviderChunk],
         config: _LoopConfig,
         round_index: int,
-    ) -> _PositionCheck:
-        """Drop regex flags the model judges to be other-context references.
-        No-op when the flag is off or nothing is judgeable. The round trip
-        shows in the panel's tool list as a call/result pair."""
+    ) -> tuple[_PositionCheck, set[str]]:
+        """Split off the flags the model judges the prose to place in another
+        position: returns (pc without them, their labels). No-op when the flag
+        is off or nothing is judgeable. The round trip shows in the panel's
+        tool list as a call/result pair."""
         if not SEMANTIC_CHECK_ENABLED or pc.board is None:
-            return pc
-        labels = pc.board_labels
-        if not labels:
-            return pc
+            return pc, set()
+        items = pc.judge_items
+        if not items:
+            return pc, set()
+        labels = [label for label, _fact in items]
         prose = "".join(c.text for c in chunks if c.kind == "text" and c.text)
         # Delegate prefix keeps a verifier sub-run's id distinct from the
         # narrator's for the same round index.
@@ -1755,7 +1789,7 @@ class AIAnalysisCoordinator:
                 "tool_use_id": call_id,
             },
         ))
-        cleared = await clear_false_positives(config.provider, pc.board, prose, labels)
+        other = await judge_other_position(config.provider, pc.board, prose, items)
         await config.emit(Event(
             kind=EVT_AI_TOOL_CALL_COMPLETE,
             game_id=config.game_id,
@@ -1763,10 +1797,10 @@ class AIAnalysisCoordinator:
                 "round": round_index,
                 "name": POSITION_JUDGE_CALL_NAME,
                 "tool_use_id": call_id,
-                "output": _judge_summary(labels, cleared),
+                "output": _judge_summary(labels, other),
             },
         ))
-        return pc.without_labels(cleared)
+        return pc.without_labels(other), other
 
     async def _emit_position_note(
         self,
@@ -1788,11 +1822,12 @@ class AIAnalysisCoordinator:
         )
 
     @staticmethod
-    def _position_check_message(pc: _PositionCheck) -> str:
+    def _position_check_message(pc: _PositionCheck, rephrase: Sequence[str] = ()) -> str:
         """Fact-anchored correction with separate asks per error type. Illegal
         moves/lines get the "..."/move-number outs (they may be another side or
         ply); false piece claims state the square's real content and ask only
-        for a restate."""
+        for a restate. `rephrase` labels (judged to mean another position) are
+        asked to name that position."""
         clauses: list[str] = []
         # Dedup: a move named both in a broken line and standalone in the prose
         # would otherwise repeat its fact. Order-preserving via dict.fromkeys.
@@ -1813,8 +1848,9 @@ class AIAnalysisCoordinator:
             clauses.append(_POSITION_CHECK_CLAIM_CLAUSE.format(facts="; ".join(claim_facts)))
         mentions = pc.tool_mentions + [surface for surface, _name in pc.tool_leaks]
         if mentions:
-            quoted = ", ".join(f'"{m}"' for m in mentions)
-            clauses.append(_POSITION_CHECK_TOOL_CLAUSE.format(mentions=quoted))
+            clauses.append(_POSITION_CHECK_TOOL_CLAUSE.format(mentions=_quote_join(mentions)))
+        if rephrase:
+            clauses.append(_POSITION_CHECK_REPHRASE_CLAUSE.format(items=_quote_join(rephrase)))
         return _POSITION_CHECK_PREFIX + " ".join([_POSITION_CHECK_LEAD, *clauses])
 
     @staticmethod

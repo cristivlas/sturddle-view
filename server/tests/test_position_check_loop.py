@@ -135,7 +135,7 @@ async def test_false_pin_claim_emits_note_and_injects_tactics_fact():
 _BISHOP_FEN = "2n1rk2/p1R2p2/2NRb1p1/1P5p/4P2P/3B1PP1/5K2/2r5 w - - 3 41"
 
 
-def test_board_labels_exclude_bishop_flags():
+def test_judge_items_exclude_bishop_flags():
     # Bishop-color flags are precomputed board facts the judge has repeatedly
     # cleared wrongly; the regex verdict is final for this class, so no
     # bishop label ever reaches the judge.
@@ -148,7 +148,7 @@ def test_board_labels_exclude_bishop_flags():
              "no dark-squared bishop on the board"),
         ],
     )
-    assert pc.board_labels == []
+    assert pc.judge_items == []
 
 
 @pytest.mark.asyncio
