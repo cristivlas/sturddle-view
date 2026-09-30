@@ -12,11 +12,17 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Awaitable, Callable, Iterator
 
-# (step name, step input) -> None. The name picks the panel label; the input
-# shows in the row's IN detail.
-ProgressReporter = Callable[[str, dict], Awaitable[None]]
+# Finishes one step with its result, shown in the row's OUT detail.
+StepFinisher = Callable[[object], Awaitable[None]]
+# (step name, step input) -> its finisher. The name picks the panel label; the
+# input shows in the row's IN detail.
+ProgressReporter = Callable[[str, dict], Awaitable[StepFinisher]]
 
 _reporter: ContextVar[ProgressReporter | None] = ContextVar("tool_progress", default=None)
+
+
+async def _finish_nothing(_output: object) -> None:
+    return None
 
 
 @contextmanager
@@ -29,8 +35,10 @@ def reporting_progress(reporter: ProgressReporter) -> Iterator[None]:
         _reporter.reset(token)
 
 
-async def report_progress(name: str, input_: dict) -> None:
-    """Report one step of the running tool; a no-op outside a dispatch."""
+async def report_progress(name: str, input_: dict) -> StepFinisher:
+    """Report one step of the running tool; await the returned finisher with
+    the step's result once it lands. Both are no-ops outside a dispatch."""
     reporter = _reporter.get()
-    if reporter is not None:
-        await reporter(name, input_)
+    if reporter is None:
+        return _finish_nothing
+    return await reporter(name, input_)

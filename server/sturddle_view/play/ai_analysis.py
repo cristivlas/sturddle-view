@@ -80,7 +80,7 @@ from ..llm.position_check import (
     truncate_at_future_line,
 )
 from ..llm.position_judge import POSITION_JUDGE_CALL_NAME, judge_other_position
-from ..llm.tool_progress import ProgressReporter, reporting_progress
+from ..llm.tool_progress import ProgressReporter, StepFinisher, reporting_progress
 from .tools_engine import (
     ANALYZE_TOOL_NAME,
     CANDIDATES_KEY,
@@ -952,10 +952,11 @@ def _progress_reporter(
     emit: EmitSink, game_id: str | None, round_index: int, parent_id: str,
 ) -> ProgressReporter:
     """Surface each progress step of the tool `parent_id` as a panel row
-    nested under it (see tool_progress)."""
+    nested under it, and its finish as that row's result (see tool_progress)."""
     steps = itertools.count(1)
 
-    async def report(name: str, input_: dict) -> None:
+    async def report(name: str, input_: dict) -> StepFinisher:
+        step_id = f"{parent_id}-{name}-{next(steps)}"
         await emit(Event(
             kind=EVT_AI_TOOL_CALL,
             game_id=game_id,
@@ -963,10 +964,24 @@ def _progress_reporter(
                 "round": round_index,
                 "name": name,
                 "input": input_,
-                "tool_use_id": f"{parent_id}-{name}-{next(steps)}",
+                "tool_use_id": step_id,
                 "parent_tool_use_id": parent_id,
             },
         ))
+
+        async def finish(output: object) -> None:
+            await emit(Event(
+                kind=EVT_AI_TOOL_CALL_COMPLETE,
+                game_id=game_id,
+                payload={
+                    "round": round_index,
+                    "name": name,
+                    "tool_use_id": step_id,
+                    "output": output,
+                },
+            ))
+
+        return finish
 
     return report
 

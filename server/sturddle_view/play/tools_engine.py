@@ -1161,8 +1161,9 @@ async def _dominance_searches(
     """(best_info, cand_info): the engine's free best on `board`, then the
     search restricted to `move`. None when cancelled before both finish.
     Raises _SearchError. Each search is reported as a progress step first,
-    so the panel names the search the board is showing."""
-    await report_progress(PROGRESS_ENGINE_BEST, {_DEPTH_KEY: limit.depth})
+    so the panel names the search the board is showing, and finished with
+    its result once it lands."""
+    finish = await report_progress(PROGRESS_ENGINE_BEST, {_DEPTH_KEY: limit.depth})
     best_info, _ = await cache.get_or_search(
         engine_launcher, board.copy(stack=False), limit,
         bus=bus, game_id=game_id, cancel_token=cancel_token,
@@ -1170,7 +1171,8 @@ async def _dominance_searches(
     )
     if cancel_token.cancelled:
         return None
-    await report_progress(
+    await finish(_step_result(board, best_info))
+    finish = await report_progress(
         PROGRESS_SEARCH_MOVE, {_MOVE_KEY: board.san(move), _DEPTH_KEY: limit.depth},
     )
     cand_info, _ = await cache.get_or_search(
@@ -1181,7 +1183,24 @@ async def _dominance_searches(
     )
     if cancel_token.cancelled:
         return None
+    await finish(_step_result(board, cand_info))
     return best_info, cand_info
+
+
+def _step_result(board: chess.Board, info: dict) -> dict:
+    """A dominance-check step's panel result: the move the search settled
+    on, its eval, and the depth reached."""
+    out: dict = {}
+    best = _best_move(info)
+    if best is not None:
+        out[_SAN_KEY] = board.san(best)
+    text = _score_to_cp(info.get(_SCORE_KEY)).get(_SCORE_TEXT_KEY)
+    if text is not None:
+        out[_SCORE_TEXT_KEY] = text
+    depth = info.get(_DEPTH_KEY)
+    if depth is not None:
+        out[_DEPTH_KEY] = depth
+    return out
 
 
 def _best_move(best_info: dict) -> chess.Move | None:
