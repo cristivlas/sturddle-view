@@ -144,6 +144,10 @@ const TOOL = Object.freeze({
   REPORT_LINE: "report_line",
   RELATED_OPENINGS: "related_openings",
   POSITION_JUDGE: "position_judge",
+  // Progress steps of recommend_move's check, nested under its row: which
+  // search the board arrow and Search Lines are showing right now.
+  ENGINE_BEST: "engine_best",
+  SEARCH_MOVE: "search_move",
 });
 
 // Per-tool dot class (tool identity color; also scopes verdict/cleared badges).
@@ -376,7 +380,7 @@ function formatToolArgs(input) {
 const TOOL_FRIENDLY_LABELS = {
   [TOOL.ANALYZE]:        ["Analyzing position", "Studying the position", "Weighing the position", "Assessing", "Grasping the situation", "Navel-gazing", "Dubito ergo cogito"],
   [TOOL.TOP_MOVES]:      [
-    "Finding copacetic moves", "Triangulating", "Scoping top moves", "Brainstorming",
+    "Finding copacetic moves", "Triangulating", "Scoping out top moves", "Brainstorming",
     "Smelling own ideas", "Scheming", "Conjuring power moves", "Crop-circling",
     "Deploying analytical probes",
   ],
@@ -399,6 +403,33 @@ const MOVE_TOOL_VERBS = {
   [TOOL.VALIDATE_MOVE]:  ["Validating", "Probing", "Confirming", "Vetting"],
   [TOOL.DELEGATE]:       ["Verifying", "Double-checking", "Reviewing", "War-gaming"],
 };
+
+// The dominance check's two steps share one metaphor: the baseline search
+// (the engine's own best) sets the standard, the candidate is measured
+// against it. Each pair is [baseline, candidate]; "{}" is the move slot. One
+// pick per check, keyed on the parent row, so the two rows always match.
+const CHECK_STEP_PAIRS = [
+  ["Setting the bar",        "Seeing if {} clears the bar"],
+  ["Consulting the oracle",  "Putting {} to the oracle"],
+  ["Finding the main line",  "Testing {} against the main line"],
+];
+const CHECK_STEP_SLOT = "{}";
+const CHECK_STEP_INDEX = { [TOOL.ENGINE_BEST]: 0, [TOOL.SEARCH_MOVE]: 1 };
+// parent row (the recommend_move line) -> its pair; the baseline step picks,
+// the candidate step reuses. Cleared with the tool-call node index.
+const checkStepPairs = new Map();
+
+function checkStepLabel(name, input, parent) {
+  const slot = CHECK_STEP_INDEX[name];
+  if (slot === undefined) return null;
+  let pair = parent ? checkStepPairs.get(parent) : null;
+  if (!pair) {
+    pair = pickVariant(CHECK_STEP_PAIRS);
+    if (parent) checkStepPairs.set(parent, pair);
+  }
+  const move = input && typeof input.move === "string" ? input.move.trim() : "";
+  return pair[slot].replace(CHECK_STEP_SLOT, move);
+}
 
 // Last variant index handed out per variants array (keyed by array identity,
 // so TOOL_FRIENDLY_LABELS and MOVE_TOOL_VERBS entries for the same tool name
@@ -447,7 +478,9 @@ function formatToolOutput(output) {
   return typeof output === "string" ? output : JSON.stringify(output);
 }
 
-function friendlyToolLabel(name, input) {
+function friendlyToolLabel(name, input, parent = null) {
+  const step = checkStepLabel(name, input, parent);
+  if (step !== null) return step;
   const move = input && typeof input.move === "string" ? input.move.trim() : "";
   const verbs = MOVE_TOOL_VERBS[name];
   if (verbs && move) return `${pickVariant(verbs)} ${move}`;
@@ -555,6 +588,7 @@ export function resetAi() {
   inst.body._statusTokens.textContent = "";
   inst.body._roundPanels.clear();
   inst.body._toolCallNodes.clear();
+  checkStepPairs.clear();
   inst.body._currentRound = null;
   toolLabelLastIndex.clear();
   setAiStatus(AI_STATE.WAITING);
@@ -609,8 +643,9 @@ export function appendAiToolCall({
     // row so the user sees them as that check's work, not the narrator's.
     // Fall back to the round panel if the parent row isn't found.
     let container = null;
+    let parent = null;
     if (parentToolUseId) {
-      const parent = inst.body._toolCallNodes.get(parentToolUseId);
+      parent = inst.body._toolCallNodes.get(parentToolUseId) ?? null;
       if (parent) {
         let children = parent.querySelector(`.${TOOL_CHILDREN_CLASS}`);
         if (!children) {
@@ -636,7 +671,7 @@ export function appendAiToolCall({
     head.append(dot);
     const label = document.createElement("span");
     label.className = "play-ai-tool-label";
-    label.textContent = friendlyToolLabel(name, input);
+    label.textContent = friendlyToolLabel(name, input, parent);
     head.append(label);
     const args = formatToolArgs(input);
     const raw = args ? `${name}(${args})` : `${name}()`;

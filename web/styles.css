@@ -625,6 +625,10 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
 .play-ai-tool-dot-report_line    { background: var(--wa-color-teal-60, #14b8a6); }
 .play-ai-tool-dot-related_openings { background: var(--wa-color-indigo-60, #6366f1); }
 .play-ai-tool-dot-position_judge { background: var(--wa-color-orange-60, #ea580c); }
+/* Dominance-check steps under a recommend_move row: the baseline search is
+   an engine search (top_moves blue), the candidate's is the pick's own. */
+.play-ai-tool-dot-engine_best    { background: var(--wa-color-primary-60, #4a90e2); }
+.play-ai-tool-dot-search_move    { background: #7c3aed; }
 /* Verifier sub-run tool calls, nested under their "Verifying line" row.
    Full-width break (flex-wrap); a vertical spine runs through the child dot
    centers (8px dot -> center x=4px), tying the sub-calls into one timeline. */
@@ -677,17 +681,19 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
 }
 /* Failed tool call: red dot + struck label. The renderer appends the error
    detail into the collapsible details body. */
-.play-ai-tool-call-failed .play-ai-tool-dot {
+.play-ai-tool-call-failed > .play-ai-tool-head > .play-ai-tool-dot {
   background: var(--wa-color-danger-60, #d9534f);
 }
-.play-ai-tool-call-failed .play-ai-tool-label {
+/* Direct child (> head > label): the verdict is the row's own, so its nested
+   step rows (the check's searches, which ran fine) keep their look. */
+.play-ai-tool-call-failed > .play-ai-tool-head > .play-ai-tool-label {
   opacity: 0.7;
   text-decoration: line-through;
 }
 /* Superseded: the tool ran fine but the loop steered the model to a better
    move (stronger move named, or a red-team hold). Struck to show it was set
    aside; the dot keeps the tool's color -- it is not a failure. */
-.play-ai-tool-call-superseded .play-ai-tool-label {
+.play-ai-tool-call-superseded > .play-ai-tool-head > .play-ai-tool-label {
   opacity: 0.7;
   text-decoration: line-through;
 }

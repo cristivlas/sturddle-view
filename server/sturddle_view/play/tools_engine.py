@@ -34,6 +34,7 @@ from ..error_detail import ERROR_KEY, REASON_KEY
 from ..events import EVT_ENGINE_SEARCH_START, Event, EventBus
 from ..llm import ToolSpec
 from ..llm.cancel import CancelToken
+from ..llm.tool_progress import report_progress
 from ..llm.tools import integer_prop, object_schema, string_list_prop, string_prop
 from .engine_analysis import (
     log_spawn_failure,
@@ -179,6 +180,12 @@ PIECE_AT_TOOL_NAME = "piece_at"
 VALIDATE_MOVE_TOOL_NAME = "validate_move"
 RECOMMEND_MOVE_TOOL_NAME = "recommend_move"
 REPORT_LINE_TOOL_NAME = "report_line"
+
+# Progress steps of the dominance check (see tool_progress): the baseline
+# search of the engine's own best, then the candidate's. Panel labels key on
+# these names.
+PROGRESS_ENGINE_BEST = "engine_best"
+PROGRESS_SEARCH_MOVE = "search_move"
 
 # Shared description for the `fen` arg across every FEN-taking tool spec
 # (analyze, material). One source so the startpos affordance stays in sync.
@@ -1153,7 +1160,9 @@ async def _dominance_searches(
 ) -> tuple[dict, dict] | None:
     """(best_info, cand_info): the engine's free best on `board`, then the
     search restricted to `move`. None when cancelled before both finish.
-    Raises _SearchError."""
+    Raises _SearchError. Each search is reported as a progress step first,
+    so the panel names the search the board is showing."""
+    await report_progress(PROGRESS_ENGINE_BEST, {_DEPTH_KEY: limit.depth})
     best_info, _ = await cache.get_or_search(
         engine_launcher, board.copy(stack=False), limit,
         bus=bus, game_id=game_id, cancel_token=cancel_token,
@@ -1161,6 +1170,9 @@ async def _dominance_searches(
     )
     if cancel_token.cancelled:
         return None
+    await report_progress(
+        PROGRESS_SEARCH_MOVE, {_MOVE_KEY: board.san(move), _DEPTH_KEY: limit.depth},
+    )
     cand_info, _ = await cache.get_or_search(
         engine_launcher, board.copy(stack=False), limit,
         bus=bus, game_id=game_id, cancel_token=cancel_token,

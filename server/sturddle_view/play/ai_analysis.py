@@ -11,6 +11,7 @@ MAX_TOOL_ROUNDS so a stuck model can't burn budget forever.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import logging
 import re
@@ -79,6 +80,7 @@ from ..llm.position_check import (
     truncate_at_future_line,
 )
 from ..llm.position_judge import POSITION_JUDGE_CALL_NAME, judge_other_position
+from ..llm.tool_progress import ProgressReporter, reporting_progress
 from .tools_engine import (
     ANALYZE_TOOL_NAME,
     CANDIDATES_KEY,
@@ -946,6 +948,29 @@ class _PositionCheck:
         )
 
 
+def _progress_reporter(
+    emit: EmitSink, game_id: str | None, round_index: int, parent_id: str,
+) -> ProgressReporter:
+    """Surface each progress step of the tool `parent_id` as a panel row
+    nested under it (see tool_progress)."""
+    steps = itertools.count(1)
+
+    async def report(name: str, input_: dict) -> None:
+        await emit(Event(
+            kind=EVT_AI_TOOL_CALL,
+            game_id=game_id,
+            payload={
+                "round": round_index,
+                "name": name,
+                "input": input_,
+                "tool_use_id": f"{parent_id}-{name}-{next(steps)}",
+                "parent_tool_use_id": parent_id,
+            },
+        ))
+
+    return report
+
+
 def _quote_join(items: Sequence[str]) -> str:
     """'"a", "b"' -- prose spans named back to the model."""
     return ", ".join(f'"{item}"' for item in items)
@@ -1552,10 +1577,14 @@ class AIAnalysisCoordinator:
                 is_delegate = pending_tool.tool_name == _DELEGATE_TOOL_NAME
                 if is_delegate:
                     self._active_delegate_id = pending_tool.tool_use_id
+                reporter = _progress_reporter(
+                    emit, game_id, round_index, pending_tool.tool_use_id,
+                )
                 try:
-                    tool_output = await self._dispatch_tool(
-                        pending_tool, registry=config.registry,
-                    )
+                    with reporting_progress(reporter):
+                        tool_output = await self._dispatch_tool(
+                            pending_tool, registry=config.registry,
+                        )
                 finally:
                     if is_delegate:
                         self._active_delegate_id = None
@@ -2085,7 +2114,9 @@ class AIAnalysisCoordinator:
         if event.kind not in _VERIFIER_FORWARDED_KINDS:
             return
         # Safe to mutate in place: _run_loop builds a fresh Event per emit.
-        event.payload["parent_tool_use_id"] = self._active_delegate_id
+        # setdefault: a progress step already names its own parent (the
+        # verifier's tool row, itself nested under the delegate).
+        event.payload.setdefault("parent_tool_use_id", self._active_delegate_id)
         if event.game_id is None:
             event.game_id = self._turn_game_id
         await self._emit(event)
