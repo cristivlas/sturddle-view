@@ -20,6 +20,7 @@ import {
   isCommentaryOpen,
 } from "../play-commentary-window.js";
 import {
+  AI_STATE,
   openAi,
   closeAi,
   resetAi,
@@ -396,6 +397,7 @@ function dispatchAiEvent(aiCtx, evt) {
           verifierRoundCap: !!p.verifier_round_cap,
           noResponse: !!p.no_response,
           noRecommendation: !!p.no_recommendation,
+          rounds: p.rounds ?? null,
           usage: p.usage || null,
           provider: p.provider || null,
         });
@@ -1947,14 +1949,14 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       // Engine busy during an in-flight AI turn = agent tool call; flip
       // the status so the user sees what's taking time. Gated on the turn,
       // not just the open panel: game-move searches must not touch it.
-      if (isAiOpen() && aiTurnInFlight(state)) setAiStatus("engine");
+      if (isAiOpen() && aiTurnInFlight(state)) setAiStatus(AI_STATE.ENGINE);
       break;
     }
     case KIND.ENGINE_INFO: {
       // Engine produced an info chunk -- search is delivering. Drop
       // the "engine searching" hint back to "waiting" so the user
       // knows the agent will narrate next.
-      if (isAiOpen() && aiTurnInFlight(state)) setAiStatus("waiting");
+      if (isAiOpen() && aiTurnInFlight(state)) setAiStatus(AI_STATE.WAITING);
       break;
     }
     case KIND.BOARD_UPDATE: {

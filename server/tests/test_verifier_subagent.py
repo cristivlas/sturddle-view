@@ -620,6 +620,7 @@ async def test_stalled_recommend_stops_nudging_and_flags_no_recommendation():
     assert len(provider.calls) == 3
     done = events[-1]
     assert done.payload.get("no_recommendation") is True
+    assert done.payload.get("rounds") == 3
     assert not done.payload.get("round_cap")
 
 
@@ -1472,10 +1473,12 @@ async def test_silent_round_after_prose_ends_turn_without_renudging():
     events = await _drain_until_done(queue)
 
     # r0 prose -> nudge #1 -> r1 silent: the empty round ends the turn (no
-    # re-nudge, no loop). Exactly 2 rounds; flagged no_recommendation.
+    # re-nudge, no loop). Exactly 2 rounds; flagged no_recommendation. The
+    # silent round still counts: the client sees no event for it.
     assert len(provider.calls) == 2
     done = events[-1]
     assert done.payload.get("no_recommendation") is True
+    assert done.payload.get("rounds") == 2
 
 
 @pytest.mark.asyncio

@@ -759,12 +759,14 @@ class _LoopResult:
     """What the shared loop reports back. `final_text` is the last round's
     prose -- the verifier verdict, with cross-round tool-call self-talk
     dropped (falls back to all-rounds text on round-cap). `recommended_uci`
-    is set only when the narrator tracked an accepted recommend_move."""
+    is set only when the narrator tracked an accepted recommend_move.
+    `rounds` counts provider calls, silent ones included."""
     final_text: str = ""
     recommended_uci: str | None = None
     recommended_depth: int | None = None
     round_cap_hit: bool = False
     text_published: bool = False
+    rounds: int = 0
 
 
 def _sort_surfaces(surfaces: list[str]) -> list[str]:
@@ -1125,6 +1127,8 @@ class AIAnalysisCoordinator:
                         # nudge -- distinct from a round-cap so the UI says "no
                         # move chosen", not "raise the cap".
                         done_payload["no_recommendation"] = True
+                        # Server count: the client can't see silent rounds.
+                        done_payload["rounds"] = result.rounds
                         log.info("AI turn ended with no accepted recommend_move")
                 except asyncio.CancelledError:
                     done_payload["cancelled"] = True
@@ -1251,7 +1255,9 @@ class AIAnalysisCoordinator:
         # is struck without another corrective: the model's acknowledgment
         # repeats the wrong phrase, so re-prompting loops until the round cap.
         corrected_items: set[str] = set()
+        rounds = 0
         for round_index in range(config.max_rounds):
+            rounds = round_index + 1
             round_chunks: list[ProviderChunk] = []
             pending_tool: ProviderChunk | None = None
             # Per-round thinking duration, carried on the first non-thinking
@@ -1612,6 +1618,7 @@ class AIAnalysisCoordinator:
             recommended_depth=recommended_depth,
             round_cap_hit=round_cap_hit,
             text_published=text_published,
+            rounds=rounds,
         )
 
     def _position_check(

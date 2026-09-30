@@ -33,19 +33,25 @@ const OPEN_KEY      = STORAGE_KEY.AI_OPEN;
 // currently selected in Settings.
 const TITLE_MODEL_KEY = STORAGE_KEY.AI_TITLE_MODEL;
 
+export const AI_STATE = Object.freeze({
+  IDLE: "idle", WAITING: "waiting", ENGINE: "engine", DONE: "done",
+});
+
 // Status text shown next to a spinner while a turn is in flight. The
 // LLM may take seconds (model latency + engine tool calls) before any
 // prose lands; without this, an empty panel reads as "stuck". Keep
 // the wording short -- the panel is narrow.
 const STATUS_TEXT = {
-  idle: "",
-  waiting: "Analyzing...",
-  engine: "Running engine search...",
-  done: "Analysis Done",
+  [AI_STATE.IDLE]: "",
+  [AI_STATE.WAITING]: "Analyzing...",
+  [AI_STATE.ENGINE]: "Running engine search...",
+  [AI_STATE.DONE]: "Analysis Done",
 };
 
 // Sticky open/closed pref for the Thinking disclosure block.
 const THINKING_OPEN_KEY = STORAGE_KEY.AI_THINKING_OPEN;
+const THINKING_OPEN_ON = "1";
+const THINKING_OPEN_OFF = "0";
 
 // Compact token count for the status ticker (Claude Code style):
 // 982, 14.2k, 1.3M.
@@ -107,12 +113,59 @@ function usageTotal(u) {
 const THINKING_LABEL_ACTIVE = "Thinking";
 const THINKING_LABEL_DONE_PREFIX = "Thought for ";
 
+const MS_PER_SECOND = 1000;
+const SECONDS_PER_MINUTE = 60;
+const SECONDS_PAD = 2;
+
+// Panel DOM classes shared between builders and selectors.
+const IS_ACTIVE_CLASS = "is-active";
+const ERROR_CLASS = "play-ai-error";
+const PROSE_CLASS = "play-ai-prose";
+const REVISION_CLASS = "play-ai-revision";
+const REVISION_SUMMARY_CLASS = "play-ai-revision-summary";
+const REVISION_BODY_CLASS = "play-ai-revision-body";
+const TOOL_CALL_CLASS = "play-ai-tool-call";
+const TOOL_HEAD_CLASS = "play-ai-tool-head";
+const TOOL_DOT_CLASS = "play-ai-tool-dot";
+const TOOL_CHILDREN_CLASS = "play-ai-tool-children";
+const TOOL_DETAILS_BODY_CLASS = "play-ai-tool-details-body";
+const ROUNDCAP_CLASS = "play-ai-roundcap";
+
+// Server-side agent tool names.
+const TOOL = Object.freeze({
+  ANALYZE: "analyze",
+  TOP_MOVES: "top_moves",
+  PIECE_AT: "piece_at",
+  VALIDATE_MOVE: "validate_move",
+  RECOMMEND_MOVE: "recommend_move",
+  MATERIAL: "material",
+  TACTICS: "tactics",
+  DELEGATE: "delegate",
+  REPORT_LINE: "report_line",
+  RELATED_OPENINGS: "related_openings",
+  POSITION_JUDGE: "position_judge",
+});
+
+// Per-tool dot class (tool identity color; also scopes verdict/cleared badges).
+function toolDotClass(name) {
+  return `${TOOL_DOT_CLASS}-${name}`;
+}
+
+function toolCallStateClass(state) {
+  return `${TOOL_CALL_CLASS}-${state}`;
+}
+
+// The row's own dot, not a nested child row's.
+function hasOwnDot(line, dotClass) {
+  return !!line.querySelector(`:scope > .${TOOL_HEAD_CLASS} > .${dotClass}`);
+}
+
 function readThinkingOpen() {
-  return loadRaw(THINKING_OPEN_KEY) === "1";
+  return loadRaw(THINKING_OPEN_KEY) === THINKING_OPEN_ON;
 }
 
 function writeThinkingOpen(open) {
-  saveRaw(THINKING_OPEN_KEY, open ? "1" : "0");
+  saveRaw(THINKING_OPEN_KEY, open ? THINKING_OPEN_ON : THINKING_OPEN_OFF);
 }
 
 function trimTrailingWhitespace(el) {
@@ -141,6 +194,7 @@ function buildBody() {
   status.hidden = true;
   const spinner = document.createElement("wa-spinner");
   spinner.className = "spinner-accent";
+  root._spinner = spinner;
   const statusText = document.createElement("span");
   statusText.className = "play-ai-status-text";
   // Token ticker: cumulative turn usage, updated per provider round
@@ -176,8 +230,8 @@ function buildBody() {
   markSelectable(root, { target: () => {
     const hovered = root._hoveredTarget;
     const detailPre = hovered?.closest(`.${TOOL_DETAILS_BODY_CLASS}`);
-    const errorBlock = hovered?.closest(".play-ai-error");
-    const prosePara = hovered?.closest(".play-ai-prose");
+    const errorBlock = hovered?.closest(`.${ERROR_CLASS}`);
+    const prosePara = hovered?.closest(`.${PROSE_CLASS}`);
     return (detailPre && !detailPre.hidden)
       ? detailPre
       : errorBlock
@@ -221,17 +275,17 @@ function buildRoundPanel() {
   tools.className = "play-ai-tools";
   timeline.append(details, tools);
   const para = document.createElement("p");
-  para.className = "play-ai-prose";
+  para.className = PROSE_CLASS;
   // Revision: a collapsible that folds away prose the AI corrected. The
   // summary carries a self-correction line; the body holds the struck-through
   // flawed prose.
   const revision = document.createElement("details");
-  revision.className = "play-ai-revision";
+  revision.className = REVISION_CLASS;
   revision.hidden = true;
   const revisionSummary = document.createElement("summary");
-  revisionSummary.className = "play-ai-revision-summary";
+  revisionSummary.className = REVISION_SUMMARY_CLASS;
   const revisionBody = document.createElement("div");
-  revisionBody.className = "play-ai-revision-body";
+  revisionBody.className = REVISION_BODY_CLASS;
   revision.append(revisionSummary, revisionBody);
   panel.append(timeline, para, revision);
   return {
@@ -259,18 +313,18 @@ function freezeThinkingLabel(entry, serverMs = null) {
   entry.thinkingDurationMs = Math.max(1, elapsedMs);
   entry.thinking.summary.textContent =
     `${THINKING_LABEL_DONE_PREFIX}${formatThinkingDuration(entry.thinkingDurationMs)}`;
-  entry.thinking.summary.classList.remove("is-active");
+  entry.thinking.summary.classList.remove(IS_ACTIVE_CLASS);
 }
 
 function formatThinkingDuration(ms) {
   // Under a minute: "Ns" (minimum 1s so sub-second flashes don't read
   // as "0s"). At/over a minute: "m:ss". Hours are unrealistic for a
   // single turn so we don't format past minutes.
-  const totalSeconds = Math.max(1, Math.round(ms / 1000));
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const m = Math.floor(totalSeconds / 60);
-  const s = totalSeconds % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
+  const totalSeconds = Math.max(1, Math.round(ms / MS_PER_SECOND));
+  if (totalSeconds < SECONDS_PER_MINUTE) return `${totalSeconds}s`;
+  const m = Math.floor(totalSeconds / SECONDS_PER_MINUTE);
+  const s = totalSeconds % SECONDS_PER_MINUTE;
+  return `${m}:${String(s).padStart(SECONDS_PAD, "0")}`;
 }
 
 function ensureRoundPanel(root, roundIndex) {
@@ -320,30 +374,30 @@ function formatToolArgs(input) {
 // Each tool maps to a few interchangeable phrasings so the panel doesn't
 // repeat the same label on every call; pickVariant() rotates through them.
 const TOOL_FRIENDLY_LABELS = {
-  analyze:        ["Analyzing position", "Studying the position", "Weighing the position", "Assessing", "Grasping the situation", "Navel-gazing", "Dubito ergo cogito"],
-  top_moves:      [
+  [TOOL.ANALYZE]:        ["Analyzing position", "Studying the position", "Weighing the position", "Assessing", "Grasping the situation", "Navel-gazing", "Dubito ergo cogito"],
+  [TOOL.TOP_MOVES]:      [
     "Finding copacetic moves", "Triangulating", "Scoping top moves", "Brainstorming",
     "Smelling own ideas", "Scheming", "Conjuring power moves", "Crop-circling",
     "Deploying analytical probes",
   ],
-  piece_at:       ["Checking", "Eyeing", "Zooming in on", "Targeting"],
-  validate_move:  ["Validating move", "Double-checking the move", "Confirming the move"],
-  recommend_move: ["Picking move", "Choosing a move", "Selecting a move", "Sussing out"],
-  material:       ["Counting material", "Tallying material", "Weighing material"],
-  tactics:        ["Spotting pins and forks", "Eyeing pins and forks", "Sniffing out tactics"],
-  delegate:       ["Verifying line", "Double-checking the play", "Reviewing the plan", "Simulating", "Fathoming", "Choreographing"],
-  report_line:    ["Checking line", "Reviewing the line", "Going over the idea", "Ascertaining"],
-  related_openings: ["Comparing openings", "Cross-checking openings", "Matching openings"],
-  position_judge: ["Checking position claims", "Fact-checking the position", "Verifying the claims"],
+  [TOOL.PIECE_AT]:       ["Checking", "Eyeing", "Zooming in on", "Targeting"],
+  [TOOL.VALIDATE_MOVE]:  ["Validating move", "Double-checking the move", "Confirming the move"],
+  [TOOL.RECOMMEND_MOVE]: ["Picking move", "Choosing a move", "Selecting a move", "Sussing out"],
+  [TOOL.MATERIAL]:       ["Counting material", "Tallying material", "Weighing material"],
+  [TOOL.TACTICS]:        ["Spotting pins and forks", "Eyeing pins and forks", "Sniffing out tactics"],
+  [TOOL.DELEGATE]:       ["Verifying line", "Double-checking the play", "Reviewing the plan", "Simulating", "Fathoming", "Choreographing"],
+  [TOOL.REPORT_LINE]:    ["Checking line", "Reviewing the line", "Going over the idea", "Ascertaining"],
+  [TOOL.RELATED_OPENINGS]: ["Comparing openings", "Cross-checking openings", "Matching openings"],
+  [TOOL.POSITION_JUDGE]: ["Checking position claims", "Fact-checking the position", "Verifying the claims"],
 };
 
 // Tools whose label shows the actual move under consideration ("Considering
 // Nd3"). Maps the tool to its verb variants; the move SAN from input.move is
 // appended.
 const MOVE_TOOL_VERBS = {
-  recommend_move: ["Considering", "Weighing", "Contemplating", "Ratiocinating over", "Projecting"],
-  validate_move:  ["Validating", "Probing", "Confirming", "Vetting"],
-  delegate:       ["Verifying", "Double-checking", "Reviewing", "War-gaming"],
+  [TOOL.RECOMMEND_MOVE]: ["Considering", "Weighing", "Contemplating", "Ratiocinating over", "Projecting"],
+  [TOOL.VALIDATE_MOVE]:  ["Validating", "Probing", "Confirming", "Vetting"],
+  [TOOL.DELEGATE]:       ["Verifying", "Double-checking", "Reviewing", "War-gaming"],
 };
 
 // Last variant index handed out per variants array (keyed by array identity,
@@ -367,8 +421,10 @@ function pickVariant(variants) {
 
 const ANALYSIS_WINDOW_TITLE = "Analysis";
 
-const TOOL_DETAILS_BODY_CLASS = "play-ai-tool-details-body";
-const ROUNDCAP_CLASS = "play-ai-roundcap";
+// Default floating geometry (px).
+const DEFAULT_WIN_W = 380;
+const DEFAULT_WIN_H = 300;
+const DEFAULT_WIN_Y = 100;
 
 // Expanded tool-call detail rows: the call under IN, the result under OUT.
 const IO_TAG_IN = "IN";
@@ -396,7 +452,7 @@ function friendlyToolLabel(name, input) {
   const verbs = MOVE_TOOL_VERBS[name];
   if (verbs && move) return `${pickVariant(verbs)} ${move}`;
   const labels = TOOL_FRIENDLY_LABELS[name];
-  if (name === "piece_at") {
+  if (name === TOOL.PIECE_AT) {
     const square = input && typeof input.square === "string" ? input.square.trim() : "";
     if (square) return `${pickVariant(labels)} ${square}`;
   }
@@ -428,9 +484,9 @@ const inst = createDockableWindow({
   winStateKey: WIN_STATE_KEY,
   dockedKey: DOCKED_KEY,
   openKey: OPEN_KEY,
-  defaultW: () => 380,
-  defaultH: 300,
-  defaultY: () => 100,
+  defaultW: () => DEFAULT_WIN_W,
+  defaultH: DEFAULT_WIN_H,
+  defaultY: () => DEFAULT_WIN_Y,
   build() {
     return buildBody();
   },
@@ -501,7 +557,7 @@ export function resetAi() {
   inst.body._toolCallNodes.clear();
   inst.body._currentRound = null;
   toolLabelLastIndex.clear();
-  setAiStatus("waiting");
+  setAiStatus(AI_STATE.WAITING);
 }
 
 // Cumulative turn usage from ai_usage events. Idempotent (overwrites
@@ -534,7 +590,7 @@ export function appendAiThinking(text, roundIndex = 0) {
     if (!out) return;
     if (!entry.hasThinking) {
       entry.thinkingStartedAt = Date.now();
-      entry.thinking.summary.classList.add("is-active");
+      entry.thinking.summary.classList.add(IS_ACTIVE_CLASS);
     }
     entry.hasThinking = true;
     entry.thinking.details.hidden = false;
@@ -548,7 +604,7 @@ export function appendAiToolCall({
   if (!inst.body || !name) return;
   withStickyBottom(() => {
     const line = document.createElement("div");
-    line.className = "play-ai-tool-call";
+    line.className = TOOL_CALL_CLASS;
     // Verifier-origin calls nest under their "Verifying line" (delegate)
     // row so the user sees them as that check's work, not the narrator's.
     // Fall back to the round panel if the parent row isn't found.
@@ -556,10 +612,10 @@ export function appendAiToolCall({
     if (parentToolUseId) {
       const parent = inst.body._toolCallNodes.get(parentToolUseId);
       if (parent) {
-        let children = parent.querySelector(".play-ai-tool-children");
+        let children = parent.querySelector(`.${TOOL_CHILDREN_CLASS}`);
         if (!children) {
           children = document.createElement("div");
-          children.className = "play-ai-tool-children";
+          children.className = TOOL_CHILDREN_CLASS;
           parent.append(children);
         }
         container = children;
@@ -573,10 +629,10 @@ export function appendAiToolCall({
     // Dot/label/arrow live in a nowrap head that scrolls horizontally,
     // so a long label never wraps the arrow onto its own line.
     const head = document.createElement("div");
-    head.className = "play-ai-tool-head";
+    head.className = TOOL_HEAD_CLASS;
     line.append(head);
     const dot = document.createElement("span");
-    dot.className = `play-ai-tool-dot play-ai-tool-dot-${name}`;
+    dot.className = `${TOOL_DOT_CLASS} ${toolDotClass(name)}`;
     head.append(dot);
     const label = document.createElement("span");
     label.className = "play-ai-tool-label";
@@ -617,7 +673,6 @@ export function appendAiToolCall({
   });
 }
 
-
 // A delegate verdict opens with "holds" or "refuted" (enforced by the
 // verifier prompt). Classify off that first word so the row can flag the
 // outcome at a glance; null when the output isn't a verdict.
@@ -636,7 +691,7 @@ function verdictKind(output) {
 // The delegate row's dot carries this class; only that row bears a
 // verdict, so nested sub-operations are never badged even if a future
 // tool happens to return a `verdict` key.
-const DELEGATE_DOT_CLASS = "play-ai-tool-dot-delegate";
+const DELEGATE_DOT_CLASS = toolDotClass(TOOL.DELEGATE);
 
 // Strip the leading holds/refuted token plus its trailing punctuation and
 // space, so the prose reads as analysis once the word moves to the summary:
@@ -657,7 +712,7 @@ const VERDICT_PROSE_CLASS = "play-ai-verdict";
 function attachVerdictProse(line, output) {
   // Delegate rows only -- same scope as the verdict badge, so a future tool
   // that happens to return a `verdict` key never grows a prose panel.
-  if (!line.querySelector(`:scope > .play-ai-tool-head > .${DELEGATE_DOT_CLASS}`)) return;
+  if (!hasOwnDot(line, DELEGATE_DOT_CLASS)) return;
   const verdict = output && typeof output === "object" ? output.verdict : null;
   if (typeof verdict !== "string" || !verdict.trim()) return;
   if (line.querySelector(`:scope > .${VERDICT_PROSE_CLASS}`)) return;
@@ -668,14 +723,14 @@ function attachVerdictProse(line, output) {
   const prose = kind ? stripVerdictLead(verdict) : verdict.trim();
   if (!prose) return;
   const details = document.createElement("details");
-  details.className = `play-ai-revision ${VERDICT_PROSE_CLASS}`;
+  details.className = `${REVISION_CLASS} ${VERDICT_PROSE_CLASS}`;
   const summary = document.createElement("summary");
-  summary.className = "play-ai-revision-summary";
+  summary.className = REVISION_SUMMARY_CLASS;
   summary.textContent = kind ? capLead(kind) : "Verdict";
   const body = document.createElement("div");
-  body.className = "play-ai-revision-body";
+  body.className = REVISION_BODY_CLASS;
   const para = document.createElement("p");
-  para.className = "play-ai-prose";
+  para.className = PROSE_CLASS;
   para.textContent = prose;
   body.append(para);
   details.append(summary, body);
@@ -689,8 +744,8 @@ function markVerdict(line, kind) {
   if (!kind) return;
   // Scoped to this row's own head (matching the CSS) so a nested child
   // delegate dot can't make a non-delegate parent row get badged.
-  if (!line.querySelector(`:scope > .play-ai-tool-head > .${DELEGATE_DOT_CLASS}`)) return;
-  const cls = `play-ai-tool-call-${kind}`;
+  if (!hasOwnDot(line, DELEGATE_DOT_CLASS)) return;
+  const cls = toolCallStateClass(kind);
   if (line.classList.contains(cls)) return;
   line.classList.add(cls);
 }
@@ -700,15 +755,15 @@ function markVerdict(line, kind) {
 // a failure next to the actual danger-red used for failed/refuted calls.
 // Badge it green once something was actually cleared, matching the
 // verdict-badge pattern above.
-const POSITION_JUDGE_DOT_CLASS = "play-ai-tool-dot-position_judge";
+const POSITION_JUDGE_DOT_CLASS = toolDotClass(TOOL.POSITION_JUDGE);
 const CLEARED_PREFIX_RE = /^cleared (\d+)\/\d+/;
 
 function markCleared(line, output) {
   if (typeof output !== "string") return;
-  if (!line.querySelector(`:scope > .play-ai-tool-head > .${POSITION_JUDGE_DOT_CLASS}`)) return;
+  if (!hasOwnDot(line, POSITION_JUDGE_DOT_CLASS)) return;
   const match = CLEARED_PREFIX_RE.exec(output);
   if (!match || match[1] === "0") return;
-  line.classList.add("play-ai-tool-call-cleared");
+  line.classList.add(toolCallStateClass("cleared"));
 }
 
 // Fill the OUT row with the tool result from ai_tool_call_complete.
@@ -735,9 +790,7 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   if (!inst.body || !toolUseId) return;
   const line = inst.body._toolCallNodes.get(toolUseId);
   if (!line) return;
-  const cls = SUPERSEDED_ERRORS.has(error)
-    ? "play-ai-tool-call-superseded"
-    : "play-ai-tool-call-failed";
+  const cls = toolCallStateClass(SUPERSEDED_ERRORS.has(error) ? "superseded" : "failed");
   // Idempotent: replay-on-reconnect can re-dispatch this event for the same
   // row; appending the suffix/gear twice would stack them.
   if (line.classList.contains(cls)) return;
@@ -915,15 +968,14 @@ export function setAiStatus(state) {
   // delta no longer hides the status (the header stays as a label).
   if (!inst.body) return;
   const text = STATUS_TEXT[state] ?? "";
-  if (state === "idle" || !text) {
+  if (state === AI_STATE.IDLE || !text) {
     inst.body._status.hidden = true;
     inst.body._statusText.textContent = "";
     return;
   }
   inst.body._status.hidden = false;
   inst.body._statusText.textContent = text;
-  const spinner = inst.body._status.querySelector("wa-spinner");
-  if (spinner) spinner.style.display = (state === "done") ? "none" : "";
+  inst.body._spinner.style.display = (state === AI_STATE.DONE) ? "none" : "";
 }
 
 export function appendAiDelta(text, roundIndex = 0, thinkingMs = null) {
@@ -969,6 +1021,18 @@ function _roundCapNote(message) {
   return note;
 }
 
+function _terminalNote(message) {
+  const note = document.createElement("div");
+  note.className = ROUNDCAP_CLASS;
+  note.textContent = message;
+  return note;
+}
+
+// `rounds` is the server's count (silent rounds leave no panel to count).
+function noRecommendationText(rounds) {
+  const after = rounds === null ? "" : ` after ${rounds} ${rounds === 1 ? "round" : "rounds"}`;
+  return `No move chosen -- the analysis finished${after} without committing to one.`;
+}
 
 export function markAiDone({
   cancelled = false,
@@ -978,6 +1042,7 @@ export function markAiDone({
   verifierRoundCap = false,
   noResponse = false,
   noRecommendation = false,
+  rounds = null,
   usage = null,
   provider = null,
 } = {}) {
@@ -986,7 +1051,7 @@ export function markAiDone({
   // land in the dedicated terminal slot below the last round panel.
   const naturalCompletion =
     !error && !roundCap && !noResponse && !noRecommendation && !cancelled;
-  setAiStatus(naturalCompletion ? "done" : "idle");
+  setAiStatus(naturalCompletion ? AI_STATE.DONE : AI_STATE.IDLE);
   if (!inst.body) return;
   // Refresh the ticker from the done totals: a replay that delivers only
   // the terminal event (no ai_usage stream) still restores the count.
@@ -1024,7 +1089,7 @@ export function markAiDone({
     }
     if (error) {
       const block = document.createElement("div");
-      block.className = "play-ai-error";
+      block.className = ERROR_CLASS;
       const head = document.createElement("strong");
       head.textContent = "AI analysis failed";
       block.append(head);
@@ -1052,17 +1117,13 @@ export function markAiDone({
       return;
     }
     if (noResponse) {
-      const note = document.createElement("div");
-      note.className = ROUNDCAP_CLASS;
-      note.textContent = "Model produced no answer. Try a different model -- some stream only chain-of-thought.";
-      slot.append(note);
+      slot.append(_terminalNote(
+        "Model produced no answer. Try a different model -- some stream only chain-of-thought.",
+      ));
       return;
     }
     if (noRecommendation) {
-      const note = document.createElement("div");
-      note.className = ROUNDCAP_CLASS;
-      note.textContent = "No move chosen -- the analysis finished without committing to one.";
-      slot.append(note);
+      slot.append(_terminalNote(noRecommendationText(rounds)));
       return;
     }
     if (cancelled) {
