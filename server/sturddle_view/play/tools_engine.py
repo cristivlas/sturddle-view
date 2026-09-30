@@ -1159,7 +1159,8 @@ async def _dominance_searches(
     settings_provider: SettingsProvider | None,
 ) -> tuple[dict, dict] | None:
     """(best_info, cand_info): the engine's free best on `board`, then the
-    search restricted to `move`. None when cancelled before both finish.
+    search restricted to `move` (skipped when `move` IS the free best -- the
+    baseline then stands in for it). None when cancelled before both finish.
     Raises _SearchError. Each search is reported as a progress step first,
     so the panel names the search the board is showing, and finished with
     its result once it lands."""
@@ -1172,6 +1173,10 @@ async def _dominance_searches(
     if cancel_token.cancelled:
         return None
     await finish(_step_result(board, best_info))
+    # The engine's own pick: the baseline already searched this line, and
+    # _is_dominated never rejects it -- a restricted repeat adds nothing.
+    if _best_move(best_info) == move:
+        return best_info, best_info
     finish = await report_progress(
         PROGRESS_SEARCH_MOVE, {_MOVE_KEY: board.san(move), _DEPTH_KEY: limit.depth},
     )

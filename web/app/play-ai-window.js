@@ -712,7 +712,11 @@ export function appendAiToolCall({
 const VERDICT_REFUTED = "refuted";
 const VERDICT_HOLDS = "holds";
 
+// Set on a withheld refutation the engine overruled: the move held.
+const MOVE_SURVIVED_KEY = "move_survived";
+
 function verdictKind(output) {
+  if (output && typeof output === "object" && output[MOVE_SURVIVED_KEY]) return VERDICT_HOLDS;
   const verdict = output && typeof output === "object" ? output.verdict : null;
   if (typeof verdict !== "string") return null;
   const head = verdict.trimStart().toLowerCase();

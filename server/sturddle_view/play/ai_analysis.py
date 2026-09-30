@@ -290,6 +290,9 @@ _NO_CONCLUSION_DETAIL = 'no conclusion. Try increasing "Max subagent rounds"'
 _UNUSABLE_REPLY_DETAIL = "discarded: the reply was not a usable verdict"
 _FALSE_FACT_DETAIL = "discarded: the verdict misstated the position"
 _UNCONFIRMED_REFUTATION_DETAIL = "discarded: the refutation does not hold up"
+# Set on a withheld refutation the engine overruled: the move survived the
+# adversarial check, so it satisfies the red-team hold like a verdict does.
+MOVE_SURVIVED_KEY = "move_survived"
 
 
 def _delegate_error(kind: str, detail: str) -> dict:
@@ -408,7 +411,10 @@ def make_delegate_tool(
             and await refute_check(move, cancel_token) is False
         ):
             log.info("delegate refutation of %s not confirmed; withheld", move.uci())
-            return _delegate_error(_VERDICT_WITHHELD_ERROR, _UNCONFIRMED_REFUTATION_DETAIL)
+            return {
+                **_delegate_error(_VERDICT_WITHHELD_ERROR, _UNCONFIRMED_REFUTATION_DETAIL),
+                MOVE_SURVIVED_KEY: True,
+            }
         return {MOVE_UCI_KEY: move.uci(), _VERDICT_KEY: verdict}
 
     return delegate
@@ -1652,13 +1658,14 @@ class AIAnalysisCoordinator:
             ):
                 consecutive_recommend_failures = 0
                 recommend_failure_nudge_armed = True
-            # A verdict-bearing delegate marks the pick red-teamed; errors
-            # (bad move, no verdict) don't count.
+            # A verdict-bearing delegate marks the pick red-teamed, and so does
+            # a refutation the engine overruled (the move survived); other
+            # errors (bad move, no verdict) don't count.
             if (
                 config.track_recommend
                 and pending_tool.tool_name == _DELEGATE_TOOL_NAME
                 and isinstance(tool_output, dict)
-                and not tool_output.get("error")
+                and (not tool_output.get("error") or tool_output.get(MOVE_SURVIVED_KEY))
             ):
                 red_teamed = True
             if _ranks_move(pending_tool, tool_output, config.move_under_test):
@@ -1685,7 +1692,14 @@ class AIAnalysisCoordinator:
             await config.transcript.tool_result(
                 round_index, pending_tool.tool_use_id, tool_output
             )
-            if isinstance(tool_output, dict) and tool_output.get("error"):
+            # A survived envelope (overruled refutation) carries an error for
+            # the model but isn't a failure: the move passed. The panel badges
+            # it from the complete event instead.
+            if (
+                isinstance(tool_output, dict)
+                and tool_output.get("error")
+                and not tool_output.get(MOVE_SURVIVED_KEY)
+            ):
                 await emit(
                     Event(
                         kind=EVT_AI_TOOL_CALL_FAILED,

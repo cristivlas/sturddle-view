@@ -40,6 +40,7 @@ from sturddle_view.llm.prompts import VERIFIER_ADDENDUM
 from sturddle_view.play.ai_analysis import (
     AIAnalysisCoordinator,
     DELEGATE_TOOL_SPEC,
+    MOVE_SURVIVED_KEY,
     VerifierResult,
     _EMPTY_TURN_PLACEHOLDER,
     _FALSE_FACT_DETAIL,
@@ -712,6 +713,58 @@ async def test_accept_without_red_team_is_held_once():
     assert recs and recs[-1].payload.get("uci") == "e2e4"
 
 
+@pytest.mark.parametrize("survived, holds", [(True, 0), (False, 1)])
+@pytest.mark.asyncio
+async def test_overruled_refutation_counts_as_red_teamed(survived, holds):
+    # The verifier said "refuted" but the engine didn't confirm it: the move
+    # survived the adversarial check, so the pick ships without a hold. Any
+    # other withheld verdict (no usable reply, false fact) proves nothing.
+    envelope = {"error": "verdict_withheld", "detail": _UNCONFIRMED_REFUTATION_DETAIL}
+    if survived:
+        envelope[MOVE_SURVIVED_KEY] = True
+
+    async def delegate(_input, *, cancel_token):
+        return envelope
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="r", input_schema={"type": "object"}),
+        _stub_recommend,
+    )
+    reg.register(
+        ToolSpec(name="delegate", description="d", input_schema={"type": "object"}),
+        delegate,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [_delegate_chunk("d0", "does it hold?")],             # red-team: overruled
+        [ProviderChunk(kind="tool_use", tool_use_id="r0",     # accept
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="r1",     # resubmit if held
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="text", text="e4 is best on review.")],
+        [ProviderChunk(kind="text", text="e4 it is.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg,
+        board_provider=(lambda: chess.Board()),
+        recommend_verifier=_echo_verifier,
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert len(_red_team_holds(events)) == holds
+    # The survived envelope isn't a failure: no failed event (the panel would
+    # strike the row red although the move passed).
+    delegate_failed = [
+        e for e in events
+        if e.kind == "ai_tool_call_failed" and e.payload.get("tool_use_id") == "d0"
+    ]
+    assert bool(delegate_failed) is not survived
+
+
 @pytest.mark.asyncio
 async def test_red_team_hold_rewrites_complete_event_output():
     # The UI's OUT block renders the complete event: a held accept must
@@ -1298,7 +1351,10 @@ async def test_delegate_withholds_verdict_that_calls_the_move_illegal():
 async def test_delegate_withholds_refutation_the_engine_does_not_confirm():
     check, calls = _refute_check_returning(False)
     out = await _delegate_e4(_verdict_runner("Refuted: e4 drops the pawn."), check)
-    assert out == {"error": "verdict_withheld", "detail": _UNCONFIRMED_REFUTATION_DETAIL}
+    assert out == {
+        "error": "verdict_withheld", "detail": _UNCONFIRMED_REFUTATION_DETAIL,
+        MOVE_SURVIVED_KEY: True,
+    }
     assert calls == [chess.Move.from_uci("e2e4")]
 
 

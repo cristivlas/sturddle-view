@@ -85,6 +85,34 @@ async def test_dominance_searches_report_each_search_before_it_runs(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_candidate_that_is_the_engine_best_skips_its_search(monkeypatch):
+    # The baseline already searched the candidate's own line: a second,
+    # restricted search (and its row) would repeat it. The baseline result
+    # stands in for the candidate's.
+    log: list = []
+    monkeypatch.setattr(tools_engine, "_run_one_search", _FakeSearch(log))
+
+    async def progress(name, input_):
+        log.append((name, input_))
+
+        async def finish(output):
+            log.append(("done", name, output))
+
+        return finish
+
+    with reporting_progress(progress):
+        best_info, cand_info = await tools_engine._dominance_searches(
+            SearchCache(), lambda: None, chess.Board(), _FREE_BEST,
+            chess.engine.Limit(depth=_SEARCH_DEPTH),
+            bus=EventBus(), game_id="g", cancel_token=CancelToken(),
+            settings_provider=None,
+        )
+
+    assert [entry[0] for entry in log] == [tools_engine.PROGRESS_ENGINE_BEST, "searched", "done"]
+    assert cand_info is best_info
+
+
+@pytest.mark.asyncio
 async def test_report_outside_a_dispatch_is_a_no_op():
     finish = await report_progress("anything", {})  # must not raise
     await finish({"san": "e4"})
