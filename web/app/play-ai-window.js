@@ -808,9 +808,12 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   line._outRow.hidden = false;
 }
 
-// Cap for the joined item list in a multi-item fallback before it is
-// ellipsis-trimmed (keeps the collapsed summary to one line).
+// Cap for the joined item list in a multi-item fallback (keeps the collapsed
+// summary to one line). Items past it drop whole, never cut mid-quote.
 const REVISION_ITEMS_MAX = 48;
+const ITEMS_SEP = ", ";
+const ELLIPSIS = "...";
+const QUOTE = "\"";
 
 // Self-correction phrasings, picked from so the revision summary doesn't read
 // robotically. Each row is [no-items, one, many]; "{}" is the item slot, and
@@ -826,20 +829,13 @@ const REVISION_PHRASES = [
 ];
 
 // A SAN move ("Nab1", "Qd1", "O-O") whose leading capital is the piece letter
-// and must be kept; prose claims ("White's bishop on g3") read better with the
-// lead lowercased mid-sentence. Castling and a piece letter + SAN body char.
+// and must be kept. Castling and a piece letter + SAN body char.
 const SAN_LEAD_RE = /^(?:O-O|[KQRBN][a-h1-8x])/;
 
 // A lowercase chess move whose case is meaningful and must be kept -- a pawn
 // push or capture ("e4", "exd5", "fxg1=Q"). Distinct from SAN_LEAD_RE (which
 // is piece moves); a pawn move starts with a file letter.
 const PAWN_MOVE_RE = /^[a-h](?:[1-8]|x[a-h][1-8])/;
-
-// Lowercase the first letter of a prose item so it reads mid-sentence
-// ("White's bishop" -> "white's bishop"); leave SAN moves untouched.
-function decapLead(s) {
-  return SAN_LEAD_RE.test(s) ? s : s.charAt(0).toLowerCase() + s.slice(1);
-}
 
 // Capitalize a prose item at a sentence start ("white bishop" -> "White
 // bishop"); leave chess moves untouched so "e4"/"Nf3" keep their case.
@@ -855,25 +851,41 @@ function pickBySeed(pool, seed) {
   return pool[((seed % n) + n) % n];
 }
 
-// Case the item to its position: capitalized when "{}" leads the phrase
-// (sentence start), lowercased when a prefix precedes it. Chess moves keep
-// their case either way.
+// Items are verbatim quotes, so they drop in as-is at any position.
 function fill(template, joined) {
-  const lead = template.startsWith("{}");
-  return template.replace("{}", lead ? capLead(joined) : decapLead(joined));
+  return template.replace("{}", joined);
+}
+
+// Join whole items up to `max` chars; the first always fits, the rest that
+// don't collapse to a trailing ellipsis.
+function joinCapped(items, max) {
+  let joined = items[0];
+  for (const item of items.slice(1)) {
+    const next = joined + ITEMS_SEP + item;
+    if (next.length > max) return joined + ITEMS_SEP + ELLIPSIS;
+    joined = next;
+  }
+  return joined;
+}
+
+// The flagged spans as quotes: prose case (surfaces may arrive lowercased),
+// prose order, deduped. A surface the prose never matched is quoted as sent.
+function quoteItems(struck, surfaces) {
+  const byKey = new Map();
+  for (const s of [...struck, ...surfaces]) {
+    const key = s.toLowerCase();
+    if (!byKey.has(key)) byKey.set(key, s);
+  }
+  return [...byKey.values()].map((s) => QUOTE + s + QUOTE);
 }
 
 // Fallback summary when the next round has no usable opening line: the AI
-// catching its own slip. SAN moves keep their case so "Nab1" isn't mangled.
+// catching its own slip, quoting what it got wrong.
 function revisionFallbackText(items, seed = 0) {
   const [none, one, many] = pickBySeed(REVISION_PHRASES, seed);
   if (!items.length) return none;
   if (items.length === 1) return fill(one, items[0]);
-  let joined = items.join(", ");
-  if (joined.length > REVISION_ITEMS_MAX) {
-    joined = joined.slice(0, REVISION_ITEMS_MAX).trimEnd() + "...";
-  }
-  return fill(many, joined);
+  return fill(many, joinCapped(items, REVISION_ITEMS_MAX));
 }
 
 // Weak models leak a standalone acknowledgment ("Understood.", "You're
@@ -928,14 +940,16 @@ function escapeRegExp(s) {
 // Cross out each flagged token in the round's prose. Rebuilds the paragraph
 // with matched spans wrapped in <del> so the reader sees the self-correction
 // land on the actual text. Longest items first so a line isn't half-matched.
+// Returns the struck spans as written, in prose order.
 function strikeProseItems(para, items) {
   const text = para.textContent;
-  if (!text || !items.length) return;
+  if (!text || !items.length) return [];
   const sorted = [...items].sort((a, b) => b.length - a.length);
   // Case-insensitive: server lowercases flagged claims, but the prose keeps
   // its original case ("Knight on b1" at a sentence start).
   const re = new RegExp(sorted.map(escapeRegExp).join("|"), "gi");
   para.textContent = "";
+  const struck = [];
   let last = 0;
   for (const m of text.matchAll(re)) {
     if (m.index > last) para.append(document.createTextNode(text.slice(last, m.index)));
@@ -943,9 +957,11 @@ function strikeProseItems(para, items) {
     del.className = "play-ai-prose-struck";
     del.textContent = m[0];
     para.append(del);
+    struck.push(m[0]);
     last = m.index + m[0].length;
   }
   if (last < text.length) para.append(document.createTextNode(text.slice(last)));
+  return struck;
 }
 
 export function noteAiPosition({ round, surfaces }) {
@@ -955,9 +971,9 @@ export function noteAiPosition({ round, surfaces }) {
   if (!surfaces || !surfaces.length) return;
   // Strike the flagged spans (exact prose), then tuck the flawed prose into
   // the revision body so the clean (next-round) prose reads on its own.
-  // The summary is the canned self-correction line.
-  strikeProseItems(entry.para, surfaces);
-  entry.revision.summary.textContent = revisionFallbackText(surfaces, round);
+  // The summary is a canned self-correction line quoting those spans.
+  const struck = strikeProseItems(entry.para, surfaces);
+  entry.revision.summary.textContent = revisionFallbackText(quoteItems(struck, surfaces), round);
   entry.revision.body.append(entry.para);
   entry.revision.details.hidden = false;
 }
