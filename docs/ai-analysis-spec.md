@@ -587,6 +587,7 @@ the board.
   refused. Tooltip: "Double-click to play line".
 - **Look.** Dotted underline at rest; when playable, pointer cursor and
   the PV row hover/playing background. Gated off: underline only.
+  Desktop only: on touch (`pointer: coarse`) links render as plain prose.
 
 ### Recommended-move link
 

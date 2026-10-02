@@ -333,6 +333,13 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
 .play-ai-prose .play-ai-line-link { text-decoration: underline dotted; }
 .play-ai-prose .play-ai-line-link-playable:hover { cursor: pointer; background: var(--wa-color-surface-raised); }
 .play-ai-prose .play-ai-line-link-playing { background: var(--wa-color-surface-raised); }
+/* Desktop only: double-click is a mouse gesture, so touch shows plain prose
+   (a tap would otherwise leave the sticky :hover background on). */
+@media (pointer: coarse) {
+  .play-ai-prose .play-ai-line-link,
+  .play-ai-prose .play-ai-line-link-playable:hover,
+  .play-ai-prose .play-ai-line-link-playing { text-decoration: none; cursor: auto; background: none; }
+}
 
 /* AI status line: spinner + short text, above the prose so streaming text
    appends below without re-flow. Dimmer: transient progress, not content. */
