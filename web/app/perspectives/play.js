@@ -31,6 +31,8 @@ import {
   markAiToolCallFailed,
   setAiToolCallResult,
   noteAiPosition,
+  linkAiOpenings,
+  linkAiRecommendation,
   markAiDone,
   setAiUsage,
   setAiStatus,
@@ -125,7 +127,7 @@ function _setXgameDismissed(gameId, key, value) {
 // the header badge. resign/timeout don't carry "1-0"/"0-1" in the payload
 // so we derive it from who lost (only human can resign today).
 function resultBadge(result) {
-  return result === RESULT.DRAW ? "½-½" : result;
+  return result === RESULT.DRAW ? "\u00bd-\u00bd" : result;
 }
 
 // Cap server-supplied error detail (engine path / exception text) in toasts.
@@ -476,6 +478,11 @@ function dispatchAiEvent(aiCtx, evt) {
       });
       return true;
     }
+    case KIND.AI_OPENING_LINKS: {
+      const p = evt.payload || {};
+      linkAiOpenings({ round: p.round ?? 0, items: p.items || [] });
+      return true;
+    }
     case KIND.AI_USAGE: {
       setAiUsage(evt.payload || null);
       return true;
@@ -488,6 +495,7 @@ function dispatchAiEvent(aiCtx, evt) {
       // not the view's: mid-replay the view is still unsynced.
       view.applyEvent(evt);
       aiShared.recommendation = { evt, fen: evt.payload.fen };
+      linkAiRecommendation(evt.payload);
       return true;
     }
   }
@@ -1465,7 +1473,7 @@ async function onNewGameImpl(state) {
       state.gameTcInitial = Number(s.tc_initial_seconds);
       state.gameTcIncrement = Number(s.tc_increment_seconds);
     } catch {
-      // ignore — drift detection just won't trigger for TC.
+      // ignore -- drift detection just won't trigger for TC.
     }
     state.refreshButtons();
   } catch (e) {
@@ -1551,7 +1559,7 @@ async function onPlayFromHereImpl(state) {
   setDisabled(state.el.viewPlayFromHereBtn, true);
   // Reset gameId so the racing board_update from new_game (which fires
   // BEFORE the API response carrying the new id) isn't dropped by the
-  // game_id filter — that drop loses the human_white/name swap.
+  // game_id filter -- that drop loses the human_white/name swap.
   state.view.setGameId(null);
   try {
     closeAi();
@@ -1973,7 +1981,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       if (state.editing && !wasEditing) _onServerEditingStart(state);
       else if (!state.editing && wasEditing) _onServerEditingStop(state);
       // View mode swaps the ribbon and suppresses play-mode signals
-      // (resignAvailable, etc.) — the user isn't playing yet.
+      // (resignAvailable, etc.) -- the user isn't playing yet.
       const v = evt.payload.view;
       const wasViewing = state.viewing;
       const prevGameId = state.viewingGameId;
@@ -2334,7 +2342,7 @@ export const playPerspective = {
       const s0 = await ctx.api("GET", "/settings");
       initialBoardStyle = s0.board_style || null;
     } catch {
-      // ignore — fall back to default style
+      // ignore -- fall back to default style
     }
 
     // --- GameView: board host on top, side host (moves+engine) below. ---
@@ -2398,10 +2406,10 @@ export const playPerspective = {
           if (held) view.releaseBoard({ snap: true });
         }
       },
-      // Click on a move in the list (view mode only) → jump cursor to
+      // Click on a move in the list (view mode only) -> jump cursor to
       // the position AFTER that move, i.e. ply = plyIndex + 1.
       onMoveJump: (plyIndex) => doViewNav(state, "/game/view/goto", { ply: plyIndex + 1 }),
-      // Click a past move in PLAY mode → flip into server view mode at that
+      // Click a past move in PLAY mode -> flip into server view mode at that
       // ply. Scrubbing to the live game's last ply auto-returns to play.
       onPlayMoveClick: (plyIndex) => enterViewAtPly(state, plyIndex),
       // Fork glyphs. Fresh map per render; both child-here (this game

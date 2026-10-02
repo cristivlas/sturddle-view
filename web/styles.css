@@ -328,6 +328,11 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
   text-decoration-thickness: 1px;
   color: #c0392b;
 }
+/* Opening names and the recommended move linked to their line; double-click
+   plays it. Hover and playing backgrounds match the Search Lines rows. */
+.play-ai-prose .play-ai-line-link { text-decoration: underline dotted; }
+.play-ai-prose .play-ai-line-link-playable:hover { cursor: pointer; background: var(--wa-color-surface-raised); }
+.play-ai-prose .play-ai-line-link-playing { background: var(--wa-color-surface-raised); }
 
 /* AI status line: spinner + short text, above the prose so streaming text
    appends below without re-flow. Dimmer: transient progress, not content. */
@@ -3261,7 +3266,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .tmb-menu.open > .tmb-dropdown { display: block; }
 .tmb-dropdown > li { margin: 0; padding: 0; list-style: none; }
 .tmb-dd-submenu { position: relative; }
-.tmb-dd-submenu > .tmb-dd-item::after { content: "▶"; position: absolute; right: 10px; font-size: 0.625rem; }
+.tmb-dd-submenu > .tmb-dd-item::after { content: "\25B6"; position: absolute; right: 10px; font-size: 0.625rem; }
 .tmb-dd-submenu > .tmb-dropdown { top: -6px; left: 100%; z-index: 9001; }
 .tmb-dd-submenu:hover > .tmb-dropdown { display: block; }
 .tmb-dd-submenu:has(> .tmb-dd-item:disabled):hover > .tmb-dropdown { display: none; }
@@ -3276,7 +3281,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   background: var(--nav-btn-bg-hover);
   box-shadow: inset 3px 0 0 var(--accent-line);
 }
-.tmb-dd-item.tmb-active::before { content: "✓"; position: absolute; left: 8px; }
+.tmb-dd-item.tmb-active::before { content: "\2713"; position: absolute; left: 8px; }
 .tmb-separator {
   border-top: 1px solid var(--wa-color-border-loud, #333);
   margin: 4px 0;
@@ -3441,11 +3446,11 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   outline: none;
 }
 .tmb-sort-opt[data-dir]::before {
-  content: "▲"; position: absolute;
+  content: "\25B2"; position: absolute;
   left: 7px; top: 50%; transform: translateY(-50%);
   font-size: 0.8125rem; color: var(--accent);
 }
-.tmb-sort-opt[data-dir="desc"]::before { content: "▼"; }
+.tmb-sort-opt[data-dir="desc"]::before { content: "\25BC"; }
 .tournaments-body {
   display: flex;
   flex: 1; min-height: 0;

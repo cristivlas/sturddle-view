@@ -554,6 +554,61 @@ code MUST NOT assume any of it.
   - Live: brief inline mention
   - View/post: PGN `[Annotator]` tag
 
+### Opening links
+
+Opening names in the prose become links that play the opening's line on
+the board.
+
+- **Matching (server).** Prose and book names are tokenized the same way:
+  casefold, punctuation dropped, whitespace collapsed ("Sicilian Defense:
+  Grand Prix Attack, Schofman Variation" == "Sicilian Defense Grand Prix
+  Attack Schofman Variation"). Sentence punctuation (`.!?;`) between
+  words is kept as a token, so a match never spans a sentence break the
+  name lacks ("St. George Defense" matches; "the Sicilian. Defense" does
+  not). A token trie over every book name (`OpeningBook.all()`) finds the
+  longest match at each word start; matches never overlap. Paraphrased or
+  invented names do not match -- a miss, never a wrong link. Narrator
+  prose only.
+- **When.** Only for a round whose prose passed the position check. A
+  flagged round's prose is struck and folded into its revision, so it
+  carries no links.
+- **Wire.** `ai_opening_links` event: `{round, items: [{surface, uci}]}`.
+  `surface` is the exact prose span (original case and punctuation);
+  `uci` is the opening's move list from the start position.
+- **Client.** Wraps each surface in a link span, whole words only. Only
+  the paragraph's own text nodes are wrapped -- text already inside a
+  link is left alone -- so other links survive and a replayed event adds
+  nothing. Striking flattens the paragraph first: struck prose carries no
+  links.
+- **Play.** Double-click plays the line through the existing PV line-show
+  (`pvFrames` from the start placement + `uci`), then snaps back to the
+  live position. Gated by `canPlayLineNow` and re-gated on
+  `PLAY_LINE_GATE_CHANGED`, same as Search Lines rows; inert when
+  refused. Tooltip: "Double-click to play line".
+- **Look.** Dotted underline at rest; when playable, pointer cursor and
+  the PV row hover/playing background. Gated off: underline only.
+
+### Recommended-move link
+
+Mentions of the recommended move in the prose become the same kind of
+link, playing the verified line. Client-only.
+
+- **Source.** The `ai_recommendation` payload: `san`, `fen`, and
+  `pv_uci` (the end-of-turn verifier's searchmoves-restricted line, so it
+  starts with the move). No `pv_uci` (the unsearched book move) -> no
+  link.
+- **Where.** Every visible prose paragraph of the turn; prose folded into
+  a revision or hidden is skipped.
+- **Matching.** The SAN, case-sensitive, check/mate suffix optional,
+  whole token (`O-O` never matches inside `O-O-O`). A move-number prefix
+  must be the current move (`11.` White, `11...` Black, from the `fen`);
+  "15.Qe1" stays plain. A pawn push (SAN is a bare square, `e4`) links
+  only with that prefix, so "the pawn on e4" stays plain. Only the move is
+  underlined, not its number.
+- **Play.** Same as opening links: `pvFrames(fen, pv_uci)`, same gate,
+  tooltip, and look. No staleness guard: any move or view change closes
+  or resets the panel.
+
 ## UI
 
 ### Layout

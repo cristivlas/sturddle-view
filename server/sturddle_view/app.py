@@ -675,6 +675,7 @@ def _setup_ai(app: FastAPI) -> None:
         recommend_verifier=_ai_recommend_verifier,
         verifier_registry=ai_verifier_registry,
         search_cache=ai_search_cache,
+        book_provider=_ai_book_provider,
     )
     # Register `delegate` last: it dispatches to the coordinator's verifier
     # sub-run, so the coordinator must exist first.

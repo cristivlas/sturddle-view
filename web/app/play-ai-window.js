@@ -8,7 +8,11 @@
 // perspective remount) is driven by play.js -- this module only owns
 // the dom inside the window.
 
-import { createDockableWindow, DOCK_ORDER } from "./play-dock-windows.js";
+import { createDockableWindow, DOCK_ORDER, getPvLineBoard } from "./play-dock-windows.js";
+import { APP_EVT } from "./app-events.js";
+import { SHOWABLE_TOOLTIP } from "./pv-table.js";
+import { pvFrames } from "./pv-walk.js";
+import { FEN } from "../vendor/cm-chessboard/src/model/Position.js";
 import {
   AUTOSCROLL_SLACK_PROSE_PX,
   isPinnedToBottom,
@@ -130,6 +134,9 @@ const TOOL_DOT_CLASS = "play-ai-tool-dot";
 const TOOL_CHILDREN_CLASS = "play-ai-tool-children";
 const TOOL_DETAILS_BODY_CLASS = "play-ai-tool-details-body";
 const ROUNDCAP_CLASS = "play-ai-roundcap";
+const LINE_LINK_CLASS = "play-ai-line-link";
+const LINE_LINK_PLAYABLE_CLASS = "play-ai-line-link-playable";
+const LINE_LINK_PLAYING_CLASS = "play-ai-line-link-playing";
 
 // Server-side agent tool names.
 const TOOL = Object.freeze({
@@ -228,6 +235,7 @@ function buildBody() {
   scroll.addEventListener("mouseleave", () => {
     root._hoveredTarget = null;
   });
+  wireLineLinks(scroll);
 
   // Select the hovered block (tool detail / error / prose), falling
   // back to the current round's prose paragraph.
@@ -974,31 +982,160 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Cross out each flagged token in the round's prose. Rebuilds the paragraph
-// with matched spans wrapped in <del> so the reader sees the self-correction
-// land on the actual text. Longest items first so a line isn't half-matched.
-// Returns the struck spans as written, in prose order.
+// Not inside a longer word.
+const NOT_AFTER_WORD = "(?<![\\p{L}\\p{N}])";
+const NOT_BEFORE_WORD = "(?![\\p{L}\\p{N}])";
+
+// Alternation of `items`, longest first so a line isn't half-matched.
+// Case-insensitive: items may differ in case from the prose (the server
+// lowercases flagged claims; "Knight on b1" opens a sentence).
+function itemsRegExp(items, { wholeWords = false } = {}) {
+  const alt = [...items].sort((a, b) => b.length - a.length).map(escapeRegExp).join("|");
+  return wholeWords
+    ? new RegExp(`${NOT_AFTER_WORD}(?:${alt})${NOT_BEFORE_WORD}`, "giu")
+    : new RegExp(alt, "gi");
+}
+
+// Wrap each match of `re` in the paragraph's own text nodes with makeEl(m).
+// Text already inside a wrap (an earlier link) is left alone, so other links
+// survive and a re-run adds nothing.
+function wrapTextMatches(para, re, makeEl) {
+  // Streamed deltas land as separate text nodes; merge them so a match can
+  // span a delta boundary.
+  para.normalize();
+  for (const node of [...para.childNodes]) {
+    if (node.nodeType !== Node.TEXT_NODE) continue;
+    const text = node.nodeValue;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    for (const m of text.matchAll(re)) {
+      if (m.index > last) frag.append(text.slice(last, m.index));
+      frag.append(makeEl(m));
+      last = m.index + m[0].length;
+    }
+    if (last === 0) continue;
+    if (last < text.length) frag.append(text.slice(last));
+    node.replaceWith(frag);
+  }
+}
+
+// Cross out each flagged token in the round's prose, so the reader sees the
+// self-correction land on the actual text. Flattens first: struck prose
+// carries no links. Returns the struck spans as written, in prose order.
 function strikeProseItems(para, items) {
-  const text = para.textContent;
-  if (!text || !items.length) return [];
-  const sorted = [...items].sort((a, b) => b.length - a.length);
-  // Case-insensitive: server lowercases flagged claims, but the prose keeps
-  // its original case ("Knight on b1" at a sentence start).
-  const re = new RegExp(sorted.map(escapeRegExp).join("|"), "gi");
-  para.textContent = "";
+  if (!para.textContent || !items.length) return [];
+  para.textContent = para.textContent;
   const struck = [];
-  let last = 0;
-  for (const m of text.matchAll(re)) {
-    if (m.index > last) para.append(document.createTextNode(text.slice(last, m.index)));
+  wrapTextMatches(para, itemsRegExp(items), (m) => {
     const del = document.createElement("del");
     del.className = "play-ai-prose-struck";
     del.textContent = m[0];
-    para.append(del);
     struck.push(m[0]);
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) para.append(document.createTextNode(text.slice(last)));
+    return del;
+  });
   return struck;
+}
+
+// Line link -> {placement, uci}: the line it plays and where it starts.
+const linkLines = new WeakMap();
+
+function applyLineLinkGate(link) {
+  const playable = !!getPvLineBoard()?.canPlayLine();
+  link.classList.toggle(LINE_LINK_PLAYABLE_CLASS, playable);
+  if (playable) link.title = SHOWABLE_TOOLTIP;
+  else link.removeAttribute("title");
+}
+
+function buildLineLink(text, placement, uci) {
+  const link = document.createElement("span");
+  link.className = LINE_LINK_CLASS;
+  link.textContent = text;
+  linkLines.set(link, { placement, uci });
+  applyLineLinkGate(link);
+  return link;
+}
+
+// Same gate as the Search Lines rows, re-applied on game-view's announcement.
+window.addEventListener(APP_EVT.PLAY_LINE_GATE_CHANGED, () => {
+  if (!inst.body) return;
+  for (const link of inst.body.querySelectorAll(`.${LINE_LINK_CLASS}`)) {
+    applyLineLinkGate(link);
+  }
+});
+
+function playLineLink(link) {
+  const board = getPvLineBoard();
+  const line = linkLines.get(link);
+  if (!board || !line?.uci) return;
+  const started = board.playLine(pvFrames(line.placement, line.uci), {
+    pvUci: line.uci,
+    onEnd: () => link.classList.remove(LINE_LINK_PLAYING_CLASS),
+  });
+  // After playLine: a retarget onto this same link fires the old show's
+  // onEnd inside it, which would otherwise clear the new mark.
+  if (started) link.classList.add(LINE_LINK_PLAYING_CLASS);
+}
+
+// Double-click a playable link to play it. The mousedown guard keeps the
+// multi-click from selecting the word first.
+function wireLineLinks(scroll) {
+  const playableLink = (ev) => ev.target.closest?.(`.${LINE_LINK_PLAYABLE_CLASS}`);
+  scroll.addEventListener("mousedown", (ev) => {
+    if (ev.detail > 1 && playableLink(ev)) ev.preventDefault();
+  });
+  scroll.addEventListener("dblclick", (ev) => {
+    const link = playableLink(ev);
+    if (link) playLineLink(link);
+  });
+}
+
+// ai_opening_links: link each opening name in a clean round's prose to its
+// book line.
+export function linkAiOpenings({ round, items }) {
+  if (!inst.body || !items.length) return;
+  const entry = inst.body._roundPanels.get(round);
+  if (!entry) return;
+  const uciBySurface = new Map(items.map((it) => [it.surface.toLowerCase(), it.uci]));
+  const re = itemsRegExp(items.map((it) => it.surface), { wholeWords: true });
+  wrapTextMatches(entry.para, re, (m) =>
+    buildLineLink(m[0], FEN.start, uciBySurface.get(m[0].toLowerCase())));
+}
+
+const FEN_SIDE_FIELD = 1;
+const FEN_FULLMOVE_FIELD = 5;
+const FEN_WHITE = "w";
+const SAN_CHECK_SUFFIX_RE = /[+#]$/;
+// A pawn push's SAN is a bare square ("e4"): prose names squares all the
+// time, so it links only after the current move number.
+const PAWN_PUSH_SAN_RE = /^[a-h][1-8]$/;
+// Not inside a move token, nor after any move number: '-' keeps O-O out of
+// O-O-O, and a number other than the current one ("15.Qe1", "15. Qe1")
+// leaves the move plain.
+const NOT_AFTER_MOVE = "(?<![\\p{L}\\p{N}.\\-])(?<!\\p{N}\\.+\\s)";
+const NOT_BEFORE_MOVE = "(?![\\p{L}\\p{N}\\-])";
+
+// Mentions of `san` as the move to play in `fen`: case-sensitive, check
+// suffix optional, either after the current move number ("11." White,
+// "11..." Black) or -- unless a pawn push -- standing alone. Only the move
+// itself is matched, not its number.
+function recommendedMoveRegExp(san, fen) {
+  const fields = fen.split(" ");
+  const dots = fields[FEN_SIDE_FIELD] === FEN_WHITE ? "\\." : "\\.\\.\\.";
+  const afterNumber = `(?<=(?<!\\p{N})${fields[FEN_FULLMOVE_FIELD]}${dots}\\s?)`;
+  const base = san.replace(SAN_CHECK_SUFFIX_RE, "");
+  const lead = PAWN_PUSH_SAN_RE.test(base) ? afterNumber : `(?:${afterNumber}|${NOT_AFTER_MOVE})`;
+  return new RegExp(`${lead}${escapeRegExp(base)}[+#]?${NOT_BEFORE_MOVE}`, "gu");
+}
+
+// ai_recommendation: link the recommended move in the turn's visible prose
+// to its verified line. No line (the unsearched book move), no link.
+export function linkAiRecommendation({ san, fen, pv_uci: pvUci }) {
+  if (!inst.body || !san || !fen || !pvUci?.length) return;
+  const re = recommendedMoveRegExp(san, fen);
+  for (const entry of inst.body._roundPanels.values()) {
+    if (entry.para.hidden || entry.revision.body.contains(entry.para)) continue;
+    wrapTextMatches(entry.para, re, (m) => buildLineLink(m[0], fen, pvUci));
+  }
 }
 
 export function noteAiPosition({ round, surfaces, hideProse = false }) {

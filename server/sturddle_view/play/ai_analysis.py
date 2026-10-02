@@ -32,6 +32,7 @@ from ..events import (
     ENVELOPE_KIND,
     ENVELOPE_PAYLOAD,
     EVT_AI_INFO,
+    EVT_AI_OPENING_LINKS,
     EVT_AI_POSITION_NOTE,
     EVT_AI_RECOMMENDATION,
     EVT_AI_THINKING,
@@ -97,6 +98,7 @@ from .tools_engine import (
     parse_move_canonical,
     parse_move_reporting,
 )
+from .tools_openings import BookProvider
 
 
 BoardProvider = Callable[[], chess.Board | None]
@@ -773,6 +775,9 @@ class _LoopConfig:
     # Verifier: the final reply must open with holds/refuted; a non-verdict
     # draws one nudge, then is dropped (empty final_text -> verdict_withheld).
     require_verdict: bool = False
+    # Narrator: link opening names in its clean prose (ai_opening_links).
+    # The verifier's prose never reaches the panel.
+    link_openings: bool = False
     # Verifier: the move under test. A verdict counts only after a top_moves
     # ranking that includes it -- analyze on the live FEN scores the position
     # before the move, so it can't judge the move.
@@ -792,6 +797,77 @@ class _LoopResult:
     round_cap_hit: bool = False
     text_published: bool = False
     rounds: int = 0
+
+
+@dataclass(slots=True)
+class _LoopState:
+    """Turn-wide mutable state of one `_run_loop` call, shared by its
+    per-round helpers."""
+    cards_injected: set[str] = field(default_factory=set)
+    last_call: tuple[tuple, dict] | None = None
+    text_parts: list[str] = field(default_factory=list)
+    recommended_uci: str | None = None
+    recommended_depth: int | None = None
+    # SAN of the accepted move -- what the nudges and the mismatch
+    # corrective name, since prose speaks SAN, not uci.
+    recommended_san: str | None = None
+    # Verifier: flips once a top_moves ranking includes the move under test.
+    move_searched: bool = False
+    nudge_sent: bool = False
+    # Narrator: re-nudge toward an accepted recommend_move each clean
+    # exit until one lands, but stop once a nudge draws no new attempt.
+    # These two track "progress since the last nudge" for that guard.
+    recommend_attempts: int = 0
+    attempts_at_last_nudge: int = -1
+    # Consecutive failed recommend_move calls (illegal/rejected); when it
+    # hits MAX_RECOMMEND_FAILURES the model is nudged to use top_moves.
+    # Reset by an accepted recommend or a top_moves call.
+    consecutive_recommend_failures: int = 0
+    recommend_failure_nudge_armed: bool = True
+    # True once a delegate call returned a verdict this turn. Gates the
+    # red-team hold: the first accepted recommend_move without one is
+    # held so the pick survives an adversarial check before it ships.
+    red_teamed: bool = False
+    red_team_nudge_sent: bool = False
+    # Flips when prose lands after recommend_move is accepted (the
+    # closing conclusion); gates the post-recommend nudge.
+    prose_after_recommend: bool = False
+    post_recommend_nudge_sent: bool = False
+    # One-shot: after the corrective, a re-asserted wrong move is struck.
+    mismatch_nudge_sent: bool = False
+    verdict_nudge_sent: bool = False
+    round_cap_hit: bool = True  # flipped to False on natural exit
+    text_published: bool = False  # flips on first non-whitespace text chunk
+    final_text: str = ""  # last round's prose only (verifier verdict)
+    # Position-check items already corrected this turn. A re-flagged item
+    # is struck without another corrective: the model's acknowledgment
+    # repeats the wrong phrase, so re-prompting loops until the round cap.
+    corrected_items: set[str] = field(default_factory=set)
+    # Labels already asked to name their other position. One-shot: prose
+    # about a past position can't be phrased past the regex, so a re-tag
+    # must not re-ask forever.
+    rephrase_asked: set[str] = field(default_factory=set)
+    # Set by the narrator's completeness nudge: the next round is forced.
+    force_tool_next: bool = False
+    # One-shot: a silent round after a fresh attempt still gets nudged.
+    silent_renudge_used: bool = False
+    rounds: int = 0
+
+
+@dataclass(slots=True)
+class _Round:
+    """One provider round: its chunks and the tool_use that ended it."""
+    index: int
+    chunks: list[ProviderChunk] = field(default_factory=list)
+    pending_tool: ProviderChunk | None = None
+    # Per-round thinking duration, carried on the first non-thinking
+    # event so the client shows it correctly on replay (a client-side
+    # Date.now() delta collapses to ~0 when replay fires at once).
+    think_timer: _ThinkTimer = field(default_factory=_ThinkTimer)
+
+    @property
+    def had_text(self) -> bool:
+        return any(c.kind == "text" and c.text for c in self.chunks)
 
 
 def _sort_surfaces(surfaces: list[str]) -> list[str]:
@@ -1017,6 +1093,7 @@ class AIAnalysisCoordinator:
         recommend_verifier: RecommendVerifier | None = None,
         verifier_registry: ToolRegistry | None = None,
         search_cache: SearchCache | None = None,
+        book_provider: BookProvider | None = None,
     ) -> None:
         self._bus = bus
         # Default provider for callers that don't supply one per turn.
@@ -1038,6 +1115,8 @@ class AIAnalysisCoordinator:
         # Cleared at turn start (position is stable within a turn, not
         # across). None when the tools aren't cache-wired (tests).
         self._search_cache = search_cache
+        # Opening book for prose opening links; None disables them.
+        self._book_provider = book_provider
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
         self._cancel_token: CancelToken | None = None
@@ -1176,6 +1255,7 @@ class AIAnalysisCoordinator:
                     track_recommend=has_recommend_move,
                     enforce_red_team=has_recommend_move and has_delegate,
                     book_move_uci=book_move_uci,
+                    link_openings=True,
                 )
                 recommended_uci: str | None = None
                 recommended_depth: int | None = None
@@ -1275,10 +1355,6 @@ class AIAnalysisCoordinator:
                     self._turn_game_id = None
                     self._active_delegate_id = None
 
-    # oversized-ok: cohesive agent state machine -- one round loop over ~15
-    # interdependent flags (nudge gating, position-check repeats, tool
-    # dedup, recommend tracking). The branches are each distinct logic, not
-    # repetition; splitting would scatter the round-exit gating.
     async def _run_loop(
         self, messages: list[Message], config: _LoopConfig,
     ) -> _LoopResult:
@@ -1291,465 +1367,467 @@ class AIAnalysisCoordinator:
         Used by both the narrator turn (`run`, real emit) and verifier
         sub-runs (`_run_verifier`, silent emit). The two differ only via
         `config`."""
-        emit = config.emit
-        game_id = config.game_id
-        mode = config.mode
-        cards_injected: set[str] = set()
-        last_call: tuple[tuple, dict] | None = None
-        text_parts: list[str] = []
-        recommended_uci: str | None = None
-        recommended_depth: int | None = None
-        # SAN of the accepted move -- what the nudges and the mismatch
-        # corrective name, since prose speaks SAN, not uci.
-        recommended_san: str | None = None
-        # Verifier: flips once a top_moves ranking includes the move under test.
-        move_searched = False
-        nudge_sent = False
-        # Narrator: re-nudge toward an accepted recommend_move each clean
-        # exit until one lands, but stop once a nudge draws no new attempt.
-        # These two track "progress since the last nudge" for that guard.
-        recommend_attempts = 0
-        attempts_at_last_nudge = -1
-        # Consecutive failed recommend_move calls (illegal/rejected); when it
-        # hits MAX_RECOMMEND_FAILURES the model is nudged to use top_moves.
-        # Reset by an accepted recommend or a top_moves call.
-        consecutive_recommend_failures = 0
-        recommend_failure_nudge_armed = True
-        # True once a delegate call returned a verdict this turn. Gates the
-        # red-team hold: the first accepted recommend_move without one is
-        # held so the pick survives an adversarial check before it ships.
-        red_teamed = False
-        red_team_nudge_sent = False
-        # Flips when prose lands after recommend_move is accepted (the
-        # closing conclusion); gates the post-recommend nudge.
-        prose_after_recommend = False
-        post_recommend_nudge_sent = False
-        # One-shot: after the corrective, a re-asserted wrong move is struck.
-        mismatch_nudge_sent = False
-        verdict_nudge_sent = False
-        round_cap_hit = True  # flipped to False on natural exit
-        text_published = False  # flips on first non-whitespace text chunk
-        final_text = ""  # last round's prose only (verifier verdict)
-        # Position-check items already corrected this turn. A re-flagged item
-        # is struck without another corrective: the model's acknowledgment
-        # repeats the wrong phrase, so re-prompting loops until the round cap.
-        corrected_items: set[str] = set()
-        # Labels already asked to name their other position. One-shot: prose
-        # about a past position can't be phrased past the regex, so a re-tag
-        # must not re-ask forever.
-        rephrase_asked: set[str] = set()
-        # Set by the narrator's completeness nudge: the next round is forced.
-        force_tool_next = False
-        # One-shot: a silent round after a fresh attempt still gets nudged.
-        silent_renudge_used = False
-        rounds = 0
+        st = _LoopState()
         for round_index in range(config.max_rounds):
-            rounds = round_index + 1
-            round_chunks: list[ProviderChunk] = []
-            pending_tool: ProviderChunk | None = None
-            # Per-round thinking duration, carried on the first non-thinking
-            # event so the client shows it correctly on replay (a client-side
-            # Date.now() delta collapses to ~0 when replay fires at once).
-            think_timer = _ThinkTimer()
-            force_tool = force_tool_next or (
-                config.force_first_round_tool and round_index == 0
-            )
-            force_tool_next = False
-            provider_stream = config.provider.stream(
-                system=config.system_prompt,
-                messages=messages,
-                tools=config.tool_schemas,
-                transcript=config.transcript,
-                round_index=round_index,
-                thinking=config.thinking_override,
-                force_tool_call=force_tool,
-            )
-            # Strip paired markdown (**, __, `) so the panel renders clean
-            # prose rather than raw emphasis markers.
-            async for chunk in strip_markdown_stream(provider_stream):
-                round_chunks.append(chunk)
-                await config.transcript.chunk(round_index, chunk)
-                if chunk.kind == "text" and chunk.text:
-                    # Non-whitespace only: a whitespace-only turn produced no
-                    # real answer, so it reads as no_response, not a (missing)
-                    # recommendation. Matches _round_produced_output's strip.
-                    if chunk.text.strip():
-                        text_published = True
-                    text_parts.append(chunk.text)
-                    payload = {"delta": chunk.text, "round": round_index}
-                    think_timer.spend_into(payload)
-                    await emit(
-                        Event(kind=EVT_AI_INFO, game_id=game_id, payload=payload)
-                    )
-                elif chunk.kind == "thinking" and chunk.text:
-                    think_timer.start()
-                    await emit(
-                        Event(
-                            kind=EVT_AI_THINKING,
-                            game_id=game_id,
-                            payload={"delta": chunk.text, "round": round_index},
-                        )
-                    )
-                elif chunk.kind == "usage" and chunk.usage is not None:
-                    await self._add_usage(chunk.usage)
-                elif chunk.kind == "tool_use":
-                    # In sequential mode (v1), a tool_use ends the round;
-                    # downstream chunks after it would belong to the next
-                    # round per Anthropic semantics. Capture and break.
-                    # (Providers order the round's usage chunk before any
-                    # tool_use, so it isn't lost to this break.)
-                    pending_tool = chunk
-                    break
-            round_had_text = any(
-                c.kind == "text" and c.text for c in round_chunks
-            )
-            # Single-board prose check, every round. A new hit surfaces a
-            # self-correction note and (below) injects a fact-anchored
-            # corrective; a repeat is only struck.
-            pc, repeat_pc = self._position_check(round_chunks).partition(corrected_items)
-            # Split off flags the prose placed in another position: not struck,
-            # but the narrator is asked (once per item) to name such positions.
-            # Repeats were already ruled on, so they skip the judge.
-            pc, other = await self._apply_semantic_check(pc, round_chunks, config, round_index)
-            # The ask rides along only when a round follows anyway (a corrective
-            # or a pending tool call): a round forced for it would repeat the
-            # unstruck prose.
-            rephrase = (
-                sorted(other - rephrase_asked)
-                if pc.hit or pending_tool is not None else []
-            )
-            rephrase_asked.update(rephrase)
-            needs_correction = pc.hit or bool(rephrase)
-            # Tool-mention-only hits carry no surface to strike; skip the UI
-            # note (it would mark nothing) but still inject the corrective
-            # below so the model rewrites the sentence. A new leak hides the
-            # round's prose (the corrective asks for it again); a repeat draws
-            # no retry, so hiding would leave the reader nothing -- strike it.
-            surfaces = _sort_surfaces(
-                pc.surfaces + repeat_pc.surfaces + repeat_pc.leak_surfaces
-            )
-            hide_prose = pc.hides_prose
-            if surfaces or hide_prose:
-                await self._emit_position_note(
-                    emit=emit, game_id=game_id, round_index=round_index,
-                    surfaces=surfaces, hide_prose=hide_prose,
-                )
-            if pc.hit:
-                corrected_items |= pc.keys
-            if needs_correction:
-                pc_message = self._position_check_message(pc, rephrase)
-            if pending_tool is None and pc.hit:
+            st.rounds = round_index + 1
+            rnd = await self._stream_round(messages, config, st, round_index)
+            correction = await self._check_round_prose(config, st, rnd)
+            if rnd.pending_tool is not None:
+                await self._dispatch_round_tool(messages, config, st, rnd, correction)
+                continue
+            if correction is not None:
                 # A mismatch blocks natural exit: append the round's prose and
                 # inject the corrective so the model self-corrects next round.
-                _inject_nudge(messages, round_chunks, pc_message)
+                _inject_nudge(messages, rnd.chunks, correction)
                 continue
-            if pending_tool is None:
-                # Natural exit. Completeness nudge: narrator re-nudges each
-                # clean exit until a move is accepted (stopping on a stall);
-                # verifier nudges once to search the move before concluding.
-                # Gated on real output: a silent round ends the turn (a model
-                # that produced nothing won't comply with one more prompt)
-                # rather than burning rounds re-nudging it. Exception, once:
-                # the narrator went silent right after a fresh (rejected)
-                # attempt -- it is still engaged, so force one more try.
-                produced = _round_produced_output(round_chunks)
-                silent_retry = (
-                    not produced
-                    and config.track_recommend
-                    and not silent_renudge_used
-                    and nudge_sent
-                    and recommend_attempts > attempts_at_last_nudge
-                )
-                if self._needs_nudge(
-                    config, nudge_sent, recommended_uci, move_searched,
-                    recommend_attempts, attempts_at_last_nudge,
-                ) and (produced or silent_retry):
-                    silent_renudge_used = silent_renudge_used or silent_retry
-                    log.info("completeness nudge (%s): injecting nudge", mode)
-                    nudge_sent = True
-                    attempts_at_last_nudge = recommend_attempts
-                    # Narrator: the nudged round must call a tool, so it can't
-                    # exit in prose again without attempting a move.
-                    force_tool_next = config.track_recommend
-                    _inject_nudge(messages, round_chunks, config.completeness_nudge)
-                    continue
-                # Prose in a post-acceptance round is the conclusion we
-                # wanted -- record it so the nudge below doesn't fire.
-                if recommended_uci is not None and round_had_text:
-                    prose_after_recommend = True
-                # Move accepted but no closing conclusion yet: ask for it
-                # once. Small models treat the tool call as the end; this
-                # backstops the prompt. Narrator-only (track_recommend).
-                if (
-                    config.track_recommend
-                    and recommended_uci is not None
-                    and not prose_after_recommend
-                    and not post_recommend_nudge_sent
-                ):
-                    # Fires even on a silent round -- that IS the trigger
-                    # (model treated the accepting call as the end). The
-                    # empty turn becomes a placeholder so the wire stays valid.
-                    log.info("post-recommend nudge (%s): asking for conclusion", mode)
-                    post_recommend_nudge_sent = True
-                    _inject_nudge(
-                        messages,
-                        round_chunks,
-                        _POST_RECOMMEND_NUDGE_PROMPTS[mode].format(
-                            san=recommended_san or "the move",
-                        ),
-                    )
-                    continue
-                # Prose naming a different move than the one recorded: the
-                # arrow and the text disagree on screen. Re-prompt once, then
-                # strike the offending spans and ship (a stalled model would
-                # otherwise burn the round budget re-asserting).
-                mismatch = self._recommend_mismatch(
-                    round_chunks, recommended_uci, recommended_san,
-                )
-                if mismatch is not None:
-                    surfaces, named = mismatch
-                    if not mismatch_nudge_sent:
-                        log.info(
-                            "recommend-mismatch nudge (%s): prose names %s, recorded %s",
-                            mode, named, recommended_san,
-                        )
-                        mismatch_nudge_sent = True
-                        _inject_nudge(
-                            messages,
-                            round_chunks,
-                            _RECOMMEND_MISMATCH_NUDGE.format(
-                                san=recommended_san, named=named,
-                            ),
-                        )
-                        continue
-                    await self._emit_position_note(
-                        emit=emit, game_id=game_id, round_index=round_index,
-                        surfaces=surfaces,
-                    )
-                # Verdict = this final round's prose only, so cross-round
-                # tool-call self-talk ("I need the FEN", "let me check")
-                # doesn't leak up to the narrator.
-                round_text = "".join(
-                    c.text for c in round_chunks if c.kind == "text" and c.text
-                )
-                if (
-                    config.require_verdict
-                    and round_text.strip()
-                    and not _VERDICT_LEAD_RE.match(round_text)
-                ):
-                    if not verdict_nudge_sent:
-                        log.info("verdict nudge (%s): reply is not a verdict", mode)
-                        verdict_nudge_sent = True
-                        _inject_nudge(messages, round_chunks, _VERIFIER_VERDICT_NUDGE)
-                        continue
-                    log.warning("verifier reply is not a verdict; dropped: %r", round_text)
-                    round_text = ""
-                # Past the one search nudge: a verdict on a move never searched
-                # is invented, so it is dropped rather than passed on.
-                if (
-                    config.move_under_test is not None
-                    and round_text.strip()
-                    and not move_searched
-                ):
-                    log.warning(
-                        "verifier verdict without a search of %s; dropped: %r",
-                        config.move_under_test.uci(), round_text,
-                    )
-                    round_text = ""
-                round_cap_hit = False
-                await _flush_think(emit, think_timer, game_id, round_index)
-                final_text = round_text
+            if await self._handle_natural_exit(messages, config, st, rnd):
                 break
-            # Only a tool_use round reaches here -- the natural-exit branch
-            # above always continues or breaks.
-            messages.append(_assistant_message(round_chunks))
-            # Single-slot dedup. Cache hit returns the prior result
-            # without re-dispatching and without a duplicate UI dot.
-            key = self._dedup_key(pending_tool)
-            cache_hit = (
-                key is not None
-                and last_call is not None
-                and last_call[0] == key
-            )
-            if cache_hit:
-                log.info("tool dedup hit: %s", pending_tool.tool_name)
-                tool_output = last_call[1]
-            else:
-                # Surface the call to the UI only on a real dispatch.
-                tool_payload = {
-                    "round": round_index,
-                    "name": pending_tool.tool_name,
-                    "input": pending_tool.tool_input,
-                    "tool_use_id": pending_tool.tool_use_id,
-                }
-                think_timer.spend_into(tool_payload)
-                await emit(
-                    Event(
-                        kind=EVT_AI_TOOL_CALL,
-                        game_id=game_id,
-                        payload=tool_payload,
-                    )
-                )
-                # Tag the verifier's nested events with this delegate's
-                # id (client nesting); cleared after so a later narrator
-                # call isn't misattributed.
-                is_delegate = pending_tool.tool_name == _DELEGATE_TOOL_NAME
-                if is_delegate:
-                    self._active_delegate_id = pending_tool.tool_use_id
-                reporter = _progress_reporter(
-                    emit, game_id, round_index, pending_tool.tool_use_id,
-                )
-                try:
-                    with reporting_progress(reporter):
-                        tool_output = await self._dispatch_tool(
-                            pending_tool, registry=config.registry,
-                        )
-                finally:
-                    if is_delegate:
-                        self._active_delegate_id = None
-                if key is not None:
-                    # Cache success and error alike (deterministic rejection
-                    # is as redundant as success) -- and always the raw
-                    # result: the red-team hold below is per-call policy.
-                    last_call = (key, tool_output)
-            # Hold the first un-red-teamed accept (one-shot; book move
-            # exempt) BEFORE any event/transcript sees the output, so the
-            # UI, the transcript, and the model all read the same result.
-            if (
-                config.track_recommend
-                and pending_tool.tool_name == RECOMMEND_MOVE_TOOL_NAME
-                and config.enforce_red_team
-                and not red_teamed
-                and not red_team_nudge_sent
-                and _is_accepted_recommend(tool_output)
-                and tool_output["uci"] != config.book_move_uci
-            ):
-                red_team_nudge_sent = True
-                tool_output = {
-                    k: v for k, v in tool_output.items() if k != "ok"
-                }
-                tool_output["error"] = _RED_TEAM_FIRST_ERROR
-                tool_output["reason"] = _RED_TEAM_FIRST_NUDGE
-                log.info("red-team nudge (%s): holding unchecked accept", mode)
-            if not cache_hit:
-                await emit(
-                    Event(
-                        kind=EVT_AI_TOOL_CALL_COMPLETE,
-                        game_id=game_id,
-                        payload={
-                            "round": round_index,
-                            "name": pending_tool.tool_name,
-                            "tool_use_id": pending_tool.tool_use_id,
-                            # Surfaced in the panel's tool-call OUT block.
-                            "output": tool_output,
-                        },
-                    )
-                )
-            # A *successful* top_moves call resets the failure streak and
-            # re-arms the nudge. An errored call (malformed args, empty list)
-            # doesn't count, or repeated bad calls would never escalate.
-            if (
-                config.track_recommend
-                and pending_tool.tool_name == TOP_MOVES_TOOL_NAME
-                and isinstance(tool_output, dict)
-                and not tool_output.get("error")
-            ):
-                consecutive_recommend_failures = 0
-                recommend_failure_nudge_armed = True
-            # A verdict-bearing delegate marks the pick red-teamed, and so does
-            # a refutation the engine overruled (the move survived); other
-            # errors (bad move, no verdict) don't count.
-            if (
-                config.track_recommend
-                and pending_tool.tool_name == _DELEGATE_TOOL_NAME
-                and isinstance(tool_output, dict)
-                and (not tool_output.get("error") or tool_output.get(MOVE_SURVIVED_KEY))
-            ):
-                red_teamed = True
-            if _ranks_move(pending_tool, tool_output, config.move_under_test):
-                move_searched = True
-            # An accepted recommend_move is the turn's pick. Safe to read a
-            # cached result: the cached uci matches a fresh dispatch's.
-            if config.track_recommend and pending_tool.tool_name == RECOMMEND_MOVE_TOOL_NAME:
-                recommend_attempts += 1
-                accepted = _is_accepted_recommend(tool_output)
-                if accepted:
-                    consecutive_recommend_failures = 0
-                    recommended_uci = tool_output["uci"]
-                    recommended_depth = tool_output.get("depth")
-                    recommended_san = tool_output.get("san")
-                    if recommended_uci == config.book_move_uci:
-                        log.info("book move accepted (%s): %s", mode, recommended_uci)
-                    # A conclusion alongside the accepting call counts -- no
-                    # separate post-move round needed. Prose in a later round
-                    # is handled at the natural-exit check.
-                    if round_had_text:
-                        prose_after_recommend = True
-                elif tool_output.get("error") != _RED_TEAM_FIRST_ERROR:
-                    consecutive_recommend_failures += 1
-            await config.transcript.tool_result(
-                round_index, pending_tool.tool_use_id, tool_output
-            )
-            # A survived envelope (overruled refutation) carries an error for
-            # the model but isn't a failure: the move passed. The panel badges
-            # it from the complete event instead.
-            if (
-                isinstance(tool_output, dict)
-                and tool_output.get("error")
-                and not tool_output.get(MOVE_SURVIVED_KEY)
-            ):
-                await emit(
-                    Event(
-                        kind=EVT_AI_TOOL_CALL_FAILED,
-                        game_id=game_id,
-                        payload={
-                            "round": round_index,
-                            "tool_use_id": pending_tool.tool_use_id,
-                            "error": tool_output.get("error"),
-                            "detail": tool_output.get("detail"),
-                        },
-                    )
-                )
-            card = self._inject_card_once(
-                pending_tool.tool_name, cards_injected, registry=config.registry,
-            )
-            messages.append(
-                _tool_result_message(
-                    pending_tool.tool_use_id, tool_output, card=card,
-                )
-            )
-            # Correct a mismatch in this round's prose. After the tool_result
-            # so the assistant tool_use is paired before this user message.
-            if needs_correction:
-                messages.append({"role": "user", "content": pc_message})
-            # Force a top_moves call after enough failed recommend attempts.
-            # After the tool_result (every tool_use needs a matching result
-            # before a user-role nudge). One-shot until a top_moves re-arms it.
-            if (
-                recommend_failure_nudge_armed
-                and consecutive_recommend_failures >= MAX_RECOMMEND_FAILURES
-            ):
-                log.info(
-                    "recommend-failure nudge (%s): forcing top_moves after %d failures",
-                    mode, consecutive_recommend_failures,
-                )
-                recommend_failure_nudge_armed = False
-                messages.append(
-                    {"role": "user", "content": _RECOMMEND_FAILURE_NUDGE}
-                )
-            await _flush_think(emit, think_timer, game_id, round_index)
         # On round-cap the narrator falls back to all-rounds text (consumer
         # is recommended_uci). The verifier must NOT -- its prose IS the
         # verdict; cross-round self-talk would poison it. Empty -> no verdict.
-        final = final_text or ("".join(text_parts) if config.track_recommend else "")
+        final = st.final_text or ("".join(st.text_parts) if config.track_recommend else "")
         return _LoopResult(
             final_text=final,
-            recommended_uci=recommended_uci,
-            recommended_depth=recommended_depth,
-            round_cap_hit=round_cap_hit,
-            text_published=text_published,
-            rounds=rounds,
+            recommended_uci=st.recommended_uci,
+            recommended_depth=st.recommended_depth,
+            round_cap_hit=st.round_cap_hit,
+            text_published=st.text_published,
+            rounds=st.rounds,
         )
+
+    async def _stream_round(
+        self,
+        messages: list[Message],
+        config: _LoopConfig,
+        st: _LoopState,
+        round_index: int,
+    ) -> _Round:
+        """Run one provider call, streaming its text and thinking onto the
+        bus. A tool_use chunk ends the round and is returned as
+        `pending_tool`."""
+        emit = config.emit
+        game_id = config.game_id
+        rnd = _Round(index=round_index)
+        force_tool = st.force_tool_next or (
+            config.force_first_round_tool and round_index == 0
+        )
+        st.force_tool_next = False
+        provider_stream = config.provider.stream(
+            system=config.system_prompt,
+            messages=messages,
+            tools=config.tool_schemas,
+            transcript=config.transcript,
+            round_index=round_index,
+            thinking=config.thinking_override,
+            force_tool_call=force_tool,
+        )
+        # Strip paired markdown (**, __, `) so the panel renders clean
+        # prose rather than raw emphasis markers.
+        async for chunk in strip_markdown_stream(provider_stream):
+            rnd.chunks.append(chunk)
+            await config.transcript.chunk(round_index, chunk)
+            if chunk.kind == "text" and chunk.text:
+                # Non-whitespace only: a whitespace-only turn produced no
+                # real answer, so it reads as no_response, not a (missing)
+                # recommendation. Matches _round_produced_output's strip.
+                if chunk.text.strip():
+                    st.text_published = True
+                st.text_parts.append(chunk.text)
+                payload = {"delta": chunk.text, "round": round_index}
+                rnd.think_timer.spend_into(payload)
+                await emit(
+                    Event(kind=EVT_AI_INFO, game_id=game_id, payload=payload)
+                )
+            elif chunk.kind == "thinking" and chunk.text:
+                rnd.think_timer.start()
+                await emit(
+                    Event(
+                        kind=EVT_AI_THINKING,
+                        game_id=game_id,
+                        payload={"delta": chunk.text, "round": round_index},
+                    )
+                )
+            elif chunk.kind == "usage" and chunk.usage is not None:
+                await self._add_usage(chunk.usage)
+            elif chunk.kind == "tool_use":
+                # In sequential mode (v1), a tool_use ends the round;
+                # downstream chunks after it would belong to the next
+                # round per Anthropic semantics. Capture and break.
+                # (Providers order the round's usage chunk before any
+                # tool_use, so it isn't lost to this break.)
+                rnd.pending_tool = chunk
+                break
+        return rnd
+
+    async def _check_round_prose(
+        self, config: _LoopConfig, st: _LoopState, rnd: _Round,
+    ) -> str | None:
+        """Single-board prose check, every round. A new hit surfaces a
+        self-correction note and returns a fact-anchored corrective to
+        inject; a repeat is only struck. A clean round's opening names are
+        linked instead. None when nothing needs correcting."""
+        emit = config.emit
+        game_id = config.game_id
+        round_index = rnd.index
+        pc, repeat_pc = self._position_check(rnd.chunks).partition(st.corrected_items)
+        # Split off flags the prose placed in another position: not struck,
+        # but the narrator is asked (once per item) to name such positions.
+        # Repeats were already ruled on, so they skip the judge.
+        pc, other = await self._apply_semantic_check(pc, rnd.chunks, config, round_index)
+        # The ask rides along only when a round follows anyway (a corrective
+        # or a pending tool call): a round forced for it would repeat the
+        # unstruck prose.
+        rephrase = (
+            sorted(other - st.rephrase_asked)
+            if pc.hit or rnd.pending_tool is not None else []
+        )
+        st.rephrase_asked.update(rephrase)
+        # Tool-mention-only hits carry no surface to strike; skip the UI
+        # note (it would mark nothing) but still return the corrective so
+        # the model rewrites the sentence. A new leak hides the round's
+        # prose (the corrective asks for it again); a repeat draws no retry,
+        # so hiding would leave the reader nothing -- strike it.
+        surfaces = _sort_surfaces(
+            pc.surfaces + repeat_pc.surfaces + repeat_pc.leak_surfaces
+        )
+        hide_prose = pc.hides_prose
+        if surfaces or hide_prose:
+            await self._emit_position_note(
+                emit=emit, game_id=game_id, round_index=round_index,
+                surfaces=surfaces, hide_prose=hide_prose,
+            )
+        elif config.link_openings:
+            await self._emit_opening_links(
+                emit=emit, game_id=game_id, round_index=round_index,
+                chunks=rnd.chunks,
+            )
+        if pc.hit:
+            st.corrected_items |= pc.keys
+        if not (pc.hit or rephrase):
+            return None
+        return self._position_check_message(pc, rephrase)
+
+    async def _handle_natural_exit(
+        self,
+        messages: list[Message],
+        config: _LoopConfig,
+        st: _LoopState,
+        rnd: _Round,
+    ) -> bool:
+        """A round that ended without a tool call. Returns True when the turn
+        ends here, False when a nudge was injected for another round.
+
+        Completeness nudge: narrator re-nudges each clean exit until a move
+        is accepted (stopping on a stall); verifier nudges once to search
+        the move before concluding. Gated on real output: a silent round
+        ends the turn (a model that produced nothing won't comply with one
+        more prompt) rather than burning rounds re-nudging it. Exception,
+        once: the narrator went silent right after a fresh (rejected)
+        attempt -- it is still engaged, so force one more try."""
+        emit = config.emit
+        game_id = config.game_id
+        mode = config.mode
+        round_chunks = rnd.chunks
+        produced = _round_produced_output(round_chunks)
+        silent_retry = (
+            not produced
+            and config.track_recommend
+            and not st.silent_renudge_used
+            and st.nudge_sent
+            and st.recommend_attempts > st.attempts_at_last_nudge
+        )
+        if self._needs_nudge(
+            config, st.nudge_sent, st.recommended_uci, st.move_searched,
+            st.recommend_attempts, st.attempts_at_last_nudge,
+        ) and (produced or silent_retry):
+            st.silent_renudge_used = st.silent_renudge_used or silent_retry
+            log.info("completeness nudge (%s): injecting nudge", mode)
+            st.nudge_sent = True
+            st.attempts_at_last_nudge = st.recommend_attempts
+            # Narrator: the nudged round must call a tool, so it can't
+            # exit in prose again without attempting a move.
+            st.force_tool_next = config.track_recommend
+            _inject_nudge(messages, round_chunks, config.completeness_nudge)
+            return False
+        # Prose in a post-acceptance round is the conclusion we
+        # wanted -- record it so the nudge below doesn't fire.
+        if st.recommended_uci is not None and rnd.had_text:
+            st.prose_after_recommend = True
+        # Move accepted but no closing conclusion yet: ask for it
+        # once. Small models treat the tool call as the end; this
+        # backstops the prompt. Narrator-only (track_recommend).
+        if (
+            config.track_recommend
+            and st.recommended_uci is not None
+            and not st.prose_after_recommend
+            and not st.post_recommend_nudge_sent
+        ):
+            # Fires even on a silent round -- that IS the trigger
+            # (model treated the accepting call as the end). The
+            # empty turn becomes a placeholder so the wire stays valid.
+            log.info("post-recommend nudge (%s): asking for conclusion", mode)
+            st.post_recommend_nudge_sent = True
+            _inject_nudge(
+                messages,
+                round_chunks,
+                _POST_RECOMMEND_NUDGE_PROMPTS[mode].format(
+                    san=st.recommended_san or "the move",
+                ),
+            )
+            return False
+        # Prose naming a different move than the one recorded: the
+        # arrow and the text disagree on screen. Re-prompt once, then
+        # strike the offending spans and ship (a stalled model would
+        # otherwise burn the round budget re-asserting).
+        mismatch = self._recommend_mismatch(
+            round_chunks, st.recommended_uci, st.recommended_san,
+        )
+        if mismatch is not None:
+            surfaces, named = mismatch
+            if not st.mismatch_nudge_sent:
+                log.info(
+                    "recommend-mismatch nudge (%s): prose names %s, recorded %s",
+                    mode, named, st.recommended_san,
+                )
+                st.mismatch_nudge_sent = True
+                _inject_nudge(
+                    messages,
+                    round_chunks,
+                    _RECOMMEND_MISMATCH_NUDGE.format(
+                        san=st.recommended_san, named=named,
+                    ),
+                )
+                return False
+            await self._emit_position_note(
+                emit=emit, game_id=game_id, round_index=rnd.index,
+                surfaces=surfaces,
+            )
+        # Verdict = this final round's prose only, so cross-round
+        # tool-call self-talk ("I need the FEN", "let me check")
+        # doesn't leak up to the narrator.
+        round_text = "".join(
+            c.text for c in round_chunks if c.kind == "text" and c.text
+        )
+        if (
+            config.require_verdict
+            and round_text.strip()
+            and not _VERDICT_LEAD_RE.match(round_text)
+        ):
+            if not st.verdict_nudge_sent:
+                log.info("verdict nudge (%s): reply is not a verdict", mode)
+                st.verdict_nudge_sent = True
+                _inject_nudge(messages, round_chunks, _VERIFIER_VERDICT_NUDGE)
+                return False
+            log.warning("verifier reply is not a verdict; dropped: %r", round_text)
+            round_text = ""
+        # Past the one search nudge: a verdict on a move never searched
+        # is invented, so it is dropped rather than passed on.
+        if (
+            config.move_under_test is not None
+            and round_text.strip()
+            and not st.move_searched
+        ):
+            log.warning(
+                "verifier verdict without a search of %s; dropped: %r",
+                config.move_under_test.uci(), round_text,
+            )
+            round_text = ""
+        st.round_cap_hit = False
+        await _flush_think(emit, rnd.think_timer, game_id, rnd.index)
+        st.final_text = round_text
+        return True
+
+    async def _dispatch_round_tool(
+        self,
+        messages: list[Message],
+        config: _LoopConfig,
+        st: _LoopState,
+        rnd: _Round,
+        correction: str | None,
+    ) -> None:
+        """Run the round's tool call and append its result (plus any
+        `correction` and failure nudge) for the next round."""
+        emit = config.emit
+        game_id = config.game_id
+        mode = config.mode
+        round_index = rnd.index
+        pending_tool = rnd.pending_tool
+        messages.append(_assistant_message(rnd.chunks))
+        # Single-slot dedup. Cache hit returns the prior result
+        # without re-dispatching and without a duplicate UI dot.
+        key = self._dedup_key(pending_tool)
+        cache_hit = (
+            key is not None
+            and st.last_call is not None
+            and st.last_call[0] == key
+        )
+        if cache_hit:
+            log.info("tool dedup hit: %s", pending_tool.tool_name)
+            tool_output = st.last_call[1]
+        else:
+            # Surface the call to the UI only on a real dispatch.
+            tool_payload = {
+                "round": round_index,
+                "name": pending_tool.tool_name,
+                "input": pending_tool.tool_input,
+                "tool_use_id": pending_tool.tool_use_id,
+            }
+            rnd.think_timer.spend_into(tool_payload)
+            await emit(
+                Event(
+                    kind=EVT_AI_TOOL_CALL,
+                    game_id=game_id,
+                    payload=tool_payload,
+                )
+            )
+            # Tag the verifier's nested events with this delegate's
+            # id (client nesting); cleared after so a later narrator
+            # call isn't misattributed.
+            is_delegate = pending_tool.tool_name == _DELEGATE_TOOL_NAME
+            if is_delegate:
+                self._active_delegate_id = pending_tool.tool_use_id
+            reporter = _progress_reporter(
+                emit, game_id, round_index, pending_tool.tool_use_id,
+            )
+            try:
+                with reporting_progress(reporter):
+                    tool_output = await self._dispatch_tool(
+                        pending_tool, registry=config.registry,
+                    )
+            finally:
+                if is_delegate:
+                    self._active_delegate_id = None
+            if key is not None:
+                # Cache success and error alike (deterministic rejection
+                # is as redundant as success) -- and always the raw
+                # result: the red-team hold below is per-call policy.
+                st.last_call = (key, tool_output)
+        # Hold the first un-red-teamed accept (one-shot; book move
+        # exempt) BEFORE any event/transcript sees the output, so the
+        # UI, the transcript, and the model all read the same result.
+        if (
+            config.track_recommend
+            and pending_tool.tool_name == RECOMMEND_MOVE_TOOL_NAME
+            and config.enforce_red_team
+            and not st.red_teamed
+            and not st.red_team_nudge_sent
+            and _is_accepted_recommend(tool_output)
+            and tool_output["uci"] != config.book_move_uci
+        ):
+            st.red_team_nudge_sent = True
+            tool_output = {
+                k: v for k, v in tool_output.items() if k != "ok"
+            }
+            tool_output["error"] = _RED_TEAM_FIRST_ERROR
+            tool_output["reason"] = _RED_TEAM_FIRST_NUDGE
+            log.info("red-team nudge (%s): holding unchecked accept", mode)
+        if not cache_hit:
+            await emit(
+                Event(
+                    kind=EVT_AI_TOOL_CALL_COMPLETE,
+                    game_id=game_id,
+                    payload={
+                        "round": round_index,
+                        "name": pending_tool.tool_name,
+                        "tool_use_id": pending_tool.tool_use_id,
+                        # Surfaced in the panel's tool-call OUT block.
+                        "output": tool_output,
+                    },
+                )
+            )
+        # A *successful* top_moves call resets the failure streak and
+        # re-arms the nudge. An errored call (malformed args, empty list)
+        # doesn't count, or repeated bad calls would never escalate.
+        if (
+            config.track_recommend
+            and pending_tool.tool_name == TOP_MOVES_TOOL_NAME
+            and isinstance(tool_output, dict)
+            and not tool_output.get("error")
+        ):
+            st.consecutive_recommend_failures = 0
+            st.recommend_failure_nudge_armed = True
+        # A verdict-bearing delegate marks the pick red-teamed, and so does
+        # a refutation the engine overruled (the move survived); other
+        # errors (bad move, no verdict) don't count.
+        if (
+            config.track_recommend
+            and pending_tool.tool_name == _DELEGATE_TOOL_NAME
+            and isinstance(tool_output, dict)
+            and (not tool_output.get("error") or tool_output.get(MOVE_SURVIVED_KEY))
+        ):
+            st.red_teamed = True
+        if _ranks_move(pending_tool, tool_output, config.move_under_test):
+            st.move_searched = True
+        # An accepted recommend_move is the turn's pick. Safe to read a
+        # cached result: the cached uci matches a fresh dispatch's.
+        if config.track_recommend and pending_tool.tool_name == RECOMMEND_MOVE_TOOL_NAME:
+            st.recommend_attempts += 1
+            accepted = _is_accepted_recommend(tool_output)
+            if accepted:
+                st.consecutive_recommend_failures = 0
+                st.recommended_uci = tool_output["uci"]
+                st.recommended_depth = tool_output.get("depth")
+                st.recommended_san = tool_output.get("san")
+                if st.recommended_uci == config.book_move_uci:
+                    log.info("book move accepted (%s): %s", mode, st.recommended_uci)
+                # A conclusion alongside the accepting call counts -- no
+                # separate post-move round needed. Prose in a later round
+                # is handled at the natural-exit check.
+                if rnd.had_text:
+                    st.prose_after_recommend = True
+            elif tool_output.get("error") != _RED_TEAM_FIRST_ERROR:
+                st.consecutive_recommend_failures += 1
+        await config.transcript.tool_result(
+            round_index, pending_tool.tool_use_id, tool_output
+        )
+        # A survived envelope (overruled refutation) carries an error for
+        # the model but isn't a failure: the move passed. The panel badges
+        # it from the complete event instead.
+        if (
+            isinstance(tool_output, dict)
+            and tool_output.get("error")
+            and not tool_output.get(MOVE_SURVIVED_KEY)
+        ):
+            await emit(
+                Event(
+                    kind=EVT_AI_TOOL_CALL_FAILED,
+                    game_id=game_id,
+                    payload={
+                        "round": round_index,
+                        "tool_use_id": pending_tool.tool_use_id,
+                        "error": tool_output.get("error"),
+                        "detail": tool_output.get("detail"),
+                    },
+                )
+            )
+        card = self._inject_card_once(
+            pending_tool.tool_name, st.cards_injected, registry=config.registry,
+        )
+        messages.append(
+            _tool_result_message(
+                pending_tool.tool_use_id, tool_output, card=card,
+            )
+        )
+        # Correct a mismatch in this round's prose. After the tool_result
+        # so the assistant tool_use is paired before this user message.
+        if correction is not None:
+            messages.append({"role": "user", "content": correction})
+        # Force a top_moves call after enough failed recommend attempts.
+        # After the tool_result (every tool_use needs a matching result
+        # before a user-role nudge). One-shot until a top_moves re-arms it.
+        if (
+            st.recommend_failure_nudge_armed
+            and st.consecutive_recommend_failures >= MAX_RECOMMEND_FAILURES
+        ):
+            log.info(
+                "recommend-failure nudge (%s): forcing top_moves after %d failures",
+                mode, st.consecutive_recommend_failures,
+            )
+            st.recommend_failure_nudge_armed = False
+            messages.append(
+                {"role": "user", "content": _RECOMMEND_FAILURE_NUDGE}
+            )
+        await _flush_think(emit, rnd.think_timer, game_id, round_index)
 
     def _position_check(
         self, chunks: list[ProviderChunk],
@@ -1920,6 +1998,34 @@ class AIAnalysisCoordinator:
         if hide_prose:
             payload["hide_prose"] = True
         await emit(Event(kind=EVT_AI_POSITION_NOTE, game_id=game_id, payload=payload))
+
+    async def _emit_opening_links(
+        self,
+        *,
+        emit: EmitSink,
+        game_id: str | None,
+        round_index: int,
+        chunks: list[ProviderChunk],
+    ) -> None:
+        """Link the opening names in a clean round's prose: each item is the
+        exact prose `surface` plus the opening's `uci` line from the start
+        position, which the client plays on double-click."""
+        book = self._book_provider() if self._book_provider is not None else None
+        if book is None:
+            return
+        prose = "".join(c.text for c in chunks if c.kind == "text" and c.text)
+        # One item per surface: the client links every occurrence of it.
+        links = dict(book.find_names(prose))
+        if not links:
+            return
+        items = [
+            {"surface": surface, "uci": list(opening.moves)}
+            for surface, opening in links.items()
+        ]
+        await emit(Event(
+            kind=EVT_AI_OPENING_LINKS, game_id=game_id,
+            payload={"round": round_index, "items": items},
+        ))
 
     @staticmethod
     def _position_check_message(pc: _PositionCheck, rephrase: Sequence[str] = ()) -> str:

@@ -46,7 +46,7 @@ def test_lookup_unplayable_returns_none():
 
 def test_lookup_longest_prefix_wins():
     book = OpeningBook.load()
-    # 1. e4 c5 (Sicilian) vs 1. e4 c5 2. Nf3 d6 3. d4 (Open Sicilian variant) —
+    # 1. e4 c5 (Sicilian) vs 1. e4 c5 2. Nf3 d6 3. d4 (Open Sicilian variant) --
     # the longer line should report a more specific name.
     short = book.lookup(["e2e4", "c7c5"])
     longer = book.lookup(["e2e4", "c7c5", "g1f3", "d7d6", "d2d4"])
@@ -63,7 +63,7 @@ def test_load_missing_dir_returns_empty():
 
 
 def test_load_is_process_cached():
-    """Repeat calls return the same instance — parsing TSVs is expensive."""
+    """Repeat calls return the same instance -- parsing TSVs is expensive."""
     a = OpeningBook.load()
     b = OpeningBook.load()
     assert a is b
@@ -240,6 +240,44 @@ def test_by_family_preserves_all_order():
 def test_by_family_unknown_returns_empty():
     book = OpeningBook.load()
     assert book.by_family("Not A Real Opening Family") == []
+
+
+# --- find_names (opening names in prose) ----------------------------------
+
+
+def _found(text: str) -> list[tuple[str, str]]:
+    return [(surface, o.name) for surface, o in OpeningBook.load().find_names(text)]
+
+
+def test_find_names_ignores_punctuation_and_takes_longest():
+    text = "The Sicilian Defense Grand Prix Attack Schofman Variation features f5."
+    assert _found(text) == [(
+        "Sicilian Defense Grand Prix Attack Schofman Variation",
+        "Sicilian Defense: Grand Prix Attack, Schofman Variation",
+    )]
+
+
+def test_find_names_ignores_case_and_apostrophe_style():
+    text = "unlike the king\u2019s indian defense"
+    assert _found(text) == [("king\u2019s indian defense", "King's Indian Defense")]
+
+
+def test_find_names_matches_sentence_punctuation_the_name_has():
+    assert _found("Black tried the St. George Defense.") == [
+        ("St. George Defense", "St. George Defense"),
+    ]
+
+
+def test_find_names_never_spans_a_sentence_break():
+    assert _found("He knew the Sicilian. Defense mattered more.") == []
+
+
+def test_find_names_reports_every_name_in_text_order():
+    text = "The Italian Game, then the Caro-Kann Defense."
+    assert _found(text) == [
+        ("Italian Game", "Italian Game"),
+        ("Caro-Kann Defense", "Caro-Kann Defense"),
+    ]
 
 
 # --- nearest (move-tree proximity ranking) --------------------------------
