@@ -25,6 +25,7 @@ const SETTINGS_PATH = "/settings";
 const TOURNAMENT_SETTINGS_PATH = "/api/tournament-settings";
 const ENGINES_TAB = "engines";
 const PUT_DEBOUNCE_MS = 400;
+const FOOTER_RAIL_VAR = "--settings-footer-rail";
 const FOOTER_INSET_VAR = "--settings-footer-inset";
 const DIALOG_WIDTH = "min(690px, 94vw)";
 // Top-tab layouts get the full vertical share; side-tab layouts cap high
@@ -290,14 +291,15 @@ export async function openSettingsDialog({
       };
       tabs.addEventListener("wa-tab-show", (ev) => showGeneralFooter(ev.detail?.name === generalPanel.name));
       showGeneralFooter(startTab === generalTab);
-      // Line the footer up with the panels' left edge (side rail only).
-      // The rail is content-sized; observing layout sets it before first paint.
+      // Footer line starts at the rail edge (like the Engines ribbon's); the
+      // button at the panels' content edge. Side rail only. The rail is
+      // content-sized; observing layout sets it before first paint.
       if (!topTabs) {
         const alignFooter = new ResizeObserver(() => {
           const nav = tabs.shadowRoot.querySelector('[part~="nav"]');
           const panelBase = generalPanel.shadowRoot.querySelector('[part~="base"]');
-          const inset = nav.offsetWidth + parseFloat(getComputedStyle(panelBase).paddingInlineStart);
-          dialog.style.setProperty(FOOTER_INSET_VAR, `${inset}px`);
+          dialog.style.setProperty(FOOTER_RAIL_VAR, `${nav.offsetWidth}px`);
+          dialog.style.setProperty(FOOTER_INSET_VAR, getComputedStyle(panelBase).paddingInlineStart);
         });
         alignFooter.observe(tabs);
         dialogClosed.signal.addEventListener("abort", () => alignFooter.disconnect());
