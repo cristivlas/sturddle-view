@@ -40,7 +40,15 @@ from sturddle_view.llm.prompts import VERIFIER_ADDENDUM
 from sturddle_view.play.ai_analysis import (
     AIAnalysisCoordinator,
     DELEGATE_TOOL_SPEC,
+    MOVE_SURVIVED_KEY,
+    VerifierResult,
     _EMPTY_TURN_PLACEHOLDER,
+    _FALSE_FACT_DETAIL,
+    _RECOMMEND_FAILURE_NUDGE,
+    _UNCONFIRMED_REFUTATION_DETAIL,
+    _UNUSABLE_REPLY_DETAIL,
+    _VERDICT_LEAD_RE,
+    _VERIFIER_SEARCH_NUDGE,
     _assistant_message,
     make_delegate_tool,
 )
@@ -95,15 +103,37 @@ async def _noop_tool(_input, *, cancel_token):
     return {"ok": True}
 
 
+async def _echo_top_moves(input_, *, cancel_token):
+    # Ranks each candidate as searched on the start position (the
+    # coordinator's default board); order and scores don't matter here.
+    board = chess.Board()
+    return {"candidates": [
+        {"move_uci": board.parse_san(m).uci()} for m in input_["moves"]
+    ]}
+
+
 def _verifier_registry() -> ToolRegistry:
-    """A verifier registry with one stand-in engine tool the sub-run can
-    call. Real engine tools aren't needed to exercise the loop wiring."""
+    """A verifier registry with stand-in tools the sub-run can call: a
+    non-search inspector and a top_moves ranking. Real engine tools aren't
+    needed to exercise the loop wiring."""
     reg = ToolRegistry()
     reg.register(
         ToolSpec(name="piece_at", description="piece_at", input_schema={"type": "object"}),
         _noop_tool,
     )
+    reg.register(
+        ToolSpec(name="top_moves", description="top_moves", input_schema={"type": "object"}),
+        _echo_top_moves,
+    )
     return reg
+
+
+def _search_chunk(tool_use_id: str, moves: tuple[str, ...] = ("e4",)) -> ProviderChunk:
+    """A verifier top_moves call; the default ranks the move under test."""
+    return ProviderChunk(
+        kind="tool_use", tool_use_id=tool_use_id,
+        tool_name="top_moves", tool_input={"moves": list(moves)},
+    )
 
 
 def _coordinator(bus, provider, *, board=None):
@@ -150,7 +180,7 @@ async def test_delegate_reports_illegal_vs_invalid_with_fen():
     # and the FEN it validated against, not a flat "could not parse" -- so a
     # wrong-side-to-move pick (e.g. '...d5' on white's turn) is legible. The
     # parse fails before the verifier runs, so the runner is never called.
-    async def never(_question):
+    async def never(_question, _move):
         raise AssertionError("runner must not run when the move is rejected")
 
     board = chess.Board()  # white to move
@@ -172,15 +202,12 @@ async def test_delegate_reports_illegal_vs_invalid_with_fen():
 @pytest.mark.asyncio
 async def test_verifier_inherits_turn_position_context():
     # Narrator delegates -> verifier sub-run -> verifier concludes.
-    # Verifier must call a tool before concluding (addendum + nudge), so
-    # its first round calls one, then concludes.
+    # Verifier must search the move before concluding (addendum + nudge),
+    # so its first round ranks it, then concludes.
     provider = _RecordingScriptedProvider(rounds=[
         [_delegate_chunk("d1", "Is e4 sound?")],            # narrator round 0
-        [ProviderChunk(                                     # verifier round 0: tool
-            kind="tool_use", tool_use_id="v1",
-            tool_name="piece_at", tool_input={"square": "e2"},
-        )],
-        [ProviderChunk(kind="text", text="e4 is sound.")],  # verifier round 1: verdict
+        [_search_chunk("v1")],                              # verifier round 0: search
+        [ProviderChunk(kind="text", text="Holds: e4 is sound.")],  # verifier round 1: verdict
         [ProviderChunk(kind="text", text="Done.")],         # narrator round 1
     ])
     bus = EventBus()
@@ -209,14 +236,11 @@ async def test_verifier_first_round_forces_tool_call_narrator_never():
     # The verifier's round 0 must carry force_tool_call so a tool-free
     # verdict is structurally impossible where tool_choice is honored.
     # Later verifier rounds go back to auto (the model must be able to
-    # conclude), and narrator rounds never force.
+    # conclude), and un-nudged narrator rounds never force.
     provider = _RecordingScriptedProvider(rounds=[
         [_delegate_chunk("d1", "Is e4 sound?")],            # narrator round 0
-        [ProviderChunk(                                     # verifier round 0: tool
-            kind="tool_use", tool_use_id="v1",
-            tool_name="piece_at", tool_input={"square": "e2"},
-        )],
-        [ProviderChunk(kind="text", text="e4 is sound.")],  # verifier round 1: verdict
+        [_search_chunk("v1")],                              # verifier round 0: search
+        [ProviderChunk(kind="text", text="Holds: e4 is sound.")],  # verifier round 1: verdict
         [ProviderChunk(kind="text", text="Done.")],         # narrator round 1
     ])
     bus = EventBus()
@@ -251,17 +275,14 @@ async def test_verifier_usage_rolls_into_narrator_turn_totals():
             )),
             _delegate_chunk("d1", "Is e4 sound?"),
         ],
-        [                                                   # verifier round 0: tool
+        [                                                   # verifier round 0: search
             ProviderChunk(kind="usage", usage=ProviderUsage(
                 input_tokens=50, output_tokens=5,
             )),
-            ProviderChunk(
-                kind="tool_use", tool_use_id="v1",
-                tool_name="piece_at", tool_input={"square": "e2"},
-            ),
+            _search_chunk("v1"),
         ],
         [                                                   # verifier round 1: verdict
-            ProviderChunk(kind="text", text="e4 is sound."),
+            ProviderChunk(kind="text", text="Holds: e4 is sound."),
             ProviderChunk(kind="usage", usage=ProviderUsage(
                 input_tokens=25, output_tokens=2,
             )),
@@ -325,17 +346,17 @@ async def test_verifier_round_cap_surfaces_on_done_payload():
     assert done.payload.get("verifier_round_cap") is True
     # The narrator itself finished cleanly -- this is advisory, not a failure.
     assert not done.payload.get("round_cap")
+    # Only a capped sub-run reports no_verdict (the client's gear points at
+    # the rounds setting).
+    assert _delegate_output(events)["error"] == "no_verdict"
 
 
 @pytest.mark.asyncio
 async def test_verifier_thinking_forced_off_narrator_inherits():
     provider = _RecordingScriptedProvider(rounds=[
         [_delegate_chunk("d1", "check e4")],                # narrator
-        [ProviderChunk(                                     # verifier: tool
-            kind="tool_use", tool_use_id="v1",
-            tool_name="piece_at", tool_input={"square": "e2"},
-        )],
-        [ProviderChunk(kind="text", text="sound.")],        # verifier: verdict
+        [_search_chunk("v1")],                              # verifier: search
+        [ProviderChunk(kind="text", text="Holds.")],        # verifier: verdict
         [ProviderChunk(kind="text", text="done.")],         # narrator
     ])
     bus = EventBus()
@@ -365,12 +386,9 @@ async def test_verifier_verdict_is_final_round_prose_only():
         [_delegate_chunk("d1", "check e4")],                      # narrator
         [                                                         # verifier r0
             ProviderChunk(kind="text", text="Let me check first. "),
-            ProviderChunk(
-                kind="tool_use", tool_use_id="v1",
-                tool_name="piece_at", tool_input={"square": "e2"},
-            ),
+            _search_chunk("v1"),
         ],
-        [ProviderChunk(kind="text", text="e4 is sound.")],       # verifier r1
+        [ProviderChunk(kind="text", text="Holds: e4 is sound.")],  # verifier r1
         [ProviderChunk(kind="text", text="Conclusion.")],        # narrator
     ])
     bus = EventBus()
@@ -399,12 +417,9 @@ async def test_verifier_tool_events_carry_parent_id_and_prose_suppressed():
         [_delegate_chunk("d1", "check e4")],
         [                                                     # verifier round
             ProviderChunk(kind="text", text="internal verdict text"),
-            ProviderChunk(
-                kind="tool_use", tool_use_id="v1",
-                tool_name="piece_at", tool_input={"square": "e2"},
-            ),
+            _search_chunk("v1"),
         ],
-        [ProviderChunk(kind="text", text="e4 sound.")],       # verifier concludes
+        [ProviderChunk(kind="text", text="Holds: e4 sound.")],  # verifier concludes
         [ProviderChunk(kind="text", text="done.")],           # narrator
     ])
     bus = EventBus()
@@ -417,7 +432,7 @@ async def test_verifier_tool_events_carry_parent_id_and_prose_suppressed():
     # Verifier tool-call events forward, stamped with the delegate's id.
     verifier_tool_calls = [
         e for e in events
-        if e.kind == "ai_tool_call" and e.payload.get("name") == "piece_at"
+        if e.kind == "ai_tool_call" and e.payload.get("name") == "top_moves"
     ]
     assert verifier_tool_calls, "verifier tool call did not surface"
     assert all(
@@ -429,7 +444,7 @@ async def test_verifier_tool_events_carry_parent_id_and_prose_suppressed():
     # own prose appears as ai_info deltas. Asserting both sides proves the
     # prose was routed internally, not merely absent.
     # Find the delegate's tool_result (the one carrying the verdict),
-    # not the verifier's internal piece_at result.
+    # not the verifier's internal top_moves result.
     delegate_results = [
         b
         for c in provider.calls
@@ -606,6 +621,7 @@ async def test_stalled_recommend_stops_nudging_and_flags_no_recommendation():
     assert len(provider.calls) == 3
     done = events[-1]
     assert done.payload.get("no_recommendation") is True
+    assert done.payload.get("rounds") == 3
     assert not done.payload.get("round_cap")
 
 
@@ -695,6 +711,58 @@ async def test_accept_without_red_team_is_held_once():
     )
     recs = [e for e in events if e.kind == "ai_recommendation"]
     assert recs and recs[-1].payload.get("uci") == "e2e4"
+
+
+@pytest.mark.parametrize("survived, holds", [(True, 0), (False, 1)])
+@pytest.mark.asyncio
+async def test_overruled_refutation_counts_as_red_teamed(survived, holds):
+    # The verifier said "refuted" but the engine didn't confirm it: the move
+    # survived the adversarial check, so the pick ships without a hold. Any
+    # other withheld verdict (no usable reply, false fact) proves nothing.
+    envelope = {"error": "verdict_withheld", "detail": _UNCONFIRMED_REFUTATION_DETAIL}
+    if survived:
+        envelope[MOVE_SURVIVED_KEY] = True
+
+    async def delegate(_input, *, cancel_token):
+        return envelope
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="r", input_schema={"type": "object"}),
+        _stub_recommend,
+    )
+    reg.register(
+        ToolSpec(name="delegate", description="d", input_schema={"type": "object"}),
+        delegate,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [_delegate_chunk("d0", "does it hold?")],             # red-team: overruled
+        [ProviderChunk(kind="tool_use", tool_use_id="r0",     # accept
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="r1",     # resubmit if held
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="text", text="e4 is best on review.")],
+        [ProviderChunk(kind="text", text="e4 it is.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg,
+        board_provider=(lambda: chess.Board()),
+        recommend_verifier=_echo_verifier,
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert len(_red_team_holds(events)) == holds
+    # The survived envelope isn't a failure: no failed event (the panel would
+    # strike the row red although the move passed).
+    delegate_failed = [
+        e for e in events
+        if e.kind == "ai_tool_call_failed" and e.payload.get("tool_use_id") == "d0"
+    ]
+    assert bool(delegate_failed) is not survived
 
 
 @pytest.mark.asyncio
@@ -1013,7 +1081,6 @@ async def test_repeated_recommend_failures_force_top_moves_nudge():
     # Screenshot regression: the model guesses illegal moves one at a time
     # via recommend_move. After MAX_RECOMMEND_FAILURES (2) failures, the loop
     # injects a user nudge telling it to use top_moves instead.
-    from sturddle_view.play.ai_analysis import _RECOMMEND_FAILURE_NUDGE
 
     async def recommend(_input, *, cancel_token):
         # First two attempts fail; the third (after the nudge) is accepted so
@@ -1057,7 +1124,6 @@ async def test_repeated_recommend_failures_force_top_moves_nudge():
 async def test_top_moves_call_rearms_the_failure_nudge():
     # A single failure does NOT trip the nudge (cap is 2). The nudge stays
     # un-fired so long as the model never accumulates 2 failures in a row.
-    from sturddle_view.play.ai_analysis import _RECOMMEND_FAILURE_NUDGE
 
     async def recommend(_input, *, cancel_token):
         if _input["move"] in ("Nd7", "Ne7"):
@@ -1111,7 +1177,6 @@ async def test_errored_top_moves_does_not_rearm_the_failure_nudge():
     # Regression: an errored (malformed) top_moves call must NOT reset the
     # recommend-failure streak -- else two real failures never trip the
     # nudge. The success tool below would reset if the short-circuit ran it.
-    from sturddle_view.play.ai_analysis import _RECOMMEND_FAILURE_NUDGE
 
     async def recommend(_input, *, cancel_token):
         if _input["move"] in ("Nd7", "Ne7"):
@@ -1162,17 +1227,21 @@ async def test_errored_top_moves_does_not_rearm_the_failure_nudge():
 
 
 @pytest.mark.asyncio
-async def test_verifier_concluding_without_tool_gets_one_nudge():
-    # The verifier must check before concluding. A verdict-from-intuition
-    # (no tool call) draws exactly one tool nudge, then it complies.
+def _last_user_content(call: dict):
+    return next(
+        m for m in reversed(call["messages"]) if m["role"] == "user"
+    )["content"]
+
+
+@pytest.mark.asyncio
+async def test_verifier_concluding_without_search_gets_one_nudge():
+    # The verifier must search the move before concluding. A verdict from
+    # intuition draws exactly one search nudge, then it complies.
     provider = _RecordingScriptedProvider(rounds=[
         [_delegate_chunk("d1", "check e4")],                # narrator
-        [ProviderChunk(kind="text", text="e4 looks fine.")],  # verifier: no tool -> nudged
-        [ProviderChunk(                                     # verifier: now calls a tool
-            kind="tool_use", tool_use_id="v1",
-            tool_name="piece_at", tool_input={"square": "e2"},
-        )],
-        [ProviderChunk(kind="text", text="e4 is sound.")],  # verifier: verdict
+        [ProviderChunk(kind="text", text="e4 looks fine.")],  # verifier: no search -> nudged
+        [_search_chunk("v1")],                              # verifier: now searches
+        [ProviderChunk(kind="text", text="Holds: e4 is sound.")],  # verifier: verdict
         [ProviderChunk(kind="text", text="done.")],         # narrator
     ])
     bus = EventBus()
@@ -1180,18 +1249,202 @@ async def test_verifier_concluding_without_tool_gets_one_nudge():
     coord = _coordinator(bus, provider)
 
     await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
-    await _drain_until_done(queue)
+    events = await _drain_until_done(queue)
 
     # The verifier's first round drew a nudge: the next verifier round's
-    # last user message is the tool nudge (not the delegated question).
+    # last user message is the search nudge (not the delegated question).
     verifier_rounds = [
         c for c in provider.calls if _VERIFIER_PROMPT_MARKER in c["system"]
     ]
-    nudged = verifier_rounds[1]
-    last_user = next(
-        m for m in reversed(nudged["messages"]) if m["role"] == "user"
+    assert _last_user_content(verifier_rounds[1]) == _VERIFIER_SEARCH_NUDGE
+    assert _delegate_output(events)["verdict"] == "Holds: e4 is sound."
+
+
+@pytest.mark.asyncio
+async def test_verifier_verdict_without_searching_the_move_is_dropped():
+    # Live repro: the verifier checked squares but never searched the move
+    # under test, then refuted it. One search nudge; a repeat unsearched
+    # verdict is dropped, never passed on.
+    refutation = "Refuted: e4 drops the pawn."
+    provider = _RecordingScriptedProvider(rounds=[
+        [_delegate_chunk("d1", "check e4")],                # narrator
+        [ProviderChunk(                                     # verifier: non-search tool
+            kind="tool_use", tool_use_id="v1",
+            tool_name="piece_at", tool_input={"square": "e4"},
+        )],
+        [ProviderChunk(kind="text", text=refutation)],      # verifier: unsearched -> nudged
+        [ProviderChunk(kind="text", text=refutation)],      # verifier: still unsearched -> dropped
+        [ProviderChunk(kind="text", text="done.")],         # narrator
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider)
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert _last_user_content(provider.calls[3]) == _VERIFIER_SEARCH_NUDGE
+    assert _delegate_output(events) == {
+        "error": "verdict_withheld", "detail": _UNUSABLE_REPLY_DETAIL,
+    }
+    assert refutation not in str(provider.calls[-1]["messages"])
+    assert len(provider.calls) == 5
+
+
+@pytest.mark.asyncio
+async def test_verifier_ranking_without_the_move_does_not_count():
+    # A top_moves ranking that leaves out the move under test is no search
+    # of it: nudged once, and the ranking that includes it clears the gate.
+    provider = _RecordingScriptedProvider(rounds=[
+        [_delegate_chunk("d1", "check e4")],                # narrator
+        [_search_chunk("v1", ("d4",))],                     # verifier: other move only
+        [ProviderChunk(kind="text", text="Refuted: d4 is better.")],  # nudged
+        [_search_chunk("v2", ("e4", "d4"))],                # verifier: includes e4
+        [ProviderChunk(kind="text", text="Holds: e4 ranks with d4.")],
+        [ProviderChunk(kind="text", text="done.")],         # narrator
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider)
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert _last_user_content(provider.calls[3]) == _VERIFIER_SEARCH_NUDGE
+    assert _delegate_output(events)["verdict"] == "Holds: e4 ranks with d4."
+
+
+def _verdict_runner(verdict: str):
+    async def runner(_question, _move):
+        return VerifierResult(verdict)
+    return runner
+
+
+def _refute_check_returning(result):
+    calls: list[chess.Move] = []
+
+    async def check(move, cancel_token):
+        calls.append(move)
+        return result
+    return check, calls
+
+
+async def _delegate_e4(runner, refute_check=None) -> dict:
+    board = chess.Board()
+    delegate = make_delegate_tool(
+        runner, board_provider=(lambda: board), refute_check=refute_check,
     )
-    assert "tool" in last_user["content"].lower()
+    return await delegate(
+        {"move": "e4", "question": "sound?"}, cancel_token=CancelToken(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_delegate_withholds_verdict_that_calls_the_move_illegal():
+    # Live repro: "Refuted -- the move is illegal (target square e6 is
+    # occupied)" about a legal move. The narrator must never see it.
+    out = await _delegate_e4(_verdict_runner("Refuted: the move is illegal."))
+    assert out == {"error": "verdict_withheld", "detail": _FALSE_FACT_DETAIL}
+
+
+@pytest.mark.asyncio
+async def test_delegate_withholds_refutation_the_engine_does_not_confirm():
+    check, calls = _refute_check_returning(False)
+    out = await _delegate_e4(_verdict_runner("Refuted: e4 drops the pawn."), check)
+    assert out == {
+        "error": "verdict_withheld", "detail": _UNCONFIRMED_REFUTATION_DETAIL,
+        MOVE_SURVIVED_KEY: True,
+    }
+    assert calls == [chess.Move.from_uci("e2e4")]
+
+
+@pytest.mark.parametrize("engine_result", [True, None])
+@pytest.mark.asyncio
+async def test_delegate_passes_confirmed_or_unchecked_refutation(engine_result):
+    # Confirmed by the engine, or the check couldn't run: the verdict stands.
+    check, _calls = _refute_check_returning(engine_result)
+    out = await _delegate_e4(_verdict_runner("Refuted: e4 drops the pawn."), check)
+    assert out == {"move_uci": "e2e4", "verdict": "Refuted: e4 drops the pawn."}
+
+
+@pytest.mark.asyncio
+async def test_delegate_holds_verdict_skips_the_engine_check():
+    check, calls = _refute_check_returning(False)
+    out = await _delegate_e4(_verdict_runner("Holds: nothing cracks e4."), check)
+    assert out["verdict"] == "Holds: nothing cracks e4."
+    assert calls == []
+
+
+def _verifier_rounds_then_narrator(*verifier_texts: str) -> _RecordingScriptedProvider:
+    """Narrator delegates, verifier searches the move then replies with each
+    of `verifier_texts` in turn, narrator concludes."""
+    return _RecordingScriptedProvider(rounds=[
+        [_delegate_chunk("d1", "check e4")],                # narrator
+        [_search_chunk("v1")],                              # verifier: search
+        *[[ProviderChunk(kind="text", text=t)] for t in verifier_texts],
+        [ProviderChunk(kind="text", text="done.")],         # narrator
+    ])
+
+
+def _delegate_output(events) -> dict:
+    return next(
+        e.payload["output"] for e in events
+        if e.kind == "ai_tool_call_complete" and e.payload.get("tool_use_id") == "d1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_verifier_non_verdict_nudged_once_then_complies():
+    # A question instead of a verdict draws one verdict nudge; the compliant
+    # reply is the verdict the narrator gets.
+    provider = _verifier_rounds_then_narrator(
+        "Would you like me to check d5 as well?",
+        "Refuted: d5 wins a pawn.",
+    )
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider)
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert _delegate_output(events)["verdict"] == "Refuted: d5 wins a pawn."
+    assert len(provider.calls) == 5
+
+
+@pytest.mark.parametrize("wrapped", [
+    "*Refuted*: d5 wins a pawn.",
+    "_Holds_ -- nothing cracks it.",
+    "# Refuted: d5 wins a pawn.",
+    "> Holds: nothing cracks it.",
+    '"Refuted": d5 wins a pawn.',
+])
+def test_verdict_lead_accepts_markdown_wrappers(wrapped):
+    # Wrappers the stream's markdown strip leaves must not drop a real verdict.
+    assert _VERDICT_LEAD_RE.match(wrapped)
+
+
+def test_verdict_lead_rejects_non_verdicts():
+    assert not _VERDICT_LEAD_RE.match("Should I also look at d5?")
+    assert not _VERDICT_LEAD_RE.match("It holds.")
+
+
+@pytest.mark.asyncio
+async def test_verifier_repeated_non_verdict_is_dropped():
+    # A second non-verdict is never passed on: the narrator gets verdict_withheld,
+    # and the question text reaches neither the narrator nor the UI.
+    question = "Should I also look at d5?"
+    provider = _verifier_rounds_then_narrator(question, question)
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider)
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert _delegate_output(events)["error"] == "verdict_withheld"
+    assert question not in str(provider.calls[-1]["messages"])
+    assert len(provider.calls) == 5
 
 
 @pytest.mark.asyncio
@@ -1227,17 +1480,11 @@ async def test_two_delegates_each_get_their_own_parent_id():
     # must stamp its verifier's events with its OWN id, no stale leakage.
     provider = _RecordingScriptedProvider(rounds=[
         [_delegate_chunk("dA", "check e4")],               # narrator: delegate A
-        [ProviderChunk(                                    # verifier A: tool
-            kind="tool_use", tool_use_id="vA",
-            tool_name="piece_at", tool_input={"square": "e2"},
-        )],
-        [ProviderChunk(kind="text", text="e4 sound.")],    # verifier A: verdict
-        [_delegate_chunk("dB", "check d4")],               # narrator: delegate B
-        [ProviderChunk(                                    # verifier B: tool
-            kind="tool_use", tool_use_id="vB",
-            tool_name="piece_at", tool_input={"square": "d2"},
-        )],
-        [ProviderChunk(kind="text", text="d4 sound.")],    # verifier B: verdict
+        [_search_chunk("vA")],                             # verifier A: search
+        [ProviderChunk(kind="text", text="Holds: e4 sound.")],  # verifier A: verdict
+        [_delegate_chunk("dB", "check d4", move="d4")],    # narrator: delegate B
+        [_search_chunk("vB", ("d4",))],                    # verifier B: search
+        [ProviderChunk(kind="text", text="Holds: d4 sound.")],  # verifier B: verdict
         [ProviderChunk(kind="text", text="done.")],        # narrator
     ])
     bus = EventBus()
@@ -1250,7 +1497,7 @@ async def test_two_delegates_each_get_their_own_parent_id():
     parents = {
         e.payload.get("tool_use_id"): e.payload.get("parent_tool_use_id")
         for e in events
-        if e.kind == "ai_tool_call" and e.payload.get("name") == "piece_at"
+        if e.kind == "ai_tool_call" and e.payload.get("name") == "top_moves"
     }
     assert parents == {"vA": "dA", "vB": "dB"}
 
@@ -1282,10 +1529,91 @@ async def test_silent_round_after_prose_ends_turn_without_renudging():
     events = await _drain_until_done(queue)
 
     # r0 prose -> nudge #1 -> r1 silent: the empty round ends the turn (no
-    # re-nudge, no loop). Exactly 2 rounds; flagged no_recommendation.
+    # re-nudge, no loop). Exactly 2 rounds; flagged no_recommendation. The
+    # silent round still counts: the client sees no event for it.
     assert len(provider.calls) == 2
     done = events[-1]
     assert done.payload.get("no_recommendation") is True
+    assert done.payload.get("rounds") == 2
+
+
+@pytest.mark.asyncio
+async def test_round_after_completeness_nudge_forces_tool_call():
+    # A prose-only exit without recommend_move draws the completeness nudge;
+    # the next round must call a tool (so it can't answer in prose again),
+    # keeping the narrator's thinking setting (providers own any thinking
+    # constraint). The round after that is back to auto.
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        _noop_tool,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="The center is contested.")],  # r0: prose -> nudge
+        [ProviderChunk(                                                 # r1: forced
+            kind="tool_use", tool_use_id="r1",
+            tool_name="recommend_move", tool_input={"move": "e4"},
+        )],
+        [ProviderChunk(kind="text", text="e4 claims the center.")],     # r2: auto
+        [],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=(lambda: None),
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    await _drain_until_done(queue)
+
+    flags = [(c["thinking"], c["force_tool_call"]) for c in provider.calls]
+    assert flags[:3] == [
+        (None, False),   # r0: auto
+        (None, True),    # r1: forced after the nudge, thinking unchanged
+        (None, False),   # r2: back to auto
+    ]
+
+
+@pytest.mark.asyncio
+async def test_silent_round_after_rejected_attempt_draws_one_forced_renudge():
+    # The live miss (qwen3.5:9b): nudged, the model attempted recommend_move
+    # (rejected), then went silent -- which ended the turn with no move. A
+    # silent round after a fresh attempt gets one more forced nudge; a second
+    # silent round still ends the turn (no loop).
+    async def recommend(_input, *, cancel_token):
+        return {"error": "recommendation_rejected", "reason": "Engine prefers Nf3."}
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        recommend,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="The center is contested.")],  # r0: prose -> nudge
+        [ProviderChunk(                                                 # r1: forced attempt
+            kind="tool_use", tool_use_id="a1",
+            tool_name="recommend_move", tool_input={"move": "e4"},
+        )],
+        [],                                                             # r2: silent -> re-nudge
+        [ProviderChunk(                                                 # r3: forced attempt
+            kind="tool_use", tool_use_id="a2",
+            tool_name="recommend_move", tool_input={"move": "d4"},
+        )],
+        [],                                                             # r4: silent -> end
+        [ProviderChunk(kind="text", text="Should never run.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=(lambda: None),
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert len(provider.calls) == 5
+    assert provider.calls[3]["force_tool_call"] is True
+    assert events[-1].payload.get("no_recommendation") is True
 
 
 @pytest.mark.asyncio

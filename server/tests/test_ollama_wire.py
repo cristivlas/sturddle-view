@@ -240,6 +240,24 @@ async def test_thinking_off_disables_reasoning(
 
 
 @pytest.mark.asyncio
+async def test_forced_tool_call_takes_thinking_off_compat_path(install_fake_httpx):
+    # /api/chat has no tool_choice: forcing routes to compat, reasoning off.
+    install_fake_httpx(lines=["data: [DONE]"])
+    provider = OllamaProvider(
+        base_url="http://fake", model="m", thinking_enabled=True,
+    )
+    async for _ in provider.stream(
+        system="", messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "t", "description": "d", "input_schema": {"type": "object"}}],
+        force_tool_call=True,
+    ):
+        pass
+    body = install_fake_httpx.holder["client"].last_body
+    assert body["tool_choice"] == "required"
+    assert body[_KEY] == ollama_mod._REASONING_EFFORT_OFF
+
+
+@pytest.mark.asyncio
 async def test_thinking_on_sends_think_without_reasoning_effort(install_fake_httpx):
     install_fake_httpx(lines=['{"done":true,"message":{}}'])
     provider = OllamaProvider(

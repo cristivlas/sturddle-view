@@ -109,3 +109,12 @@ def test_has_position_flags_sees_tactic_claims():
     after.push_san("O-O")
     assert has_position_flags("The knight on f3 is pinned.", before, after)
     assert not has_position_flags("The knight on c6 is pinned.", before, after)
+
+
+def test_has_position_flags_sees_illegality_claims():
+    # The move under test is legal by construction, so calling it illegal is
+    # false on either side of the move boundary.
+    before = chess.Board(_RUY_PIN_FEN)
+    after = before.copy()
+    after.push_san("O-O")
+    assert has_position_flags("Refuted: the move is illegal.", before, after)

@@ -10,7 +10,9 @@ to prove.
 """
 from __future__ import annotations
 
+import functools
 import re
+from typing import Iterable
 
 import chess
 
@@ -258,8 +260,8 @@ _MARKED_PAWN_PUSH_RE = re.compile(
 # Models are told to write SAN but drift into UCI; the check must still see
 # the move. Same group names as _SAN_TOKEN_RE for the shared guards.
 _UCI_TOKEN_RE = re.compile(
-    rf"(?:(?P<num>\d+)(?P<dots>\.{{1,3}})\s*|(?P<prefix>\.\.\.))?\b"
-    rf"(?P<token>[a-h][1-8][a-h][1-8][qrbn]?)\b"
+    r"(?:(?P<num>\d+)(?P<dots>\.{1,3})\s*|(?P<prefix>\.\.\.))?\b"
+    r"(?P<token>[a-h][1-8][a-h][1-8][qrbn]?)\b"
 )
 
 
@@ -1393,10 +1395,120 @@ def find_tool_mentions(text: str) -> list[str]:
     return out
 
 
+# Tool machinery written into prose: a snake_case tool name as-is, or any
+# name (or tool result key) as a "Title Case:" label ("Recommend Move:",
+# "Verdict:"). Unlike the woven phrases above, both betray process talk, so
+# the coordinator hides the whole round's prose from the reader.
+_SNAKE_SEP = "_"
+_WORD_GAP = r"\s+"
+_LABEL_TAIL = r"\s*:"
+# A label opens a line or a sentence, after any markdown wrapper
+# ("*Verdict:*"); mid-sentence "the final verdict: ..." is prose.
+_LABEL_LEAD = r"(?:^|(?<=[.!?]\s))[^\w\n]*"
+_LEAK_GROUP = "leak"
+
+
+@functools.cache
+def _tool_leak_res(name: str) -> tuple[re.Pattern, ...]:
+    words = name.split(_SNAKE_SEP)
+    label = re.compile(
+        rf"{_LABEL_LEAD}(?P<{_LEAK_GROUP}>"
+        rf"{_WORD_GAP.join(map(re.escape, words))}{_LABEL_TAIL})",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    if len(words) == 1:
+        return (label,)
+    snake = re.compile(rf"(?P<{_LEAK_GROUP}>\b{re.escape(name)}\b)", re.IGNORECASE)
+    return (snake, label)
+
+
+def iter_tool_label_leaks(text: str, names: Iterable[str]):
+    """Yield (surface, name) per tool name or result key leaked into `text`:
+    'recommend_move' anywhere, or 'Recommend Move:' / 'Verdict:' as a label
+    opening a line or sentence. One yield per distinct surface;
+    case-insensitive."""
+    seen: set[str] = set()
+    for name in names:
+        for pattern in _tool_leak_res(name):
+            for m in pattern.finditer(text):
+                surface = m.group(_LEAK_GROUP)
+                if surface not in seen:
+                    seen.add(surface)
+                    yield surface, name
+
+
+# "the move is illegal", "Re6 can't be played": a legality verdict. The
+# verifier's move under test is legal by construction (delegate parses it
+# first), so any such phrase in a verdict is false.
+_ILLEGAL_WORDS = (
+    r"(?i:(?:is|was)\s+(?:illegal|not\s+legal|not\s+a\s+legal\s+move)"
+    r"|can(?:not|'t|\s+not)\s+be\s+played)"
+)
+_ILLEGALITY_RE = re.compile(rf"\b{_ILLEGAL_WORDS}")
+# "<SAN> is illegal": held against the live board. Bare pawn pushes count
+# here -- the legality verb rules out a plain square name.
+_SAN_ILLEGAL_CLAIM_RE = re.compile(
+    rf"\b(?P<token>{_SAN_CASTLE}|{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}"
+    rf"|{_SAN_PAWN_PUSH})\s+{_ILLEGAL_WORDS}"
+)
+_LEGAL_MOVE_FACT = "{san} is legal here"
+
+
+def mentions_illegality(text: str) -> bool:
+    """True if `text` calls some move illegal (see _ILLEGALITY_RE)."""
+    return _ILLEGALITY_RE.search(text) is not None
+
+
+def iter_false_illegality_claims(text: str, board: chess.Board):
+    """Yield (surface, label, fact) per '<SAN> is illegal' claim about a move
+    that is legal for the side to move on `board`."""
+    seen: set[str] = set()
+    for m in _SAN_ILLEGAL_CLAIM_RE.finditer(text):
+        token = m.group("token")
+        if token in seen:
+            continue
+        seen.add(token)
+        move = _parse_san_real(board, token)
+        if move is None:
+            continue
+        san = board.san(move)
+        yield m.group(0), f"{token} illegal", _LEGAL_MOVE_FACT.format(san=san)
+
+
+# "e6 is occupied" / "e6 is empty": square occupancy with no piece named.
+_OCCUPANCY_RE = re.compile(
+    r"\b(?P<square>[a-h][1-8])\s+(?:is|was)\s+"
+    r"(?:(?P<occupied>occupied|taken)|empty|vacant|unoccupied)\b",
+    re.IGNORECASE,
+)
+_OCCUPIED_WORD = "occupied"
+_EMPTY_WORD = "empty"
+
+
+def iter_false_occupancy_claims(text: str, board: chess.Board):
+    """Yield (surface, label, fact) per occupied/empty claim that holds on
+    neither the current nor any projected board (same looseness as the
+    piece claims: a named move reaching the square clears it)."""
+    boards = [board, *projected_boards(text, board)]
+    seen: set[str] = set()
+    for m in _OCCUPANCY_RE.finditer(text):
+        name = m.group("square").lower()
+        occupied = m.group("occupied") is not None
+        label = f"{name} {_OCCUPIED_WORD if occupied else _EMPTY_WORD}"
+        if label in seen:
+            continue
+        seen.add(label)
+        square = chess.parse_square(name)
+        if any((b.piece_at(square) is not None) == occupied for b in boards):
+            continue
+        yield m.group(0), label, describe_square(name, board)
+
+
 def _flagged_surfaces(text: str, board: chess.Board) -> set[str]:
     """Exact prose spans a non-LLM board recognizer flags on `board`: illegal
-    moves/lines, false piece, file, file-openness and bishop-color claims.
-    Tool mentions are board-independent and excluded here (see
+    moves/lines, false piece, file, file-openness, bishop-color, pin/fork
+    and occupancy claims. Tool mentions are board-independent and excluded
+    here (see
     has_position_flags). Strict -- the whole text, no future-line truncation
     or opening carve-out. One shared dedup set across the move recognizers,
     as the striking path uses."""
@@ -1423,6 +1535,8 @@ def _flagged_surfaces(text: str, board: chess.Board) -> set[str]:
         out.add(surface)
     for surface, _label, _fact in iter_false_tactic_claims(text, board):
         out.add(surface)
+    for surface, _label, _fact in iter_false_occupancy_claims(text, board):
+        out.add(surface)
     return out
 
 
@@ -1432,7 +1546,8 @@ def has_position_flags(text: str, before: chess.Board, after: chess.Board) -> bo
     `before`) and its replies (legal on `after`); a single board misfires on
     whichever side it isn't. So a board claim flags only when it holds on
     NEITHER board -- a real illegality/falsehood, not a boundary artifact.
-    Tool mentions are board-independent, so they flag regardless."""
-    if find_tool_mentions(text):
+    Tool mentions are board-independent, so they flag regardless, as does
+    any illegality claim (the move under test is legal on `before`)."""
+    if find_tool_mentions(text) or mentions_illegality(text):
         return True
     return bool(_flagged_surfaces(text, before) & _flagged_surfaces(text, after))

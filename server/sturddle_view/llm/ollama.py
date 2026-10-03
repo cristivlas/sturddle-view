@@ -391,12 +391,11 @@ class OllamaProvider(LLMProvider):
         # Thinking on => /api/chat (Ollama native) with `think=true`; off
         # => /v1/chat/completions (OpenAI-compat) with reasoning disabled,
         # unless the model leaks it (then its reasoning channel is dropped).
-        # `thinking=False` forces the off path (verifier sub-runs).
-        # `force_tool_call` only reaches the compat path -- /api/chat has no
-        # tool_choice, and the verifier (the only forcing caller) always
-        # runs thinking-off, i.e. compat. Best-effort either way: local
-        # models may ignore it, and the coordinator's nudge backstops.
-        if thinking is not False and self._thinking_enabled:
+        # `thinking=False` forces the off path (verifier sub-runs), and so
+        # does a forced tool call -- /api/chat has no tool_choice. Best-effort
+        # either way: local models may ignore it.
+        forced = force_tool_call and bool(tools)
+        if thinking is not False and self._thinking_enabled and not forced:
             inner = self._stream_native(
                 system, messages, tools,
                 transcript=transcript, round_index=round_index,
@@ -406,7 +405,7 @@ class OllamaProvider(LLMProvider):
             inner = self._stream_openai_compat(
                 system, messages, tools,
                 transcript=transcript, round_index=round_index,
-                force_tool_call=force_tool_call,
+                force_tool_call=forced,
                 reasoning_off=reasoning_off,
             )
             if reasoning_off:
@@ -451,7 +450,7 @@ class OllamaProvider(LLMProvider):
             body[_TOOLS_KEY] = tools_anthropic_to_openai(tools)
             if force_tool_call:
                 # OpenAI-compat spelling of "must call a tool this round"
-                # (verifier first rounds). See LLMProvider.stream().
+                # (verifier first rounds, nudged narrator round). See LLMProvider.stream().
                 body["tool_choice"] = "required"
 
         return stream_openai_compat(

@@ -33,9 +33,14 @@ def replay_uci(board: chess.Board, moves: list[str]) -> chess.Board:
     return b
 
 
+def color_name(color: chess.Color) -> str:
+    """Return "white" or "black" for `color`."""
+    return SIDE_WHITE if color == chess.WHITE else SIDE_BLACK
+
+
 def side_to_move(board: chess.Board) -> str:
     """Return "white" or "black" for the side to move."""
-    return SIDE_WHITE if board.turn == chess.WHITE else SIDE_BLACK
+    return color_name(board.turn)
 
 
 def moves_san(board: chess.Board, start_fen: str | None = None) -> list[str]:

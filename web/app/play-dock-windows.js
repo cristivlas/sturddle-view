@@ -1232,9 +1232,12 @@ const PV_OPEN_KEY      = STORAGE_KEY.PVTABLE_OPEN;
 
 // Set by play.js on mount, cleared on unmount: the live board's line-show
 // primitives, so this module can sample placement per engine_info and drive
-// a play on double-click without importing game-view.js directly.
+// a play on double-click without importing game-view.js directly. The AI
+// window's line links (opening names, the recommended move) play through the
+// same board (getPvLineBoard).
 let pvLineBoard = null;
 export function setPvLineBoard(api) { pvLineBoard = api; }
+export function getPvLineBoard() { return pvLineBoard; }
 
 // A pointerdown inside the Search Lines window's current chrome (its WinBox
 // root, dock slot, or inline slot) never cancels a running show -- decided

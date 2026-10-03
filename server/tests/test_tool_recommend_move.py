@@ -38,7 +38,7 @@ from sturddle_view.play.playbook import (
     SOURCE_EVAL,
     Situation,
 )
-from sturddle_view.play.tools_engine import make_recommend_move_tool
+from sturddle_view.play.tools_engine import make_recommend_move_tool, make_refute_check
 
 from .conftest import _write_uci_stub
 
@@ -90,6 +90,15 @@ def _tool(engine_path: str, board: chess.Board, situation: Situation | None = No
         bus=bus,
         board_provider=lambda: board,
         situation_provider=lambda: situation,
+    )
+
+
+def _refute_check(engine_path: str, board: chess.Board):
+    bus = EventBus()
+    return make_refute_check(
+        _launcher_from_path(engine_path, bus),
+        bus=bus,
+        board_provider=lambda: board,
     )
 
 
@@ -316,3 +325,35 @@ async def test_ahead_rejects_a_repeating_move_without_searching():
     assert out["error"] == "recommendation_rejected", out
     assert "repeats" in out["reason"]
     assert out["san"] == "Nf3"
+
+
+@pytest.mark.parametrize(("free_info", "restricted_info", "confirmed"), [
+    # Engine best beats the candidate by 290: dominated, refutation stands.
+    ("info depth 20 score cp 300 nodes 100 time 10 pv e2e4",
+     "info depth 20 score cp 10 nodes 100 time 10 pv g1f3", True),
+    # Beats it by 40, inside the margin: recommend_move would accept it.
+    ("info depth 20 score cp 60 nodes 100 time 10 pv e2e4",
+     "info depth 20 score cp 20 nodes 100 time 10 pv g1f3", False),
+    # The engine's own pick is never dominated.
+    ("info depth 20 score cp 30 nodes 100 time 10 pv g1f3",
+     "info depth 20 score cp 30 nodes 100 time 10 pv g1f3", False),
+])
+@pytest.mark.asyncio
+async def test_refute_check_matches_the_recommend_gate(
+    tmp_path: Path, free_info: str, restricted_info: str, confirmed: bool,
+):
+    engine_path = _make_free_vs_restricted_fake(
+        tmp_path, "rc", free_info=free_info, restricted_info=restricted_info,
+    )
+    board = chess.Board()
+    check = _refute_check(engine_path, board)
+    assert await check(board.parse_san("Nf3"), CancelToken()) is confirmed
+
+
+@pytest.mark.asyncio
+async def test_refute_check_is_undecided_without_a_live_board():
+    def never():
+        raise AssertionError("no search without a board")
+
+    check = make_refute_check(never, bus=EventBus(), board_provider=lambda: None)
+    assert await check(chess.Move.from_uci("g1f3"), CancelToken()) is None

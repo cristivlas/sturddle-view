@@ -78,6 +78,7 @@ from .play.tools_engine import (
     make_piece_at_tool,
     make_recommend_move_tool,
     make_recommend_verifier,
+    make_refute_check,
     make_report_line_tool,
     make_tactics_tool,
     make_top_moves_tool,
@@ -674,6 +675,7 @@ def _setup_ai(app: FastAPI) -> None:
         recommend_verifier=_ai_recommend_verifier,
         verifier_registry=ai_verifier_registry,
         search_cache=ai_search_cache,
+        book_provider=_ai_book_provider,
     )
     # Register `delegate` last: it dispatches to the coordinator's verifier
     # sub-run, so the coordinator must exist first.
@@ -682,6 +684,15 @@ def _setup_ai(app: FastAPI) -> None:
         make_delegate_tool(
             app.state.ai_coordinator.delegate_runner(),
             board_provider=_ai_board_provider,
+            refute_check=make_refute_check(
+                _ai_engine_launcher,
+                bus=app.state.event_bus,
+                board_provider=_ai_board_provider,
+                game_id_provider=_ai_game_id_provider,
+                settings_provider=_ai_settings_provider,
+                search_cache=ai_search_cache,
+                situation_provider=_ai_situation_provider,
+            ),
         ),
     )
 

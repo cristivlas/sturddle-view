@@ -3,7 +3,7 @@
 Every round's prose is checked against the live board. A mismatch emits an
 ai_position_note event (UI self-correction) and injects a fact-anchored
 [position check] user message so the model corrects itself next round. A
-re-flagged item escalates the corrective wording.
+re-flagged item is struck again but draws no second corrective.
 """
 from __future__ import annotations
 
@@ -11,12 +11,11 @@ import chess
 import pytest
 
 from sturddle_view.events import EVT_AI_POSITION_NOTE, EventBus
-from sturddle_view.llm import ProviderChunk, ScriptedProvider, ToolRegistry
+from sturddle_view.llm import ProviderChunk, ScriptedProvider, ToolRegistry, ToolSpec
 from sturddle_view.play.ai_analysis import (
     AIAnalysisCoordinator,
     _PositionCheck,
     _POSITION_CHECK_PREFIX,
-    _POSITION_CHECK_REPEAT_LEAD,
 )
 
 
@@ -136,7 +135,7 @@ async def test_false_pin_claim_emits_note_and_injects_tactics_fact():
 _BISHOP_FEN = "2n1rk2/p1R2p2/2NRb1p1/1P5p/4P2P/3B1PP1/5K2/2r5 w - - 3 41"
 
 
-def test_board_labels_exclude_bishop_flags():
+def test_judge_items_exclude_bishop_flags():
     # Bishop-color flags are precomputed board facts the judge has repeatedly
     # cleared wrongly; the regex verdict is final for this class, so no
     # bishop label ever reaches the judge.
@@ -149,7 +148,7 @@ def test_board_labels_exclude_bishop_flags():
              "no dark-squared bishop on the board"),
         ],
     )
-    assert pc.board_labels == []
+    assert pc.judge_items == []
 
 
 @pytest.mark.asyncio
@@ -204,7 +203,7 @@ def test_tool_mention_produces_corrective_clause():
         line_pairs=[],
         tool_mentions=["the tool"],
     )
-    msg = AIAnalysisCoordinator._position_check_message(pc, repeat=False)
+    msg = AIAnalysisCoordinator._position_check_message(pc)
     assert '"the tool"' in msg
     assert "never name the tools or engine" in msg
     assert "isn't legal" not in msg
@@ -219,30 +218,44 @@ def test_move_named_as_line_and_token_appears_once_in_corrective():
         claim_triples=[],
         line_pairs=[("Bb5", "Bb5")],
     )
-    msg = AIAnalysisCoordinator._position_check_message(pc, repeat=False)
+    msg = AIAnalysisCoordinator._position_check_message(pc)
     assert msg.count("Bb5 isn't legal") == 1
 
 
+def test_repeat_keys_do_not_collide_across_item_types():
+    # A claim keyed by square e4 must not mark the pawn move e4 as a repeat.
+    claim = _PositionCheck(
+        chess.Board(_FEN), [], [("the knight on e4", "knight on e4", "e4")], [],
+    )
+    move = _PositionCheck(chess.Board(_FEN), [("e4", "e4")], [], [])
+    new, repeat = move.partition(claim.keys)
+    assert new.move_pairs == [("e4", "e4")]
+    assert not repeat.hit
+
+
 @pytest.mark.asyncio
-async def test_repeat_of_reworded_claim_escalates():
-    # Round 1: "white bishop on c6"; round 2 re-asserts it as "bishop on c6".
-    # The repeat key is the square, so the reworded repeat still escalates.
-    # c6 is empty and unreachable by either bishop, so both rounds flag.
+async def test_repeat_of_reworded_claim_is_struck_and_shipped():
+    # Round 2's acknowledgment rewords the round-1 claim; the repeat key is
+    # the square, so it's struck with no second corrective and the turn ends
+    # after round 2 instead of looping to the round cap.
     board = chess.Board(_FEN)
     provider = ScriptedProvider(rounds=[
         [ProviderChunk(kind="text", text="White bishop on c6 is strong.")],
-        [ProviderChunk(kind="text", text="The bishop on c6 stays.")],
-        [ProviderChunk(kind="text", text="Fine, the bishop is on f5.")],
+        [ProviderChunk(kind="text", text="Actually, bishop on c6 isn't right.")],
+        [ProviderChunk(kind="text", text="Never reached.")],
     ])
     coord, bus = _coord(provider, board)
     queue = await bus.subscribe()
 
     await coord.run(game_id="g")
-    await _drain_until_done(queue)
+    events = await _drain_until_done(queue)
 
-    # The third round's input carries the escalated (repeat) corrective.
-    injected = _last_user_texts(provider)
-    assert any(_POSITION_CHECK_REPEAT_LEAD in t for t in injected)
+    notes = [e for e in events if e.kind == EVT_AI_POSITION_NOTE]
+    assert [n.payload["surfaces"] for n in notes] == [
+        ["White bishop on c6"], ["bishop on c6"],
+    ]
+    assert provider.stream_calls == 2
+    assert not events[-1].payload.get("round_cap")
 
 
 @pytest.mark.asyncio
@@ -312,23 +325,24 @@ async def test_false_file_claim_emits_note_and_injects_corrective():
 
 
 @pytest.mark.asyncio
-async def test_repeat_of_file_claim_escalates():
+async def test_repeat_of_file_claim_is_struck_and_shipped():
     # The file label joins the repeat keys: re-asserting "white queen on the
-    # c-file" in round 2 draws the escalated corrective in round 3.
+    # c-file" in round 2 is struck and ends the turn, no third round.
     board = chess.Board(_C_FILE_FEN)
     provider = ScriptedProvider(rounds=[
         [ProviderChunk(kind="text", text="Rc8 faces the white queen on the c-file.")],
         [ProviderChunk(kind="text", text="The white queen on the c-file is loose.")],
-        [ProviderChunk(kind="text", text="Fine, the white queen is on b2.")],
+        [ProviderChunk(kind="text", text="Never reached.")],
     ])
     coord, bus = _coord(provider, board)
     queue = await bus.subscribe()
 
     await coord.run(game_id="g")
-    await _drain_until_done(queue)
+    events = await _drain_until_done(queue)
 
-    injected = _last_user_texts(provider)
-    assert any(_POSITION_CHECK_REPEAT_LEAD in t for t in injected)
+    notes = [e for e in events if e.kind == EVT_AI_POSITION_NOTE]
+    assert len(notes) == 2
+    assert provider.stream_calls == 2
 
 
 @pytest.mark.asyncio
@@ -354,3 +368,124 @@ async def test_false_file_openness_emits_note_and_injects_corrective():
         and "the c-file is open: no pawns on it" in t
         for t in injected
     )
+
+
+# Black to move; Re6 is legal and e6 is empty (the live repro).
+_RE6_FEN = "1rb1r1k1/ppp2pp1/2n2q1p/4p3/2Pp3N/3P2PP/PP1QPPB1/2R1K2R b K - 1 14"
+
+
+@pytest.mark.asyncio
+async def test_false_illegality_claim_emits_note_and_injects_legal_fact():
+    board = chess.Board(_RE6_FEN)
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="Re6 is illegal, so the rook stays.")],
+        [ProviderChunk(kind="text", text="Corrected.")],
+    ])
+    coord, bus = _coord(provider, board)
+    queue = await bus.subscribe()
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    notes = [e for e in events if e.kind == EVT_AI_POSITION_NOTE]
+    assert [n.payload["surfaces"] for n in notes] == [["Re6 is illegal"]]
+    injected = _last_user_texts(provider)
+    assert any(
+        t.startswith(_POSITION_CHECK_PREFIX) and "Re6 is legal here" in t
+        for t in injected
+    )
+
+
+@pytest.mark.asyncio
+async def test_false_occupancy_claim_emits_note_and_injects_square_fact():
+    board = chess.Board(_RE6_FEN)
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="The rook cannot land because e6 is occupied.")],
+        [ProviderChunk(kind="text", text="Corrected.")],
+    ])
+    coord, bus = _coord(provider, board)
+    queue = await bus.subscribe()
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    notes = [e for e in events if e.kind == EVT_AI_POSITION_NOTE]
+    assert [n.payload["surfaces"] for n in notes] == [["e6 is occupied"]]
+    injected = _last_user_texts(provider)
+    assert any("e6 is empty" in t for t in injected)
+
+
+@pytest.mark.asyncio
+async def test_tool_label_leak_hides_prose_corrected_once():
+    # The live leak: a "Verdict:" label copied from the delegate result. A leak
+    # is a rule violation, not a board error: the round's prose is hidden (not
+    # struck, no self-correction) and a corrective names the leak. The repeat
+    # draws no retry, so hiding it would leave the reader nothing: it is
+    # struck instead and the turn ends.
+    board = chess.Board(_FEN)
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="Verdict: holds, the knight on f6 guards d5.")],
+        [ProviderChunk(kind="text", text="Verdict: the knight on f6 guards d5.")],
+        [ProviderChunk(kind="text", text="Never reached.")],
+    ])
+    coord, bus = _coord(provider, board)
+    queue = await bus.subscribe()
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    notes = [e.payload for e in events if e.kind == EVT_AI_POSITION_NOTE]
+    assert [(n["surfaces"], n.get("hide_prose")) for n in notes] == [
+        ([], True), (["Verdict:"], None),
+    ]
+    assert provider.stream_calls == 2
+    injected = _last_user_texts(provider)
+    assert any(
+        t.startswith(_POSITION_CHECK_PREFIX) and '"Verdict:"' in t for t in injected
+    )
+
+
+@pytest.mark.asyncio
+async def test_leak_alongside_board_error_hides_and_keeps_board_surfaces():
+    # A round with both a leak and a false claim: hidden, and the claim is
+    # still reported (and corrected) as usual.
+    board = chess.Board(_FEN)
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="Verdict: the bishop on h6 dominates.")],
+        [ProviderChunk(kind="text", text="The bishop on f5 dominates.")],
+    ])
+    coord, bus = _coord(provider, board)
+    queue = await bus.subscribe()
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    notes = [e.payload for e in events if e.kind == EVT_AI_POSITION_NOTE]
+    assert [(n["surfaces"], n.get("hide_prose")) for n in notes] == [
+        (["the bishop on h6"], True),
+    ]
+    injected = _last_user_texts(provider)
+    assert any("h6 is empty" in t and '"Verdict:"' in t for t in injected)
+
+
+async def _noop_tool(_input, *, cancel_token):
+    return {"ok": True}
+
+
+def test_registered_tool_names_are_leak_names():
+    board = chess.Board(_FEN)
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="recommend_move", description="d", input_schema={"type": "object"}),
+        _noop_tool,
+    )
+    coord = AIAnalysisCoordinator(
+        EventBus(), None, registry=registry, board_provider=lambda: board,
+    )
+    pc = coord._position_check([
+        ProviderChunk(kind="text", text="Recommend Move: Nxd5 wins a pawn."),
+    ])
+    assert pc.tool_leaks == [("Recommend Move:", "recommend_move")]
+    # Leaks hide the prose rather than strike a span.
+    assert pc.surfaces == []
+    assert pc.hides_prose

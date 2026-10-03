@@ -20,7 +20,7 @@ from __future__ import annotations
 import chess
 import pytest
 
-from sturddle_view.events import EventBus
+from sturddle_view.events import EVT_ENGINE_INFO, EventBus
 from sturddle_view.llm.cancel import CancelToken
 from sturddle_view.play import tools_engine
 from sturddle_view.play.tools_engine import SearchCache
@@ -136,6 +136,30 @@ async def test_clear_drops_entries(_patched):
     cache.clear()
     await _search(cache, board, 6)  # new turn -> must re-run
     assert _patched.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_publishes_engine_info(_patched):
+    # A live tool search publishes engine_info, which drives the board arrow
+    # and the Search Lines window. A reuse must too, or both keep showing the
+    # previous search while the panel names the move now under consideration.
+    cache = SearchCache()
+    board = chess.Board()
+    move = chess.Move.from_uci("e2e4")
+    await _search(cache, board, 6, root_moves=[move])
+    bus = EventBus()
+    queue = await bus.subscribe()
+
+    await cache.get_or_search(
+        engine_launcher=lambda: None, board=board, limit=_limit(6),
+        bus=bus, game_id="g", cancel_token=CancelToken(), root_moves=[move],
+    )
+
+    assert _patched.calls == 1  # served from the cache
+    kinds = []
+    while not queue.empty():
+        kinds.append(queue.get_nowait().kind)
+    assert EVT_ENGINE_INFO in kinds
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,7 @@
   --muted: #9a9a9a;
   --muted-bright: #aaa;
   --scrollbar-thumb: rgba(255, 255, 255, 0.18);
+  --scrollbar-thumb-min-h: 50px;
   --wb-outline: rgba(136, 136, 136, 0.4);
   --wb-radius: 8px;
   /* Minimized-WinBox dock strip; tournament-workspace.js reads it as
@@ -327,6 +328,18 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
   text-decoration-thickness: 1px;
   color: #c0392b;
 }
+/* Opening names and the recommended move linked to their line; double-click
+   plays it. Hover and playing backgrounds match the Search Lines rows. */
+.play-ai-prose .play-ai-line-link { text-decoration: underline dotted; }
+.play-ai-prose .play-ai-line-link-playable:hover { cursor: pointer; background: var(--wa-color-surface-raised); }
+.play-ai-prose .play-ai-line-link-playing { background: var(--wa-color-surface-raised); }
+/* Desktop only: double-click is a mouse gesture, so touch shows plain prose
+   (a tap would otherwise leave the sticky :hover background on). */
+@media (pointer: coarse) {
+  .play-ai-prose .play-ai-line-link,
+  .play-ai-prose .play-ai-line-link-playable:hover,
+  .play-ai-prose .play-ai-line-link-playing { text-decoration: none; cursor: auto; background: none; }
+}
 
 /* AI status line: spinner + short text, above the prose so streaming text
    appends below without re-flow. Dimmer: transient progress, not content. */
@@ -624,6 +637,10 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
 .play-ai-tool-dot-report_line    { background: var(--wa-color-teal-60, #14b8a6); }
 .play-ai-tool-dot-related_openings { background: var(--wa-color-indigo-60, #6366f1); }
 .play-ai-tool-dot-position_judge { background: var(--wa-color-orange-60, #ea580c); }
+/* Dominance-check steps under a recommend_move row: the baseline search is
+   an engine search (top_moves blue), the candidate's is the pick's own. */
+.play-ai-tool-dot-engine_best    { background: var(--wa-color-primary-60, #4a90e2); }
+.play-ai-tool-dot-search_move    { background: #7c3aed; }
 /* Verifier sub-run tool calls, nested under their "Verifying line" row.
    Full-width break (flex-wrap); a vertical spine runs through the child dot
    centers (8px dot -> center x=4px), tying the sub-calls into one timeline. */
@@ -676,17 +693,19 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
 }
 /* Failed tool call: red dot + struck label. The renderer appends the error
    detail into the collapsible details body. */
-.play-ai-tool-call-failed .play-ai-tool-dot {
+.play-ai-tool-call-failed > .play-ai-tool-head > .play-ai-tool-dot {
   background: var(--wa-color-danger-60, #d9534f);
 }
-.play-ai-tool-call-failed .play-ai-tool-label {
+/* Direct child (> head > label): the verdict is the row's own, so its nested
+   step rows (the check's searches, which ran fine) keep their look. */
+.play-ai-tool-call-failed > .play-ai-tool-head > .play-ai-tool-label {
   opacity: 0.7;
   text-decoration: line-through;
 }
 /* Superseded: the tool ran fine but the loop steered the model to a better
    move (stronger move named, or a red-team hold). Struck to show it was set
    aside; the dot keeps the tool's color -- it is not a failure. */
-.play-ai-tool-call-superseded .play-ai-tool-label {
+.play-ai-tool-call-superseded > .play-ai-tool-head > .play-ai-tool-label {
   opacity: 0.7;
   text-decoration: line-through;
 }
@@ -763,14 +782,17 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
   cursor: pointer;
   user-select: none;
   flex: 0 0 auto;
-  /* One caret glyph rotated open/closed (identical size both ways).
-     inline-block so the transform applies; nudged to the label baseline. */
+  /* A clip-path triangle in a fixed box, rotated about the box center
+     (a text glyph's ink is off-center in its advance box, so it drifts). */
   display: inline-block;
-  transform: translateY(2px);
+  width: 0.8em;
+  height: 1em;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
   transition: transform 0.12s ease;
 }
 .play-ai-tool-toggle.is-open {
-  transform: translateY(2px) rotate(90deg);
+  transform: rotate(90deg);
 }
 .play-ai-tool-details-body {
   flex: 1 1 100%;
@@ -2482,21 +2504,31 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
     width: 100%;
     box-sizing: border-box;
   }
+  /* The active tab's bar has margin-inline-end: -track-width to sit on the
+     track, but an explicit width ignores that margin; widen by the track
+     width plus the optional bar overhang. */
+  wa-dialog .settings-tabs:not(.settings-top-tabs) wa-tab {
+    width: calc(
+      100% + var(--side-track-line) + var(--side-bar-overhang)
+    );
+  }
+  wa-dialog .settings-tabs:not(.settings-top-tabs)::part(tabs) {
+    border-inline-end-width: var(--side-track-line);
+  }
 }
-wa-dialog:has(.engine-settings-tabs)::part(footer),
-wa-dialog:has(> .settings-reset-row)::part(footer) {
+wa-dialog:has(.engine-settings-tabs)::part(footer) {
   border-top: 1px solid rgba(255, 255, 255, 0.12);
   padding-top: 12px;
 }
-/* Settings Reset: the gap above the button mirrors the one below it. */
-wa-dialog:has(> .settings-reset-row)::part(footer) {
-  padding-top: var(--spacing);
-}
-/* Button spans the panels' width: left edge at the JS-measured inset. */
+/* Settings Reset: the row carries the line (spanning like the Engines
+   ribbon's) and the gap above the button, mirroring the one below it. */
 .settings-reset-row {
   flex: 1;
   display: flex;
-  margin-inline-start: var(--settings-footer-inset, 0px);
+  margin-inline-start: var(--settings-footer-rail, 0px);
+  padding-inline-start: var(--settings-footer-inset, 0px);
+  padding-top: var(--spacing);
+  border-top: 1px solid var(--wa-color-border-loud, #353841);
 }
 .settings-reset-row .settings-reset-btn { flex: 1; }
 /* Dark text on gray at rest; hover lights it up in the brand (loud) fill.
@@ -2882,6 +2914,11 @@ wa-dialog wa-tab-group {
 }
 wa-dialog .settings-tabs {
   --track-width: 0.1875rem;
+  --side-track-line: 1px;
+  --side-bar-overhang: 1px;
+  --track-color: var(--border-subtle);
+  /* --track-color: var(--wa-form-control-background-color); */
+  /* --track-color: var(--row-bg-hover); */
 }
 wa-dialog::part(dialog) {
   overflow: visible !important;
@@ -2916,7 +2953,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="general"] > * + * {
 /* Side-tab panels pad their right edge by --wa-space-xl (WA tab-group), so
    inset the footer Reset button to line up with the panel's controls. */
 wa-dialog:has(.settings-tabs:not(.settings-top-tabs)) > .settings-reset-row {
-  margin-inline-end: var(--wa-space-xl);
+  padding-inline-end: var(--wa-space-xl);
 }
 /* Settings uses top tabs below --bp-settings-top-tabs (wider than the
    481px side-rail gate); undo the equal-width side-rail tabs there. */
@@ -3235,7 +3272,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .tmb-menu.open > .tmb-dropdown { display: block; }
 .tmb-dropdown > li { margin: 0; padding: 0; list-style: none; }
 .tmb-dd-submenu { position: relative; }
-.tmb-dd-submenu > .tmb-dd-item::after { content: "▶"; position: absolute; right: 10px; font-size: 0.625rem; }
+.tmb-dd-submenu > .tmb-dd-item::after { content: "\25B6"; position: absolute; right: 10px; font-size: 0.625rem; }
 .tmb-dd-submenu > .tmb-dropdown { top: -6px; left: 100%; z-index: 9001; }
 .tmb-dd-submenu:hover > .tmb-dropdown { display: block; }
 .tmb-dd-submenu:has(> .tmb-dd-item:disabled):hover > .tmb-dropdown { display: none; }
@@ -3250,7 +3287,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   background: var(--nav-btn-bg-hover);
   box-shadow: inset 3px 0 0 var(--accent-line);
 }
-.tmb-dd-item.tmb-active::before { content: "✓"; position: absolute; left: 8px; }
+.tmb-dd-item.tmb-active::before { content: "\2713"; position: absolute; left: 8px; }
 .tmb-separator {
   border-top: 1px solid var(--wa-color-border-loud, #333);
   margin: 4px 0;
@@ -3415,11 +3452,11 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   outline: none;
 }
 .tmb-sort-opt[data-dir]::before {
-  content: "▲"; position: absolute;
+  content: "\25B2"; position: absolute;
   left: 7px; top: 50%; transform: translateY(-50%);
   font-size: 0.8125rem; color: var(--accent);
 }
-.tmb-sort-opt[data-dir="desc"]::before { content: "▼"; }
+.tmb-sort-opt[data-dir="desc"]::before { content: "\25BC"; }
 .tournaments-body {
   display: flex;
   flex: 1; min-height: 0;
@@ -3801,6 +3838,14 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tabs wa-tab-panel { height: 100%; --padding: 0; }
 .studio-tabs wa-tab-panel::part(base) { height: 100%; box-sizing: border-box; }
 .studio-pane { height: 100%; overflow: auto; }
+/* Chromium/WebKit only; Firefox has no thumb-length control. */
+@media (min-width: 801px) {
+  .studio-tabs *::-webkit-scrollbar-thumb:vertical,
+  .import-pos-tabs .openings-body-scroll::-webkit-scrollbar-thumb:vertical {
+    min-height: var(--scrollbar-thumb-min-h);
+  }
+  .import-pos-tabs .openings-body-scroll { --scrollbar-thumb-min-h: 100px; }
+}
 /* Standings/Tourneys/History own their scroll internally (split-table
    pattern above), so their pane must not also scroll or the header
    scrolls out of view with it. */

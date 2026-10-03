@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import chess
 from fastapi import HTTPException, Request, status
 
-from ..chess.board import moves_san
+from ..chess.board import color_name, moves_san
 from ..chess.results import UNKNOWN_RESULT
 from ..config import PROVIDER_OLLAMA
 from ..env_utils import env_int
@@ -243,6 +243,7 @@ async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
         in_opening=in_opening,
         book_reply=reply,
         playbook=_playbook_for(hve, board, mode),
+        player_side=color_name(hve.human_color()) if mode == COACH_MODE else None,
     )
     if reply is None:
         return TurnInputs(message, None, ())

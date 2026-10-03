@@ -137,7 +137,7 @@ source; check the file when a precise value matters.
 | `SV_AI_API_KEY` | unset | Headless fallback for the active provider's API key; OS keyring takes precedence. | `server/sturddle_view/key_store.py` |
 | `SV_AI_MAX_TOOL_ROUNDS` | `32` | Hard cap on agent loop rounds per turn. Hit emits `done.round_cap=true`. | `server/sturddle_view/play/ai_analysis.py` |
 | `SV_AI_VERIFIER_MAX_ROUNDS` | `8` | Round cap for a verifier sub-run (one move, a tool call or two, a verdict). | `server/sturddle_view/play/ai_analysis.py` |
-| `SV_AI_SEMANTIC_CHECK` | `1` | LLM judge that clears regex position-check flags the prose meant about a past/hypothetical/alternate position. Only drops flags, never adds; off reverts to regex-only. Accepts `1`/`true`/`yes`/`on`. | `server/sturddle_view/play/ai_analysis.py` |
+| `SV_AI_SEMANTIC_CHECK` | `1` | LLM judge over regex position-check flags: a flag the prose placed in an earlier or later position is not struck, and the narrator is asked once (on a round that follows anyway) to name such positions. Never adds flags; off reverts to regex-only. Accepts `1`/`true`/`yes`/`on`. | `server/sturddle_view/play/ai_analysis.py` |
 | `SV_AI_THINKING_BUDGET_TOKENS` | `4096` | Default Anthropic extended-thinking budget; UI override persists per-settings. | `server/sturddle_view/config.py` |
 | `SV_AI_MAX_TOKENS` | `4096` | Anthropic visible-output cap per round (`max_tokens`); an extended-thinking budget is added on top. | `server/sturddle_view/llm/anthropic.py` |
 | `SV_OLLAMA_THINK_PROBE_MAX_TOKENS` | `512` | Token cap for the one-time per-model Ollama probe that checks whether thinking-off (`reasoning_effort: "none"`) leaks reasoning into visible text; hitting the cap reads as clean. | `server/sturddle_view/llm/ollama.py` |

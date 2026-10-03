@@ -67,9 +67,15 @@ Round body, in order:
    downstream chunks would belong to the next round per Anthropic
    semantics).
 3. Decide exit / continuation:
-   - Clean round (no tool_use) -> break. Natural end of turn (a
-     completeness nudge may run one more round if no `recommend_move`
-     landed yet).
+   - Clean round (no tool_use) -> break. Natural end of turn, unless the
+     completeness nudge fires: with no accepted `recommend_move` yet, the
+     narrator is re-nudged on every clean exit until one lands, stopping
+     when a nudge drew no new attempt (stall). The nudged round forces a
+     tool call where the provider honors `tool_choice` (Ollama and Gemini
+     drop thinking for it), so the model can't exit in prose again
+     without attempting a move. A silent round ends the turn, except
+     once: silent right after a fresh rejected attempt draws one more
+     forced nudge.
    - Tool_use pending -> append the assistant message; continue.
 4. If a tool_use is pending: dispatch via the registry, append the
    `tool_result` user message (matching `tool_use_id`). Failures
@@ -96,26 +102,49 @@ engine, no eval -- the split keeps raw eval out, not board facts). The
 verifier registry holds the search/inspection tools
 (`analyze`, `top_moves`, `piece_at`, `validate_move`); both registries
 share one per-turn `search_cache`, so a position searched once isn't
-searched again across them.
+searched again across them. A cache hit republishes the stored result as
+`engine_info`, so the board arrow and Search Lines follow the move now
+under consideration exactly as a live search would.
 
 **Flow per turn:** the narrator weighs its candidates, then red-teams
 its pick with `delegate(move, question)`; each call spawns a verifier
 sub-run (`AIAnalysisCoordinator._run_verifier`, verifier prompt +
 registry, no `delegate` -- one level deep). The verifier is an
 adversary: it assumes the move is flawed and hunts the refutation with
-the engine, must call a tool before concluding (structurally forced on
-its first round via `tool_choice` where the provider honors it --
-Anthropic `any`, OpenAI-compat `required`; a no-tool verdict draws one
-nudge as the fallback), and returns a one/two sentence holds/refuted
+the engine, must call a tool on its first round (structurally forced via
+OpenAI-compat `tool_choice: required`; Anthropic is never forced -- newer
+models reject it and no capability flag detects it -- so the nudge
+covers it), must rank the move under test in a
+`top_moves` call before concluding (`analyze` on the live FEN scores the
+position before the move, so it can't judge the move; an unsearched
+verdict draws one nudge, then is dropped as `verdict_withheld`), and returns a
+one/two sentence holds/refuted
 conclusion that lands as the delegate tool_result. The canonical SAN is prefixed to the
 delegated question ("Move under test: ...") so the verifier knows the
 move under attack regardless of the narrator's phrasing. The narrator
 synthesizes and calls `recommend_move`.
 
+**Verdict gate.** The verifier never talks to the user: its prompt drops
+the reader-facing rules (voice, length, audience) for an output rule (the
+reply is parsed by a program; no questions or conversation). The server
+enforces it: a reply not opening with "holds"/"refuted" draws one nudge,
+then is dropped (the narrator gets `verdict_withheld`), never shown or
+passed on. `no_verdict` is reserved for a sub-run the round cap cut short
+(the client's gear deep-links to "Max subagent rounds"; more rounds won't
+fix a withheld verdict). `delegate` then withholds (as `verdict_withheld`)
+a verdict whose reason
+misstates the board -- a board-check flag, or any illegality claim (the
+move under test is legal by construction) -- and a "refuted" the engine
+doesn't confirm: the same dominance test `recommend_move` applies (plan-
+aware margin, verification depth), so a refutation stands only when the
+final gate would reject the move too.
+
 **Red-team hold.** The first accepted `recommend_move` of a turn with no
 prior delegate verdict is held once (`error=red_team_first`) and the
 model is asked to red-team the move first; a stalled model still gets
-its pick on the next attempt. Enforced in the loop, both personas, only
+its pick on the next attempt. A refutation the engine overruled counts
+as a verdict (the withheld envelope carries `move_survived`): the move
+survived the adversarial check. Enforced in the loop, both personas, only
 when `delegate` is registered. This supersedes the earlier
 commentator-only compare-first hold (a `top_moves` ranking does not
 satisfy it -- ranking is not an adversarial check).
@@ -130,15 +159,39 @@ adds latency x fan-out and risks Ollama `<think>` leaking into the verdict).
 model can consult: `piece_at` settles a square, `report_line` replays a
 line's legality, `top_moves`/`recommend_move` score moves, `tactics`
 lists the pins and forks actually on the board. Wrong tactical
-judgment is caught by forcing a tool call before a verdict (the verifier
-must call a tool before concluding).
+judgment is caught by requiring a search of the move before a verdict
+(the verifier must rank it with `top_moves` before concluding).
 
 A light post-hoc prose check (`llm/position_check.py`) runs over the
 single current board only: piece-on-square, file, bishop-color,
-file-openness and line claims, plus pin/fork claims (see §Tactical
-grounding). A flag becomes a clarifying question to the model ("do you
-mean a past or hypothetical position?"), never a rewrite demand. The
-earlier multi-board legality validator was removed (branch history).
+file-openness, square-occupancy, "<move> is illegal" and line claims,
+plus pin/fork claims (see §Tactical grounding). A flag becomes a
+clarifying question to the model ("do you mean a past or hypothetical
+position?"), never a rewrite demand. Each flagged item draws that question
+once per turn: a re-flag (the model's acknowledgment repeats the wrong
+phrase) is struck in the UI but skips the judge and the corrective, so the
+turn ends instead of looping to the round cap. The earlier multi-board
+legality validator was removed (branch history).
+
+**Position judge.** Before the flags act, an LLM judge
+(`llm/position_judge.py`, `SV_AI_SEMANTIC_CHECK`) is handed each flagged
+label with the board fact that makes it false and asked whether the prose
+places the item in another position (earlier, or later in a line under
+analysis). It can only tag a flag, never add one; a parse failure or
+provider error tags nothing. A tagged flag is not struck; instead the
+narrator is asked once per item to name that position from then on (moves
+with numbers, or the earlier move it came before). That ask never forces a
+round of its own -- it rides along a corrective or a pending tool call --
+since the unstruck prose would otherwise be repeated verbatim. Fact-class
+flags (bishop color etc.) skip the judge: the regex verdict is final.
+
+**Tool-name leaks.** Board-independent: a tool name or result key written
+into prose (`recommend_move`, "Recommend Move:", "Verdict:") is a rule
+violation, not a board error. A new leak hides the whole round's prose
+from the reader (`ai_position_note.hide_prose`) and the corrective cites
+the rule and asks for the analysis again; a repeat draws no retry, so it is
+struck instead of hidden (hiding would leave the reader nothing). The
+narrator prompt says leaking prose is withheld and must be rewritten.
 
 **Tactical grounding (pins and forks).** Models write "the knight is
 pinned" or "forks king and rook" from pattern memory, not the board.
@@ -187,6 +240,17 @@ resubmits *that* move, so a rejection resolves in one step rather than
 open-ended probing. The last accepted `recommend_move` is the turn's pick
 and drives the on-board arrow (via the end-of-turn `ai_recommendation`
 verifier search).
+
+The dominance check runs two searches -- the engine's free best as the
+baseline, then the candidate restricted -- and reports each as a progress
+step (`llm/tool_progress.py`: a context-scoped reporter the coordinator
+installs around every dispatch). Each step lands in the panel as a sub-row
+nested under the `recommend_move` row (`engine_best`, `search_move`),
+filled with its result (move, eval, depth) when the search finishes, so the
+row names the search the arrow and Search Lines are showing. When the
+candidate IS the engine's best, the restricted search is skipped: the
+baseline already searched that line and the check never rejects the
+engine's own pick.
 
 ### Tools (v1)
 
@@ -318,6 +382,11 @@ enough.
 
 - Full PGN + per-ply eval array injected into the initial user message
   (chess games are small: ~80 plies SAN < 2k tokens typically)
+- The side to move is stated explicitly (never re-derived from FEN). In
+  coach mode the message also names who plays which color ("Sides: the
+  player plays black; the engine plays white.") and tags the mover
+  ("Side to move: black (the player)"), so a weak model doesn't take the
+  engine's side or mistake the side to move for the player's.
 - `get_position` / `get_pgn_range` remain available as tools but are
   expected to be rarely needed in path 3; primary value is live mode
   (game grows turn by turn) and heavily-annotated re-runs
@@ -426,8 +495,7 @@ carrying the tag flags the model too. Failed probes are not cached.
 - Cancel aborts both engine and LLM as a single user-facing task
 - Cancel is hard-stop: kill current tool + LLM stream, drop agent loop;
   no cooperative wrap-up turn (UI shows partial prose as-is)
-- Tool use is sequential only in v1 (no parallel tool calls); Anthropic
-  provider sets `disable_parallel_tool_use: true`
+- Tool use is sequential only in v1 (no parallel tool calls)
 - Forward-looking: parallel tool use is desirable later (latency + token
   savings). Design the tool dispatcher and cancellation to tolerate
   concurrent tool execution from day one even though v1 runs one at a
@@ -485,6 +553,62 @@ code MUST NOT assume any of it.
 - Engine named once per game:
   - Live: brief inline mention
   - View/post: PGN `[Annotator]` tag
+
+### Opening links
+
+Opening names in the prose become links that play the opening's line on
+the board.
+
+- **Matching (server).** Prose and book names are tokenized the same way:
+  casefold, punctuation dropped, whitespace collapsed ("Sicilian Defense:
+  Grand Prix Attack, Schofman Variation" == "Sicilian Defense Grand Prix
+  Attack Schofman Variation"). Sentence punctuation (`.!?;`) between
+  words is kept as a token, so a match never spans a sentence break the
+  name lacks ("St. George Defense" matches; "the Sicilian. Defense" does
+  not). A token trie over every book name (`OpeningBook.all()`) finds the
+  longest match at each word start; matches never overlap. Paraphrased or
+  invented names do not match -- a miss, never a wrong link. Narrator
+  prose only.
+- **When.** Only for a round whose prose passed the position check. A
+  flagged round's prose is struck and folded into its revision, so it
+  carries no links.
+- **Wire.** `ai_opening_links` event: `{round, items: [{surface, uci}]}`.
+  `surface` is the exact prose span (original case and punctuation);
+  `uci` is the opening's move list from the start position.
+- **Client.** Wraps each surface in a link span, whole words only. Only
+  the paragraph's own text nodes are wrapped -- text already inside a
+  link is left alone -- so other links survive and a replayed event adds
+  nothing. Striking flattens the paragraph first: struck prose carries no
+  links.
+- **Play.** Double-click plays the line through the existing PV line-show
+  (`pvFrames` from the start placement + `uci`), then snaps back to the
+  live position. Gated by `canPlayLineNow` and re-gated on
+  `PLAY_LINE_GATE_CHANGED`, same as Search Lines rows; inert when
+  refused. Tooltip: "Double-click to play line".
+- **Look.** Dotted underline at rest; when playable, pointer cursor and
+  the PV row hover/playing background. Gated off: underline only.
+  Desktop only: on touch (`pointer: coarse`) links render as plain prose.
+
+### Recommended-move link
+
+Mentions of the recommended move in the prose become the same kind of
+link, playing the verified line. Client-only.
+
+- **Source.** The `ai_recommendation` payload: `san`, `fen`, and
+  `pv_uci` (the end-of-turn verifier's searchmoves-restricted line, so it
+  starts with the move). No `pv_uci` (the unsearched book move) -> no
+  link.
+- **Where.** Every visible prose paragraph of the turn; prose folded into
+  a revision or hidden is skipped.
+- **Matching.** The SAN, case-sensitive, check/mate suffix optional,
+  whole token (`O-O` never matches inside `O-O-O`). A move-number prefix
+  must be the current move (`11.` White, `11...` Black, from the `fen`);
+  "15.Qe1" stays plain. A pawn push (SAN is a bare square, `e4`) links
+  only with that prefix, so "the pawn on e4" stays plain. Only the move is
+  underlined, not its number.
+- **Play.** Same as opening links: `pvFrames(fen, pv_uci)`, same gate,
+  tooltip, and look. No staleness guard: any move or view change closes
+  or resets the panel.
 
 ## UI
 

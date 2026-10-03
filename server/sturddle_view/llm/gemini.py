@@ -160,15 +160,17 @@ class GeminiProvider(LLMProvider):
             # prompt_tokens_details.cached_tokens).
             "stream_options": {"include_usage": True},
         }
+        forced = force_tool_call and bool(tools)
         if tools:
             body["tools"] = tools_anthropic_to_openai(tools)
-            if force_tool_call:
+            if forced:
                 # OpenAI-compat spelling of "must call a tool this round"
-                # (verifier first rounds). See LLMProvider.stream().
+                # (verifier first rounds, nudged narrator round). See LLMProvider.stream().
                 body["tool_choice"] = "required"
-        # `thinking=False` forces it off for this call (verifier sub-runs);
-        # otherwise honor the provider default.
-        if thinking is not False and self._thinking_enabled:
+        # `thinking=False` forces it off for this call (verifier sub-runs),
+        # and so does a forced tool call (forcing is unverified with
+        # reasoning on); otherwise honor the provider default.
+        if thinking is not False and self._thinking_enabled and not forced:
             body[REASONING_EFFORT_KEY] = _REASONING_EFFORT_ON
 
         inner = stream_openai_compat(

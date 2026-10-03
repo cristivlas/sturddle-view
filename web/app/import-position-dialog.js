@@ -11,7 +11,7 @@ import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { wireSplitScroll } from "./split-table.js";
-import { attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
+import { SORT_DIR, attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { loadJson, saveJson } from "./storage.js";
 import { mqNarrowDialog } from "./breakpoints.js";
 import { markSelectable, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
@@ -40,6 +40,7 @@ const ANALYSIS_WARNING = "Analysis will be closed.";
 const CONFIRM_TRUNC_MAX = 46;
 const RECENT_TRUNC_MAX = 40;
 const ELLIPSIS = "...";
+const DIALOG_TITLE = "Import";
 // Base content width (PGN/FEN panels). On desktop the dialog is widened by
 // the tab rail so this content width is preserved; narrow viewports keep the
 // base width and put the tabs on top.
@@ -165,10 +166,24 @@ export function confirmDiscardViewedGame({ viewing, currentSummary, analysisRunn
   });
 }
 
+// Tab names; PGN/FEN double as the import format sent to the server.
+const TAB = Object.freeze({ PGN: "pgn", FEN: "fen", OPENINGS: "openings" });
+// Insertion order is the visual tab order.
+const TAB_LABELS = Object.freeze({ [TAB.PGN]: "PGN", [TAB.FEN]: "FEN", [TAB.OPENINGS]: "Opening" });
+
 const PLACEHOLDERS = {
-  fen: "Paste FEN, e.g.\nrnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-  pgn: 'Paste PGN, e.g.\n[Event "?"]\n[White "..."]\n[Black "..."]\n\n1. e4 e5 2. Nf3 Nc6 ...',
+  [TAB.FEN]: "Paste FEN, e.g.\nrnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+  [TAB.PGN]: 'Paste PGN, e.g.\n[Event "?"]\n[White "..."]\n[Black "..."]\n\n1. e4 e5 2. Nf3 Nc6 ...',
 };
+
+const MUTED_CLASS = "muted";
+const STATUS = Object.freeze({ MUTED: MUTED_CLASS, OK: "ok", ERR: "err" });
+const IS_ACTIVE_CLASS = "is-active";
+const OPEN_CLASS = "open";
+const DRAG_OVER_CLASS = "drag-over";
+
+const RECENT_IMPORTS_PATH = "/game/recent-imports";
+const HASH_PREVIEW_LEN = 12;
 
 const TEXTAREA_ROWS = 8;
 
@@ -178,6 +193,7 @@ const OPENINGS_COL_MIN_PCT = 8;
 const OPENINGS_COL_ECO = "eco";
 const OPENINGS_COL_NAME = "name";
 const OPENINGS_COL_MOVES = "moves";
+const OPENINGS_COLS = [OPENINGS_COL_ECO, OPENINGS_COL_NAME, OPENINGS_COL_MOVES];
 const SELECTED_CLASS = "selected";
 const SELECTED_ROW_SEL = `tr.${SELECTED_CLASS}`;
 const OPENING_ROW_CLASS = "openings-list-item";
@@ -226,14 +242,14 @@ function wireOpeningsSearch(el, { setFilter, renderList, clearSelection, scrollS
   searchInput.addEventListener("input", () => {
     const text = searchInput.value || "";
     setFilter(text);
-    searchBtn.classList.toggle("is-active", !!text);
+    searchBtn.classList.toggle(IS_ACTIVE_CLASS, !!text);
     clearSelection();
     renderList();
   });
 
   function closeSearch() {
-    searchWrap.classList.remove("open");
-    searchBtn.classList.remove("is-active");
+    searchWrap.classList.remove(OPEN_CLASS);
+    searchBtn.classList.remove(IS_ACTIVE_CLASS);
     searchInput.value = "";
     setFilter("");
     renderList();
@@ -252,10 +268,10 @@ function wireOpeningsSearch(el, { setFilter, renderList, clearSelection, scrollS
     if (e.key === "Escape") { closeSearch(); e.preventDefault(); e.stopPropagation(); }
   }
   searchBtn.addEventListener("click", () => {
-    const opening = !searchWrap.classList.contains("open");
+    const opening = !searchWrap.classList.contains(OPEN_CLASS);
     if (opening) {
-      searchWrap.classList.add("open");
-      searchBtn.classList.add("is-active");
+      searchWrap.classList.add(OPEN_CLASS);
+      searchBtn.classList.add(IS_ACTIVE_CLASS);
       requestAnimationFrame(() => searchInput.focus?.());
       document.addEventListener("pointerdown", onOutsideClick);
       document.addEventListener("keydown", onSearchKey, true);
@@ -381,8 +397,8 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
     if (!visible.length) {
       const tr = document.createElement("tr");
       const td = document.createElement("td");
-      td.colSpan = 3;
-      td.className = "openings-list-empty muted";
+      td.colSpan = OPENINGS_COLS.length;
+      td.className = `openings-list-empty ${MUTED_CLASS}`;
       td.textContent = rows.length ? "No openings match." : "Loading...";
       tr.appendChild(td);
       list.appendChild(tr);
@@ -446,11 +462,7 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
     let nameBtnSort;
     const sortCtrl = attachColumnSort({
       table: openingsHeadTable,
-      columns: [
-        { key: OPENINGS_COL_ECO, firstDir: "asc" },
-        { key: OPENINGS_COL_NAME, firstDir: "asc" },
-        { key: OPENINGS_COL_MOVES, firstDir: "asc" },
-      ],
+      columns: OPENINGS_COLS.map((key) => ({ key, firstDir: SORT_DIR.ASC })),
       storageKey: STORAGE_KEY.OPENINGS_SORT,
       onSort: (state) => {
         sort = state ? { key: state.key, dir: state.dir } : null;
@@ -542,10 +554,13 @@ function saveRecentsCache(entries) {
   saveJson(RECENTS_CACHE_KEY, lean);
 }
 
+const EXT_PGN = ".pgn";
+const EXT_EPD = ".epd";
+
 function detectFormatFromName(name) {
   const n = (name || "").toLowerCase();
-  if (n.endsWith(".pgn")) return "pgn";
-  if (n.endsWith(".fen") || n.endsWith(".epd")) return "fen";
+  if (n.endsWith(EXT_PGN)) return TAB.PGN;
+  if (n.endsWith(EXT_EPD)) return TAB.FEN;
   return null;
 }
 
@@ -564,7 +579,7 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
     const opt = document.createElement("wa-option");
     opt.value = String(i);
     opt.dataset.hash = entry.hash;
-    const full = formatSummary(entry.summary, { short: true }) || entry.hash.slice(0, 12);
+    const full = formatSummary(entry.summary, { short: true }) || entry.hash.slice(0, HASH_PREVIEW_LEN);
     const shown = truncateMiddle(full, RECENT_TRUNC_MAX);
     if (shown !== full) opt.title = full;
     // textContent on the label (no innerHTML) blocks any HTML-injection
@@ -602,7 +617,7 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
     saveRecentsCache(ctx.recentsCache);
     render();
     const qs = force ? "?force=1" : "";
-    api("DELETE", `/game/recent-imports/${removed.hash}${qs}`)
+    api("DELETE", `${RECENT_IMPORTS_PATH}/${removed.hash}${qs}`)
       .then(async () => {
         // Notify other perspectives that recents changed so they
         // can refresh derived state (e.g. play.js x-game info,
@@ -613,7 +628,7 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
         }));
         if (recentSel.querySelectorAll("wa-option").length >= RECENTS_DISPLAY_CAP) return;
         try {
-          const r = await api("GET", "/game/recent-imports");
+          const r = await api("GET", RECENT_IMPORTS_PATH);
           const known = new Set(ctx.recentsCache.map((c) => c.hash));
           const fresh = (r.entries || []).filter(
             (e) => e.hash !== removed.hash && !known.has(e.hash)
@@ -645,7 +660,7 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
           });
           if (ok) deleteRecent(removed, true);
         } else {
-          setStatus(apiErrorDetail(e), "err");
+          setStatus(apiErrorDetail(e), STATUS.ERR);
         }
       });
   }
@@ -659,7 +674,7 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
     recentSel.value = "";
     if (!entry) return;
     try {
-      const r = await api("GET", `/game/recent-imports/${entry.hash}`);
+      const r = await api("GET", `${RECENT_IMPORTS_PATH}/${entry.hash}`);
       const targetFormat = r.format || entry.format;
       if (targetFormat !== ctx.format) selectTab(targetFormat);
       applyText(targetFormat, r.text || "");
@@ -672,7 +687,7 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
       );
       onPickSubmit(openingOverride);
     } catch (e) {
-      setStatus(apiErrorDetail(e), "err");
+      setStatus(apiErrorDetail(e), STATUS.ERR);
     }
   });
   render();
@@ -681,7 +696,7 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
   // user sees the freshest list without delay.
   (async () => {
     try {
-      const r = await api("GET", "/game/recent-imports");
+      const r = await api("GET", RECENT_IMPORTS_PATH);
       ctx.recentsCache = (r.entries || []).slice(0, RECENTS_DISPLAY_CAP);
       saveRecentsCache(ctx.recentsCache);
       render();
@@ -707,14 +722,14 @@ function openingFromLabel(label) {
  *  POST so it can do hash comparison and confirmation first. */
 export function showImportPositionDialog({ api }) {
   return showDialog({
-    label: "Import",
+    label: DIALOG_TITLE,
     width: mqNarrowDialog.matches ? DIALOG_WIDTH_NARROW : DIALOG_WIDTH_WIDE,
     body: (resolve, dialog) => {
       // Shared mutable state: `format`/`submitting` are reassigned by the
       // controller AND read by the extracted recents dropdown, so they live
       // on a ctx object (not locals) -- both sides see writes. recentsCache
       // is reassigned in both the recents handler and submit().
-      const ctx = { format: "pgn", submitting: false, recentsCache: loadRecentsCache() };
+      const ctx = { format: TAB.PGN, submitting: false, recentsCache: loadRecentsCache() };
 
       const wrap = document.createElement("div");
       wrap.className = "import-pos-form";
@@ -725,26 +740,26 @@ export function showImportPositionDialog({ api }) {
       // Side tabs on desktop, top tabs on narrow viewports (the rail eats
       // too much horizontal space on phones). Mirrors the Settings dialog.
       tabs.placement = mqNarrowDialog.matches ? "top" : "start";
-      tabs.innerHTML = `
-        <wa-tab slot="nav" panel="pgn">PGN</wa-tab>
-        <wa-tab slot="nav" panel="fen">FEN</wa-tab>
-        <wa-tab slot="nav" panel="openings">Opening</wa-tab>
-        <wa-tab-panel name="pgn"></wa-tab-panel>
-        <wa-tab-panel name="fen"></wa-tab-panel>
-        <wa-tab-panel name="openings"></wa-tab-panel>
-      `;
+      // Preset the start tab: WA activates one only from an IntersectionObserver
+      // callback, and a missed callback left the dialog with no panel shown.
+      const activeAttr = (name) => (name === ctx.format ? " active" : "");
+      const names = Object.keys(TAB_LABELS);
+      tabs.innerHTML =
+        names.map((n) => `<wa-tab slot="nav" panel="${n}"${activeAttr(n)}>${TAB_LABELS[n]}</wa-tab>`).join("")
+        + names.map((n) => `<wa-tab-panel name="${n}"${activeAttr(n)}></wa-tab-panel>`).join("");
       wrap.appendChild(tabs);
+      const panelOf = (name) => tabs.querySelector(`wa-tab-panel[name="${name}"]`);
 
       const openings = createOpeningsPanel({
         api,
-        onChange: () => { if (ctx.format === "openings") syncSubmitEnabled(); },
-        onCommit: () => { if (ctx.format === "openings") submit(); },
+        onChange: () => { if (ctx.format === TAB.OPENINGS) syncSubmitEnabled(); },
+        onCommit: () => { if (ctx.format === TAB.OPENINGS) submit(); },
       });
-      tabs.querySelector('wa-tab-panel[name="openings"]').appendChild(openings.el);
+      panelOf(TAB.OPENINGS).appendChild(openings.el);
 
       const textareas = {};
       const panelBodies = {};
-      for (const name of ["pgn", "fen"]) {
+      for (const name of [TAB.PGN, TAB.FEN]) {
         const ta = document.createElement("wa-textarea");
         ta.size = "small";
         ta.resize = "none";
@@ -762,7 +777,7 @@ export function showImportPositionDialog({ api }) {
         const panelBody = document.createElement("div");
         panelBody.className = "import-pos-panel-body";
         panelBody.appendChild(ta);
-        tabs.querySelector(`wa-tab-panel[name="${name}"]`).appendChild(panelBody);
+        panelOf(name).appendChild(panelBody);
         panelBodies[name] = panelBody;
         textareas[name] = ta;
       }
@@ -772,7 +787,7 @@ export function showImportPositionDialog({ api }) {
       fileBtn.innerHTML = `<wa-icon slot="start" name="upload"></wa-icon>From file...`;
       const fileInput = document.createElement("input");
       fileInput.type = "file";
-      fileInput.accept = ".pgn,.epd,text/plain";
+      fileInput.accept = [EXT_PGN, EXT_EPD, "text/plain"].join(",");
       fileInput.style.display = "none";
       fileBtn.addEventListener("click", () => fileInput.click());
       fileInput.addEventListener("change", async () => {
@@ -798,20 +813,20 @@ export function showImportPositionDialog({ api }) {
       dialogLabel.slot = "label";
       dialogLabel.className = "import-dialog-label";
       const labelText = document.createElement("span");
-      labelText.textContent = "Import";
+      labelText.textContent = DIALOG_TITLE;
       dialogLabel.append(labelText, recentSel);
       dialog.appendChild(dialogLabel);
 
       const status = document.createElement("div");
-      status.className = "import-pos-status muted";
+      status.className = `import-pos-status ${STATUS.MUTED}`;
       status.textContent = "";
-      // Initial home: the default active tab (pgn). selectTab reparents on switch.
-      panelBodies.pgn.append(status);
+      // Initial home: the start tab. selectTab reparents on switch.
+      panelBodies[ctx.format].append(status);
 
       dialog.appendChild(wrap);
 
       const alignRecentSel = () => {
-        const panelRect = panelBodies.pgn.getBoundingClientRect();
+        const panelRect = panelBodies[TAB.PGN].getBoundingClientRect();
         const labelRect = labelText.getBoundingClientRect();
         recentSel.style.marginInlineStart = `${Math.max(0, panelRect.left - labelRect.right)}px`;
       };
@@ -828,23 +843,24 @@ export function showImportPositionDialog({ api }) {
 
       function setStatus(msg, kind) {
         status.textContent = msg;
-        status.classList.remove("muted", "ok", "err");
-        status.classList.add(kind || "muted");
+        status.classList.remove(...Object.values(STATUS));
+        status.classList.add(kind || STATUS.MUTED);
       }
 
       function selectTab(name) {
-        if (typeof tabs.show === "function") tabs.show(name);
+        // WA's switch lands async and echoes wa-tab-show; the handler skips it.
+        tabs.active = name;
         ctx.format = name;
-        if (name !== "openings") {
+        if (name !== TAB.OPENINGS) {
           panelBodies[name].append(status);
         }
-        fileBtn.style.display = name === "pgn" ? "" : "none";
-        if (name === "openings") {
+        fileBtn.style.display = name === TAB.PGN ? "" : "none";
+        if (name === TAB.OPENINGS) {
           openings.load();
           requestAnimationFrame(openings.measureRibbon);
           openings.focus();
         } else if (!textareas[ctx.format].value.trim()) {
-          setStatus("", "muted");
+          setStatus("", STATUS.MUTED);
         }
         syncSubmitEnabled();
       }
@@ -852,10 +868,10 @@ export function showImportPositionDialog({ api }) {
       // The text the import POST will carry, regardless of source tab.
       // Openings resolve to a PGN; that's the format we send.
       function currentText() {
-        return ctx.format === "openings" ? openings.selectedPgn() : (textareas[ctx.format].value || "");
+        return ctx.format === TAB.OPENINGS ? openings.selectedPgn() : (textareas[ctx.format].value || "");
       }
       function sendFormat() {
-        return ctx.format === "openings" ? "pgn" : ctx.format;
+        return ctx.format === TAB.OPENINGS ? TAB.PGN : ctx.format;
       }
 
       function syncSubmitEnabled() {
@@ -870,10 +886,10 @@ export function showImportPositionDialog({ api }) {
         if (!text.trim()) return;
         ctx.submitting = true;
         start.setAttribute("disabled", "");
-        setStatus("Checking...", "muted");
+        setStatus("Checking...", STATUS.MUTED);
         const fmt = sendFormat();
         const opening = openingOverride
-          || (ctx.format === "openings" ? openings.selectedOpening() : null);
+          || (ctx.format === TAB.OPENINGS ? openings.selectedOpening() : null);
         try {
           const r = await api("POST", "/game/import/validate", { format: fmt, text });
           // Openings are labeled by ECO + name everywhere (recents, confirm
@@ -891,7 +907,7 @@ export function showImportPositionDialog({ api }) {
           resolve({ format: fmt, text, hash: r.hash, summary, opening });
         } catch (e) {
           ctx.submitting = false;
-          setStatus(apiErrorDetail(e), "err");
+          setStatus(apiErrorDetail(e), STATUS.ERR);
           syncSubmitEnabled();
         }
       }
@@ -904,25 +920,25 @@ export function showImportPositionDialog({ api }) {
         if (hint !== ctx.format) selectTab(hint);
         textareas[hint].value = text;
         syncSubmitEnabled();
-        setStatus(`Loaded ${f.name}`, "muted");
+        setStatus(`Loaded ${f.name}`, STATUS.MUTED);
       }
 
       tabs.addEventListener("wa-tab-show", (ev) => {
         const name = ev.detail?.name;
-        if (name !== "fen" && name !== "pgn" && name !== "openings") return;
+        if (!Object.hasOwn(TAB_LABELS, name) || name === ctx.format) return;
         selectTab(name);
       });
 
-      // Drag-and-drop a .fen / .pgn file anywhere on the dialog body.
+      // Drag-and-drop a .epd / .pgn file anywhere on the dialog body.
       wrap.addEventListener("dragover", (ev) => {
         if (ev.dataTransfer?.types?.includes("Files")) {
           ev.preventDefault();
-          wrap.classList.add("drag-over");
+          wrap.classList.add(DRAG_OVER_CLASS);
         }
       });
-      wrap.addEventListener("dragleave", () => wrap.classList.remove("drag-over"));
+      wrap.addEventListener("dragleave", () => wrap.classList.remove(DRAG_OVER_CLASS));
       wrap.addEventListener("drop", async (ev) => {
-        wrap.classList.remove("drag-over");
+        wrap.classList.remove(DRAG_OVER_CLASS);
         const f = ev.dataTransfer?.files?.[0];
         if (!f) return;
         ev.preventDefault();

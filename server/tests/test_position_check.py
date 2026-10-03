@@ -31,6 +31,10 @@ from sturddle_view.llm.position_check import (
     iter_illegal_moves,
     iter_illegal_piece_moves,
     iter_illegal_square_moves,
+    iter_false_illegality_claims,
+    iter_false_occupancy_claims,
+    iter_tool_label_leaks,
+    mentions_illegality,
     projected_boards,
     truncate_at_future_line,
 )
@@ -1247,3 +1251,60 @@ def test_opponent_verb_gap_does_not_recolor_the_piece():
     board = _board(_WILD_C_FILE_FEN)
     assert find_false_piece_claims("Your opponent attacks the knight on f6", board) == []
     assert find_false_file_claims("Your opponent targets the knight on the c-file", board) == []
+
+
+# The live repro: Black to move, Re6 (Re8-e6) is legal and e6 is empty.
+_RE6_FEN = "1rb1r1k1/ppp2pp1/2n2q1p/4p3/2Pp3N/3P2PP/PP1QPPB1/2R1K2R b K - 1 14"
+
+
+def test_false_illegality_claim_flagged_with_legal_fact():
+    board = _board(_RE6_FEN)
+    got = list(iter_false_illegality_claims("Re6 is illegal here.", board))
+    assert got == [("Re6 is illegal", "Re6 illegal", "Re6 is legal here")]
+
+
+def test_true_illegality_claim_not_flagged():
+    # d4 holds Black's own pawn, so Nd4 really can't be played.
+    board = _board(_RE6_FEN)
+    assert list(iter_false_illegality_claims("Nd4 cannot be played.", board)) == []
+
+
+def test_mentions_illegality():
+    assert mentions_illegality("Refuted -- the move is illegal (e6 is occupied).")
+    assert mentions_illegality("Refuted: Re6 can't be played.")
+    assert not mentions_illegality("Refuted: Re6 drops the e-pawn.")
+
+
+def test_false_occupancy_claim_flagged_with_square_fact():
+    board = _board(_RE6_FEN)
+    got = list(iter_false_occupancy_claims("Note that e6 is occupied and d4 is empty.", board))
+    assert got == [
+        ("e6 is occupied", "e6 occupied", "e6 is empty"),
+        ("d4 is empty", "d4 empty", "d4 has a black pawn"),
+    ]
+
+
+def test_occupancy_claim_cleared_by_a_named_move():
+    # After Re6 the square is occupied: a projected board clears the claim.
+    board = _board(_RE6_FEN)
+    assert list(iter_false_occupancy_claims("After Re6, e6 is occupied.", board)) == []
+
+
+def test_tool_label_leaks():
+    text = "Recommend Move: Re6\nVerdict: holds. recommend_move again; top moves agree."
+    got = list(iter_tool_label_leaks(text, ["recommend_move", "top_moves", "verdict"]))
+    assert got == [
+        ("recommend_move", "recommend_move"),
+        ("Recommend Move:", "recommend_move"),
+        ("Verdict:", "verdict"),
+    ]
+
+
+def test_tool_label_opens_a_sentence_or_markdown_wrapper():
+    text = "Re6 holds. *Verdict:* it guards e5."
+    assert list(iter_tool_label_leaks(text, ["verdict"])) == [("Verdict:", "verdict")]
+
+
+def test_label_word_mid_sentence_is_prose():
+    text = "The final verdict: White wins the endgame."
+    assert list(iter_tool_label_leaks(text, ["verdict"])) == []

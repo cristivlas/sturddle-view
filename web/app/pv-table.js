@@ -29,7 +29,7 @@ const PLAYING_ROW_CLASS = "wb-pv-row-playing";
 const MOVE_SPAN_CLASS = "wb-pv-move";
 const MOVE_CURRENT_CLASS = "wb-pv-move-current";
 const MOVE_NUM_CLASS = "wb-pv-movenum";
-const SHOWABLE_TOOLTIP = "Double-click to play line";
+export const SHOWABLE_TOOLTIP = "Double-click to play line";
 // Fewer than two frames (searched position + at least one ply) has nothing
 // to show: no hover, no tooltip, double-click inert.
 const MIN_SHOWABLE_FRAMES = 2;

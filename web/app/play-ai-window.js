@@ -8,7 +8,11 @@
 // perspective remount) is driven by play.js -- this module only owns
 // the dom inside the window.
 
-import { createDockableWindow, DOCK_ORDER } from "./play-dock-windows.js";
+import { createDockableWindow, DOCK_ORDER, getPvLineBoard } from "./play-dock-windows.js";
+import { APP_EVT } from "./app-events.js";
+import { SHOWABLE_TOOLTIP } from "./pv-table.js";
+import { pvFrames } from "./pv-walk.js";
+import { FEN } from "../vendor/cm-chessboard/src/model/Position.js";
 import {
   AUTOSCROLL_SLACK_PROSE_PX,
   isPinnedToBottom,
@@ -33,19 +37,25 @@ const OPEN_KEY      = STORAGE_KEY.AI_OPEN;
 // currently selected in Settings.
 const TITLE_MODEL_KEY = STORAGE_KEY.AI_TITLE_MODEL;
 
+export const AI_STATE = Object.freeze({
+  IDLE: "idle", WAITING: "waiting", ENGINE: "engine", DONE: "done",
+});
+
 // Status text shown next to a spinner while a turn is in flight. The
 // LLM may take seconds (model latency + engine tool calls) before any
 // prose lands; without this, an empty panel reads as "stuck". Keep
 // the wording short -- the panel is narrow.
 const STATUS_TEXT = {
-  idle: "",
-  waiting: "Analyzing...",
-  engine: "Running engine search...",
-  done: "Analysis Done",
+  [AI_STATE.IDLE]: "",
+  [AI_STATE.WAITING]: "Analyzing...",
+  [AI_STATE.ENGINE]: "Running engine search...",
+  [AI_STATE.DONE]: "Analysis Done",
 };
 
 // Sticky open/closed pref for the Thinking disclosure block.
 const THINKING_OPEN_KEY = STORAGE_KEY.AI_THINKING_OPEN;
+const THINKING_OPEN_ON = "1";
+const THINKING_OPEN_OFF = "0";
 
 // Compact token count for the status ticker (Claude Code style):
 // 982, 14.2k, 1.3M.
@@ -107,12 +117,66 @@ function usageTotal(u) {
 const THINKING_LABEL_ACTIVE = "Thinking";
 const THINKING_LABEL_DONE_PREFIX = "Thought for ";
 
+const MS_PER_SECOND = 1000;
+const SECONDS_PER_MINUTE = 60;
+const SECONDS_PAD = 2;
+
+// Panel DOM classes shared between builders and selectors.
+const IS_ACTIVE_CLASS = "is-active";
+const ERROR_CLASS = "play-ai-error";
+const PROSE_CLASS = "play-ai-prose";
+const REVISION_CLASS = "play-ai-revision";
+const REVISION_SUMMARY_CLASS = "play-ai-revision-summary";
+const REVISION_BODY_CLASS = "play-ai-revision-body";
+const TOOL_CALL_CLASS = "play-ai-tool-call";
+const TOOL_HEAD_CLASS = "play-ai-tool-head";
+const TOOL_DOT_CLASS = "play-ai-tool-dot";
+const TOOL_CHILDREN_CLASS = "play-ai-tool-children";
+const TOOL_DETAILS_BODY_CLASS = "play-ai-tool-details-body";
+const ROUNDCAP_CLASS = "play-ai-roundcap";
+const LINE_LINK_CLASS = "play-ai-line-link";
+const LINE_LINK_PLAYABLE_CLASS = "play-ai-line-link-playable";
+const LINE_LINK_PLAYING_CLASS = "play-ai-line-link-playing";
+
+// Server-side agent tool names.
+const TOOL = Object.freeze({
+  ANALYZE: "analyze",
+  TOP_MOVES: "top_moves",
+  PIECE_AT: "piece_at",
+  VALIDATE_MOVE: "validate_move",
+  RECOMMEND_MOVE: "recommend_move",
+  MATERIAL: "material",
+  TACTICS: "tactics",
+  DELEGATE: "delegate",
+  REPORT_LINE: "report_line",
+  RELATED_OPENINGS: "related_openings",
+  POSITION_JUDGE: "position_judge",
+  // Progress steps of recommend_move's check, nested under its row: which
+  // search the board arrow and Search Lines are showing right now.
+  ENGINE_BEST: "engine_best",
+  SEARCH_MOVE: "search_move",
+});
+
+// Per-tool dot class (tool identity color; also scopes verdict/cleared badges).
+function toolDotClass(name) {
+  return `${TOOL_DOT_CLASS}-${name}`;
+}
+
+function toolCallStateClass(state) {
+  return `${TOOL_CALL_CLASS}-${state}`;
+}
+
+// The row's own dot, not a nested child row's.
+function hasOwnDot(line, dotClass) {
+  return !!line.querySelector(`:scope > .${TOOL_HEAD_CLASS} > .${dotClass}`);
+}
+
 function readThinkingOpen() {
-  return loadRaw(THINKING_OPEN_KEY) === "1";
+  return loadRaw(THINKING_OPEN_KEY) === THINKING_OPEN_ON;
 }
 
 function writeThinkingOpen(open) {
-  saveRaw(THINKING_OPEN_KEY, open ? "1" : "0");
+  saveRaw(THINKING_OPEN_KEY, open ? THINKING_OPEN_ON : THINKING_OPEN_OFF);
 }
 
 function trimTrailingWhitespace(el) {
@@ -141,6 +205,7 @@ function buildBody() {
   status.hidden = true;
   const spinner = document.createElement("wa-spinner");
   spinner.className = "spinner-accent";
+  root._spinner = spinner;
   const statusText = document.createElement("span");
   statusText.className = "play-ai-status-text";
   // Token ticker: cumulative turn usage, updated per provider round
@@ -170,14 +235,15 @@ function buildBody() {
   scroll.addEventListener("mouseleave", () => {
     root._hoveredTarget = null;
   });
+  wireLineLinks(scroll);
 
   // Select the hovered block (tool detail / error / prose), falling
   // back to the current round's prose paragraph.
   markSelectable(root, { target: () => {
     const hovered = root._hoveredTarget;
     const detailPre = hovered?.closest(`.${TOOL_DETAILS_BODY_CLASS}`);
-    const errorBlock = hovered?.closest(".play-ai-error");
-    const prosePara = hovered?.closest(".play-ai-prose");
+    const errorBlock = hovered?.closest(`.${ERROR_CLASS}`);
+    const prosePara = hovered?.closest(`.${PROSE_CLASS}`);
     return (detailPre && !detailPre.hidden)
       ? detailPre
       : errorBlock
@@ -221,17 +287,17 @@ function buildRoundPanel() {
   tools.className = "play-ai-tools";
   timeline.append(details, tools);
   const para = document.createElement("p");
-  para.className = "play-ai-prose";
+  para.className = PROSE_CLASS;
   // Revision: a collapsible that folds away prose the AI corrected. The
   // summary carries a self-correction line; the body holds the struck-through
   // flawed prose.
   const revision = document.createElement("details");
-  revision.className = "play-ai-revision";
+  revision.className = REVISION_CLASS;
   revision.hidden = true;
   const revisionSummary = document.createElement("summary");
-  revisionSummary.className = "play-ai-revision-summary";
+  revisionSummary.className = REVISION_SUMMARY_CLASS;
   const revisionBody = document.createElement("div");
-  revisionBody.className = "play-ai-revision-body";
+  revisionBody.className = REVISION_BODY_CLASS;
   revision.append(revisionSummary, revisionBody);
   panel.append(timeline, para, revision);
   return {
@@ -259,18 +325,18 @@ function freezeThinkingLabel(entry, serverMs = null) {
   entry.thinkingDurationMs = Math.max(1, elapsedMs);
   entry.thinking.summary.textContent =
     `${THINKING_LABEL_DONE_PREFIX}${formatThinkingDuration(entry.thinkingDurationMs)}`;
-  entry.thinking.summary.classList.remove("is-active");
+  entry.thinking.summary.classList.remove(IS_ACTIVE_CLASS);
 }
 
 function formatThinkingDuration(ms) {
   // Under a minute: "Ns" (minimum 1s so sub-second flashes don't read
   // as "0s"). At/over a minute: "m:ss". Hours are unrealistic for a
   // single turn so we don't format past minutes.
-  const totalSeconds = Math.max(1, Math.round(ms / 1000));
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const m = Math.floor(totalSeconds / 60);
-  const s = totalSeconds % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
+  const totalSeconds = Math.max(1, Math.round(ms / MS_PER_SECOND));
+  if (totalSeconds < SECONDS_PER_MINUTE) return `${totalSeconds}s`;
+  const m = Math.floor(totalSeconds / SECONDS_PER_MINUTE);
+  const s = totalSeconds % SECONDS_PER_MINUTE;
+  return `${m}:${String(s).padStart(SECONDS_PAD, "0")}`;
 }
 
 function ensureRoundPanel(root, roundIndex) {
@@ -320,31 +386,58 @@ function formatToolArgs(input) {
 // Each tool maps to a few interchangeable phrasings so the panel doesn't
 // repeat the same label on every call; pickVariant() rotates through them.
 const TOOL_FRIENDLY_LABELS = {
-  analyze:        ["Analyzing position", "Studying the position", "Weighing the position", "Assessing", "Grasping the situation", "Navel-gazing", "Dubito ergo cogito"],
-  top_moves:      [
-    "Finding copacetic moves", "Triangulating", "Scoping top moves", "Brainstorming",
+  [TOOL.ANALYZE]:        ["Analyzing position", "Studying the position", "Weighing the position", "Assessing", "Grasping the situation", "Navel-gazing", "Dubito ergo cogito"],
+  [TOOL.TOP_MOVES]:      [
+    "Finding copacetic moves", "Triangulating", "Scoping out top moves", "Brainstorming",
     "Smelling own ideas", "Scheming", "Conjuring power moves", "Crop-circling",
     "Deploying analytical probes",
   ],
-  piece_at:       ["Checking", "Eyeing", "Zooming in on", "Targeting"],
-  validate_move:  ["Validating move", "Double-checking the move", "Confirming the move"],
-  recommend_move: ["Picking move", "Choosing a move", "Selecting a move", "Sussing out"],
-  material:       ["Counting material", "Tallying material", "Weighing material"],
-  tactics:        ["Spotting pins and forks", "Eyeing pins and forks", "Sniffing out tactics"],
-  delegate:       ["Verifying line", "Double-checking the play", "Reviewing the plan", "Simulating", "Fathoming", "Choreographing"],
-  report_line:    ["Checking line", "Reviewing the line", "Going over the idea", "Ascertaining"],
-  related_openings: ["Comparing openings", "Cross-checking openings", "Matching openings"],
-  position_judge: ["Checking position claims", "Fact-checking the position", "Verifying the claims"],
+  [TOOL.PIECE_AT]:       ["Checking", "Eyeing", "Zooming in on", "Targeting"],
+  [TOOL.VALIDATE_MOVE]:  ["Validating move", "Double-checking the move", "Confirming the move"],
+  [TOOL.RECOMMEND_MOVE]: ["Picking move", "Choosing a move", "Selecting a move", "Sussing out"],
+  [TOOL.MATERIAL]:       ["Counting material", "Tallying material", "Weighing material"],
+  [TOOL.TACTICS]:        ["Spotting pins and forks", "Eyeing pins and forks", "Sniffing out tactics"],
+  [TOOL.DELEGATE]:       ["Verifying line", "Double-checking the play", "Reviewing the plan", "Simulating", "Fathoming", "Choreographing"],
+  [TOOL.REPORT_LINE]:    ["Checking line", "Reviewing the line", "Going over the idea", "Ascertaining"],
+  [TOOL.RELATED_OPENINGS]: ["Comparing openings", "Cross-checking openings", "Matching openings"],
+  [TOOL.POSITION_JUDGE]: ["Checking position claims", "Fact-checking the position", "Verifying the claims"],
 };
 
 // Tools whose label shows the actual move under consideration ("Considering
 // Nd3"). Maps the tool to its verb variants; the move SAN from input.move is
 // appended.
 const MOVE_TOOL_VERBS = {
-  recommend_move: ["Considering", "Weighing", "Contemplating", "Ratiocinating over", "Projecting"],
-  validate_move:  ["Validating", "Probing", "Confirming", "Vetting"],
-  delegate:       ["Verifying", "Double-checking", "Reviewing", "War-gaming"],
+  [TOOL.RECOMMEND_MOVE]: ["Considering", "Weighing", "Contemplating", "Ratiocinating over", "Projecting"],
+  [TOOL.VALIDATE_MOVE]:  ["Validating", "Probing", "Confirming", "Vetting"],
+  [TOOL.DELEGATE]:       ["Verifying", "Double-checking", "Reviewing", "War-gaming"],
 };
+
+// The dominance check's two steps share one metaphor: the baseline search
+// (the engine's own best) sets the standard, the candidate is measured
+// against it. Each pair is [baseline, candidate]; "{}" is the move slot. One
+// pick per check, keyed on the parent row, so the two rows always match.
+const CHECK_STEP_PAIRS = [
+  ["Setting the bar",        "Seeing if {} clears the bar"],
+  ["Consulting the oracle",  "Putting {} to the oracle"],
+  ["Finding the main line",  "Testing {} against the main line"],
+];
+const CHECK_STEP_SLOT = "{}";
+const CHECK_STEP_INDEX = { [TOOL.ENGINE_BEST]: 0, [TOOL.SEARCH_MOVE]: 1 };
+// parent row (the recommend_move line) -> its pair; the baseline step picks,
+// the candidate step reuses. Cleared with the tool-call node index.
+const checkStepPairs = new Map();
+
+function checkStepLabel(name, input, parent) {
+  const slot = CHECK_STEP_INDEX[name];
+  if (slot === undefined) return null;
+  let pair = parent ? checkStepPairs.get(parent) : null;
+  if (!pair) {
+    pair = pickVariant(CHECK_STEP_PAIRS);
+    if (parent) checkStepPairs.set(parent, pair);
+  }
+  const move = input && typeof input.move === "string" ? input.move.trim() : "";
+  return pair[slot].replace(CHECK_STEP_SLOT, move);
+}
 
 // Last variant index handed out per variants array (keyed by array identity,
 // so TOOL_FRIENDLY_LABELS and MOVE_TOOL_VERBS entries for the same tool name
@@ -367,8 +460,10 @@ function pickVariant(variants) {
 
 const ANALYSIS_WINDOW_TITLE = "Analysis";
 
-const TOOL_DETAILS_BODY_CLASS = "play-ai-tool-details-body";
-const ROUNDCAP_CLASS = "play-ai-roundcap";
+// Default floating geometry (px).
+const DEFAULT_WIN_W = 380;
+const DEFAULT_WIN_H = 300;
+const DEFAULT_WIN_Y = 100;
 
 // Expanded tool-call detail rows: the call under IN, the result under OUT.
 const IO_TAG_IN = "IN";
@@ -391,12 +486,14 @@ function formatToolOutput(output) {
   return typeof output === "string" ? output : JSON.stringify(output);
 }
 
-function friendlyToolLabel(name, input) {
+function friendlyToolLabel(name, input, parent = null) {
+  const step = checkStepLabel(name, input, parent);
+  if (step !== null) return step;
   const move = input && typeof input.move === "string" ? input.move.trim() : "";
   const verbs = MOVE_TOOL_VERBS[name];
   if (verbs && move) return `${pickVariant(verbs)} ${move}`;
   const labels = TOOL_FRIENDLY_LABELS[name];
-  if (name === "piece_at") {
+  if (name === TOOL.PIECE_AT) {
     const square = input && typeof input.square === "string" ? input.square.trim() : "";
     if (square) return `${pickVariant(labels)} ${square}`;
   }
@@ -428,9 +525,9 @@ const inst = createDockableWindow({
   winStateKey: WIN_STATE_KEY,
   dockedKey: DOCKED_KEY,
   openKey: OPEN_KEY,
-  defaultW: () => 380,
-  defaultH: 300,
-  defaultY: () => 100,
+  defaultW: () => DEFAULT_WIN_W,
+  defaultH: DEFAULT_WIN_H,
+  defaultY: () => DEFAULT_WIN_Y,
   build() {
     return buildBody();
   },
@@ -499,9 +596,10 @@ export function resetAi() {
   inst.body._statusTokens.textContent = "";
   inst.body._roundPanels.clear();
   inst.body._toolCallNodes.clear();
+  checkStepPairs.clear();
   inst.body._currentRound = null;
   toolLabelLastIndex.clear();
-  setAiStatus("waiting");
+  setAiStatus(AI_STATE.WAITING);
 }
 
 // Cumulative turn usage from ai_usage events. Idempotent (overwrites
@@ -534,7 +632,7 @@ export function appendAiThinking(text, roundIndex = 0) {
     if (!out) return;
     if (!entry.hasThinking) {
       entry.thinkingStartedAt = Date.now();
-      entry.thinking.summary.classList.add("is-active");
+      entry.thinking.summary.classList.add(IS_ACTIVE_CLASS);
     }
     entry.hasThinking = true;
     entry.thinking.details.hidden = false;
@@ -548,18 +646,19 @@ export function appendAiToolCall({
   if (!inst.body || !name) return;
   withStickyBottom(() => {
     const line = document.createElement("div");
-    line.className = "play-ai-tool-call";
+    line.className = TOOL_CALL_CLASS;
     // Verifier-origin calls nest under their "Verifying line" (delegate)
     // row so the user sees them as that check's work, not the narrator's.
     // Fall back to the round panel if the parent row isn't found.
     let container = null;
+    let parent = null;
     if (parentToolUseId) {
-      const parent = inst.body._toolCallNodes.get(parentToolUseId);
+      parent = inst.body._toolCallNodes.get(parentToolUseId) ?? null;
       if (parent) {
-        let children = parent.querySelector(".play-ai-tool-children");
+        let children = parent.querySelector(`.${TOOL_CHILDREN_CLASS}`);
         if (!children) {
           children = document.createElement("div");
-          children.className = "play-ai-tool-children";
+          children.className = TOOL_CHILDREN_CLASS;
           parent.append(children);
         }
         container = children;
@@ -573,22 +672,20 @@ export function appendAiToolCall({
     // Dot/label/arrow live in a nowrap head that scrolls horizontally,
     // so a long label never wraps the arrow onto its own line.
     const head = document.createElement("div");
-    head.className = "play-ai-tool-head";
+    head.className = TOOL_HEAD_CLASS;
     line.append(head);
     const dot = document.createElement("span");
-    dot.className = `play-ai-tool-dot play-ai-tool-dot-${name}`;
+    dot.className = `${TOOL_DOT_CLASS} ${toolDotClass(name)}`;
     head.append(dot);
     const label = document.createElement("span");
     label.className = "play-ai-tool-label";
-    label.textContent = friendlyToolLabel(name, input);
+    label.textContent = friendlyToolLabel(name, input, parent);
     head.append(label);
     const args = formatToolArgs(input);
     const raw = args ? `${name}(${args})` : `${name}()`;
     const toggle = document.createElement("span");
     toggle.className = "play-ai-tool-toggle";
-    // One glyph, rotated via CSS when open -- guarantees the open/closed
-    // caret are identical size (the unicode triangles aren't).
-    toggle.textContent = "\u25b6";
+    // CSS-drawn triangle, rotated when open (see .play-ai-tool-toggle).
     head.append(toggle);
     const details = document.createElement("div");
     details.className = TOOL_DETAILS_BODY_CLASS;
@@ -617,14 +714,17 @@ export function appendAiToolCall({
   });
 }
 
-
 // A delegate verdict opens with "holds" or "refuted" (enforced by the
 // verifier prompt). Classify off that first word so the row can flag the
 // outcome at a glance; null when the output isn't a verdict.
 const VERDICT_REFUTED = "refuted";
 const VERDICT_HOLDS = "holds";
 
+// Set on a withheld refutation the engine overruled: the move held.
+const MOVE_SURVIVED_KEY = "move_survived";
+
 function verdictKind(output) {
+  if (output && typeof output === "object" && output[MOVE_SURVIVED_KEY]) return VERDICT_HOLDS;
   const verdict = output && typeof output === "object" ? output.verdict : null;
   if (typeof verdict !== "string") return null;
   const head = verdict.trimStart().toLowerCase();
@@ -636,7 +736,7 @@ function verdictKind(output) {
 // The delegate row's dot carries this class; only that row bears a
 // verdict, so nested sub-operations are never badged even if a future
 // tool happens to return a `verdict` key.
-const DELEGATE_DOT_CLASS = "play-ai-tool-dot-delegate";
+const DELEGATE_DOT_CLASS = toolDotClass(TOOL.DELEGATE);
 
 // Strip the leading holds/refuted token plus its trailing punctuation and
 // space, so the prose reads as analysis once the word moves to the summary:
@@ -657,26 +757,26 @@ const VERDICT_PROSE_CLASS = "play-ai-verdict";
 function attachVerdictProse(line, output) {
   // Delegate rows only -- same scope as the verdict badge, so a future tool
   // that happens to return a `verdict` key never grows a prose panel.
-  if (!line.querySelector(`:scope > .play-ai-tool-head > .${DELEGATE_DOT_CLASS}`)) return;
+  if (!hasOwnDot(line, DELEGATE_DOT_CLASS)) return;
   const verdict = output && typeof output === "object" ? output.verdict : null;
   if (typeof verdict !== "string" || !verdict.trim()) return;
-  // Server flagged the prose as possibly wrong (a non-LLM validator hit): hide
-  // it entirely rather than risk a false claim. The badge and raw OUT stay.
-  if (output.prose_flagged) return;
   if (line.querySelector(`:scope > .${VERDICT_PROSE_CLASS}`)) return;
   const kind = verdictKind(output);
+  // Drop the leading verdict word (now the summary) so the prose isn't
+  // redundant: "Refuted. After 11...O-O" -> "After 11...O-O". A bare verdict
+  // ("holds") leaves nothing to fold: the row badge says it all.
+  const prose = kind ? stripVerdictLead(verdict) : verdict.trim();
+  if (!prose) return;
   const details = document.createElement("details");
-  details.className = `play-ai-revision ${VERDICT_PROSE_CLASS}`;
+  details.className = `${REVISION_CLASS} ${VERDICT_PROSE_CLASS}`;
   const summary = document.createElement("summary");
-  summary.className = "play-ai-revision-summary";
+  summary.className = REVISION_SUMMARY_CLASS;
   summary.textContent = kind ? capLead(kind) : "Verdict";
   const body = document.createElement("div");
-  body.className = "play-ai-revision-body";
+  body.className = REVISION_BODY_CLASS;
   const para = document.createElement("p");
-  para.className = "play-ai-prose";
-  // Drop the leading verdict word (now the summary) so the prose isn't
-  // redundant: "Refuted. After 11...O-O" -> "After 11...O-O".
-  para.textContent = kind ? stripVerdictLead(verdict) : verdict.trim();
+  para.className = PROSE_CLASS;
+  para.textContent = prose;
   body.append(para);
   details.append(summary, body);
   line.append(details);
@@ -689,8 +789,8 @@ function markVerdict(line, kind) {
   if (!kind) return;
   // Scoped to this row's own head (matching the CSS) so a nested child
   // delegate dot can't make a non-delegate parent row get badged.
-  if (!line.querySelector(`:scope > .play-ai-tool-head > .${DELEGATE_DOT_CLASS}`)) return;
-  const cls = `play-ai-tool-call-${kind}`;
+  if (!hasOwnDot(line, DELEGATE_DOT_CLASS)) return;
+  const cls = toolCallStateClass(kind);
   if (line.classList.contains(cls)) return;
   line.classList.add(cls);
 }
@@ -700,15 +800,15 @@ function markVerdict(line, kind) {
 // a failure next to the actual danger-red used for failed/refuted calls.
 // Badge it green once something was actually cleared, matching the
 // verdict-badge pattern above.
-const POSITION_JUDGE_DOT_CLASS = "play-ai-tool-dot-position_judge";
+const POSITION_JUDGE_DOT_CLASS = toolDotClass(TOOL.POSITION_JUDGE);
 const CLEARED_PREFIX_RE = /^cleared (\d+)\/\d+/;
 
 function markCleared(line, output) {
   if (typeof output !== "string") return;
-  if (!line.querySelector(`:scope > .play-ai-tool-head > .${POSITION_JUDGE_DOT_CLASS}`)) return;
+  if (!hasOwnDot(line, POSITION_JUDGE_DOT_CLASS)) return;
   const match = CLEARED_PREFIX_RE.exec(output);
   if (!match || match[1] === "0") return;
-  line.classList.add("play-ai-tool-call-cleared");
+  line.classList.add(toolCallStateClass("cleared"));
 }
 
 // Fill the OUT row with the tool result from ai_tool_call_complete.
@@ -735,9 +835,7 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   if (!inst.body || !toolUseId) return;
   const line = inst.body._toolCallNodes.get(toolUseId);
   if (!line) return;
-  const cls = SUPERSEDED_ERRORS.has(error)
-    ? "play-ai-tool-call-superseded"
-    : "play-ai-tool-call-failed";
+  const cls = toolCallStateClass(SUPERSEDED_ERRORS.has(error) ? "superseded" : "failed");
   // Idempotent: replay-on-reconnect can re-dispatch this event for the same
   // row; appending the suffix/gear twice would stack them.
   if (line.classList.contains(cls)) return;
@@ -755,16 +853,19 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   line._outRow.hidden = false;
 }
 
-// Cap for the joined item list in a multi-item fallback before it is
-// ellipsis-trimmed (keeps the collapsed summary to one line).
+// Cap for the joined item list in a multi-item fallback (keeps the collapsed
+// summary to one line). Items past it drop whole, never cut mid-quote.
 const REVISION_ITEMS_MAX = 48;
+const ITEMS_SEP = ", ";
+const ELLIPSIS = "...";
+const QUOTE = "\"";
 
 // Self-correction phrasings, picked from so the revision summary doesn't read
 // robotically. Each row is [no-items, one, many]; "{}" is the item slot, and
 // every opener is distinct. The original wording is the first row. Pick is
 // deterministic on the round (stable across panel rehydration -- never random).
 const REVISION_PHRASES = [
-  ["Actually, let me reconsider.", "Actually, {} isn't right.",  "Wait, {} look wrong."],
+  ["Actually, let me reconsider.", "Actually, {} isn't right.",  "Wait, {} may be wrong."],
   ["Scratch that.",               "Scratch that -- {} is wrong.", "Hold on -- {} are off."],
   ["Let me correct myself.",      "Correcting myself: {} is off.", "My mistake -- {} are wrong."],
   ["One moment.",                 "I had {} wrong.",              "{} -- incorrect."],
@@ -773,20 +874,13 @@ const REVISION_PHRASES = [
 ];
 
 // A SAN move ("Nab1", "Qd1", "O-O") whose leading capital is the piece letter
-// and must be kept; prose claims ("White's bishop on g3") read better with the
-// lead lowercased mid-sentence. Castling and a piece letter + SAN body char.
+// and must be kept. Castling and a piece letter + SAN body char.
 const SAN_LEAD_RE = /^(?:O-O|[KQRBN][a-h1-8x])/;
 
 // A lowercase chess move whose case is meaningful and must be kept -- a pawn
 // push or capture ("e4", "exd5", "fxg1=Q"). Distinct from SAN_LEAD_RE (which
 // is piece moves); a pawn move starts with a file letter.
 const PAWN_MOVE_RE = /^[a-h](?:[1-8]|x[a-h][1-8])/;
-
-// Lowercase the first letter of a prose item so it reads mid-sentence
-// ("White's bishop" -> "white's bishop"); leave SAN moves untouched.
-function decapLead(s) {
-  return SAN_LEAD_RE.test(s) ? s : s.charAt(0).toLowerCase() + s.slice(1);
-}
 
 // Capitalize a prose item at a sentence start ("white bishop" -> "White
 // bishop"); leave chess moves untouched so "e4"/"Nf3" keep their case.
@@ -802,25 +896,41 @@ function pickBySeed(pool, seed) {
   return pool[((seed % n) + n) % n];
 }
 
-// Case the item to its position: capitalized when "{}" leads the phrase
-// (sentence start), lowercased when a prefix precedes it. Chess moves keep
-// their case either way.
+// Items are verbatim quotes, so they drop in as-is at any position.
 function fill(template, joined) {
-  const lead = template.startsWith("{}");
-  return template.replace("{}", lead ? capLead(joined) : decapLead(joined));
+  return template.replace("{}", joined);
+}
+
+// Join whole items up to `max` chars; the first always fits, the rest that
+// don't collapse to a trailing ellipsis.
+function joinCapped(items, max) {
+  let joined = items[0];
+  for (const item of items.slice(1)) {
+    const next = joined + ITEMS_SEP + item;
+    if (next.length > max) return joined + ITEMS_SEP + ELLIPSIS;
+    joined = next;
+  }
+  return joined;
+}
+
+// The flagged spans as quotes: prose case (surfaces may arrive lowercased),
+// prose order, deduped. A surface the prose never matched is quoted as sent.
+function quoteItems(struck, surfaces) {
+  const byKey = new Map();
+  for (const s of [...struck, ...surfaces]) {
+    const key = s.toLowerCase();
+    if (!byKey.has(key)) byKey.set(key, s);
+  }
+  return [...byKey.values()].map((s) => QUOTE + s + QUOTE);
 }
 
 // Fallback summary when the next round has no usable opening line: the AI
-// catching its own slip. SAN moves keep their case so "Nab1" isn't mangled.
+// catching its own slip, quoting what it got wrong.
 function revisionFallbackText(items, seed = 0) {
   const [none, one, many] = pickBySeed(REVISION_PHRASES, seed);
   if (!items.length) return none;
   if (items.length === 1) return fill(one, items[0]);
-  let joined = items.join(", ");
-  if (joined.length > REVISION_ITEMS_MAX) {
-    joined = joined.slice(0, REVISION_ITEMS_MAX).trimEnd() + "...";
-  }
-  return fill(many, joined);
+  return fill(many, joinCapped(items, REVISION_ITEMS_MAX));
 }
 
 // Weak models leak a standalone acknowledgment ("Understood.", "You're
@@ -872,39 +982,178 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Cross out each flagged token in the round's prose. Rebuilds the paragraph
-// with matched spans wrapped in <del> so the reader sees the self-correction
-// land on the actual text. Longest items first so a line isn't half-matched.
+// Not inside a longer word.
+const NOT_AFTER_WORD = "(?<![\\p{L}\\p{N}])";
+const NOT_BEFORE_WORD = "(?![\\p{L}\\p{N}])";
+
+// Alternation of `items`, longest first so a line isn't half-matched.
+// Case-insensitive: items may differ in case from the prose (the server
+// lowercases flagged claims; "Knight on b1" opens a sentence).
+function itemsRegExp(items, { wholeWords = false } = {}) {
+  const alt = [...items].sort((a, b) => b.length - a.length).map(escapeRegExp).join("|");
+  return wholeWords
+    ? new RegExp(`${NOT_AFTER_WORD}(?:${alt})${NOT_BEFORE_WORD}`, "giu")
+    : new RegExp(alt, "gi");
+}
+
+// Wrap each match of `re` in the paragraph's own text nodes with makeEl(m).
+// Text already inside a wrap (an earlier link) is left alone, so other links
+// survive and a re-run adds nothing.
+function wrapTextMatches(para, re, makeEl) {
+  // Streamed deltas land as separate text nodes; merge them so a match can
+  // span a delta boundary.
+  para.normalize();
+  for (const node of [...para.childNodes]) {
+    if (node.nodeType !== Node.TEXT_NODE) continue;
+    const text = node.nodeValue;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    for (const m of text.matchAll(re)) {
+      if (m.index > last) frag.append(text.slice(last, m.index));
+      frag.append(makeEl(m));
+      last = m.index + m[0].length;
+    }
+    if (last === 0) continue;
+    if (last < text.length) frag.append(text.slice(last));
+    node.replaceWith(frag);
+  }
+}
+
+// Cross out each flagged token in the round's prose, so the reader sees the
+// self-correction land on the actual text. Flattens first: struck prose
+// carries no links. Returns the struck spans as written, in prose order.
 function strikeProseItems(para, items) {
-  const text = para.textContent;
-  if (!text || !items.length) return;
-  const sorted = [...items].sort((a, b) => b.length - a.length);
-  // Case-insensitive: server lowercases flagged claims, but the prose keeps
-  // its original case ("Knight on b1" at a sentence start).
-  const re = new RegExp(sorted.map(escapeRegExp).join("|"), "gi");
-  para.textContent = "";
-  let last = 0;
-  for (const m of text.matchAll(re)) {
-    if (m.index > last) para.append(document.createTextNode(text.slice(last, m.index)));
+  if (!para.textContent || !items.length) return [];
+  para.textContent = para.textContent;
+  const struck = [];
+  wrapTextMatches(para, itemsRegExp(items), (m) => {
     const del = document.createElement("del");
     del.className = "play-ai-prose-struck";
     del.textContent = m[0];
-    para.append(del);
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) para.append(document.createTextNode(text.slice(last)));
+    struck.push(m[0]);
+    return del;
+  });
+  return struck;
 }
 
-export function noteAiPosition({ round, surfaces }) {
+// Line link -> {placement, uci}: the line it plays and where it starts.
+const linkLines = new WeakMap();
+
+function applyLineLinkGate(link) {
+  const playable = !!getPvLineBoard()?.canPlayLine();
+  link.classList.toggle(LINE_LINK_PLAYABLE_CLASS, playable);
+  if (playable) link.title = SHOWABLE_TOOLTIP;
+  else link.removeAttribute("title");
+}
+
+function buildLineLink(text, placement, uci) {
+  const link = document.createElement("span");
+  link.className = LINE_LINK_CLASS;
+  link.textContent = text;
+  linkLines.set(link, { placement, uci });
+  applyLineLinkGate(link);
+  return link;
+}
+
+// Same gate as the Search Lines rows, re-applied on game-view's announcement.
+window.addEventListener(APP_EVT.PLAY_LINE_GATE_CHANGED, () => {
+  if (!inst.body) return;
+  for (const link of inst.body.querySelectorAll(`.${LINE_LINK_CLASS}`)) {
+    applyLineLinkGate(link);
+  }
+});
+
+function playLineLink(link) {
+  const board = getPvLineBoard();
+  const line = linkLines.get(link);
+  if (!board || !line?.uci) return;
+  const started = board.playLine(pvFrames(line.placement, line.uci), {
+    pvUci: line.uci,
+    onEnd: () => link.classList.remove(LINE_LINK_PLAYING_CLASS),
+  });
+  // After playLine: a retarget onto this same link fires the old show's
+  // onEnd inside it, which would otherwise clear the new mark.
+  if (started) link.classList.add(LINE_LINK_PLAYING_CLASS);
+}
+
+// Double-click a playable link to play it. The mousedown guard keeps the
+// multi-click from selecting the word first.
+function wireLineLinks(scroll) {
+  const playableLink = (ev) => ev.target.closest?.(`.${LINE_LINK_PLAYABLE_CLASS}`);
+  scroll.addEventListener("mousedown", (ev) => {
+    if (ev.detail > 1 && playableLink(ev)) ev.preventDefault();
+  });
+  scroll.addEventListener("dblclick", (ev) => {
+    const link = playableLink(ev);
+    if (link) playLineLink(link);
+  });
+}
+
+// ai_opening_links: link each opening name in a clean round's prose to its
+// book line.
+export function linkAiOpenings({ round, items }) {
+  if (!inst.body || !items.length) return;
+  const entry = inst.body._roundPanels.get(round);
+  if (!entry) return;
+  const uciBySurface = new Map(items.map((it) => [it.surface.toLowerCase(), it.uci]));
+  const re = itemsRegExp(items.map((it) => it.surface), { wholeWords: true });
+  wrapTextMatches(entry.para, re, (m) =>
+    buildLineLink(m[0], FEN.start, uciBySurface.get(m[0].toLowerCase())));
+}
+
+const FEN_SIDE_FIELD = 1;
+const FEN_FULLMOVE_FIELD = 5;
+const FEN_WHITE = "w";
+const SAN_CHECK_SUFFIX_RE = /[+#]$/;
+// A pawn push's SAN is a bare square ("e4"): prose names squares all the
+// time, so it links only after the current move number.
+const PAWN_PUSH_SAN_RE = /^[a-h][1-8]$/;
+// Not inside a move token, nor after any move number: '-' keeps O-O out of
+// O-O-O, and a number other than the current one ("15.Qe1", "15. Qe1")
+// leaves the move plain.
+const NOT_AFTER_MOVE = "(?<![\\p{L}\\p{N}.\\-])(?<!\\p{N}\\.+\\s)";
+const NOT_BEFORE_MOVE = "(?![\\p{L}\\p{N}\\-])";
+
+// Mentions of `san` as the move to play in `fen`: case-sensitive, check
+// suffix optional, either after the current move number ("11." White,
+// "11..." Black) or -- unless a pawn push -- standing alone. Only the move
+// itself is matched, not its number.
+function recommendedMoveRegExp(san, fen) {
+  const fields = fen.split(" ");
+  const dots = fields[FEN_SIDE_FIELD] === FEN_WHITE ? "\\." : "\\.\\.\\.";
+  const afterNumber = `(?<=(?<!\\p{N})${fields[FEN_FULLMOVE_FIELD]}${dots}\\s?)`;
+  const base = san.replace(SAN_CHECK_SUFFIX_RE, "");
+  const lead = PAWN_PUSH_SAN_RE.test(base) ? afterNumber : `(?:${afterNumber}|${NOT_AFTER_MOVE})`;
+  return new RegExp(`${lead}${escapeRegExp(base)}[+#]?${NOT_BEFORE_MOVE}`, "gu");
+}
+
+// ai_recommendation: link the recommended move in the turn's visible prose
+// to its verified line. No line (the unsearched book move), no link.
+export function linkAiRecommendation({ san, fen, pv_uci: pvUci }) {
+  if (!inst.body || !san || !fen || !pvUci?.length) return;
+  const re = recommendedMoveRegExp(san, fen);
+  for (const entry of inst.body._roundPanels.values()) {
+    if (entry.para.hidden || entry.revision.body.contains(entry.para)) continue;
+    wrapTextMatches(entry.para, re, (m) => buildLineLink(m[0], fen, pvUci));
+  }
+}
+
+export function noteAiPosition({ round, surfaces, hideProse = false }) {
   if (!inst.body) return;
   const entry = inst.body._roundPanels.get(round);
   if (!entry || !entry.revision) return;
+  // Tool-name leak: process talk, not a chess slip -- withhold the prose
+  // outright, no self-correction. The next round restates it cleanly.
+  if (hideProse) {
+    entry.para.hidden = true;
+    return;
+  }
   if (!surfaces || !surfaces.length) return;
   // Strike the flagged spans (exact prose), then tuck the flawed prose into
   // the revision body so the clean (next-round) prose reads on its own.
-  // The summary is the canned self-correction line.
-  strikeProseItems(entry.para, surfaces);
-  entry.revision.summary.textContent = revisionFallbackText(surfaces, round);
+  // The summary is a canned self-correction line quoting those spans.
+  const struck = strikeProseItems(entry.para, surfaces);
+  entry.revision.summary.textContent = revisionFallbackText(quoteItems(struck, surfaces), round);
   entry.revision.body.append(entry.para);
   entry.revision.details.hidden = false;
 }
@@ -915,15 +1164,14 @@ export function setAiStatus(state) {
   // delta no longer hides the status (the header stays as a label).
   if (!inst.body) return;
   const text = STATUS_TEXT[state] ?? "";
-  if (state === "idle" || !text) {
+  if (state === AI_STATE.IDLE || !text) {
     inst.body._status.hidden = true;
     inst.body._statusText.textContent = "";
     return;
   }
   inst.body._status.hidden = false;
   inst.body._statusText.textContent = text;
-  const spinner = inst.body._status.querySelector("wa-spinner");
-  if (spinner) spinner.style.display = (state === "done") ? "none" : "";
+  inst.body._spinner.style.display = (state === AI_STATE.DONE) ? "none" : "";
 }
 
 export function appendAiDelta(text, roundIndex = 0, thinkingMs = null) {
@@ -969,6 +1217,18 @@ function _roundCapNote(message) {
   return note;
 }
 
+function _terminalNote(message) {
+  const note = document.createElement("div");
+  note.className = ROUNDCAP_CLASS;
+  note.textContent = message;
+  return note;
+}
+
+// `rounds` is the server's count (silent rounds leave no panel to count).
+function noRecommendationText(rounds) {
+  const after = rounds === null ? "" : ` after ${rounds} ${rounds === 1 ? "round" : "rounds"}`;
+  return `No move chosen -- the analysis finished${after} without committing to one.`;
+}
 
 export function markAiDone({
   cancelled = false,
@@ -978,6 +1238,7 @@ export function markAiDone({
   verifierRoundCap = false,
   noResponse = false,
   noRecommendation = false,
+  rounds = null,
   usage = null,
   provider = null,
 } = {}) {
@@ -986,7 +1247,7 @@ export function markAiDone({
   // land in the dedicated terminal slot below the last round panel.
   const naturalCompletion =
     !error && !roundCap && !noResponse && !noRecommendation && !cancelled;
-  setAiStatus(naturalCompletion ? "done" : "idle");
+  setAiStatus(naturalCompletion ? AI_STATE.DONE : AI_STATE.IDLE);
   if (!inst.body) return;
   // Refresh the ticker from the done totals: a replay that delivers only
   // the terminal event (no ai_usage stream) still restores the count.
@@ -1012,7 +1273,7 @@ export function markAiDone({
       // Skip when the last round's prose was folded into its revision -- the
       // border would land on text tucked inside the collapsed disclosure.
       const folded = last && last.para.parentNode === last.revision?.body;
-      if (last && !folded) last.para.classList.add("play-ai-prose-final");
+      if (last && !folded && !last.para.hidden) last.para.classList.add("play-ai-prose-final");
     }
     // Token breakdown first (before the marker blocks' early returns) so
     // it renders on every terminal path that keeps the panel alive.
@@ -1024,7 +1285,7 @@ export function markAiDone({
     }
     if (error) {
       const block = document.createElement("div");
-      block.className = "play-ai-error";
+      block.className = ERROR_CLASS;
       const head = document.createElement("strong");
       head.textContent = "AI analysis failed";
       block.append(head);
@@ -1052,17 +1313,13 @@ export function markAiDone({
       return;
     }
     if (noResponse) {
-      const note = document.createElement("div");
-      note.className = ROUNDCAP_CLASS;
-      note.textContent = "Model produced no answer. Try a different model -- some stream only chain-of-thought.";
-      slot.append(note);
+      slot.append(_terminalNote(
+        "Model produced no answer. Try a different model -- some stream only chain-of-thought.",
+      ));
       return;
     }
     if (noRecommendation) {
-      const note = document.createElement("div");
-      note.className = ROUNDCAP_CLASS;
-      note.textContent = "No move chosen -- the analysis finished without committing to one.";
-      slot.append(note);
+      slot.append(_terminalNote(noRecommendationText(rounds)));
       return;
     }
     if (cancelled) {

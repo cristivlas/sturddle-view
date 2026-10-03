@@ -13,6 +13,9 @@ const PATH_NAME_RE = /(Path|File|Dir)$/i;
 const REFRESH_BTN_LABEL = "Refresh";
 const RESET_BTN_LABEL = "Reset";
 const SAVE_BTN_LABEL = "Apply";
+const REFRESH_BTN_TIP = "Re-query engine options";
+const RESET_BTN_TIP = "Restore engine defaults";
+const SAVE_BTN_TIP = "Save and close";
 
 function isPathOption(name) {
   return PATH_NAME_RE.test(name);
@@ -481,6 +484,7 @@ export function showEngineOptionsDialog({
       refresh.size = "small";
       refresh.className = "eo-footer-btn-sunken";
       refresh.textContent = REFRESH_BTN_LABEL;
+      refresh.title = REFRESH_BTN_TIP;
       refresh.addEventListener("click", guard(async () => {
         // Probe with the *in-progress* launch profile so the user sees
         // options gated by their newly-typed args/env. Server doesn't
@@ -526,6 +530,7 @@ export function showEngineOptionsDialog({
       defaultsBtn.size = "small";
       defaultsBtn.className = "eo-footer-btn-sunken";
       defaultsBtn.textContent = RESET_BTN_LABEL;
+      defaultsBtn.title = RESET_BTN_TIP;
       defaultsBtn.addEventListener("click", () => {
         // Reopen with options cleared (fields render advertised defaults)
         // and the name restored to the UCI id name, collision-suffixed.
@@ -553,6 +558,7 @@ export function showEngineOptionsDialog({
       save.size = "small";
       save.variant = "brand";
       save.textContent = SAVE_BTN_LABEL;
+      save.title = SAVE_BTN_TIP;
       save.addEventListener("click", guard(async () => {
         const diff = diffFromDefaults(ctx.values, schema);
         const trimmed = (currentName || "").trim();

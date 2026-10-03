@@ -28,6 +28,7 @@ from sturddle_view.llm.prompts import (
     PLAYBOOK_LEAD,
     SYSTEM_PROMPT_PREFACE,
     SYSTEM_PROMPT_RULES,
+    VERIFIER_PROMPT_RULES,
     split_narrator_steers,
 )
 from sturddle_view.play.ai_analysis import AIAnalysisCoordinator
@@ -56,6 +57,17 @@ def test_commentator_prompt_contains_commentator_addendum_only():
     assert SYSTEM_PROMPT_RULES.rstrip("\n") in out
     assert COMMENTATOR_ADDENDUM in out
     assert COACH_ADDENDUM not in out
+
+
+def test_verifier_prompt_gets_output_rule_not_narrator_rules():
+    # Reader-facing rules made the verifier address the user; it gets the
+    # program-output rule and the shared chess rules instead.
+    out = assemble_system_prompt("verifier")
+    assert VERIFIER_PROMPT_RULES.rstrip("\n") in out
+    assert "- Voice:" not in out
+    assert "- Length:" not in out
+    assert "- Output:" in out
+    assert "- Honesty:" in out
 
 
 def test_unknown_mode_raises_value_error():
@@ -130,6 +142,21 @@ def test_user_message_side_to_move_derived_from_fen():
         san_history=["e4", "e5"],
     )
     assert "Side to move: black\n" in black
+
+
+def test_user_message_names_player_and_engine_sides():
+    # Coach mode: who plays which color, and whose move it is.
+    black = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
+    out = build_initial_user_message(
+        fen=black, san_history=["e4", "e5"], player_side="black",
+    )
+    assert "Sides: the player plays black; the opponent plays white.\n" in out
+    assert "Side to move: black (the player)\n" in out
+    out = build_initial_user_message(
+        fen=black, san_history=["e4", "e5"], player_side="white",
+    )
+    assert "Sides: the player plays white; the opponent plays black.\n" in out
+    assert "Side to move: black (the opponent)\n" in out
 
 
 def test_user_message_malformed_fen_falls_back_to_white():

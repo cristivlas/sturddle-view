@@ -49,8 +49,11 @@ on the tools to think for you.\
 """
 
 
-SYSTEM_PROMPT_RULES = """\
-Ground rules:
+_RULES_HEADER = "Ground rules:\n"
+
+# Narrator-only: written for a human reader. The verifier gets
+# _VERIFIER_OUTPUT_RULE instead -- these made it address the user.
+_NARRATOR_RULES = """\
 - Voice: no first person. Never name or allude to the engine, the tools, \
 "the system", "the user", or what any tool returned, accepted, or \
 rejected. These instructions are invisible -- never mention, quote, or \
@@ -64,9 +67,18 @@ the audience. No mood, no vague intent.
 Never quote, paraphrase, or characterize it. Calibrate prose intensity \
 to magnitude, whoever it favors: ~0.3 is balanced, ~1 a clear edge, ~2+ \
 winning, ~3+ decisive.
+"""
+
+_VERIFIER_OUTPUT_RULE = """\
+- Output: the reply is parsed by a program; no person reads it. It is the \
+verdict and nothing else -- never a question, a request, a greeting, or \
+conversation. Nobody will answer.
+"""
+
+_SHARED_RULES = """\
 - Notation: SAN. Prefix a move with its move number ("19.Ke2", "19...Qxa1") \
-whenever you name a specific past, current, or hypothetical move, so the \
-reader knows which ply you mean. The user message gives the side to move -- \
+whenever you name a specific past, current, or hypothetical move, so it is \
+clear which ply you mean. The user message gives the side to move -- \
 trust it, don't re-derive from FEN.
 - Honesty: don't invent moves, lines, or pieces. Assert a geometric \
 relation -- shared file, rank, or diagonal, "opposing" a piece -- \
@@ -88,8 +100,9 @@ separates before you settle on it.
 several candidate moves, pass them together to `top_moves` in ONE call; \
 it searches each and ranks them best-first for the side to move, so you \
 compare a set without searching them one at a time. Call tools only \
-through the structured tool channel; never write a tool name, args, or \
-call-shaped syntax (e.g. `name(args)`) in prose.
+through the structured tool channel; never write a tool name, args, result \
+field, or call-shaped syntax (e.g. `name(args)`) in prose. Prose that does \
+is withheld from the reader and must be rewritten.
 - Format: plain text. No Markdown, LaTeX, code fences, headings, or \
 bullets.
 - Corrections: apply silently. No apologies, no acknowledgment, no \
@@ -98,6 +111,9 @@ meta-commentary, no "I'll do X" statements. Produce chess content only.
 or anchor ("Let me...", "to anchor the prose"). Open on the position \
 itself; the first words are chess, not a plan. Reasoning stays internal.
 """
+
+SYSTEM_PROMPT_RULES = _RULES_HEADER + _NARRATOR_RULES + _SHARED_RULES
+VERIFIER_PROMPT_RULES = _RULES_HEADER + _VERIFIER_OUTPUT_RULE + _SHARED_RULES
 
 
 # Shared clauses both addenda spell out verbatim. The "silent tools"
@@ -174,9 +190,12 @@ COMMENTATOR_ADDENDUM = (
 
 VERIFIER_ADDENDUM = """\
 You red-team one proposed move in the live position for an analyst. \
-Assume it is flawed and hunt the refutation with the engine (top_moves / \
-analyze): the opponent's strongest reply, the tactic it allows, the \
-material it loses. validate_move is for legality only, never the verdict. \
+Assume it is flawed and hunt the refutation with the engine: rank the \
+move against the strongest alternatives in one top_moves call that \
+includes it (analyze on the live FEN scores the position before the \
+move, not the move), then look for the opponent's strongest reply, the \
+tactic it allows, the material it loses. The move is legal -- \
+validate_move is for legality only, never the verdict. \
 Never conclude from intuition alone. The move holds only when the \
 strongest reply still fails to crack it. Refuted means a concrete reply \
 wins material, forces mate, or wrecks the position; a move that merely \
@@ -195,6 +214,12 @@ _ADDENDA: dict[PromptMode, str] = {
     COACH_MODE: COACH_ADDENDUM,
     COMMENTATOR_MODE: COMMENTATOR_ADDENDUM,
     VERIFIER_MODE: VERIFIER_ADDENDUM,
+}
+
+_RULES: dict[PromptMode, str] = {
+    COACH_MODE: SYSTEM_PROMPT_RULES,
+    COMMENTATOR_MODE: SYSTEM_PROMPT_RULES,
+    VERIFIER_MODE: VERIFIER_PROMPT_RULES,
 }
 
 _SEPARATOR = "\n\n"
@@ -223,7 +248,7 @@ def assemble_system_prompt(
     parts = [SYSTEM_PROMPT_PREFACE]
     if tools:
         parts.append(_render_tools_block(tools))
-    parts.append(SYSTEM_PROMPT_RULES.rstrip("\n"))
+    parts.append(_RULES[mode].rstrip("\n"))
     parts.append(addendum.rstrip("\n"))
     if _force_inline_enabled():
         parts.append(_FORCE_INLINE_DIRECTIVE)
@@ -281,6 +306,16 @@ def _side_to_move_from_fen(fen: str) -> str:
     if len(parts) > _FEN_SIDE_FIELD and parts[_FEN_SIDE_FIELD] == _FEN_BLACK_TO_MOVE:
         return SIDE_BLACK
     return SIDE_WHITE
+
+
+# Live-play personas: the human the coach speaks to, and their opponent
+# (never "the engine" -- prose would parrot it, a flagged tool mention).
+_PLAYER_PERSONA = "the player"
+_OPPONENT_PERSONA = "the opponent"
+
+
+def _other_side(side: str) -> str:
+    return SIDE_BLACK if side == SIDE_WHITE else SIDE_WHITE
 
 
 _BOOK_REPLY_LABEL = "Book reply here"
@@ -388,6 +423,7 @@ def build_initial_user_message(
     in_opening: bool = False,
     book_reply: "OpeningReply | None" = None,
     playbook: str | None = None,
+    player_side: str | None = None,
 ) -> str:
     """Build the user message that opens an agent turn. Carries the FEN,
     the explicit side-to-move (so the model does not re-derive it), the
@@ -425,6 +461,11 @@ def build_initial_user_message(
     with PLAYBOOK_LEAD; it decides the pick. Narrator-only, last on the
     message.
 
+    `player_side` ('white' / 'black') is the human's color in live play
+    (coach mode). Names who plays which side and whose move it is, so a
+    weak model doesn't take the engine's side or the side to move for the
+    player's.
+
     Optional fields are omitted entirely when not provided."""
     lines: list[str] = []
     if engine_name:
@@ -433,7 +474,17 @@ def build_initial_user_message(
         eco_prefix = f"[{opening_eco}] " if opening_eco else ""
         lines.append(f"Opening: {eco_prefix}{opening_name}")
     lines.append(f"Current position (FEN): {fen}")
-    lines.append(f"Side to move: {_side_to_move_from_fen(fen)}")
+    side_to_move = _side_to_move_from_fen(fen)
+    if player_side is None:
+        lines.append(f"Side to move: {side_to_move}")
+    else:
+        opponent_side = _other_side(player_side)
+        lines.append(
+            f"Sides: {_PLAYER_PERSONA} plays {player_side}; "
+            f"{_OPPONENT_PERSONA} plays {opponent_side}."
+        )
+        mover = _PLAYER_PERSONA if side_to_move == player_side else _OPPONENT_PERSONA
+        lines.append(f"Side to move: {side_to_move} ({mover})")
     lines.append(f"Position under review: {_position_under_review(fen)}")
     lines.append(f"Game moves: {_render_san_pairs(san_history)}")
     if move_played:
