@@ -256,18 +256,34 @@ class OpeningBook:
         Caller is trusted to supply a legal move list; we don't validate
         per-ply legality. Malformed UCI yields a graceful early return;
         illegal-but-parseable moves will raise from chess.Board.push."""
-        board = chess.Board()
         best: Optional[Opening] = None
+        for hit in self._walk(chess.Board(), uci_moves, check_legal=False):
+            if hit is not None:
+                best = hit
+        return best
+
+    def line_openings(self, fen: str, uci_moves: Iterable[str]) -> list[Optional[Opening]]:
+        """The opening registered at each position `uci_moves` reaches from
+        `fen` (None where there is none), up to the first malformed or
+        illegal move: a client's line may belong to another position.
+        Raises ValueError for a bad `fen`."""
+        return list(self._walk(chess.Board(fen), uci_moves, check_legal=True))
+
+    def _walk(
+        self, board: chess.Board, uci_moves: Iterable[str], check_legal: bool,
+    ) -> Iterator[Optional[Opening]]:
+        """The opening registered (or None) at each position `uci_moves`
+        reaches on `board`, until a malformed move or, when `check_legal`,
+        an illegal one."""
         for uci in uci_moves:
             try:
                 move = chess.Move.from_uci(uci)
             except ValueError:
-                return best
+                return
+            if check_legal and not board.is_legal(move):
+                return
             board.push(move)
-            hit = self._by_pos.get(board.epd())
-            if hit is not None:
-                best = hit
-        return best
+            yield self._by_pos.get(board.epd())
 
     def all(self) -> list[Opening]:
         """Every opening (one row per name, shortest line), sorted ECO then

@@ -2351,6 +2351,8 @@ export const playPerspective = {
       interactive: true,
       sideContainer: sideHost,
       boardStyle: initialBoardStyle,
+      fetchLineOpenings: (fen, moves) =>
+        ctx.api("POST", "/openings/line", { fen, moves }).then((r) => r.results),
       onMove: async (uci) => {
         // Drop during analysis: exit analysis and play the move. A running
         // session asks first; a finished AI turn exits silently, matching

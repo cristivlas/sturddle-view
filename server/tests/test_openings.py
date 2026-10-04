@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
+import chess
 import chess.pgn
 import pytest
 
@@ -169,6 +170,40 @@ def test_lookup_stops_at_malformed_uci_returning_best_so_far():
     assert hit is not None
     assert hit.eco.startswith("B")
     assert "Caro-Kann" in hit.name
+
+
+# --- line_openings ----------------------------------------------------------
+
+AFTER_CARO_KANN_FEN = "rnbqkbnr/pp1ppppp/2p5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
+
+
+def _names(hits):
+    return [hit and hit.name for hit in hits]
+
+
+def test_line_openings_reports_each_position():
+    book = OpeningBook.load()
+    hits = book.line_openings(chess.STARTING_FEN, ["e2e4", "c7c6", "h2h4"])
+    assert _names(hits) == ["King's Pawn Game", "Caro-Kann Defense", None]
+
+
+def test_line_openings_starts_from_fen():
+    book = OpeningBook.load()
+    hits = book.line_openings(AFTER_CARO_KANN_FEN, ["d2d4", "d7d5", "e4e5"])
+    assert _names(hits)[-1] == "Caro-Kann Defense: Advance Variation"
+
+
+@pytest.mark.parametrize("bad", ["not-a-move", "e2e4"])
+def test_line_openings_stops_at_malformed_or_illegal_move(bad):
+    """A line belonging to another position stops where it stops fitting."""
+    book = OpeningBook.load()
+    hits = book.line_openings(chess.STARTING_FEN, ["e2e4", bad, "c7c6"])
+    assert _names(hits) == ["King's Pawn Game"]
+
+
+def test_line_openings_bad_fen_raises():
+    with pytest.raises(ValueError):
+        OpeningBook.load().line_openings("not a fen", ["e2e4"])
 
 
 # --- family_of / by_family ------------------------------------------------

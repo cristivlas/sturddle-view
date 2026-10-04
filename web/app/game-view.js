@@ -188,7 +188,14 @@ async function copyFen(ctx) {
   }
 }
 
+// The game's own opening; a line show only borrows the label (see
+// playLineWithOpenings) and puts this back when it ends.
 function setOpening(ctx, opening) {
+  ctx.opening = opening;
+  if (!ctx.lineOpenings) renderOpening(ctx, opening);
+}
+
+function renderOpening(ctx, opening) {
   if (!ctx.openingLine) return;
   if (!opening || (!opening.eco && !opening.name)) {
     ctx.openingLine.classList.add(IS_EMPTY_CLASS);
@@ -940,6 +947,60 @@ function canPlayLineNow(ctx) {
   return !searching && !ctx.editing && !engineToMove(ctx);
 }
 
+// Placement, side, castling, en passant: the position, minus move counters.
+const FEN_POSITION_FIELDS = 4;
+function fenPosition(fen) {
+  return fen.split(" ").slice(0, FEN_POSITION_FIELDS).join(" ");
+}
+
+// The opening label follows a played line: each ply shows the last book
+// opening reached so far (as the game's own lookup does), starting from the
+// game's opening when the line starts at the game's position, else blank.
+// opts.startFen is the line's start (default: the game's position).
+function playLineWithOpenings(ctx, frames, { startFen = ctx.currentFen, ...opts }) {
+  const show = { base: null, hits: null, ply: -1 };
+  if (fenPosition(startFen) === fenPosition(ctx.currentFen)) show.base = ctx.opening;
+  const started = ctx.board.playLine(frames, {
+    ...opts,
+    onStep(ply) {
+      show.ply = ply;
+      renderLineOpening(ctx, show);
+      opts.onStep?.(ply);
+    },
+    onEnd() {
+      endLineOpenings(ctx, show);
+      opts.onEnd?.();
+    },
+  });
+  if (!started) return false;
+  // After playLine: a retarget ends the previous show inside it.
+  ctx.lineOpenings = show;
+  renderLineOpening(ctx, show);
+  ctx.fetchLineOpenings?.(startFen, opts.pvUci ?? [])
+    .then((hits) => {
+      show.hits = hits;
+      renderLineOpening(ctx, show);
+    })
+    // Best-effort: on failure the label just stays where it is.
+    .catch(() => {});
+  return true;
+}
+
+function renderLineOpening(ctx, show) {
+  if (ctx.lineOpenings !== show) return;
+  let opening = show.base;
+  for (let i = 0; i <= show.ply && i < (show.hits?.length ?? 0); i++) {
+    opening = show.hits[i] ?? opening;
+  }
+  renderOpening(ctx, opening);
+}
+
+function endLineOpenings(ctx, show) {
+  if (ctx.lineOpenings !== show) return;
+  ctx.lineOpenings = null;
+  renderOpening(ctx, ctx.opening);
+}
+
 // Announced as a window event, not left to bus subscribers: the Search Lines
 // body (and its bus subscription) outlives a perspective nav, so after a
 // round trip it sits BEFORE this view's handler in the bus and would read the
@@ -1005,7 +1066,7 @@ function buildViewApi(ctx) {
     // Both handed out as bare function references (setPvLineBoard), so they
     // close over ctx via canPlayLineNow rather than using `this`.
     canPlayLine() { return canPlayLineNow(ctx); },
-    playLine(frames, opts) { return canPlayLineNow(ctx) && ctx.board.playLine(frames, opts); },
+    playLine(frames, opts = {}) { return canPlayLineNow(ctx) && playLineWithOpenings(ctx, frames, opts); },
     // The AI-turn-finished latch lives in play.js; it flips without a
     // board_update, so the gate is re-announced here.
     setAnalysisIdle(idle) {
@@ -1086,6 +1147,9 @@ export function mountGameView(container, opts = {}) {
     interactive = false,
     sideContainer = null, // optional: separate host for the side rail
     boardStyle = null,    // preset id from settings; null = library default
+    // (fen, uciMoves) => Promise<(opening|null)[]>: the book opening at each
+    // position a played line reaches; see playLineWithOpenings.
+    fetchLineOpenings = null,
   } = opts;
   const showClocks = show.clocks !== false;
   const showMoves = show.moves !== false;
@@ -1105,7 +1169,7 @@ export function mountGameView(container, opts = {}) {
   const ready = new Promise((r) => { resolveReady = r; });
 
   const ctx = {
-    onMoveJump, onPlayMoveClick, forkInfoFn, onForkClick,
+    onMoveJump, onPlayMoveClick, forkInfoFn, onForkClick, fetchLineOpenings,
     interactive, showClocks, showMoves, showEngineInfo,
     ready, resolveReady,
 
@@ -1130,6 +1194,9 @@ export function mountGameView(container, opts = {}) {
     analysisIdle: false,
     // Last announced canPlayLineNow() value; see announcePlayLineGate.
     playLineGate: null,
+    // The game's opening, and the line show borrowing its label (if any).
+    opening: null,
+    lineOpenings: null,
     // Cached PGN names so flipping the board in view mode can re-swap
     // top/bottom without waiting for a fresh board_update.
     viewWhiteName: null,

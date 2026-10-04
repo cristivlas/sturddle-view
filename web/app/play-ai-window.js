@@ -1037,7 +1037,7 @@ function strikeProseItems(para, items) {
   return struck;
 }
 
-// Line link -> {placement, uci}: the line it plays and where it starts.
+// Line link -> {fen, uci}: the line it plays and where it starts.
 const linkLines = new WeakMap();
 
 function applyLineLinkGate(link) {
@@ -1047,11 +1047,11 @@ function applyLineLinkGate(link) {
   else link.removeAttribute("title");
 }
 
-function buildLineLink(text, placement, uci) {
+function buildLineLink(text, fen, uci) {
   const link = document.createElement("span");
   link.className = LINE_LINK_CLASS;
   link.textContent = text;
-  linkLines.set(link, { placement, uci });
+  linkLines.set(link, { fen, uci });
   applyLineLinkGate(link);
   return link;
 }
@@ -1068,8 +1068,9 @@ function playLineLink(link) {
   const board = getPvLineBoard();
   const line = linkLines.get(link);
   if (!board || !line?.uci) return;
-  const started = board.playLine(pvFrames(line.placement, line.uci), {
+  const started = board.playLine(pvFrames(line.fen, line.uci), {
     pvUci: line.uci,
+    startFen: line.fen,
     onEnd: () => link.classList.remove(LINE_LINK_PLAYING_CLASS),
   });
   // After playLine: a retarget onto this same link fires the old show's
