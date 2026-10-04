@@ -6,10 +6,10 @@
 //
 // Each window can float (WinBox) or dock into the left column of the play
 // grid (.play-dock-left) -- or into the rail dock (.play-rail-dock), a
-// capacity-one destination under the moves list where the eval strip lives
+// two-slot destination under the moves list where the eval strip lives
 // by default. Which destination a window last docked into is persisted per
 // window in DOCK_DEST_KEY. Dock state is persisted in localStorage; when
-// two or more windows are docked, drag-grips between adjacent slots
+// two or more windows share a dock, drag-grips between adjacent slots
 // resize them (per-slot flex-grow ratios stored in DOCK_GROW_KEY).
 // Besides the header buttons, windows dock/undock by drag: dropping a
 // floating title bar on the dock column docks; dragging a slot header
@@ -51,12 +51,14 @@ const PLAY_GRID_SEL = ".play-grid";
 const DOCK_SLOT_CLASS = "dock-slot";
 const DOCK_GHOST_CLASS = "dock-ghost";
 const DOCK_SLOT_SEL = `.${DOCK_SLOT_CLASS}`;
+const DOCK_GHOST_SEL = `.${DOCK_GHOST_CLASS}`;
 // Dock-state contract shared with game-view, which sizes the rail band from
 // it: exported so a rename here can't silently desync the two modules.
 export const DOCK_EMPTY_CLASS = "dock-empty";
 export const DOCK_DROP_ELIGIBLE_CLASS = "dock-drop-eligible";
 export const DOCK_GRIP_CLASS = "dock-grip";
-export const DOCK_GHOST_SEL = `.${DOCK_GHOST_CLASS}`;
+// Slots (hidden ones included) the rail dock holds at once.
+const RAIL_DOCK_CAPACITY = 2;
 
 // Vertical stack order for docked windows. Lower values render higher
 // in the column. Centralized so adding a new window doesn't require
@@ -85,12 +87,12 @@ const DRAG_DOCK_THRESHOLD_PX = 5;
 
 // Set by play.js on perspective mount/unmount.
 let dockEl = null;
-// Rail dock: capacity-one destination under the moves list, positioned by
+// Rail dock: two-slot destination under the moves list, positioned by
 // game-view's positionSideRail. Also set by play.js on mount/unmount.
 let railDockEl = null;
 let dockResizeObs = null;
-// Drag handles between adjacent docked slots. With N slots there are
-// (N-1) grips; the array is rebuilt each time slots change via
+// Drag handles between adjacent docked slots. With N slots in a container
+// there are (N-1) grips; the array is rebuilt each time slots change via
 // syncDockVisibility.
 let dockGrips = [];
 
@@ -312,13 +314,18 @@ function syncHiddenSlots() {
   }
 }
 
-// Toggle a container's dock-empty class from its live (visible) slot count,
-// emitting LAYOUT_CHANGED on transition. Shared by all dock containers.
-function syncEmptyClass(el) {
-  const wasEmpty = el.classList.contains(DOCK_EMPTY_CLASS);
-  const isEmpty = Array.from(el.querySelectorAll(DOCK_SLOT_SEL)).every(slotHidden);
-  el.classList.toggle(DOCK_EMPTY_CLASS, isEmpty);
-  if (wasEmpty !== isEmpty) emitLayoutChanged();
+// Visible-slot count each container had at its last sync.
+const syncedSlotCounts = new WeakMap();
+
+// Stamp a container's dock-empty class from its live (visible) slot count,
+// emitting LAYOUT_CHANGED when the count changes: the rail band is sized from
+// it. Shared by all dock containers.
+function syncSlotCount(el) {
+  const count = growSlots(el).length;
+  el.classList.toggle(DOCK_EMPTY_CLASS, count === 0);
+  if (syncedSlotCounts.get(el) === count) return;
+  syncedSlotCounts.set(el, count);
+  emitLayoutChanged();
 }
 
 function emitLayoutChanged() {
@@ -332,26 +339,31 @@ function growFor(grows, key) {
   return Number.isFinite(g) && g > 0 ? g : DEFAULT_DOCK_GROW;
 }
 
-// Main-dock slots that participate in the flex-grow/grip ratio system:
+// Slots of `container` that participate in the flex-grow/grip ratio system:
 // all visible ones (empty-eval-hidden slots are counted out).
-function growSlots() {
-  if (!dockEl) return [];
-  return Array.from(dockEl.querySelectorAll(DOCK_SLOT_SEL)).filter(s => !slotHidden(s));
+function growSlots(container) {
+  return Array.from(container.querySelectorAll(DOCK_SLOT_SEL)).filter(s => !slotHidden(s));
 }
 
-// Size the dock's growing flex children. `extraKey` (the drop-ghost's
+// Visible slots in `container` plus a pending drop ghost: the windows its
+// height has to fit. Exported for game-view, which sizes the rail band from it.
+export function dockSlotCount(container) {
+  return growSlots(container).length + (container.querySelector(DOCK_GHOST_SEL) ? 1 : 0);
+}
+
+// Size a container's growing flex children. `extraKey` (the drop-ghost's
 // dockedKey, when previewing) is counted as a virtual slot so the preview
 // split matches the post-dock split exactly. A lone slot OR lone ghost
-// fills the whole dock, ignoring any stored ratio from a prior multi-slot
-// session. Hidden slots are left alone.
-function applyDockGrows(extraKey = null) {
-  if (!dockEl) return;
-  const slots = growSlots();
-  const ghost = dockEl.querySelector(DOCK_GHOST_SEL);
+// fills the whole container, ignoring any stored ratio from a prior
+// multi-slot session. Hidden slots are left alone.
+function applyDockGrows(container, extraKey = null) {
+  const slots = growSlots(container);
+  const ghost = container.querySelector(DOCK_GHOST_SEL);
   const ghostCounts = !!ghost && !!extraKey;
   if (slots.length + (ghostCounts ? 1 : 0) <= 1) {
-    for (const slot of slots) slot.style.flexGrow = "1";
-    if (ghostCounts) ghost.style.flexGrow = "1";
+    const loneGrow = String(DEFAULT_DOCK_GROW);
+    for (const slot of slots) slot.style.flexGrow = loneGrow;
+    if (ghostCounts) ghost.style.flexGrow = loneGrow;
     return;
   }
   const grows = loadDockGrows();
@@ -390,19 +402,29 @@ function setDest(key, val) {
   saveJson(DOCK_DEST_KEY, dests);
 }
 
-// The rail dock holds at most one visible slot; it's free for `inst` when
-// empty or when the occupant is inst's own slot (re-dock while dragging
-// out). A hidden (empty-eval) squatter yields too: dock() evicts it into
-// the main dock -- so it only counts as free when there is one to evict to.
+// The rail dock holds RAIL_DOCK_CAPACITY slots; it's free for `inst` when one
+// is open or `inst` already holds one (re-dock while dragging out). A hidden
+// (empty-eval) squatter yields too: dock() evicts it into the main dock -- so
+// it only counts as free when there is one to evict to.
 function railFreeFor(inst) {
   // Mobile hides the rail (CSS), so nothing may land there. Gated here --
   // the single chokepoint every rail consumer routes through -- rather than
   // repeated at each call site, where one omission strands a window in a
   // display:none container.
   if (!railDockEl || isMobileLayout()) return false;
-  const occupant = railDockEl.querySelector(DOCK_SLOT_SEL);
-  if (!occupant || occupant === inst.slot) return true;
-  return !!dockEl && slotHidden(occupant);
+  const slots = Array.from(railDockEl.querySelectorAll(DOCK_SLOT_SEL));
+  if (slots.length < RAIL_DOCK_CAPACITY || slots.includes(inst.slot)) return true;
+  return !!dockEl && slots.some(slotHidden);
+}
+
+// A full rail makes room for an arriving window by sending one occupant to the
+// main dock: a hidden (empty-eval) squatter first, else the bottom slot (the
+// eval strip can fill mid-drag, after railFreeFor already said yes).
+function evictRailSquatter() {
+  const slots = Array.from(railDockEl.querySelectorAll(DOCK_SLOT_SEL));
+  if (slots.length < RAIL_DOCK_CAPACITY || !dockEl) return;
+  const squatter = slots.find(slotHidden) ?? slots[slots.length - 1];
+  instances.find(i => i.slot === squatter)?.redock(dockEl);
 }
 
 function attachGripDrag(grip, topInst, botInst) {
@@ -468,12 +490,14 @@ function clearDockGrips() {
   dockGrips = [];
 }
 
-function rebuildDockGrips() {
-  clearDockGrips();
-  if (!dockEl) return;
+function dockContainers() {
+  return [dockEl, railDockEl].filter(Boolean);
+}
+
+function addDockGrips(container) {
   // Only visible slots get grips: a grip against a hidden neighbor would
   // be a stray handle resizing nothing.
-  const slots = growSlots();
+  const slots = growSlots(container);
   for (let i = 0; i + 1 < slots.length; i++) {
     const topSlot = slots[i];
     const botSlot = slots[i + 1];
@@ -482,18 +506,23 @@ function rebuildDockGrips() {
     if (!topInst || !botInst) continue;
     const grip = document.createElement("div");
     grip.className = DOCK_GRIP_CLASS;
-    dockEl.insertBefore(grip, botSlot);
+    container.insertBefore(grip, botSlot);
     attachGripDrag(grip, topInst, botInst);
     dockGrips.push(grip);
   }
 }
 
+function rebuildDockGrips() {
+  clearDockGrips();
+  for (const container of dockContainers()) addDockGrips(container);
+}
+
 function syncDockVisibility() {
   syncHiddenSlots();
-  if (railDockEl) syncEmptyClass(railDockEl);
-  if (!dockEl) return;
-  syncEmptyClass(dockEl);
-  applyDockGrows();
+  for (const container of dockContainers()) {
+    syncSlotCount(container);
+    applyDockGrows(container);
+  }
   rebuildDockGrips();
 }
 
@@ -542,9 +571,8 @@ function showDockGhost(container, inst) {
   if (isNew && container === railDockEl) emitLayoutChanged();
   // Size existing slots + ghost with the same pass dock() uses, so the
   // preview split equals the post-dock split (the lone-slot flex:1 override
-  // no longer applies once the ghost is a second child). The rail dock holds
-  // a single slot, so its ghost just fills it (CSS flex:1) -- no grow pass.
-  if (container === dockEl) applyDockGrows(inst.dockedKey);
+  // no longer applies once the ghost is a second child).
+  applyDockGrows(container, inst.dockedKey);
 }
 
 function hideDockGhost(container) {
@@ -553,7 +581,7 @@ function hideDockGhost(container) {
   ghost.remove();
   // Restore real-slot sizing: a now-lone slot must snap back to flex:1,
   // which the ghost's virtual-slot pass had suppressed.
-  if (container === dockEl) applyDockGrows();
+  applyDockGrows(container);
   if (container === railDockEl) emitLayoutChanged();
 }
 
@@ -815,13 +843,7 @@ export function createDockableWindow(config) {
   function dock(toContainer = null, { persistDest = false } = {}) {
     const container = toContainer ?? resolveDockEl();
     if (!container) return;
-    if (container === railDockEl) {
-      // Only a hidden (empty-eval) squatter can be here -- railFreeFor
-      // gates out visible occupants -- and it yields to the main dock.
-      const occupant = instances.find(i =>
-        i !== inst && i.slot && i.slot.parentElement === railDockEl);
-      if (occupant && dockEl) occupant.redock(dockEl);
-    }
+    if (container === railDockEl) evictRailSquatter();
     if (wb) {
       saveGeo(geoKey, wb);
       wb.body.removeChild(body);
@@ -1124,7 +1146,7 @@ export function setDockContainer(el) {
 // still parked in it.
 export function setRailDockContainer(el) {
   railDockEl = el;
-  if (el) syncEmptyClass(el);
+  if (el) syncSlotCount(el);
 }
 
 // -- UCI log body ------------------------------------------------------------

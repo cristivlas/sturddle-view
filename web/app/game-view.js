@@ -6,8 +6,8 @@ import { toast } from "./dialogs.js";
 import {
   DOCK_DROP_ELIGIBLE_CLASS,
   DOCK_EMPTY_CLASS,
-  DOCK_GHOST_SEL,
   DOCK_GRIP_CLASS,
+  dockSlotCount,
   isMobileLayout,
 } from "./play-dock-windows.js";
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
@@ -50,6 +50,8 @@ const DEFAULT_LEFT_RAIL_EMPTY_RATIO = 0.4;
 const RAIL_NATURAL_CAP_VIEWPORT_PX = 1500;
 // Floor for the moves list when the rail-dock grip is dragged up.
 const MIN_MOVES_REM = 6;
+// Room the rail band gives each stacked window: its header plus a few rows.
+const RAIL_SLOT_MIN_REM = 5;
 const RAIL_GRIP_SEL_CLASS = "play-rail-grip";
 // Hides a section that has nothing to show (display: none in styles.css).
 const IS_EMPTY_CLASS = "is-empty";
@@ -368,9 +370,9 @@ function clearFixedGeom(el) {
   for (const prop of ["left", "top", "width", "height"]) el.style.removeProperty(prop);
 }
 
-// Rail-dock lift: how far the docked window's top edge is dragged above the
-// board bottom, stealing that height from the moves list. Shared by every
-// GameView instance (only one is on a desktop play grid at a time).
+// Rail-dock lift: how far the band's top edge is dragged above the board
+// bottom, stealing that height from the moves list. Shared by every GameView
+// instance (only one is on a desktop play grid at a time).
 let railLift = Math.max(0, Number(loadRaw(STORAGE_KEY.PLAY_RAIL_LIFT, 0)) || 0);
 
 // Grip between the moves list and whatever is docked in the rail band. It is
@@ -387,10 +389,10 @@ function ensureRailGrip(ctx, railDock) {
     eDown.preventDefault();
     try { grip.setPointerCapture(eDown.pointerId); } catch { /* */ }
     grip.classList.add("dragging");
-    const lift0 = railLift;
+    const lift0 = ctx.railBandLift;
     const y0 = eDown.clientY;
     const onMove = (e) => {
-      railLift = Math.max(0, Math.min(lift0 - (e.clientY - y0), ctx.railMaxLift ?? 0));
+      railLift = Math.max(ctx.railMinLift, Math.min(lift0 - (e.clientY - y0), ctx.railMaxLift));
       if (ctx.railGeom) positionSideRail(ctx, ctx.railGeom);
     };
     const onUp = () => {
@@ -452,16 +454,30 @@ function positionSideRail(ctx, geom) {
     width = capRail ? Math.min(railW, avail) : avail;
   }
   const height = Math.max(rem(MIN_AVAIL_REM), Math.floor(boardRect.bottom - topRef.top));
-  // Lift applies only while something is docked in the rail band; with an
-  // empty band the moves list runs all the way down to the board bottom.
   ctx.railMaxLift = Math.max(0, height - rem(MIN_MOVES_REM));
+  const boardBottom = Math.floor(boardRect.bottom);
+  const clockRow = ctx.clockBottomRow;
+  const barBottom = clockRow && clockRow.offsetParent !== null
+    ? Math.floor(clockRow.getBoundingClientRect().bottom)
+    : boardBottom;
+  // Band starts one grip-thickness below the board, so the grip fills the
+  // gap between the moves list and the docked panel exactly.
+  const bareTop = boardBottom + RAIL_GRIP_PX;
+  const slotCount = railDock ? dockSlotCount(railDock) : 0;
   // A pending drop counts as an occupant, so the drop outline (and the hover
   // preview) shows the band at its persisted, lifted size, not the bare one.
-  const occupied = !!railDock && (
-    !railDock.classList.contains(DOCK_EMPTY_CLASS)
-    || railDock.classList.contains(DOCK_DROP_ELIGIBLE_CLASS)
-    || !!railDock.querySelector(DOCK_GHOST_SEL));
-  const lift = occupied ? Math.min(railLift, ctx.railMaxLift) : 0;
+  const occupied = slotCount > 0
+    || !!railDock?.classList.contains(DOCK_DROP_ELIGIBLE_CLASS);
+  // Stacked windows each need room for a header and a few rows: the band
+  // grows past the persisted lift to fit them, and the moves list yields.
+  const stackedNeed = slotCount > 1 ? slotCount * rem(RAIL_SLOT_MIN_REM) : 0;
+  const stackedLift = stackedNeed > 0 ? stackedNeed - (barBottom - bareTop) : 0;
+  ctx.railMinLift = Math.min(Math.max(0, stackedLift), ctx.railMaxLift);
+  // Lift applies only while something is docked in the rail band; with an
+  // empty band the moves list runs all the way down to the board bottom.
+  const lift = occupied
+    ? Math.min(Math.max(railLift, ctx.railMinLift), ctx.railMaxLift) : 0;
+  ctx.railBandLift = lift;
   sideHost.style.left = `${left}px`;
   sideHost.style.top = `${top}px`;
   sideHost.style.width = `${width}px`;
@@ -472,14 +488,7 @@ function positionSideRail(ctx, geom) {
   // clock bottom. It never joins the rail's flex flow, so the moves list
   // keeps its exact geometry.
   if (railDock) {
-    const boardBottom = Math.floor(boardRect.bottom);
-    const clockRow = ctx.clockBottomRow;
-    const barBottom = clockRow && clockRow.offsetParent !== null
-      ? Math.floor(clockRow.getBoundingClientRect().bottom)
-      : boardBottom;
-    // Band starts one grip-thickness below the board, so the grip fills the
-    // gap between the moves list and the docked panel exactly.
-    const barTop = boardBottom + RAIL_GRIP_PX - lift;
+    const barTop = bareTop - lift;
     railDock.style.left = `${left}px`;
     railDock.style.top = `${barTop}px`;
     railDock.style.width = `${width}px`;
