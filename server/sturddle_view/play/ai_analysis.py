@@ -17,7 +17,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field, fields
-from typing import Awaitable, Callable, Sequence
+from typing import Awaitable, Callable, Iterable, Sequence
 
 import chess
 
@@ -82,6 +82,7 @@ from ..llm.position_check import (
 )
 from ..llm.position_judge import POSITION_JUDGE_CALL_NAME, judge_other_position
 from ..llm.tool_progress import ProgressReporter, StepFinisher, reporting_progress
+from ..openings import Opening, find_opening_names
 from .tools_engine import (
     ANALYZE_TOOL_NAME,
     CANDIDATES_KEY,
@@ -1115,7 +1116,8 @@ class AIAnalysisCoordinator:
         # Cleared at turn start (position is stable within a turn, not
         # across). None when the tools aren't cache-wired (tests).
         self._search_cache = search_cache
-        # Opening book for prose opening links; None disables them.
+        # Opening book: lets prose links tell another opening's full name
+        # from a short form of the turn's own. None skips that guard.
         self._book_provider = book_provider
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
@@ -1134,6 +1136,10 @@ class AIAnalysisCoordinator:
         self._opening_turn: bool = False
         # The turn's book move (UCI); recommend_move accepts it unsearched.
         self._turn_book_move: str | None = None
+        # Openings put in front of the narrator this turn, by name: the
+        # game's own plus every related_openings row. Prose naming one is
+        # linked to its line (see _emit_opening_links). Empty outside a turn.
+        self._turn_openings: dict[str, Opening] = {}
         # tool_use_id of the in-flight delegate call; its verifier's
         # nested tool events stamp this so the client renders them under
         # the right "Verifying line" row. Late-bound. None when idle.
@@ -1168,6 +1174,7 @@ class AIAnalysisCoordinator:
         user_message: str | None = None,
         book_move_uci: str | None = None,
         book_alternatives: tuple[str, ...] = (),
+        opening: Opening | None = None,
         max_tool_rounds: int = MAX_TOOL_ROUNDS,
         verifier_max_rounds: int = VERIFIER_MAX_ROUNDS,
     ) -> None:
@@ -1190,7 +1197,8 @@ class AIAnalysisCoordinator:
         position: a `recommend_move` of it is accepted without the
         red-team hold. `book_alternatives` (UCI) ride the
         `ai_recommendation` payload when that move is the accepted pick,
-        for the board's secondary arrows.
+        for the board's secondary arrows. `opening` is the opening the
+        game is in; prose naming it is linked to its line.
         """
         active = provider or self._provider
         system_prompt = assemble_system_prompt(mode, tools=self._registry.specs())
@@ -1207,6 +1215,7 @@ class AIAnalysisCoordinator:
             )
             self._turn_context = turn_context
             self._turn_book_move = book_move_uci
+            self._turn_openings = {opening.name: opening} if opening else {}
             self._turn_game_id = game_id
             self._verifier_max_rounds = verifier_max_rounds
             # OR'd true by any delegate whose verifier sub-run hits its round
@@ -1352,6 +1361,7 @@ class AIAnalysisCoordinator:
                     self._turn_context = ""
                     self._opening_turn = False
                     self._turn_book_move = None
+                    self._turn_openings = {}
                     self._turn_game_id = None
                     self._active_delegate_id = None
 
@@ -2007,20 +2017,22 @@ class AIAnalysisCoordinator:
         round_index: int,
         chunks: list[ProviderChunk],
     ) -> None:
-        """Link the opening names in a clean round's prose: each item is the
-        exact prose `surface` plus the opening's `uci` line from the start
-        position, which the client plays on double-click."""
-        book = self._book_provider() if self._book_provider is not None else None
-        if book is None:
-            return
+        """Link the turn's openings where a clean round's prose names them:
+        each item is the exact prose `surface` plus the opening's `uci` line
+        from the start position, which the client plays on double-click. A
+        null `uci` marks a span to leave plain: a name that is not ours to
+        link but contains a linked surface."""
         prose = "".join(c.text for c in chunks if c.kind == "text" and c.text)
-        # One item per surface: the client links every occurrence of it.
-        links = dict(book.find_names(prose))
-        if not links:
+        book = self._book_provider() if self._book_provider is not None else None
+        # One item per surface: the client wraps every occurrence of it.
+        names = dict(find_opening_names(prose, self._turn_openings.values(), book))
+        linked = [surface for surface, opening in names.items() if opening is not None]
+        if not linked:
             return
         items = [
-            {"surface": surface, "uci": list(opening.moves)}
-            for surface, opening in links.items()
+            {"surface": surface, "uci": list(opening.moves) if opening else None}
+            for surface, opening in names.items()
+            if opening is not None or any(s in surface for s in linked)
         ]
         await emit(Event(
             kind=EVT_AI_OPENING_LINKS, game_id=game_id,
@@ -2085,6 +2097,12 @@ class AIAnalysisCoordinator:
                 return True
             return recommend_attempts > attempts_at_last_nudge
         return not nudge_sent and not move_searched
+
+    def note_openings(self, openings: Iterable[Opening]) -> None:
+        """Record openings a tool put in front of the narrator this turn
+        (related_openings' `on_shown`), so prose naming them is linked."""
+        for opening in openings:
+            self._turn_openings.setdefault(opening.name, opening)
 
     def turn_book_move(self) -> str | None:
         """The in-flight turn's book move (UCI), for recommend_move's

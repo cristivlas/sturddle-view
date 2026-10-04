@@ -9,12 +9,13 @@ import csv
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Iterator, Mapping, NamedTuple, Optional, Sequence
 
 import chess
 
 from ._runtime import app_root
 from .chess.pgn_walk import replay_line
+from .env_utils import env_int
 
 
 DEFAULT_OPENINGS_DIR = app_root() / "web" / "vendor" / "chess-openings"
@@ -30,17 +31,38 @@ _SENTENCE_GAP_RE = re.compile(r"[.!?;]")
 _GAP_TOKEN = "."
 # Trie key marking "a name ends here"; never a word (words are non-empty).
 _TRIE_END = ""
+# A name's parts ("Family: Variation, Sub-variation"); a short form drops
+# leading parts at one of these.
+_NAME_PART_SEP_RE = re.compile(r"[:,]")
+# What a possessive leaves on a word once its apostrophe is dropped
+# ("gambit's" -> "gambits").
+_POSSESSIVE_SUFFIX = "s"
+# Fewest words in a short form: a one-word tail ("Closed") is ordinary prose.
+_DEFAULT_SHORT_FORM_MIN_WORDS = 2
+SHORT_FORM_MIN_WORDS = env_int(
+    "SV_AI_OPENING_SHORT_FORM_MIN_WORDS", _DEFAULT_SHORT_FORM_MIN_WORDS
+)
 
 
-def _name_tokens(text: str) -> list[tuple[str, int, int]]:
-    """(token, start, end) per word of `text`, casefolded and apostrophe-
-    free, with a _GAP_TOKEN for each sentence-punctuation gap."""
-    tokens: list[tuple[str, int, int]] = []
+class _NameToken(NamedTuple):
+    """One word of a name or of prose, apostrophe-free: `exact` as written,
+    `folded` casefolded; [start, end) is its span in the source text."""
+    folded: str
+    exact: str
+    start: int
+    end: int
+
+
+def _name_tokens(text: str) -> list[_NameToken]:
+    """The words of `text`, with a _GAP_TOKEN for each sentence-punctuation
+    gap between two of them."""
+    tokens: list[_NameToken] = []
     prev_end: int | None = None
     for m in _NAME_WORD_RE.finditer(text):
         if prev_end is not None and _SENTENCE_GAP_RE.search(text, prev_end, m.start()):
-            tokens.append((_GAP_TOKEN, prev_end, m.start()))
-        tokens.append((_APOSTROPHE_RE.sub("", m.group()).casefold(), m.start(), m.end()))
+            tokens.append(_NameToken(_GAP_TOKEN, _GAP_TOKEN, prev_end, m.start()))
+        word = _APOSTROPHE_RE.sub("", m.group())
+        tokens.append(_NameToken(word.casefold(), word, m.start(), m.end()))
         prev_end = m.end()
     return tokens
 
@@ -58,6 +80,136 @@ class Opening:
         return {"eco": self.eco, "name": self.name, "pgn": self.pgn, "ply": self.ply}
 
 
+def _short_forms(name: str) -> Iterator[tuple[str, ...]]:
+    """The exact-case word tuples `name` goes by with leading parts dropped
+    ("Bellon Gambit" for "English Opening: King's English Variation, Bellon
+    Gambit"). Each has at least SHORT_FORM_MIN_WORDS words and opens with a
+    capital: a tail like "with d5" is ordinary prose."""
+    for sep in _NAME_PART_SEP_RE.finditer(name):
+        words = tuple(t.exact for t in _name_tokens(name[sep.end():]))
+        if (
+            sum(w != _GAP_TOKEN for w in words) >= SHORT_FORM_MIN_WORDS
+            and words[0][0].isupper()
+        ):
+            yield words
+
+
+def _longest_at(
+    words: Sequence[str], i: int, forms: Mapping[tuple[str, ...], object], limit: int,
+) -> int:
+    """Word count of the longest of `forms` written at words[i:]; 0 if none.
+    `limit` is the longest form's word count."""
+    for n in range(min(limit, len(words) - i), 0, -1):
+        if tuple(words[i:i + n]) in forms:
+            return n
+    return 0
+
+
+def _lead_word(word: str, names: Sequence[frozenset[str]]) -> str | None:
+    """`word` (casefolded) as a word of one of `names`, or its possessive's
+    base ("gambits" -> "gambit"); None if neither is."""
+    for candidate in (word, word.removesuffix(_POSSESSIVE_SUFFIX)):
+        if any(candidate in name for name in names):
+            return candidate
+    return None
+
+
+def _lead_run_start(
+    tokens: Sequence[_NameToken],
+    i: int,
+    form: tuple[str, ...],
+    own: frozenset[str],
+    book: OpeningBook,
+) -> int:
+    """Where another opening's name starts when it leads into the short form
+    `form` at tokens[i]: the capitalized words right before it, all words of
+    one other book name going by `form`, one of them not in `own` (the
+    opening's own name words). "French" in "French Exchange Variation" (the
+    French Defense's); not "Black" in "Black's Advance Variation" (no such
+    opening). `i` when there is none."""
+    others = [name for name in book.names_by_short_form(form) if name != own]
+    j = i
+    foreign = False
+    while j > 0 and others:
+        word = tokens[j - 1].exact
+        if not word[0].isupper():
+            break
+        lead = _lead_word(word.casefold(), others)
+        if lead is None:
+            break
+        others = [name for name in others if lead in name]
+        j -= 1
+        foreign = foreign or lead not in own
+    return j if foreign else i
+
+
+def find_opening_names(
+    text: str, openings: Iterable[Opening], book: OpeningBook | None = None,
+) -> list[tuple[str, Opening | None]]:
+    """Opening names in `text`, as (surface, opening) in text order;
+    `surface` is the exact span of `text`, `opening` the one of `openings`
+    it names. Words compare with punctuation dropped, never across sentence
+    punctuation the name lacks. A full name matches in any case; a short
+    form (see `_short_forms`) only as the book capitalizes it. Longest match
+    wins at each word; no overlaps.
+
+    `opening` is None for a name that must not be linked: a short form that
+    fits two of `openings`, or (with `book`) one that names another opening
+    -- its full name ("French Defense Exchange Variation") or its words
+    leading into a short form it shares ("French Exchange Variation"). Such
+    a name is taken whole, so the short form inside it is not linked."""
+    full: dict[tuple[str, ...], Opening] = {}
+    # None marks a short form that fits more than one opening.
+    short: dict[tuple[str, ...], Opening | None] = {}
+    own_words: dict[str, frozenset[str]] = {}
+    for opening in openings:
+        name_words = tuple(t.folded for t in _name_tokens(opening.name))
+        full.setdefault(name_words, opening)
+        own_words[opening.name] = frozenset(name_words)
+        for words in _short_forms(opening.name):
+            owner = short.setdefault(words, opening)
+            if owner is not None and owner.name != opening.name:
+                short[words] = None
+    full_limit = max(map(len, full), default=0)
+    short_limit = max(map(len, short), default=0)
+    tokens = _name_tokens(text)
+    folded = [t.folded for t in tokens]
+    exact = [t.exact for t in tokens]
+    # (first token, end token exclusive, opening) per name found.
+    spans: list[tuple[int, int, Opening | None]] = []
+    i = 0
+    while i < len(tokens):
+        n_full = _longest_at(folded, i, full, full_limit)
+        if book is not None:
+            n_full = max(n_full, book.name_length_at(folded, i))
+        n_short = _longest_at(exact, i, short, short_limit)
+        n = max(n_full, n_short)
+        if n == 0:
+            i += 1
+            continue
+        first = i
+        # A full name outranks a short form of its length; one that is not
+        # in `openings` names no opening of ours.
+        if n_full >= n_short:
+            hit = full.get(tuple(folded[i:i + n]))
+        else:
+            form = tuple(exact[i:i + n])
+            hit = short[form]
+            if hit is not None and book is not None:
+                first = _lead_run_start(tokens, i, form, own_words[hit.name], book)
+        if first < i:
+            # Another name leads into the short form: the phrase, with any
+            # name already found in it, is one name that is not ours.
+            hit = None
+            while spans and spans[-1][1] > first:
+                first = min(first, spans.pop()[0])
+        spans.append((first, i + n, hit))
+        i += n
+    return [
+        (text[tokens[a].start:tokens[b - 1].end], hit) for a, b, hit in spans
+    ]
+
+
 class OpeningBook:
     """Position-keyed opening lookup.
 
@@ -72,8 +224,11 @@ class OpeningBook:
         # Shortest registered line per name (for name/ECO search). Multiple
         # transposition rows share a name; we keep the fewest-ply entry.
         self._by_name: dict[str, Opening] = {}
-        # Word trie over _by_name for find_names; built on first use.
+        # Built over _by_name on first use: the word trie of the full names
+        # (name_length_at) and their word sets by short form
+        # (names_by_short_form).
         self._name_trie: dict | None = None
+        self._short_form_names: dict[tuple[str, ...], list[frozenset[str]]] | None = None
 
     def __len__(self) -> int:
         return len(self._by_pos)
@@ -91,6 +246,7 @@ class OpeningBook:
         if existing is None or opening.ply < existing.ply:
             self._by_name[name] = opening
             self._name_trie = None
+            self._short_form_names = None
 
     def lookup(self, uci_moves: Iterable[str]) -> Optional[Opening]:
         """Return the most specific (deepest-ply) opening reached while
@@ -188,41 +344,38 @@ class OpeningBook:
     def _trie(self) -> dict:
         if self._name_trie is None:
             root: dict = {}
-            for name, opening in self._by_name.items():
+            for name in self._by_name:
                 node = root
-                for token, _start, _end in _name_tokens(name):
-                    node = node.setdefault(token, {})
-                node[_TRIE_END] = opening
+                for token in _name_tokens(name):
+                    node = node.setdefault(token.folded, {})
+                node[_TRIE_END] = True
             self._name_trie = root
         return self._name_trie
 
-    def find_names(self, text: str) -> list[tuple[str, Opening]]:
-        """Opening names written in `text`, as (surface, opening) in text
-        order. Words compare casefolded with punctuation dropped, so
-        "Sicilian Defense Grand Prix Attack" matches "Sicilian Defense:
-        Grand Prix Attack" -- but never across sentence punctuation the
-        name lacks. Longest name wins at each word; no overlaps. `surface`
-        is the exact span of `text`."""
-        tokens = _name_tokens(text)
-        trie = self._trie()
-        found: list[tuple[str, Opening]] = []
-        i = 0
-        while i < len(tokens):
-            node = trie
-            best: tuple[int, Opening] | None = None
-            for j in range(i, len(tokens)):
-                node = node.get(tokens[j][0])
-                if node is None:
-                    break
-                if _TRIE_END in node:
-                    best = (j, node[_TRIE_END])
-            if best is None:
-                i += 1
-                continue
-            end, opening = best
-            found.append((text[tokens[i][1]:tokens[end][2]], opening))
-            i = end + 1
-        return found
+    def name_length_at(self, words: Sequence[str], i: int) -> int:
+        """Word count of the longest book name written at words[i:]
+        (casefolded words, see `_name_tokens`); 0 if none."""
+        node = self._trie()
+        best = 0
+        for j in range(i, len(words)):
+            node = node.get(words[j])
+            if node is None:
+                break
+            if _TRIE_END in node:
+                best = j - i + 1
+        return best
+
+    def names_by_short_form(self, form: tuple[str, ...]) -> list[frozenset[str]]:
+        """Casefolded word sets of the book names that go by the short form
+        `form` (see `_short_forms`)."""
+        if self._short_form_names is None:
+            index: dict[tuple[str, ...], list[frozenset[str]]] = {}
+            for name in self._by_name:
+                words = frozenset(t.folded for t in _name_tokens(name))
+                for short_form in _short_forms(name):
+                    index.setdefault(short_form, []).append(words)
+            self._short_form_names = index
+        return self._short_form_names.get(form, [])
 
     # Process-wide cache: parsing the TSVs takes ~3s and the data is static.
     # The cache is keyed by directory path only and is NOT invalidated on

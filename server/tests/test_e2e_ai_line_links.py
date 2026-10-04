@@ -1,7 +1,8 @@
 """E2E: AI prose line links (opening names, the recommended move).
 
-ai_opening_links wraps opening names; ai_recommendation then wraps the
-recommended move's mentions without disturbing them. Move matching: the SAN
+ai_opening_links wraps opening names (exact case; a null-uci item is left
+plain, whole); ai_recommendation then wraps the recommended move's mentions
+without disturbing them. Move matching: the SAN
 as a whole token (O-O never inside O-O-O), check suffix optional, a move
 number only if it is the current one, and a pawn push only after that number.
 Double-click plays the line.
@@ -103,6 +104,29 @@ async def test_opening_and_pawn_push_links_and_play(server, make_page):
 
     await page.locator(PLAYABLE_SEL).nth(1).dblclick()
     await page.wait_for_selector(PLAYING_SEL)
+
+
+@pytest.mark.asyncio
+async def test_opening_surface_matching(server, make_page):
+    base = server
+    gid = _start_analysis(base)
+    # Exact case only, and a span the server marked plain (null uci) stays
+    # whole even though a linked surface sits inside it.
+    _seed(
+        base, gid,
+        deltas=[
+            "The Exchange Variation is calm; an exchange variation in lowercase "
+            "and the French Defense Exchange Variation stay plain.",
+        ],
+        rec={"uci": "d2d4", "san": "d4"},
+        opening_items=[
+            {"surface": "French Defense Exchange Variation", "uci": None},
+            {"surface": "Exchange Variation", "uci": ["e2e4", "c7c6"]},
+        ],
+    )
+    expected = ["Exchange Variation"]
+    _page, texts = await _link_texts(make_page, base, len(expected))
+    assert texts == expected
 
 
 @pytest.mark.parametrize(("san", "uci", "prose", "expected"), [

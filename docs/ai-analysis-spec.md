@@ -559,23 +559,59 @@ code MUST NOT assume any of it.
 Opening names in the prose become links that play the opening's line on
 the board.
 
-- **Matching (server).** Prose and book names are tokenized the same way:
-  casefold, punctuation dropped, whitespace collapsed ("Sicilian Defense:
-  Grand Prix Attack, Schofman Variation" == "Sicilian Defense Grand Prix
-  Attack Schofman Variation"). Sentence punctuation (`.!?;`) between
-  words is kept as a token, so a match never spans a sentence break the
-  name lacks ("St. George Defense" matches; "the Sicilian. Defense" does
-  not). A token trie over every book name (`OpeningBook.all()`) finds the
-  longest match at each word start; matches never overlap. Paraphrased or
-  invented names do not match -- a miss, never a wrong link. Narrator
-  prose only.
+- **Scope.** Only the openings the turn put in front of the narrator:
+  the opening the game is in (named in the user message) and every row a
+  `related_openings` call returned this turn. The coordinator keeps those
+  `Opening` records (moves included) for the turn and drops them at its
+  end. A name the model recalls on its own gets no link. Narrator prose
+  only.
+- **Matching (server).** One scan of the round's prose for those
+  openings' names, longest match at each word; matches never overlap.
+  Prose and names are tokenized the same way: punctuation dropped,
+  whitespace collapsed ("Sicilian Defense: Grand Prix Attack, Schofman
+  Variation" == "Sicilian Defense Grand Prix Attack Schofman Variation").
+  Sentence punctuation (`.!?;`) between words is kept as a token, so a
+  match never spans a sentence break the name lacks ("St. George Defense"
+  matches; "the Sicilian. Defense" does not).
+  - *Full name:* case-insensitive.
+  - *Short form:* the name with leading parts dropped at a `:` or `,`
+    ("Bellon Gambit" for "English Opening: King's English Variation,
+    Bellon Gambit"). At least two words
+    (`SV_AI_OPENING_SHORT_FORM_MIN_WORDS`), opening with a capital, and
+    capitalized as in the book, so "the closed center", "the main line"
+    and "answers with d5" (tail of "Polish Opening, with d5") stay plain.
+    A short form that fits two of the turn's openings links neither.
+  - *Other openings:* the full name of any book opening outside the
+    turn's set is taken whole and left plain (word trie over every book
+    name), so a short form inside it is not linked: "Exchange Variation"
+    in "French Defense Exchange Variation" is not the turn's Caro-Kann
+    Exchange. Likewise a short form right after capitalized words that
+    are all words of one other book opening going by the same short form,
+    one of them not in its own opening's name ("French Exchange
+    Variation", "Winawer Advance Variation", "King's Exchange Variation",
+    "Najdorf English Attack" when the turn's English Attack is the
+    Taimanov's; possessives too: "Queen's Gambit's Exchange Variation"):
+    the whole phrase, including any name already found in it, is left
+    plain. Words no such opening has do not block it ("The Advance
+    Variation", "Black's Advance Variation" link), nor do its own name's
+    words ("Caro-Kann Exchange Variation" links). A short form equal to
+    another opening's full name ("St. George Defense") is left plain.
+  - *Misses:* reworded names ("Closed Sicilian") do not match -- no link.
+  - *Accepted gap:* another opening named after the short form ("the
+    Exchange Variation of the French") is not detected, so that short form
+    can link to the wrong opening.
 - **When.** Only for a round whose prose passed the position check. A
   flagged round's prose is struck and folded into its revision, so it
   carries no links.
 - **Wire.** `ai_opening_links` event: `{round, items: [{surface, uci}]}`.
   `surface` is the exact prose span (original case and punctuation);
-  `uci` is the opening's move list from the start position.
-- **Client.** Wraps each surface in a link span, whole words only. Only
+  `uci` is the opening's move list from the start position. A null `uci`
+  marks a span to leave plain: a name not linked (another opening's, or
+  an ambiguous short form) that contains a linked surface. Sent only
+  when the round has at least one link.
+- **Client.** Wraps each surface in a link span, whole words only, exact
+  case (the surface is the prose's own span), longest surface first; a
+  null-`uci` surface is matched whole and left as text. Only
   the paragraph's own text nodes are wrapped -- text already inside a
   link is left alone -- so other links survive and a replayed event adds
   nothing. Striking flattens the paragraph first: struck prose carries no

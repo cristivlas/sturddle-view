@@ -161,6 +161,7 @@ source; check the file when a precise value matters.
 | `SV_AI_TOP_MOVES_MAX_N` | `5` | Hard cap on `top_moves` candidate count; over-large `n` clamped. | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_REPORT_LINE_MAX_PLIES` | `40` | Hard cap on `report_line` continuation length; bounds payload size (no engine search). | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_RELATED_OPENINGS_MAX_N` | `8` | Cap on sibling variations returned per `related_openings` call; a broad family would otherwise flood context. | `server/sturddle_view/play/tools_openings.py` |
+| `SV_AI_OPENING_SHORT_FORM_MIN_WORDS` | `2` | Fewest words in a shortened opening name ("Bellon Gambit") for the AI prose to link it; a one-word tail ("Closed") is ordinary prose. | `server/sturddle_view/openings.py` |
 | `SV_AI_OPENING_PHASE_SLACK_PLIES` | `12` | Plies of slack past the book line before the commentary opening-theory directive (mandating a `related_openings` call) switches off. | `server/sturddle_view/api/_ai_kick.py` |
 | `SV_AI_OPENING_THEORY_MIN_SHARE` | `0.04` | An ECO move counts as theory only when its named lines reach this share of the top continuation's (tricks sit below `0.01`). | `server/sturddle_view/play/opening_reply.py` |
 | `SV_AI_OPENING_ALTERNATIVES_MAX` | `3` | Sibling theory moves carried alongside a book reply for the prose to name. | `server/sturddle_view/play/opening_reply.py` |
