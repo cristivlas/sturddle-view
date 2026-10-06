@@ -16,7 +16,7 @@ import chess
 from ..env_utils import env_int
 from ..llm import ToolSpec
 from ..llm.cancel import CancelToken
-from ..openings import OpeningBook
+from ..openings import Opening, OpeningBook
 
 
 log = logging.getLogger(__name__)
@@ -25,6 +25,8 @@ log = logging.getLogger(__name__)
 BookProvider = Callable[[], OpeningBook | None]
 BoardProvider = Callable[[], chess.Board | None]
 OpeningsTool = Callable[..., Awaitable[dict]]
+# Told which openings a call returned, so prose naming them can be linked.
+OpeningsShown = Callable[[list[Opening]], None]
 
 
 RELATED_OPENINGS_TOOL_NAME = "related_openings"
@@ -76,13 +78,14 @@ RELATED_OPENINGS_TOOL_SPEC = ToolSpec(
 def make_related_openings_tool(
     book_provider: BookProvider,
     board_provider: BoardProvider,
+    on_shown: OpeningsShown | None = None,
 ) -> OpeningsTool:
     """Build the `related_openings` async tool. Ranks openings by shared
     move-prefix with the current line (the move-tree neighbors that branch
     at or near the position under review), nearest first. An optional
     `family` restricts the pool to one named family. Returns a structured
     error when neither a live position nor a family is available, so the
-    model recovers or moves on.
+    model recovers or moves on. `on_shown` is told the returned openings.
     """
     async def related_openings(input_: dict, *, cancel_token: CancelToken) -> dict:
         book = book_provider()
@@ -101,6 +104,8 @@ def make_related_openings_tool(
             return {"error": "no_live_position"}
         line = [m.uci() for m in board.move_stack] if board is not None else []
         rows = book.nearest(line, family=family, limit=RELATED_OPENINGS_MAX_N)
+        if on_shown is not None:
+            on_shown(rows)
         out: dict = {"count": len(rows), "openings": [o.as_dict() for o in rows]}
         if family is not None:
             out["family"] = family

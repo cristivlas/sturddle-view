@@ -3,10 +3,11 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
+import chess
 import chess.pgn
 import pytest
 
-from sturddle_view.openings import OpeningBook
+from sturddle_view.openings import OpeningBook, find_opening_names
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -171,6 +172,40 @@ def test_lookup_stops_at_malformed_uci_returning_best_so_far():
     assert "Caro-Kann" in hit.name
 
 
+# --- line_openings ----------------------------------------------------------
+
+AFTER_CARO_KANN_FEN = "rnbqkbnr/pp1ppppp/2p5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
+
+
+def _names(hits):
+    return [hit and hit.name for hit in hits]
+
+
+def test_line_openings_reports_each_position():
+    book = OpeningBook.load()
+    hits = book.line_openings(chess.STARTING_FEN, ["e2e4", "c7c6", "h2h4"])
+    assert _names(hits) == ["King's Pawn Game", "Caro-Kann Defense", None]
+
+
+def test_line_openings_starts_from_fen():
+    book = OpeningBook.load()
+    hits = book.line_openings(AFTER_CARO_KANN_FEN, ["d2d4", "d7d5", "e4e5"])
+    assert _names(hits)[-1] == "Caro-Kann Defense: Advance Variation"
+
+
+@pytest.mark.parametrize("bad", ["not-a-move", "e2e4"])
+def test_line_openings_stops_at_malformed_or_illegal_move(bad):
+    """A line belonging to another position stops where it stops fitting."""
+    book = OpeningBook.load()
+    hits = book.line_openings(chess.STARTING_FEN, ["e2e4", bad, "c7c6"])
+    assert _names(hits) == ["King's Pawn Game"]
+
+
+def test_line_openings_bad_fen_raises():
+    with pytest.raises(ValueError):
+        OpeningBook.load().line_openings("not a fen", ["e2e4"])
+
+
 # --- family_of / by_family ------------------------------------------------
 
 
@@ -242,41 +277,201 @@ def test_by_family_unknown_returns_empty():
     assert book.by_family("Not A Real Opening Family") == []
 
 
-# --- find_names (opening names in prose) ----------------------------------
+# --- find_opening_names (a turn's openings named in prose) ----------------
+
+_SCHOFMAN = "Sicilian Defense: Grand Prix Attack, Schofman Variation"
+_BELLON_ENGLISH = "English Opening: King's English Variation, Bellon Gambit"
+_BELLON_DUTCH = "Dutch Defense: Bellon Gambit"
+_CLOSED_SICILIAN = "Sicilian Defense: Closed"
+_BENKO_MAIN_LINE = "Benko Gambit Declined: Main Line"
+_CARO_KANN_EXCHANGE = "Caro-Kann Defense: Exchange Variation"
+_CARO_KANN_ADVANCE = "Caro-Kann Defense: Advance Variation"
+_TAIMANOV_ENGLISH_ATTACK = (
+    "Sicilian Defense: Taimanov Variation, Bastrikov Variation, English Attack"
+)
+_POLISH_WITH_D5 = "Polish Opening, with d5"
+_CURLY_APOSTROPHE = chr(0x2019)
 
 
-def _found(text: str) -> list[tuple[str, str]]:
-    return [(surface, o.name) for surface, o in OpeningBook.load().find_names(text)]
+def _found(text: str, *names: str) -> list[tuple[str, str | None]]:
+    """(surface, opening name) for `text` scanned against the named openings;
+    the name is None for a span found but not to be linked."""
+    book = OpeningBook.load()
+    by_name = {o.name: o for o in book.all()}
+    hits = find_opening_names(text, [by_name[n] for n in names], book)
+    return [(surface, o.name if o else None) for surface, o in hits]
 
 
-def test_find_names_ignores_punctuation_and_takes_longest():
+def test_find_full_name_ignores_punctuation():
     text = "The Sicilian Defense Grand Prix Attack Schofman Variation features f5."
-    assert _found(text) == [(
-        "Sicilian Defense Grand Prix Attack Schofman Variation",
-        "Sicilian Defense: Grand Prix Attack, Schofman Variation",
-    )]
+    assert _found(text, _SCHOFMAN) == [
+        ("Sicilian Defense Grand Prix Attack Schofman Variation", _SCHOFMAN),
+    ]
 
 
-def test_find_names_ignores_case_and_apostrophe_style():
-    text = "unlike the king\u2019s indian defense"
-    assert _found(text) == [("king\u2019s indian defense", "King's Indian Defense")]
+def test_find_full_name_ignores_case_and_apostrophe_style():
+    surface = f"king{_CURLY_APOSTROPHE}s indian defense"
+    assert _found(f"unlike the {surface}", "King's Indian Defense") == [
+        (surface, "King's Indian Defense"),
+    ]
 
 
-def test_find_names_matches_sentence_punctuation_the_name_has():
-    assert _found("Black tried the St. George Defense.") == [
+def test_find_matches_sentence_punctuation_the_name_has():
+    assert _found("Black tried the St. George Defense.", "St. George Defense") == [
         ("St. George Defense", "St. George Defense"),
     ]
 
 
-def test_find_names_never_spans_a_sentence_break():
-    assert _found("He knew the Sicilian. Defense mattered more.") == []
+def test_find_never_spans_a_sentence_break():
+    text = "He knew the Sicilian. Defense mattered more."
+    assert _found(text, "Sicilian Defense") == []
 
 
-def test_find_names_reports_every_name_in_text_order():
+def test_find_another_openings_full_name_is_not_linked():
+    assert _found("The Italian Game is solid.", "Caro-Kann Defense") == [
+        ("Italian Game", None),
+    ]
+
+
+def test_find_reports_every_name_in_text_order():
     text = "The Italian Game, then the Caro-Kann Defense."
-    assert _found(text) == [
+    assert _found(text, "Caro-Kann Defense", "Italian Game") == [
         ("Italian Game", "Italian Game"),
         ("Caro-Kann Defense", "Caro-Kann Defense"),
+    ]
+
+
+def test_find_short_form_drops_leading_parts():
+    assert _found("Unlike the Bellon Gambit, this is calm.", _BELLON_ENGLISH) == [
+        ("Bellon Gambit", _BELLON_ENGLISH),
+    ]
+    text = "The Grand Prix Attack Schofman Variation branches early."
+    assert _found(text, _SCHOFMAN) == [
+        ("Grand Prix Attack Schofman Variation", _SCHOFMAN),
+    ]
+
+
+def test_find_takes_the_longest_form():
+    text = "The King's English Variation, Bellon Gambit is sharp."
+    assert _found(text, _BELLON_ENGLISH) == [
+        ("King's English Variation, Bellon Gambit", _BELLON_ENGLISH),
+    ]
+
+
+def test_find_short_form_fitting_two_openings_links_neither():
+    text = "Unlike the Bellon Gambit, this is calm."
+    assert _found(text, _BELLON_ENGLISH, _BELLON_DUTCH) == [("Bellon Gambit", None)]
+
+
+def test_find_short_form_needs_two_words():
+    assert _found("The Closed center favors White.", _CLOSED_SICILIAN) == []
+
+
+def test_find_short_form_must_open_with_a_capital():
+    # "with d5" is the tail of the name, and ordinary chess prose.
+    assert _found("Black answers with d5 at once.", _POLISH_WITH_D5) == []
+    assert _found("The Polish Opening with d5 is rare.", _POLISH_WITH_D5) == [
+        ("Polish Opening with d5", _POLISH_WITH_D5),
+    ]
+
+
+def test_find_short_form_inside_another_openings_name_is_not_linked():
+    text = "Unlike the French Defense Exchange Variation, this is calm."
+    assert _found(text, _CARO_KANN_EXCHANGE) == [
+        ("French Defense Exchange Variation", None),
+    ]
+    assert _found("The Exchange Variation is calm.", _CARO_KANN_EXCHANGE) == [
+        ("Exchange Variation", _CARO_KANN_EXCHANGE),
+    ]
+
+
+def test_find_short_form_after_another_names_words_is_not_linked():
+    # A reworded name of another opening: no full-name match to go by.
+    text = "Unlike the French Exchange Variation, this is calm."
+    assert _found(text, _CARO_KANN_EXCHANGE) == [
+        ("French Exchange Variation", None),
+    ]
+    # Another opening's full name, then the short form: one name, not ours.
+    text = "The Queen's Gambit Exchange Variation is calm."
+    assert _found(text, _CARO_KANN_EXCHANGE) == [
+        ("Queen's Gambit Exchange Variation", None),
+    ]
+
+
+def test_find_short_form_after_another_names_variation_word_is_not_linked():
+    # The lead is a variation of another family, not a family word.
+    text = "Unlike the Winawer Advance Variation, this is calm."
+    assert _found(text, _CARO_KANN_ADVANCE) == [
+        ("Winawer Advance Variation", None),
+    ]
+    text = "Unlike the Najdorf English Attack, this is calm."
+    assert _found(text, _TAIMANOV_ENGLISH_ATTACK) == [
+        ("Najdorf English Attack", None),
+    ]
+
+
+def test_find_short_form_after_a_possessive_foreign_name_is_not_linked():
+    text = "The Queen's Gambit's Exchange Variation is calm."
+    assert _found(text, _CARO_KANN_EXCHANGE) == [
+        ("Queen's Gambit's Exchange Variation", None),
+    ]
+
+
+def test_find_short_form_after_its_own_names_words_is_linked():
+    text = "The Caro-Kann Exchange Variation is calm."
+    assert _found(text, _CARO_KANN_EXCHANGE) == [
+        ("Exchange Variation", _CARO_KANN_EXCHANGE),
+    ]
+    text = "The Caro-Kann's Exchange Variation is calm."
+    assert _found(text, _CARO_KANN_EXCHANGE) == [
+        ("Exchange Variation", _CARO_KANN_EXCHANGE),
+    ]
+    text = "Unlike the Taimanov English Attack, this is calm."
+    assert _found(text, _TAIMANOV_ENGLISH_ATTACK) == [
+        ("English Attack", _TAIMANOV_ENGLISH_ATTACK),
+    ]
+
+
+def test_find_short_form_after_a_word_no_other_such_opening_has_is_linked():
+    # A lead blocks only as words of another opening going by the same short
+    # form: no Advance Variation opening has "The" or "Black" in its name.
+    assert _found("The Advance Variation is sharp.", _CARO_KANN_ADVANCE) == [
+        ("Advance Variation", _CARO_KANN_ADVANCE),
+    ]
+    text = "Black's Advance Variation is sharp."
+    assert _found(text, _CARO_KANN_ADVANCE) == [
+        ("Advance Variation", _CARO_KANN_ADVANCE),
+    ]
+
+
+def test_find_short_form_after_a_word_another_such_opening_has_is_not_linked():
+    # "King's Indian Defense: Exchange Variation" goes by it too.
+    text = "Unlike the King's Exchange Variation, this is calm."
+    assert _found(text, _CARO_KANN_EXCHANGE) == [
+        ("King's Exchange Variation", None),
+    ]
+
+
+def test_find_foreign_phrase_takes_in_a_name_found_before_it():
+    # "Queen's Gambit" alone would link, but here it leads into its own
+    # family's Exchange Variation: the whole phrase is one plain name.
+    text = "The Queen's Gambit Exchange Variation is calm."
+    assert _found(text, "Queen's Gambit", _CARO_KANN_EXCHANGE) == [
+        ("Queen's Gambit Exchange Variation", None),
+    ]
+
+
+def test_find_short_form_equal_to_another_openings_full_name_is_not_linked():
+    text = "Black tried the St. George Defense."
+    assert _found(text, "Zukertort Opening: St. George Defense") == [
+        ("St. George Defense", None),
+    ]
+
+
+def test_find_short_form_is_case_sensitive():
+    assert _found("Follow the main line here.", _BENKO_MAIN_LINE) == []
+    assert _found("Follow the Main Line here.", _BENKO_MAIN_LINE) == [
+        ("Main Line", _BENKO_MAIN_LINE),
     ]
 
 

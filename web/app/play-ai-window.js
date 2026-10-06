@@ -987,18 +987,19 @@ const NOT_AFTER_WORD = "(?<![\\p{L}\\p{N}])";
 const NOT_BEFORE_WORD = "(?![\\p{L}\\p{N}])";
 
 // Alternation of `items`, longest first so a line isn't half-matched.
-// Case-insensitive: items may differ in case from the prose (the server
-// lowercases flagged claims; "Knight on b1" opens a sentence).
-function itemsRegExp(items, { wholeWords = false } = {}) {
+// Case-insensitive unless `exactCase`: flagged claims may differ in case from
+// the prose (the server lowercases them; "Knight on b1" opens a sentence).
+function itemsRegExp(items, { wholeWords = false, exactCase = false } = {}) {
   const alt = [...items].sort((a, b) => b.length - a.length).map(escapeRegExp).join("|");
+  const flags = exactCase ? "g" : "gi";
   return wholeWords
-    ? new RegExp(`${NOT_AFTER_WORD}(?:${alt})${NOT_BEFORE_WORD}`, "giu")
-    : new RegExp(alt, "gi");
+    ? new RegExp(`${NOT_AFTER_WORD}(?:${alt})${NOT_BEFORE_WORD}`, `${flags}u`)
+    : new RegExp(alt, flags);
 }
 
-// Wrap each match of `re` in the paragraph's own text nodes with makeEl(m).
-// Text already inside a wrap (an earlier link) is left alone, so other links
-// survive and a re-run adds nothing.
+// Replace each match of `re` in the paragraph's own text nodes with makeEl(m)
+// (a node, or a string to leave it plain). Text already inside a wrap (an
+// earlier link) is left alone, so other links survive and a re-run adds nothing.
 function wrapTextMatches(para, re, makeEl) {
   // Streamed deltas land as separate text nodes; merge them so a match can
   // span a delta boundary.
@@ -1036,7 +1037,7 @@ function strikeProseItems(para, items) {
   return struck;
 }
 
-// Line link -> {placement, uci}: the line it plays and where it starts.
+// Line link -> {fen, uci}: the line it plays and where it starts.
 const linkLines = new WeakMap();
 
 function applyLineLinkGate(link) {
@@ -1046,11 +1047,11 @@ function applyLineLinkGate(link) {
   else link.removeAttribute("title");
 }
 
-function buildLineLink(text, placement, uci) {
+function buildLineLink(text, fen, uci) {
   const link = document.createElement("span");
   link.className = LINE_LINK_CLASS;
   link.textContent = text;
-  linkLines.set(link, { placement, uci });
+  linkLines.set(link, { fen, uci });
   applyLineLinkGate(link);
   return link;
 }
@@ -1067,8 +1068,9 @@ function playLineLink(link) {
   const board = getPvLineBoard();
   const line = linkLines.get(link);
   if (!board || !line?.uci) return;
-  const started = board.playLine(pvFrames(line.placement, line.uci), {
+  const started = board.playLine(pvFrames(line.fen, line.uci), {
     pvUci: line.uci,
+    startFen: line.fen,
     onEnd: () => link.classList.remove(LINE_LINK_PLAYING_CLASS),
   });
   // After playLine: a retarget onto this same link fires the old show's
@@ -1090,15 +1092,20 @@ function wireLineLinks(scroll) {
 }
 
 // ai_opening_links: link each opening name in a clean round's prose to its
-// book line.
+// book line. Exact case: a surface is the prose's own span, and a short name
+// ("Main Line") must not link its lowercase everyday twin.
 export function linkAiOpenings({ round, items }) {
   if (!inst.body || !items.length) return;
   const entry = inst.body._roundPanels.get(round);
   if (!entry) return;
-  const uciBySurface = new Map(items.map((it) => [it.surface.toLowerCase(), it.uci]));
-  const re = itemsRegExp(items.map((it) => it.surface), { wholeWords: true });
-  wrapTextMatches(entry.para, re, (m) =>
-    buildLineLink(m[0], FEN.start, uciBySurface.get(m[0].toLowerCase())));
+  const uciBySurface = new Map(items.map((it) => [it.surface, it.uci]));
+  const re = itemsRegExp([...uciBySurface.keys()], { wholeWords: true, exactCase: true });
+  wrapTextMatches(entry.para, re, (m) => {
+    const uci = uciBySurface.get(m[0]);
+    // No line: a longer name the server marked plain, matched whole so the
+    // linked surface inside it stays plain too.
+    return uci ? buildLineLink(m[0], FEN.start, uci) : m[0];
+  });
 }
 
 const FEN_SIDE_FIELD = 1;

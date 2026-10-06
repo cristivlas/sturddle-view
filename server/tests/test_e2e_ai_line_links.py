@@ -1,10 +1,12 @@
 """E2E: AI prose line links (opening names, the recommended move).
 
-ai_opening_links wraps opening names; ai_recommendation then wraps the
-recommended move's mentions without disturbing them. Move matching: the SAN
+ai_opening_links wraps opening names (exact case; a null-uci item is left
+plain, whole); ai_recommendation then wraps the recommended move's mentions
+without disturbing them. Move matching: the SAN
 as a whole token (O-O never inside O-O-O), check suffix optional, a move
 number only if it is the current one, and a pawn push only after that number.
-Double-click plays the line.
+Double-click plays the line, and the board's opening label follows it, then
+comes back.
 
 Driven by seeding the coordinator's replay buffer while the server holds
 ANALYZING (engine-only analysis on a fake engine) -- no real LLM.
@@ -28,6 +30,11 @@ PLAY_PERSP = "#play-perspective"
 LINK_SEL = ".play-ai-prose .play-ai-line-link"
 PLAYABLE_SEL = ".play-ai-prose .play-ai-line-link-playable"
 PLAYING_SEL = ".play-ai-prose .play-ai-line-link-playing"
+OPENING_LINE_SEL = ".opening-line"
+ADVANCE_PGN = "1. e4 c6 2. d4 d5 3. e5"
+ADVANCE_PLIES = 5
+ADVANCE_NAME = "Caro-Kann Defense: Advance Variation"
+CARO_KANN_NAME = "Caro-Kann Defense"
 
 
 @pytest.fixture
@@ -81,6 +88,16 @@ async def _link_texts(make_page, base, count: int) -> tuple:
     return page, await page.locator(LINK_SEL).all_text_contents()
 
 
+async def _wait_opening_name(page, name: str) -> None:
+    """Until the board's opening line shows `name` (not hidden as empty)."""
+    await page.wait_for_function(
+        "([line, name]) => { const el = document.querySelector(line);"
+        " return !!el && !el.classList.contains('is-empty')"
+        " && el.querySelector('.opening-name').textContent === name; }",
+        arg=[OPENING_LINE_SEL, name],
+    )
+
+
 @pytest.mark.asyncio
 async def test_opening_and_pawn_push_links_and_play(server, make_page):
     base = server
@@ -103,6 +120,56 @@ async def test_opening_and_pawn_push_links_and_play(server, make_page):
 
     await page.locator(PLAYABLE_SEL).nth(1).dblclick()
     await page.wait_for_selector(PLAYING_SEL)
+
+
+@pytest.mark.asyncio
+async def test_opening_surface_matching(server, make_page):
+    base = server
+    gid = _start_analysis(base)
+    # Exact case only, and a span the server marked plain (null uci) stays
+    # whole even though a linked surface sits inside it.
+    _seed(
+        base, gid,
+        deltas=[
+            "The Exchange Variation is calm; an exchange variation in lowercase "
+            "and the French Defense Exchange Variation stay plain.",
+        ],
+        rec={"uci": "d2d4", "san": "d4"},
+        opening_items=[
+            {"surface": "French Defense Exchange Variation", "uci": None},
+            {"surface": "Exchange Variation", "uci": ["e2e4", "c7c6"]},
+        ],
+    )
+    expected = ["Exchange Variation"]
+    _page, texts = await _link_texts(make_page, base, len(expected))
+    assert texts == expected
+
+
+@pytest.mark.asyncio
+async def test_opening_label_follows_played_line(server, make_page):
+    base = server
+    # The game sits in the Advance Variation; the link replays the plain
+    # Caro-Kann from the start, so the label must change and come back.
+    r = httpx.post(f"{base}/game/import", json={
+        "format": "pgn", "text": ADVANCE_PGN, "land_at_ply": ADVANCE_PLIES,
+    })
+    r.raise_for_status()
+    gid = r.json()["game_id"]
+    httpx.post(f"{base}/game/analysis/start").raise_for_status()
+    _seed(
+        base, gid,
+        deltas=["The Caro-Kann Defense is solid."],
+        rec={"uci": "c8f5", "san": "Bf5"},
+        opening_items=[{"surface": "Caro-Kann Defense", "uci": ["e2e4", "c7c6"]}],
+    )
+    page, _texts = await _link_texts(make_page, base, 1)
+    await _wait_opening_name(page, ADVANCE_NAME)
+
+    await page.locator(PLAYABLE_SEL).first.dblclick()
+    await page.wait_for_selector(PLAYING_SEL)
+    await _wait_opening_name(page, CARO_KANN_NAME)
+    await page.wait_for_selector(PLAYING_SEL, state="detached")
+    await _wait_opening_name(page, ADVANCE_NAME)
 
 
 @pytest.mark.parametrize(("san", "uci", "prose", "expected"), [

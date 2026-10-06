@@ -1,6 +1,7 @@
 """Opening list endpoint and opening-aware /game/import behavior."""
 from __future__ import annotations
 
+import chess
 import pytest
 from fastapi.testclient import TestClient
 
@@ -60,6 +61,34 @@ def test_openings_list_requires_auth(tmp_path):
     app = _make_app(tmp_path)
     with TestClient(app) as c:  # no Authorization header
         assert c.get("/openings").status_code == 401
+
+
+# --- POST /openings/line --------------------------------------------------
+
+def test_line_openings_one_result_per_move(client):
+    r = client.post("/openings/line", json={"fen": chess.STARTING_FEN, "moves": ["e2e4", "c7c6", "h2h4"]})
+    assert r.status_code == 200, r.text
+    results = r.json()["results"]
+    assert [row and row["name"] for row in results] == [
+        "King's Pawn Game", "Caro-Kann Defense", None,
+    ]
+    assert set(results[0]) == {"eco", "name", "pgn", "ply"}
+
+
+@pytest.mark.parametrize("payload", [
+    {"fen": "not a fen", "moves": ["e2e4"]},
+    {"moves": ["e2e4"]},
+    {"fen": chess.STARTING_FEN, "moves": "e2e4"},
+    {"fen": chess.STARTING_FEN, "moves": [1]},
+])
+def test_line_openings_bad_payload_is_400(client, payload):
+    assert client.post("/openings/line", json=payload).status_code == 400
+
+
+def test_line_openings_requires_auth(tmp_path):
+    with TestClient(_make_app(tmp_path)) as c:  # no Authorization header
+        r = c.post("/openings/line", json={"fen": chess.STARTING_FEN, "moves": []})
+        assert r.status_code == 401
 
 
 # --- /game/import with opening identity -----------------------------------

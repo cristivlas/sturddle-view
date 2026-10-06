@@ -2351,6 +2351,8 @@ export const playPerspective = {
       interactive: true,
       sideContainer: sideHost,
       boardStyle: initialBoardStyle,
+      fetchLineOpenings: (fen, moves) =>
+        ctx.api("POST", "/openings/line", { fen, moves }).then((r) => r.results),
       onMove: async (uci) => {
         // Drop during analysis: exit analysis and play the move. A running
         // session asks first; a finished AI turn exits silently, matching
@@ -2462,9 +2464,9 @@ export const playPerspective = {
       cancelLine: view.cancelLine,
     });
 
-    // Rail dock: capacity-one dock destination in the band under the moves
+    // Rail dock: two-slot dock destination in the band under the moves
     // list (positioned by positionSideRail). Default home of the Engine Eval
-    // window; any dock window can be dragged into it while it's free.
+    // window; any dock window can be dragged into it while a slot is free.
     // Bar click -> enter view mode at that ply (same as clicking the move in
     // the list); handlers go through setEvalBarCallbacks because the window
     // body outlives this mount's closures.

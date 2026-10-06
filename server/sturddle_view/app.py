@@ -495,6 +495,13 @@ def _setup_ai(app: FastAPI) -> None:
         coord = ai_coordinator(app.state)
         return coord.turn_book_move() if coord is not None else None
 
+    # Late-bound like the book move: the tools are built before the
+    # coordinator that tracks the turn's openings for prose links.
+    def _ai_note_openings(openings):
+        coord = ai_coordinator(app.state)
+        if coord is not None:
+            coord.note_openings(openings)
+
     # Side-to-move Situation for the recommend_move gate: the pick under
     # check is the mover's, whichever persona asked for it.
     def _ai_situation_provider():
@@ -612,6 +619,7 @@ def _setup_ai(app: FastAPI) -> None:
         make_related_openings_tool(
             book_provider=_ai_book_provider,
             board_provider=_ai_board_provider,
+            on_shown=_ai_note_openings,
         ),
     )
     app.state.ai_tool_registry = ai_registry

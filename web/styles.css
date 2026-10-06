@@ -2010,7 +2010,7 @@ body .side-popover.popover-floating {
   height: auto;
   max-height: none;
 }
-/* Rail dock under the moves box: a capacity-one dock destination. Fixed
+/* Rail dock under the moves box: a two-slot dock destination. Fixed
    (geometry from positionSideRail) so it fills the gap between board bottom
    and clock bottom without touching the moves-list flow. Default home of the
    Engine Eval window; play-dock-windows.js manages visibility and drop-hint

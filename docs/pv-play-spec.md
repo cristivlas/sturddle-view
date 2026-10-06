@@ -141,6 +141,19 @@ Three CSS additions, all under `.wb-pvtable-tbl`: showable-row
 hover, playing-row highlight, current-move token highlight. No
 existing rule changes.
 
+## Opening label
+
+The board's opening line follows the show. Each ply shows the last
+book opening reached so far on the line, as the game's own lookup
+does. Before any hit it shows the game's opening when the line starts
+at the game's position, else nothing (an AI opening link replays from
+the start position). The book hits come from one `POST
+/openings/line` per show; until they arrive, and if the call fails,
+the label stays at that start. Any end of the show (return, cancel,
+outside position, retarget) puts the game's opening back. A
+`board_update` during a show updates the game's opening without
+touching the label; the show's end then shows it.
+
 ## Cancel
 
 - Esc, or a pointerdown outside the Search Lines window, captured
@@ -253,7 +266,10 @@ was queued behind a foreign entry, it plays now.
 
 ## Data
 
-No server change. `engine_info` already carries `pv_uci`.
+`engine_info` already carries `pv_uci`. The opening label's book hits
+come from `POST /openings/line {fen, moves}` -> `{results: [opening |
+null, ...]}`, one per position the moves reach from `fen`, up to the
+first malformed or illegal move (a bad `fen` is a 400).
 
 A row's position is sampled at `engine_info` arrival from the board:
 its last externally set placement, never a show frame. Placement is
@@ -337,7 +353,10 @@ truncated line is shown as far as it makes sense, never as ghosts.
   `setAnalysisIdle(idle)`, the AI-turn-finished latch pushed in by
   play.js. `playLine`/`canPlayLine` are handed out as bare function
   references, so they close over the view's own state rather than
-  reading `this`.
+  reading `this`. `playLine` also drives the opening label (Opening
+  label above): `opts.startFen` is the line's start (default: the
+  game's position), and the book hits come through the
+  `fetchLineOpenings(fen, moves)` option play.js mounts the view with.
 - `play-dock-windows.js`: `setPvLineBoard({ currentPlacement,
   canPlayLine, playLine, cancelLine })`; supplies `isExempt(target)` =
   target is inside `inst.wb`'s root, `inst.slot`, or `inst.inlineSlot`,

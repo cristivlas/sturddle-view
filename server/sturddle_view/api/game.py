@@ -330,7 +330,7 @@ async def import_validate(payload: dict) -> dict:
 
 @router.post("/import")
 async def import_game(payload: dict, request: Request) -> dict:
-    """Import a FEN or PGN into VIEW MODE at the last ply.
+    """Import a FEN or PGN into VIEW MODE at the start (or `land_at_ply`).
 
     The user inspects via /game/view/* navigation; exit view by calling
     /game/view/play-from-here, which seeds a fresh play game from the

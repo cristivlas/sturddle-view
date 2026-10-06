@@ -31,6 +31,7 @@ from ..llm import (
     render_playbook,
 )
 from ..llm.ollama import DEFAULT_BASE_URL as _DEFAULT_OLLAMA_BASE_URL, OllamaProvider
+from ..openings import Opening
 from ..play.human_vs_engine import live_hve
 from ..play.mode import Mode
 from ..play.opening_reply import book_ref_from_settings, probe_opening_reply
@@ -170,11 +171,13 @@ def _playbook_for(hve, board: chess.Board, mode: PromptMode) -> str:
 class TurnInputs:
     """What one AI turn is kicked with: the opening user message, the
     book move (UCI) the loop accepts without a red-team hold, if any,
-    and its sibling theory moves for the board's secondary arrows."""
+    its sibling theory moves for the board's secondary arrows, and the
+    opening the game is in (prose naming it is linked to its line)."""
 
     user_message: str
     book_move_uci: str | None
     book_alternatives: tuple[str, ...]
+    opening: Opening | None
 
 
 async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
@@ -246,8 +249,10 @@ async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
         player_side=color_name(hve.human_color()) if mode == COACH_MODE else None,
     )
     if reply is None:
-        return TurnInputs(message, None, ())
-    return TurnInputs(message, reply.uci, tuple(a.uci for a in reply.alternatives))
+        return TurnInputs(message, None, (), opening)
+    return TurnInputs(
+        message, reply.uci, tuple(a.uci for a in reply.alternatives), opening,
+    )
 
 
 async def _evict_stale_ollama_models(base_url: str, target_model: str) -> None:
@@ -345,6 +350,7 @@ async def start_ai_turn(request: Request) -> None:
             user_message=inputs.user_message if inputs else None,
             book_move_uci=inputs.book_move_uci if inputs else None,
             book_alternatives=inputs.book_alternatives if inputs else (),
+            opening=inputs.opening if inputs else None,
             mode=mode,
             max_tool_rounds=s.ai_max_tool_rounds,
             verifier_max_rounds=s.ai_verifier_max_rounds,
