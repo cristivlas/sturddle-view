@@ -271,11 +271,14 @@ and annotate paths; no parallel copies of either.
 
 ### Trigger
 
-View-ribbon pencil (`#view-edit`) while viewing (`state.viewing`) with
-the AI turn done (`aiAnalysisDone(state)`) and visible AI prose (see
-Prefill source). View mode only: the play-ribbon pencil (`#edit-pos`)
-keeps its discard-game flow, since play-mode comment editing is out of
-scope (see below).
+Either pencil -- view ribbon (`#view-edit`) or play ribbon (`#edit-pos`)
+-- with the AI turn done (`aiAnalysisDone(state)`) and visible AI prose
+(see Prefill source). From play mode the existing play -> view flip
+(`/game/view/start`) runs first, minus its discard-game confirm:
+annotating is the intent. With no confirm asked, the flip suspends the
+live game (`suspend: true`), so a cancelled edit can still resume it by
+scrubbing back to its last ply. No prose -> both pencils keep their
+confirms.
 
 ### Flow
 
@@ -381,4 +384,5 @@ a revision, so the dead guards go: the divider's `revision?.` and
 - Editing the root comment via a separate affordance (cursor=0 already
   covers it through the same flow).
 - Comment editing during live play (would require live-game PGN
-  autosave hooks; view-mode-only for v1).
+  autosave hooks; view-mode-only for v1). The play-pencil AI-prose
+  shortcut flips to view mode first, so it does not edit the live game.

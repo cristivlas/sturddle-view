@@ -1,5 +1,6 @@
-"""E2E: view-ribbon pencil after a finished AI turn opens the annotation
-modal prefilled with the AI prose (pencil + comment button in one go).
+"""E2E: the pencil after a finished AI turn opens the annotation modal
+prefilled with the AI prose (pencil + comment button in one go). From play
+mode it flips to view first, skipping the discard-game confirm.
 
 - No comment at the ply: the modal holds the latest visible prose -- rounds
   folded into a revision or hidden as a tool leak are skipped -- and the
@@ -9,8 +10,8 @@ modal prefilled with the AI prose (pencil + comment button in one go).
 - OK then the edit confirm saves the prose as the ply's comment.
 - Cancel leaves edit mode open with nothing staged; the prose is single
   use, so the comment button then preloads the plain comment.
-- No visible prose: the normal confirm flow. Play mode keeps the play
-  pencil's discard-game confirm.
+- No visible prose: the normal confirm flows (stop analysis in view,
+  discard game in play).
 
 Driven by seeding the coordinator's replay buffer while the server holds
 ANALYZING (engine-only analysis on a fake engine) with ai_enabled on for
@@ -43,17 +44,22 @@ VIEW_EDIT_BTN = "#view-edit"
 PLAY_EDIT_BTN = "#edit-pos"
 EDIT_ANNOTATE_BTN = "#edit-annotate"
 EDIT_CONFIRM_BTN = "#edit-confirm"
+EDIT_CANCEL_BTN = "#edit-cancel"
+VIEW_BACK_BTN = "#view-back"
+VIEW_FORWARD_BTN = "#view-forward"
 EDIT_RIBBON = "#edit-controls"
 VIEW_RIBBON = "#view-controls"
+PLAY_RIBBON = "#board-controls"
+VIEW_OPEN_BTN = "#view-import"
+RECENTS_SELECT = "wa-dialog[open] wa-select"
+RECENT_DELETE_BTN = 'wa-option[data-hash="{}"] .recent-del'
+DELETE_LABEL = "Delete"
+SAVED_NOTE = "Annotated copy."
 OPEN_DIALOG = "wa-dialog[open]"
 ANNOTATION_TEXTAREA = f"{OPEN_DIALOG} wa-textarea"
-# Any annotation dialog, open or still opening (open lands a frame later).
-ANY_ANNOTATION_TEXTAREA = "wa-dialog wa-textarea"
 DIALOG_BUTTON = f"{OPEN_DIALOG} wa-button"
 OK_LABEL = "OK"
-EDIT_POSITION_LABEL = "Edit position"
 CONFIRM_MESSAGE = f"{OPEN_DIALOG} .confirm-message"
-ANY_CONFIRM_MESSAGE = "wa-dialog .confirm-message"
 STOP_ANALYSIS_CONFIRM = "Stop analysis and edit the position?"
 DISCARD_GAME_CONFIRM = "Cancel the game in progress and edit the position?"
 ANALYSIS_DONE = "Analysis Done"
@@ -77,10 +83,10 @@ RIBBON_SHOWN_JS = """(sel) => {
   const el = document.querySelector(sel);
   return !!el && getComputedStyle(el).display !== 'none';
 }"""
-RIBBON_SHOWN_OR_CONFIRM_JS = """([ribbon, confirm]) => {
+LIVE_BOARD_JS = """([ribbon, fen]) => {
   const el = document.querySelector(ribbon);
-  return (!!el && getComputedStyle(el).display !== 'none')
-    || !!document.querySelector(confirm);
+  return !!el && getComputedStyle(el).display !== 'none'
+    && document.querySelector('.fen-text')?.textContent === fen;
 }"""
 
 
@@ -180,11 +186,6 @@ async def _confirm_message(page) -> str:
     return await page.locator(CONFIRM_MESSAGE).text_content()
 
 
-async def _accept_edit_confirm(page) -> None:
-    await page.locator(DIALOG_BUTTON, has_text=EDIT_POSITION_LABEL).click()
-    await page.wait_for_selector(ANY_CONFIRM_MESSAGE, state="detached")
-
-
 @pytest.mark.asyncio
 async def test_pencil_prefills_latest_visible_prose(server, make_page):
     page, errors = await _view_with_finished_ai(
@@ -263,18 +264,69 @@ async def test_no_visible_prose_keeps_confirm_flow(server, make_page):
 
 
 @pytest.mark.asyncio
-async def test_play_pencil_keeps_discard_game_confirm(server, make_page):
+async def test_play_pencil_carries_prose_without_confirm(server, make_page):
     page, errors = await _play_with_finished_ai(make_page, server, rounds=[(VERDICT, None)])
     await page.click(PLAY_EDIT_BTN)
-    assert await _confirm_message(page) == DISCARD_GAME_CONFIRM
-    await _accept_edit_confirm(page)
-    # The client may still read analysis as on after the play -> view flip,
-    # adding the stop-analysis confirm. Either way no prose carries over.
-    await page.wait_for_function(
-        RIBBON_SHOWN_OR_CONFIRM_JS, arg=[EDIT_RIBBON, ANY_CONFIRM_MESSAGE],
+    assert await _annotation_text(page) == VERDICT
+    assert await page.locator(CONFIRM_MESSAGE).count() == 0
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_play_pencil_cancel_leaves_game_resumable(server, make_page):
+    page, errors = await _play_with_finished_ai(make_page, server, rounds=[(VERDICT, None)])
+    await page.click(PLAY_EDIT_BTN)
+    await _annotation_text(page)
+    await _close_dialog(page)
+    await page.click(EDIT_CANCEL_BTN)
+    await page.wait_for_function(RIBBON_SHOWN_JS, arg=VIEW_RIBBON)
+    # No confirm was asked, so the game was suspended, not discarded:
+    # scrubbing back to its last ply resumes it.
+    await page.click(VIEW_BACK_BTN)
+    await page.click(VIEW_FORWARD_BTN)
+    await page.wait_for_function(RIBBON_SHOWN_JS, arg=PLAY_RIBBON)
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_force_deleting_annotated_suspended_copy_resumes_live_game(server, make_page):
+    """The suspended view's annotated copy, deleted from the Open dialog while
+    analysis runs, hands back the live game. The server publishes the resume
+    before it responds, so this exercises update-first arrival only."""
+    base = server
+    _import_at_last_ply(base, None)
+    httpx.post(f"{base}/game/view/play-from-here", json={}).raise_for_status()
+    live_fen = httpx.get(f"{base}/_test/hve/state").json()["board_fen"]
+    httpx.post(f"{base}/game/view/start",
+               json={"suspend": True, "land_at_ply": PGN_PLIES}).raise_for_status()
+    fen = httpx.post(f"{base}/game/edit/start", json={}).json()["fen"]
+    r = httpx.post(f"{base}/game/edit/commit", json={
+        "fen": fen, "apply_comment": True, "comment_text": SAVED_NOTE,
+    })
+    r.raise_for_status()
+    h = r.json()["hash"]
+    httpx.post(f"{base}/game/analysis/start").raise_for_status()
+
+    _ctx, page = await make_page(viewport={"width": 1600, "height": 1000})
+    errors = watch_page_errors(page)
+    await page.goto(base + "/")
+    await wait_perspective_ready(page)
+    await page.wait_for_function(RIBBON_SHOWN_JS, arg=VIEW_RIBBON)
+    await page.click(VIEW_OPEN_BTN)
+    await page.click(RECENTS_SELECT)
+    await page.click(RECENT_DELETE_BTN.format(h))
+    # The row is the one in view: confirm the forced delete.
+    await page.locator(DIALOG_BUTTON, has_text=DELETE_LABEL).click()
+    # The live position, not the idle startpos (which also shows this ribbon).
+    await page.wait_for_function(LIVE_BOARD_JS, arg=[PLAY_RIBBON, live_fen])
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_play_pencil_without_prose_keeps_discard_confirm(server, make_page):
+    page, errors = await _play_with_finished_ai(
+        make_page, server, rounds=[(LEAKED_PROSE, "hide")],
     )
-    if await page.locator(ANY_CONFIRM_MESSAGE).count():
-        await _accept_edit_confirm(page)
-        await page.wait_for_function(RIBBON_SHOWN_JS, arg=EDIT_RIBBON)
-    assert await page.locator(ANY_ANNOTATION_TEXTAREA).count() == 0
+    await page.click(PLAY_EDIT_BTN)
+    assert await _confirm_message(page) == DISCARD_GAME_CONFIRM
     assert_no_page_errors(errors)

@@ -1914,6 +1914,18 @@ function enterIdleAfterViewDelete(state) {
   }));
 }
 
+// Force-deleting a suspend-origin view's copy resumed the live game. Its
+// board_update races the DELETE response and the view's game-id filter may
+// have dropped it: adopt the live id, then resync for a fresh board_update.
+async function adoptResumedAfterViewDelete(state, gameId) {
+  state.view.setGameId(gameId);
+  try {
+    await state.ctx.api("POST", "/game/sync", {});
+  } catch (e) {
+    reportError(state.ctx, MSG.RESUME_FAILED, e);
+  }
+}
+
 // A finished game flips into view mode on its recents copy (the live game is
 // finalized before game_result fires; the server flushes recents first),
 // landing on the final position. Zero-move games never reach recents -- skip.
@@ -1926,13 +1938,14 @@ async function _enterViewOnGameOver(state, gameId) {
 
 async function _enterEditFromCurrentMode(state) {
   // Finished AI prose goes on to the annotation modal (see
-  // _onServerEditingStart). Read it before anything closes the panel.
-  const aiProse = state.viewing && aiAnalysisDone(state) ? latestVisibleAiProse() : null;
+  // _annotateCarriedAiProse). Read it before anything closes the panel.
+  const aiProse = aiAnalysisDone(state) ? latestVisibleAiProse() : null;
   // Server requires view mode before edit. From play mode, flip into
   // view via /game/view/start (no recents write); /game/import would
   // pollute the recents history with the current play position.
   if (!state.viewing) {
-    if (!await _confirmDiscardActiveGame({
+    // No discard confirm when carrying AI prose: annotating is the intent.
+    if (aiProse === null && !await _confirmDiscardActiveGame({
       message: MSG.CONFIRM_EDIT_FROM_PLAY,
       okLabel: MSG.EDIT_POSITION,
     })) return;
@@ -1942,7 +1955,11 @@ async function _enterEditFromCurrentMode(state) {
     state.suppressCommentsForEditTransition = true;
     try {
       closeAi();
-      const r = await state.ctx.api("POST", "/game/view/start", {});
+      // No confirm was asked, so keep the game resumable (scrub back, then to
+      // the last ply) should the edit be cancelled. Land there directly: a
+      // pass through ply 0 would trip that auto-resume.
+      const flip = aiProse === null ? {} : { suspend: true, land_at_ply: state.movesPlayed };
+      const r = await state.ctx.api("POST", "/game/view/start", flip);
       state.view.setGameId(r.game_id);
       await state.ctx.api("POST", "/game/sync", {});
     } catch (e) {
@@ -2548,6 +2565,10 @@ export const playPerspective = {
     // for the currently-viewed game so the fork glyph + banner reflect
     // the new state (B3: glyph stale after a child was deleted).
     const onRecentsChanged = (ev) => {
+      if (ev.detail?.resumedGameId) {
+        adoptResumedAfterViewDelete(state, ev.detail.resumedGameId);
+        return;
+      }
       // The currently-viewed game was force-deleted -> idle board.
       if (ev.detail?.deletedGameId && state.viewing && !state.editing
           && ev.detail.deletedGameId === state.viewingGameId) {

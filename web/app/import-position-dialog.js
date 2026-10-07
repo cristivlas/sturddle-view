@@ -618,13 +618,18 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
     render();
     const qs = force ? "?force=1" : "";
     api("DELETE", `${RECENT_IMPORTS_PATH}/${removed.hash}${qs}`)
-      .then(async () => {
+      .then(async (resp) => {
         // Notify other perspectives that recents changed so they
         // can refresh derived state (e.g. play.js x-game info,
         // for the fork glyph + banner). Bus-style decoupling so
         // the dialog stays unaware of who is listening.
         window.dispatchEvent(new CustomEvent(APP_EVT.RECENTS_CHANGED, {
-          detail: { deletedHash: removed.hash, deletedGameId: removed.game_id ?? null },
+          detail: {
+            deletedHash: removed.hash,
+            deletedGameId: removed.game_id ?? null,
+            // Set when deleting the viewed copy resumed a suspended live game.
+            resumedGameId: resp?.resumed_game_id ?? null,
+          },
         }));
         if (recentSel.querySelectorAll("wa-option").length >= RECENTS_DISPLAY_CAP) return;
         try {

@@ -21,6 +21,8 @@ PARENT_PGN = (
     '[Event "?"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n'
     "1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0\n"
 )
+# Ply the tests fork from (after 2...Nc6, White to move).
+FORK_PLY = 4
 
 LEGAL_MOVE_BODY = (
     "    elif line.startswith('position'):\n"
@@ -75,7 +77,7 @@ def test_fork_no_overwrite_and_links(client):
     parent_id = r.json()["game_id"]
 
     # 2. Navigate to ply 4, fork.
-    assert c.post("/game/view/goto", json={"ply": 4}).status_code == 200
+    assert c.post("/game/view/goto", json={"ply": FORK_PLY}).status_code == 200
     r = c.post("/game/view/play-from-here", json={})
     assert r.status_code == 200, r.text
     child_id = r.json()["game_id"]
@@ -90,13 +92,13 @@ def test_fork_no_overwrite_and_links(client):
     child = _by_id(c, child_id)
     assert "Qxf7#" in parent["text"], "PARENT TEXT OVERWRITTEN"
     assert child["parent_game_id"] == parent_id, "CHILD LOST PARENT LINK"
-    assert child["fork_ply"] == 4
+    assert child["fork_ply"] == FORK_PLY
     assert parent["children"], "PARENT HAS NO CHILDREN REF"
 
     # 4. Auto-view (what play.js does on game_result).
     r = c.post(
         "/game/import",
-        json={"format": child["format"], "text": child["text"], "land_at_ply": 4},
+        json={"format": child["format"], "text": child["text"], "land_at_ply": FORK_PLY},
     )
     assert r.status_code == 200, r.text
     assert r.json()["game_id"] == child_id, "AUTO-VIEW CHANGED THE GAME ID"
@@ -130,7 +132,7 @@ def test_repeat_fork_same_ply(client):
     r = c.post("/game/import", json={"format": "pgn", "text": PARENT_PGN})
     parent_id = r.json()["game_id"]
 
-    assert c.post("/game/view/goto", json={"ply": 4}).status_code == 200
+    assert c.post("/game/view/goto", json={"ply": FORK_PLY}).status_code == 200
     child1 = c.post("/game/view/play-from-here", json={}).json()["game_id"]
     assert c.post("/game/resign", json={}).status_code == 200
     assert _by_id(c, child1)["parent_game_id"] == parent_id
@@ -138,7 +140,7 @@ def test_repeat_fork_same_ply(client):
     # Client auto-views child1, then user forks again from the same ply.
     got = _by_id(c, child1)
     c.post("/game/import", json={"format": got["format"], "text": got["text"]})
-    assert c.post("/game/view/goto", json={"ply": 4}).status_code == 200
+    assert c.post("/game/view/goto", json={"ply": FORK_PLY}).status_code == 200
     child2 = c.post("/game/view/play-from-here", json={}).json()["game_id"]
     assert c.post("/game/resign", json={}).status_code == 200
 
@@ -164,8 +166,39 @@ def test_delete_in_view_row_requires_force_then_closes_view(client):
     # Forced delete -> row gone, view session closed (view ops now reject).
     r = c.delete(f"/game/recent-imports/{h}?force=1")
     assert r.status_code == 200, r.text
+    assert r.json()["resumed_game_id"] is None
     assert c.get(f"/game/recent-imports/by-id/{game_id}").status_code == 404
     assert c.post("/game/view/goto", json={"ply": 1}).status_code == 400
+
+
+@pytest.mark.parametrize("analyzing", [False, True])
+def test_force_delete_of_annotated_suspended_view_resumes_live_game(client, analyzing):
+    """A suspended view (/view/start suspend) gains a recents row once an
+    annotation is committed; force-deleting that row while viewing it --
+    analysis running or not -- must hand back the live game, not drop it
+    with the view."""
+    c = client
+    c.post("/game/import", json={"format": "pgn", "text": PARENT_PGN})
+    assert c.post("/game/view/goto", json={"ply": FORK_PLY}).status_code == 200
+    live_id = c.post("/game/view/play-from-here", json={}).json()["game_id"]
+
+    r = c.post("/game/view/start", json={"suspend": True, "land_at_ply": FORK_PLY})
+    assert r.status_code == 200, r.text
+    fen = c.post("/game/edit/start", json={}).json()["fen"]
+    r = c.post("/game/edit/commit", json={
+        "fen": fen, "apply_comment": True, "comment_text": "Annotated copy.",
+    })
+    assert r.status_code == 200, r.text
+    h = r.json()["hash"]
+    if analyzing:
+        assert c.post("/game/analysis/start", json={}).status_code == 200
+
+    r = c.delete(f"/game/recent-imports/{h}?force=1")
+    assert r.status_code == 200, r.text
+    assert r.json()["resumed_game_id"] == live_id
+    hve = c.app.state.hve
+    assert hve.viewing_game_id is None
+    assert hve.game_id == live_id
 
 
 def test_delete_non_viewed_row_needs_no_force(client):
@@ -186,7 +219,7 @@ def test_force_delete_does_not_override_children_pin(client):
     parent_id = r.json()["game_id"]
     parent_hash = r.json()["hash"]
     # Fork + finish so the parent gains a child ref.
-    assert c.post("/game/view/goto", json={"ply": 4}).status_code == 200
+    assert c.post("/game/view/goto", json={"ply": FORK_PLY}).status_code == 200
     c.post("/game/view/play-from-here", json={})
     assert c.post("/game/resign", json={}).status_code == 200
     # Auto-view the finished child (now the in-view game is the child,
@@ -207,7 +240,7 @@ def test_children_pin_wins_over_in_view_confirm(client):
     parent_id = r.json()["game_id"]
     parent_hash = r.json()["hash"]
     # Fork + finish so the parent gains a child ref.
-    assert c.post("/game/view/goto", json={"ply": 4}).status_code == 200
+    assert c.post("/game/view/goto", json={"ply": FORK_PLY}).status_code == 200
     c.post("/game/view/play-from-here", json={})
     assert c.post("/game/resign", json={}).status_code == 200
     # Re-view the PARENT: now it is in-view AND children-pinned.

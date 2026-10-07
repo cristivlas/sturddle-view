@@ -91,6 +91,7 @@ _VALID_FORMATS = (FMT_FEN, FMT_PGN, _FMT_AUTO)
 _PARSED_GAME_FIELD = "parsed_game"
 _NOT_FOUND = "not found"
 _OK = {"ok": True}
+_RESUMED_GAME_ID_KEY = "resumed_game_id"
 _PGN_MEDIA_TYPE = "application/x-chess-pgn; charset=utf-8"
 _RECENT_IMPORT_PATH = "/recent-imports/{h}"
 
@@ -500,8 +501,10 @@ async def delete_recent_import(h: str, request: Request, force: bool = False) ->
     children (refs non-empty); the row is pinned in that case and not
     deleted. Returns 409 ``{"error": "in_view"}`` when the row is the
     currently-viewed game and ``force`` is not set; with ``force=1`` the
-    row is deleted and the view session is closed (idle board). The
-    children pin is not overridable by force.
+    row is deleted and the view session is closed: idle board, or -- for a
+    suspend-origin view -- the live game resumed, its id returned as
+    ``resumed_game_id`` (else null). The children pin is not overridable
+    by force.
     """
     store = request.app.state.recent_imports
     hve = request.app.state.hve
@@ -525,9 +528,11 @@ async def delete_recent_import(h: str, request: Request, force: bool = False) ->
         raise not_found(_NOT_FOUND)
     if result.status is RemoveStatus.BLOCKED_BY_REFS:
         raise conflict({_ERROR_KEY: "has_children", _CHILDREN_KEY: result.children})
+    resumed_id = None
     if in_view:
-        await hve.close_view()
-    return _OK
+        await _cancel_ai_analysis(request)
+        resumed_id = await hve.close_view()
+    return {**_OK, _RESUMED_GAME_ID_KEY: resumed_id}
 
 
 @router.get("/pgn")
@@ -571,9 +576,10 @@ async def view_start(payload: dict, request: Request) -> dict:
 
     With ``suspend: true`` the live play game is held in memory so the client
     can resume the SAME game (no fork) via `/view/resume-play` -- used by the
-    scrub-back feature. The edit precondition omits it (no resume, unchanged
-    POV). Optional ``land_at_ply`` lands the cursor directly at a past ply
-    (flicker-free) instead of the default last ply.
+    scrub-back feature and the AI-prose edit entry (no discard confirm, so
+    the game stays resumable). A plain edit entry omits it (the user agreed
+    to discard; unchanged POV). Optional ``land_at_ply`` lands the cursor
+    directly at a past ply (flicker-free) instead of the default last ply.
     """
     land_at_ply = _land_at_ply(payload)
     suspend = bool(payload.get("suspend", False))

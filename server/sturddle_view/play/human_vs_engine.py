@@ -1619,23 +1619,29 @@ class HumanVsEngine:
             self._fork_link = (parent_game_id, fork_ply)
         return new_id
 
-    async def close_view(self) -> None:
-        """Tear the view session down to the idle/no-game state (fresh
-        GameBundle). Used when the viewed game's recents row is force-
-        deleted: the view has nothing to show anymore. No-op outside view.
+    async def close_view(self) -> str | None:
+        """Close the view session when the viewed game's recents row is
+        force-deleted: the view has nothing to show anymore. No-op outside
+        view. Works from VIEWING or ANALYZING (analysis is cancelled).
 
-        Suspend-origin sessions (scrub-back /view/start) never reach this
-        path -- their game_id is minted fresh and has no recents row -- so
-        dropping ``_suspended_play`` here cannot lose a live game."""
+        A suspend-origin session (/view/start) gains a recents row once an
+        annotation is committed; deleting it resumes the suspended live game
+        (returns its game_id) rather than dropping it. Otherwise tears down
+        to the idle/no-game state (fresh GameBundle) and returns None."""
         async with self._lock:
             if not self._viewing:
-                return
-            await self._cancel_analysis()
-            await self._cancel_think()
-            await self._cancel_tick()
-            self._game = GameBundle()
-            self._fork_link = None
-            self._suspended_play = None
+                return None
+            if self._suspended_play is not None:
+                await self._restore_suspended_play()
+            else:
+                await self._cancel_analysis()
+                await self._cancel_think()
+                await self._cancel_tick()
+                self._game = GameBundle()
+                self._fork_link = None
+                return None
+        await self.republish_state()
+        return self._game_id
 
     async def resume_play(self) -> str:
         """Exit view mode back into the SAME play game suspended by
@@ -1646,21 +1652,27 @@ class HumanVsEngine:
         async with self._lock:
             if not (self._mode & Op.PLAY_FROM_HERE._mask):
                 raise ModeConflictError(self._mode, Op.PLAY_FROM_HERE)
-            state = self._suspended_play
-            if state is None:
+            if self._suspended_play is None:
                 raise RuntimeError("no suspended play game to resume")
-            self._suspended_play = None
-            await self._cancel_analysis()
-            await self._cancel_think()
-            await self._cancel_tick()
-            self._reset_view_state()
-            # restore_from sets the mode (PLAY, or PAUSED if it was paused on
-            # entry), rebuilds the live board/clock, and leaves the tick
-            # stopped; republish_state (below) starts ticking + kicks the
-            # engine if it's its turn -- mirrors the server-boot resume path.
-            self.restore_from(state)
+            await self._restore_suspended_play()
         await self.republish_state()
         return self._game_id
+
+    async def _restore_suspended_play(self) -> None:
+        """Swap the view session out for the suspended live game. Caller
+        holds the lock, has checked ``_suspended_play``, and calls
+        ``republish_state`` after releasing it."""
+        assert self._lock.locked(), "_restore_suspended_play called without lock"
+        state = self._suspended_play
+        self._suspended_play = None
+        await self._cancel_analysis()
+        await self._cancel_think()
+        await self._cancel_tick()
+        self._reset_view_state()
+        # restore_from sets the mode (PLAY, or PAUSED if it was paused on
+        # entry), rebuilds the live board/clock, and leaves the tick stopped;
+        # republish_state starts ticking + kicks the engine if it's its turn.
+        self.restore_from(state)
 
     async def apply_engine_settings_live(self) -> None:
         """Force the play engine to respawn so the latest options/args/env
