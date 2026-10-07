@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from sturddle_view.chess.pgn_build import build_pgn
+from sturddle_view.chess.score import SCORE_CP, SCORE_DEPTH
 from sturddle_view.config import Settings
 from sturddle_view.events import EventBus
 from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
@@ -13,7 +15,7 @@ from sturddle_view.play.import_position import _sanitize_comment, parse_pgn
 
 def test_strips_clk_and_eval_brackets():
     s = _sanitize_comment(
-        "[%clk 0:05:01] [%eval 0.34,12] Best move (alternative line) +0.34/12 5.2s"
+        "[%clk 0:05:01] [%eval 0.34,12] Best move +0.34/12 5.2s"
     )
     assert s == "Best move"
 
@@ -46,9 +48,43 @@ def test_collapses_intra_paragraph_whitespace():
     assert s == "Tactical shot here."
 
 
-def test_strips_parenthesized_variations():
-    s = _sanitize_comment("Sound move (1...e5 2.Nf3) but committal.")
-    assert s == "Sound move but committal."
+def test_keeps_parenthesized_text():
+    """Parens are the annotator's own text: prose asides and quoted lines."""
+    prose = "The knight (on f3) holds; Rxd5 wins material (25.Rxd5 Qxd5)."
+    assert _sanitize_comment(prose) == prose
+
+
+@pytest.mark.parametrize("comment", [
+    "(Ng5) 0.35/19 17",
+    "(Kxf6) [%eval 273,31] [%emt 00:00:12]",
+    "(O-O+) +1.20/18 3.0s",
+    "(12...exd5 13.Nxd5) -0.40/21",
+    "(Book)",
+])
+def test_drops_engine_pv_only_remainder(comment):
+    """Cutechess-style PV in parens with nothing else readable is machine output."""
+    assert _sanitize_comment(comment) is None
+
+
+@pytest.mark.parametrize("comment", ["(only move)", "(forced)"])
+def test_keeps_lone_human_parenthetical(comment):
+    assert _sanitize_comment(comment) == comment
+    assert _sanitize_comment(f"{comment} [%clk 0:04:58]") == comment
+
+
+def test_keeps_lowercase_san_lead():
+    assert _sanitize_comment("e4 is strong.") == "e4 is strong."
+    assert _sanitize_comment("[%clk 0:05:01] exd5 recaptures.") == "exd5 recaptures."
+
+
+def test_keeps_trailing_unsigned_integer_fraction():
+    """Only engine-shaped evals (signed, or unsigned decimal) are tokens."""
+    assert _sanitize_comment("Holds the draw, 1/2") == "Holds the draw, 1/2"
+
+
+@pytest.mark.parametrize("token", ["0.00/20", "+2/10", "-M3/30", "M5/30", "+0.35/20 1.2s"])
+def test_strips_engine_shaped_eval_token(token):
+    assert _sanitize_comment(f"Solid. {token}") == "Solid."
 
 
 def test_strips_cutechess_trailing_token():
@@ -80,8 +116,8 @@ def test_keeps_trailing_bare_integer_seconds():
     seconds to avoid eating these. Accept the tradeoff: cutechess
     output configured to emit bare integer seconds is rare, and the
     proper fix is bracket-tag emit (see docs/pgn-comment-format.md)."""
-    assert _sanitize_comment("took 7s") == "Took 7s"
-    assert _sanitize_comment("won in 30s") == "Won in 30s"
+    assert _sanitize_comment("took 7s") == "took 7s"
+    assert _sanitize_comment("won in 30s") == "won in 30s"
 
 
 def test_keeps_mid_string_time_token():
@@ -116,6 +152,35 @@ def test_parse_pgn_collects_per_ply_comments():
 """
     pos = parse_pgn(pgn)
     assert pos.comments == ["Strong center.", None, "Develops a piece."]
+
+
+_ROUND_TRIP_PROSE = [
+    "e4 grabs the centre (and frees the bishop).",
+    None,
+    "Nf3 wins material (3.Nxe5 Qe7), but holds the draw, 1/2",
+    "(forced)",
+]
+
+
+@pytest.mark.parametrize("eval_history", [
+    None,  # [%clk] path
+    [  # token path
+        {SCORE_CP: 30, SCORE_DEPTH: 20}, None,
+        {SCORE_CP: -15, SCORE_DEPTH: 22}, {SCORE_CP: 10, SCORE_DEPTH: 21},
+    ],
+])
+def test_saved_comments_survive_reload(eval_history):
+    """App-saved annotations come back unchanged (modulo whitespace)."""
+    pgn = build_pgn(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5", "g1f3", "b8c6"],
+        clock_history=[(300.0, 300.0), (298.0, 300.0), (298.0, 297.0), (296.0, 297.0)],
+        final_clocks=(296.0, 295.0),
+        headers={},
+        eval_history=eval_history,
+        comments=_ROUND_TRIP_PROSE,
+    )
+    assert parse_pgn(pgn).comments == _ROUND_TRIP_PROSE
 
 
 def test_parse_pgn_comments_none_when_absent():

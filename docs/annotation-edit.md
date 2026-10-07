@@ -256,6 +256,123 @@ This must be tested exhaustively. Minimum surface:
     the non-verbatim path (force `_view_original_text=None` to simulate
     post-annotation-edit state), expect comments preserved.
 
+## AI prose -> annotation shortcut (planned)
+
+Front-end feature (plus the server comment round-trip fix below, a
+standalone bug fix it depends on). Pencil while finished AI prose is
+showing behaves as pencil + comment button pressed in succession: edit
+mode opens and the annotation modal comes up prefilled with the AI
+prose. Saved AI prose is the user's annotation from then on, fed to
+later AI prompts like any other comment (no origin marker -- that would
+need a non-standard PGN tag).
+
+Requirement: cleanest implementation -- reuse the existing edit-entry
+and annotate paths; no parallel copies of either.
+
+### Trigger
+
+View-ribbon pencil (`#view-edit`) while viewing (`state.viewing`) with
+the AI turn done (`aiAnalysisDone(state)`) and visible AI prose (see
+Prefill source). View mode only: the play-ribbon pencil (`#edit-pos`)
+keeps its discard-game flow, since play-mode comment editing is out of
+scope (see below).
+
+### Flow
+
+1. Read the AI prose into `state` before anything closes the AI panel.
+2. Skip the "stop analysis?" confirm -- the turn is finished and its
+   prose carries over.
+3. Normal edit entry (`/game/edit/start`): analysis stops, the AI panel
+   closes, the edit ribbon shows. On failure, clear the saved prose.
+4. Once edit mode is live -- at the end of the board_update that turns
+   it on, after `_onServerEditingStart` resets `pendingAnnotation` and
+   the view state settles (event-driven, no timers) -- press the comment
+   button programmatically, then clear the saved prose (single use).
+   The ribbon ends up in exactly the state a real click leaves (no new
+   styling); the button's handler opens the modal preloaded per Prefill
+   text below. A later ordinary pencil press never sees
+   stale prose.
+5. OK -> staged as `pendingAnnotation`, exactly as a manual annotate;
+   the user still confirms the edit to commit it.
+6. Cancel -> modal closes, nothing staged, edit mode stays open.
+
+Fallback: no visible prose -> normal pencil flow (confirm + editor).
+
+### Prefill text
+
+Never silently replace a user comment:
+- Ply has no comment -> the AI prose.
+- Ply has a comment -> existing comment, blank line, AI prose.
+- Existing comment already contains the AI prose (e.g. a second AI run
+  after annotating) -> the existing comment unchanged. "Contains" is
+  compared with whitespace runs collapsed on both sides (shared
+  `collapseWhitespace` in `text-utils.js`): a reload re-imports the
+  comment through `_sanitize_comment`, which collapses intra-paragraph
+  whitespace.
+
+### Prerequisite: comment round-trip fix (server)
+
+`_sanitize_comment` (`play/import_position.py`) rewrites comment prose
+on every import, so saved annotations (hand-typed today, AI prose with
+this feature) come back altered on reload:
+- every parenthesized span is stripped as an "inline variation" --
+  "the knight (on f3) defends", "wins material (25.Rxd5 Qxd5)";
+- the first letter is capitalized -- corrupts SAN leads ("e4" -> "E4").
+
+Fix: drop capitalization (it only papered over a lowercase word exposed
+by a stripped leading tag). Narrow the paren strip to its one real
+source: cutechess-style comments carry an engine PV / book marker in
+parens (`{(Ng5) 0.35/19 17}`, `{(Book)}` -- ~380 in the repo's PGN
+fixtures; every group is SAN moves or `Book`). A remainder that is
+exactly one parenthesized group of SAN moves (move numbers allowed) is
+dropped only when machine tokens were stripped from that comment; the
+`(Book)` marker is always dropped. A human `{(forced)}` stays even
+beside the `[%clk]` tag `build_pgn` adds, as do parens anywhere in
+prose. Accepted residual: a saved comment that is nothing but a
+parenthesized move line reads exactly like an engine PV and is dropped.
+SAN sub-patterns move from `llm/position_check.py` to a shared
+`chess/san_patterns.py`. One rule for all sources: no app-saved marker, no second
+import path.
+
+Kept: `[%...]` tag stripping and the cutechess/fastchess trailing
+tokens, with one tightening:
+- Eval token (`_CUTECHESS_EVAL_RE`): require an engine-shaped eval --
+  signed (`+0.35`, `-2`, `+M5`) or unsigned decimal (`0.00`). An
+  unsigned integer (`1/2`) no longer matches, so prose ending "holds
+  the draw, 1/2" survives. Matches every eval shape in the repo's PGN
+  corpus (~175k tokens, none unsigned-integer); the same regex parses
+  evals, which tightens consistently. The eval shape is one shared
+  pattern, also used by the cutechess time parser.
+- Trailing time (`_TRAILING_MACHINE_TIME_RE`, decimal `s` / integer
+  `ms`): kept as is. Accepted risk: prose ending in such a duration
+  ("... in 2.5 s") loses it.
+
+Tests: replace `test_strips_parenthesized_variations` with keep-parens
+and PV-only-remainder tests; drop the synthetic `(alternative line)`
+from `test_strips_clk_and_eval_brackets`; update the lowercase-lead
+expectations (`"took 7s" == "Took 7s"` etc. in `test_pgn_comments.py`
+and `test_pgn_eval_parse.py`); add a round-trip test (prose with
+parens, a variation, a SAN lead, a trailing "1/2" and a lone "(forced)"
+survive save -> reload, both the [%clk] and the eval-token PGN paths).
+
+### Prefill source
+
+`play-ai-window.js` exports one accessor returning the prose of the
+latest round whose prose is visible and non-empty, as `textContent`
+(plain text; opening links flatten to their names). Earlier rounds are
+searched back when the last one is hidden, folded or empty; none
+qualifying -> null (the pencil falls back, see Flow). Client-side because the displayed prose is
+client-derived (ack-lead scrub, strikes); a server copy would duplicate
+that logic. The panel module owns its DOM, so the accessor is the only
+reader.
+
+Visibility is one shared helper, `isProseVisible(entry)`: para not
+hidden (`hideProse`) and not folded into its revision. It replaces the
+two inline variants today (`linkAiRecommendation`, the final-prose
+divider in `markAiDone`) and backs the accessor. Every round panel has
+a revision, so the dead guards go: the divider's `revision?.` and
+`noteAiPosition`'s `!entry.revision`.
+
 ## Out of scope (v1)
 
 - Undo / redo within edit mode.

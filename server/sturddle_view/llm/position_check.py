@@ -16,16 +16,17 @@ from typing import Iterable
 
 import chess
 
+from ..chess.san_patterns import (
+    SAN_CASTLE,
+    SAN_MOVE,
+    SAN_MOVE_NUMBER,
+    SAN_PAWN_CAPTURE,
+    SAN_PAWN_PUSH,
+    SAN_PIECE_MOVE,
+)
 from ..play.tactics import Fork, Pin, all_forks, all_pins, piece_label
 
 
-# Shared SAN sub-patterns, factored so the per-token and continuation
-# recognizers can't drift. All groups non-capturing so finditer/findall
-# return whole tokens.
-_SAN_CASTLE = r"O-O-O|O-O"
-_SAN_PIECE_MOVE = r"[KQRBN][a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?"
-_SAN_PAWN_CAPTURE = r"[a-h]x[a-h][1-8](?:=[QRBN])?[+#]?"
-_SAN_PAWN_PUSH = r"[a-h][1-8](?:=[QRBN])?[+#]?"
 _SAN_GLYPHS = r"[!?]{0,2}"
 
 
@@ -40,7 +41,7 @@ _SAN_GLYPHS = r"[!?]{0,2}"
 # run is its own group: "..." (after a number or standalone) marks Black.
 _SAN_TOKEN_RE = re.compile(
     rf"(?:(?P<num>\d+)(?P<dots>\.{{0,3}})\s*)?(?P<prefix>\.\.\.)?\b"
-    rf"(?P<token>(?:{_SAN_CASTLE}|{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}){_SAN_GLYPHS})"
+    rf"(?P<token>(?:{SAN_CASTLE}|{SAN_PIECE_MOVE}|{SAN_PAWN_CAPTURE}){_SAN_GLYPHS})"
 )
 
 
@@ -252,7 +253,7 @@ def find_illegal_moves(text: str, board: chess.Board) -> list[str]:
 # names as _SAN_TOKEN_RE so the shared match guards apply unchanged.
 _MARKED_PAWN_PUSH_RE = re.compile(
     rf"(?:(?P<num>\d+)(?P<dots>\.{{1,3}})\s*|(?P<prefix>\.\.\.))"
-    rf"(?P<token>{_SAN_PAWN_PUSH}{_SAN_GLYPHS})\b"
+    rf"(?P<token>{SAN_PAWN_PUSH}{_SAN_GLYPHS})\b"
 )
 
 # Raw UCI in prose ("c4c5", "8.b1d2"): a glued square pair is unambiguous,
@@ -304,7 +305,7 @@ def iter_stm_moves(text: str, board: chess.Board):
 # Pawn captures ("dxc4") are unambiguous and already matched there -- pushes
 # only here.
 _MOVE_WORD_PAWN_RE = re.compile(
-    rf"\bmove\s+(?P<token>{_SAN_PAWN_PUSH}{_SAN_GLYPHS})",
+    rf"\bmove\s+(?P<token>{SAN_PAWN_PUSH}{_SAN_GLYPHS})",
 )
 
 
@@ -329,13 +330,10 @@ def find_illegal_pawn_moves(text: str, board: chess.Board) -> list[str]:
 
 # A single move inside a continuation. Adds bare pawn pushes (e4): inside a
 # whitespace-delimited run a push reads as a move, not a square reference.
-_CONT_MOVE = (
-    rf"(?:{_SAN_CASTLE}|{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}|{_SAN_PAWN_PUSH})"
-    rf"{_SAN_GLYPHS}"
-)
+_CONT_MOVE = rf"{SAN_MOVE}{_SAN_GLYPHS}"
 # Per-move move-number prefix: "1.", "12.", "3...". Captured so a white-only
 # shorthand ("1.e4 2.Nf3", skipping Black) can be told from a true sequence.
-_MOVE_NUM = r"(\d+\.(?:\.\.)?\s*)?"
+_MOVE_NUM = rf"({SAN_MOVE_NUMBER}\s*)?"
 # Two or more moves separated only by whitespace and optional move numbers.
 # A prose word between moves breaks the run, so only genuine lines (not
 # "Nf3 is strong, and Bb5 too") are captured.
@@ -1448,8 +1446,7 @@ _ILLEGALITY_RE = re.compile(rf"\b{_ILLEGAL_WORDS}")
 # "<SAN> is illegal": held against the live board. Bare pawn pushes count
 # here -- the legality verb rules out a plain square name.
 _SAN_ILLEGAL_CLAIM_RE = re.compile(
-    rf"\b(?P<token>{_SAN_CASTLE}|{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}"
-    rf"|{_SAN_PAWN_PUSH})\s+{_ILLEGAL_WORDS}"
+    rf"\b(?P<token>{SAN_MOVE})\s+{_ILLEGAL_WORDS}"
 )
 _LEGAL_MOVE_FACT = "{san} is legal here"
 

@@ -1134,13 +1134,30 @@ function recommendedMoveRegExp(san, fen) {
   return new RegExp(`${lead}${escapeRegExp(base)}[+#]?${NOT_BEFORE_MOVE}`, "gu");
 }
 
+// Prose the reader sees: not withheld (hideProse), not folded into the
+// round's revision.
+function isProseVisible(entry) {
+  return !entry.para.hidden && !entry.revision.body.contains(entry.para);
+}
+
+// Latest round's visible, non-empty prose as plain text; null when none.
+export function latestVisibleAiProse() {
+  if (!inst.body) return null;
+  const entries = [...inst.body._roundPanels.values()];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const text = entries[i].para.textContent.trim();
+    if (text && isProseVisible(entries[i])) return text;
+  }
+  return null;
+}
+
 // ai_recommendation: link the recommended move in the turn's visible prose
 // to its verified line. No line (the unsearched book move), no link.
 export function linkAiRecommendation({ san, fen, pv_uci: pvUci }) {
   if (!inst.body || !san || !fen || !pvUci?.length) return;
   const re = recommendedMoveRegExp(san, fen);
   for (const entry of inst.body._roundPanels.values()) {
-    if (entry.para.hidden || entry.revision.body.contains(entry.para)) continue;
+    if (!isProseVisible(entry)) continue;
     wrapTextMatches(entry.para, re, (m) => buildLineLink(m[0], fen, pvUci));
   }
 }
@@ -1148,7 +1165,7 @@ export function linkAiRecommendation({ san, fen, pv_uci: pvUci }) {
 export function noteAiPosition({ round, surfaces, hideProse = false }) {
   if (!inst.body) return;
   const entry = inst.body._roundPanels.get(round);
-  if (!entry || !entry.revision) return;
+  if (!entry) return;
   // Tool-name leak: process talk, not a chess slip -- withhold the prose
   // outright, no self-correction. The next round restates it cleanly.
   if (hideProse) {
@@ -1277,10 +1294,9 @@ export function markAiDone({
     const multiRound = inst.body._roundPanels.size > 1;
     if (multiRound && naturalCompletion) {
       const last = inst.body._roundPanels.get(inst.body._currentRound);
-      // Skip when the last round's prose was folded into its revision -- the
-      // border would land on text tucked inside the collapsed disclosure.
-      const folded = last && last.para.parentNode === last.revision?.body;
-      if (last && !folded && !last.para.hidden) last.para.classList.add("play-ai-prose-final");
+      // Skip hidden or folded prose -- the border would land on text tucked
+      // inside the collapsed disclosure.
+      if (last && isProseVisible(last)) last.para.classList.add("play-ai-prose-final");
     }
     // Token breakdown first (before the marker blocks' early returns) so
     // it renders on every terminal path that keeps the panel alive.

@@ -8,6 +8,7 @@ import { wireSplitScroll } from "./split-table.js";
 import { attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
+import { collapseWhitespace } from "./text-utils.js";
 import { markSelectable, rafCoalesce, splitPath, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
 
 const FS_ENTRY_CLASS = "fs-entry";
@@ -842,7 +843,7 @@ export const DETAILS_DIALOG_WIDTH = "min(560px, 92vw)";
  *  Returns { summary, full, truncated }; `truncated` is true only when the
  *  summary actually drops text the user might want to read. */
 export function summarizeError(text) {
-  const full = String(text ?? "").replace(/\s+/g, " ").trim();
+  const full = collapseWhitespace(String(text ?? ""));
   const summary = (full.match(FIRST_SENTENCE_RE) || [full])[0].trim() || full;
   return { summary, full, truncated: summary.length < full.length };
 }

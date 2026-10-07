@@ -41,9 +41,11 @@ import {
   setOnReanalyzeAi,
   setAiInlineHost,
   isAiOpen,
+  latestVisibleAiProse,
 } from "../play-ai-window.js";
 import { terminationLabel } from "../format-termination.js";
 import { editAnnotation } from "../annotation-dialog.js";
+import { collapseWhitespace } from "../text-utils.js";
 
 // Tool name the AI uses to inspect hypothetical positions; the live
 // board mirrors `input.fen` while a call with this name is in flight.
@@ -132,6 +134,16 @@ function resultBadge(result) {
 
 // Cap server-supplied error detail (engine path / exception text) in toasts.
 const MAX_TOAST_DETAIL = 200;
+
+const PARAGRAPH_BREAK = "\n\n";
+
+// Annotation prefill from finished AI prose: never silently replace the
+// ply's comment. Whitespace-collapsed compare -- a reload collapses it.
+function annotationWithAiProse(comment, aiProse) {
+  if (!comment) return aiProse;
+  if (collapseWhitespace(comment).includes(collapseWhitespace(aiProse))) return comment;
+  return comment + PARAGRAPH_BREAK + aiProse;
+}
 
 // Settings backing a dock window's visibility: read on refresh, cleared by
 // that window's X.
@@ -1620,7 +1632,10 @@ async function onEditConfirmImpl(state) {
 async function onEditAnnotateImpl(state) {
   // Preload from pendingAnnotation (if user already staged something
   // this edit session) or fall back to the server's current comment.
-  const preload = state.pendingAnnotation ?? (state.lastViewComment ?? "");
+  const current = state.pendingAnnotation ?? (state.lastViewComment ?? "");
+  const preload = state.aiProsePrefill === null
+    ? current
+    : annotationWithAiProse(current, state.aiProsePrefill);
   const result = await editAnnotation({ currentText: preload });
   if (result?.apply) {
     state.pendingAnnotation = result.text;
@@ -1835,6 +1850,15 @@ function _onServerEditingStart(state) {
   refreshButtons(state);
 }
 
+// AI-done pencil: once edit mode is live and the view state has settled,
+// continue as if the comment button were pressed next. The click handler
+// reads the prefill synchronously; clear it after (single use).
+function _annotateCarriedAiProse(state) {
+  if (state.aiProsePrefill === null) return;
+  state.el.editAnnotateBtn.click();
+  state.aiProsePrefill = null;
+}
+
 function _clearEditTransitionSuppression(state) {
   if (!state.suppressCommentsForEditTransition) return;
   state.suppressCommentsForEditTransition = false;
@@ -1901,6 +1925,9 @@ async function _enterViewOnGameOver(state, gameId) {
 }
 
 async function _enterEditFromCurrentMode(state) {
+  // Finished AI prose goes on to the annotation modal (see
+  // _onServerEditingStart). Read it before anything closes the panel.
+  const aiProse = state.viewing && aiAnalysisDone(state) ? latestVisibleAiProse() : null;
   // Server requires view mode before edit. From play mode, flip into
   // view via /game/view/start (no recents write); /game/import would
   // pollute the recents history with the current play position.
@@ -1924,7 +1951,8 @@ async function _enterEditFromCurrentMode(state) {
       return;
     }
   }
-  if (state.analyzing) {
+  // No confirm when the AI turn is done: its prose carries over.
+  if (state.analyzing && aiProse === null) {
     const ok = await confirm({
       message: MSG.CONFIRM_EDIT_STOP_ANALYSIS,
       okLabel: MSG.EDIT_POSITION,
@@ -1937,9 +1965,11 @@ async function _enterEditFromCurrentMode(state) {
     }
   }
   try {
+    state.aiProsePrefill = aiProse;
     closeAi();
     await state.ctx.api("POST", "/game/edit/start", {});
   } catch (e) {
+    state.aiProsePrefill = null;
     _clearEditTransitionSuppression(state);
     reportError(state.ctx, MSG.EDIT_POSITION_FAILED, e);
   }
@@ -2139,6 +2169,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       // GameView cleared arrows above (runs before this handler on the same
       // bus); restore the AI recommendation arrow.
       reapplyAiRecommendation(state, evt.payload.fen);
+      if (state.editing && !wasEditing) _annotateCarriedAiProse(state);
       break;
     }
     case KIND.GAME_RESULT:
@@ -2198,6 +2229,9 @@ export const playPerspective = {
       // Edit-mode staged annotation: null=no change, ""=clear, "text"=set at
       // entry ply. Reset on each edit entry and on /edit/cancel.
       pendingAnnotation: null,
+      // Finished AI prose carried from the view pencil into the annotation
+      // modal; single use, consumed when edit mode goes live.
+      aiProsePrefill: null,
       viewFlipped: false,
       takebackPending: false,
       commentNavPrev: null,
@@ -2303,7 +2337,7 @@ export const playPerspective = {
     state.el = {
       editSideBtn, editSidePopover, editSidePopoverWrap,
       editCastleBtn, editCastlePopover, editCastlePopoverWrap,
-      editSideTogglePill, editCastleCb, editRibbon, playRibbon, viewRibbon,
+      editSideTogglePill, editCastleCb, editAnnotateBtn, editRibbon, playRibbon, viewRibbon,
       pauseBtn, takebackBtn, savePgnBtn, switchSidesBtn, resignBtn, analyzeBtn,
       viewFirstBtn, viewBackBtn, viewForwardBtn, viewLastBtn, viewSavePgnBtn,
       viewPlayFromHereBtn, viewAnalyzeBtn, boardHost, newGameBtn,
