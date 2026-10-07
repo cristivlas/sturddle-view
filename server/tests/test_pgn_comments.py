@@ -190,6 +190,27 @@ def test_saved_comments_survive_reload(eval_history):
     assert parse_pgn(pgn).comments == _ROUND_TRIP_PROSE
 
 
+def test_annotated_plies_keep_spent_time_on_reload():
+    """Token-path PGN: a commented ply's "<prose> <time>s" still yields its
+    spent time, so the reloaded clocks match -- with and without an eval."""
+    evals = [None, {SCORE_CP: -20}, None, {SCORE_CP: 10, SCORE_DEPTH: 21}]
+    comments = ["Main line.", "Solid reply.", "Develops.", "Natural."]
+    pgn = build_pgn(
+        start_fen=None,
+        moves_uci=_ROUND_TRIP_MOVES,
+        clock_history=_ROUND_TRIP_CLOCKS,
+        final_clocks=_ROUND_TRIP_FINAL,
+        headers={},
+        time_control=_ROUND_TRIP_TC,
+        eval_history=evals,
+        comments=comments,
+    )
+    pos = parse_pgn(pgn)
+    assert pos.comments == comments
+    assert pos.clock_history == _ROUND_TRIP_CLOCKS
+    assert (pos.final_white_time, pos.final_black_time) == _ROUND_TRIP_FINAL
+
+
 def test_depthless_evals_survive_reload():
     """Evals with no search depth (e.g. a Lichess [%eval] import) come back
     as evals -- not as comment text -- with every ply's spent time intact."""

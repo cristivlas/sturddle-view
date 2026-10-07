@@ -145,7 +145,9 @@ the rewrite -- emit still uses positional cutechess tokens, so a cutechess
 run configured to write bare-integer seconds can still leak, and the proper
 `[%clk]`/`[%eval]` emit fix above remains tabled. Eval extraction is
 unaffected (it reads `[%eval]` bracket tags and the `eval/depth` cutechess
-token, not the bare time).
+token, not the bare time). The clock reader (`_cutechess_time_seconds`)
+reads that same trailing token -- one shared regex -- so a commented ply
+keeps its spent time on reload instead of zeroing the reconstructed clocks.
 
 A second emit-side patch covers evals with no depth (e.g. from a Lichess
 `[%eval]` import, re-serialized after an annotation or play-from-here): a

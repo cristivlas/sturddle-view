@@ -140,39 +140,11 @@ _CUTECHESS_TIME_ONLY_RE = re.compile(
     r"^\s*(\d+(?:\.\d+)?)\s*(ms|s)\s*$"
 )
 
-# Trailing "machine-signature" time token: cutechess/fastchess sometimes
-# emit a bare time at the tail of a comment that ALSO contains prose,
-# e.g. "{ Good move! 3.2s }". After python-chess strips the braces and
-# we strip the surrounding whitespace we're left with prose ending in a
-# time token -- the anchored regex above doesn't match because of the
-# leading prose, and _CUTECHESS_EVAL_RE doesn't match because there's
-# no eval/depth prefix. So we add this third pattern that strips just
-# the trailing token.
-#
-# The tricky part is distinguishing a machine time token from a casual
-# human time mention ("took 7s", "won in 30s"). The cutechess writer
-# always emits with decimal precision for seconds (e.g. "3.2s",
-# "0.5s") -- never bare integer seconds -- and uses "ms" for
-# milliseconds. Humans, by contrast, typically write whole-number
-# seconds without a decimal point ("7s", not "7.0s"). We exploit this:
-#
-#  - strip trailing "<decimal>s"     -- machine signature
-#  - strip trailing "<integer>ms"    -- machine signature
-#  - leave trailing "<integer>s"     -- could be human prose
-#
-# This catches cutechess/fastchess output and leaves casual human time
-# mentions intact. The cost is missing engine outputs that happen to
-# emit bare integer seconds (some configurations do this) -- but those
-# already fail to strip cleanly today, so we're not regressing.
-#
-# Why not also detect the PGN as "cutechess-shaped" first (e.g. via
-# eval/depth presence anywhere) and only then apply this strip? See
-# docs/pgn-comment-format.md -- such detection is fragile (cutechess
-# runs without eval output have no detection signal) and the proper
-# fix is to emit [%clk] / [%eval] bracket tags instead of these
-# positional tokens. This regex is the band-aid until that ships.
+# Machine time token after prose ("{ Good move! 3.2s }"): decimal seconds or
+# integer ms -- humans write "took 7s". The sanitizer strips it, the clock
+# reader reads it (value, unit groups). See docs/pgn-comment-format.md.
 _TRAILING_MACHINE_TIME_RE = re.compile(
-    r"\s+(?:\d+\.\d+\s*s|\d+\s*ms)\s*$"
+    r"\s+(\d+\.\d+(?=\s*s)|\d+(?=\s*ms))\s*(ms|s)\s*$"
 )
 
 # Cutechess / fastchess full eval+depth capture (eval and depth groups).
@@ -228,14 +200,17 @@ def _cutechess_time_seconds(comment: str | None) -> float | None:
 
     Accepts both the full form ``{<eval>/<depth> <time>s}`` and the
     time-only variant ``{<time>s}`` we emit on plies with no engine
-    search. [%...] bracket tags (e.g. a depth-less [%eval]) are ignored.
+    search, also after comment prose. [%...] bracket tags (e.g. a
+    depth-less [%eval]) are ignored.
     """
     if not comment:
         return None
     s = _BRACKET_TAG_RE.sub(" ", comment)
-    m = _CUTECHESS_TIME_RE.search(s)
-    if m is None:
-        m = _CUTECHESS_TIME_ONLY_RE.search(s)
+    m = (
+        _CUTECHESS_TIME_RE.search(s)
+        or _CUTECHESS_TIME_ONLY_RE.search(s)
+        or _TRAILING_MACHINE_TIME_RE.search(s)
+    )
     if not m:
         return None
     try:
