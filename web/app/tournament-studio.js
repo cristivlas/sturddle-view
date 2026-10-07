@@ -1412,6 +1412,9 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   ctx.logListEl = document.createElement("ul");
   ctx.logListEl.className = "wb-eventlog-list";
   ctx.logPaneEl?.appendChild(ctx.logListEl);
+  // Its own region: the tab group (a custom element) never takes focus, so a
+  // click on a log line leaves Ctrl+A with no enclosing focused region.
+  markSelectable(ctx.logListEl, { rows: "li" });
   ctx.ms = createMultiSelect({
     getRows: () => (ctx.tourneyTbody ? ctx.tourneyTbody.querySelectorAll(TOURNEY_ROW_SEL) : []),
     getAnchorId: () => ctx.selectedId,
