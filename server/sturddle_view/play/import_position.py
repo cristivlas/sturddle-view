@@ -228,13 +228,14 @@ def _cutechess_time_seconds(comment: str | None) -> float | None:
 
     Accepts both the full form ``{<eval>/<depth> <time>s}`` and the
     time-only variant ``{<time>s}`` we emit on plies with no engine
-    search.
+    search. [%...] bracket tags (e.g. a depth-less [%eval]) are ignored.
     """
     if not comment:
         return None
-    m = _CUTECHESS_TIME_RE.search(comment)
+    s = _BRACKET_TAG_RE.sub(" ", comment)
+    m = _CUTECHESS_TIME_RE.search(s)
     if m is None:
-        m = _CUTECHESS_TIME_ONLY_RE.search(comment)
+        m = _CUTECHESS_TIME_ONLY_RE.search(s)
     if not m:
         return None
     try:

@@ -144,6 +144,11 @@ def test_cutechess_time_only_token_is_parsed_as_time():
     assert _cutechess_time_seconds("250ms") == 0.25
 
 
+def test_time_token_after_bracket_tag_is_parsed_as_time():
+    # A depth-less eval rides as a [%eval] tag ahead of the time token.
+    assert _cutechess_time_seconds("[%eval 0.34] 1.0s") == 1.0
+
+
 def test_prose_with_trailing_time_is_not_parsed_as_time():
     # Prose comments mentioning seconds must NOT be classified as elapsed-time
     # tokens; otherwise we silently corrupt imported PGNs with annotated prose.

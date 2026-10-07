@@ -42,15 +42,15 @@ def test_black_cp_flip():
 
 
 def test_white_mate():
-    text = _build(["e2e4"], [{"mate": 5}])
+    text = _build(["e2e4"], [{"mate": 5, "depth": 20}])
     nodes = _read_nodes(text)
-    assert "+M5" in nodes[0].comment
+    assert "+M5/20" in nodes[0].comment
 
 
 def test_black_mate_flip():
-    text = _build(["e2e4", "e7e5"], [None, {"mate": 5}])
+    text = _build(["e2e4", "e7e5"], [None, {"mate": 5, "depth": 20}])
     nodes = _read_nodes(text)
-    assert "-M5" in nodes[1].comment
+    assert "-M5/20" in nodes[1].comment
 
 
 def test_missing_eval_emits_time_only():
@@ -70,12 +70,16 @@ def test_missing_eval_emits_time_only():
         assert "s" in (node.comment or "")
 
 
-def test_depth_omitted_when_missing():
-    text = _build(["e2e4"], [{"cp": 34}])
-    nodes = _read_nodes(text)
-    # "+0.34" with no slash-depth.
-    assert "+0.34" in nodes[0].comment
-    assert "+0.34/" not in nodes[0].comment
+@pytest.mark.parametrize(("moves", "evals", "tag"), [
+    (["e2e4"], [{"cp": 34}], "[%eval 0.34]"),
+    # White POV on the wire: no flip on a black-to-move ply.
+    (["e2e4", "e7e5"], [None, {"cp": -34}], "[%eval -0.34]"),
+    (["e2e4"], [{"mate": -3}], "[%eval #-3]"),
+])
+def test_depthless_eval_written_as_bracket_tag(moves, evals, tag):
+    # A bare "+0.34" (no "/depth") would read back as comment prose.
+    nodes = _read_nodes(_build(moves, evals))
+    assert nodes[-1].comment == tag
 
 
 def test_eval_history_none_equivalent_to_today():

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from sturddle_view.chess.pgn_build import build_pgn
-from sturddle_view.chess.score import SCORE_CP, SCORE_DEPTH
+from sturddle_view.chess.score import SCORE_CP, SCORE_DEPTH, SCORE_MATE
 from sturddle_view.config import Settings
 from sturddle_view.events import EventBus
 from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
@@ -162,6 +162,13 @@ _ROUND_TRIP_PROSE = [
 ]
 
 
+_ROUND_TRIP_MOVES = ["e2e4", "e7e5", "g1f3", "b8c6"]
+# Pre-move (white, black) clocks; whole-second spends round-trip exactly.
+_ROUND_TRIP_CLOCKS = [(300.0, 300.0), (298.0, 300.0), (298.0, 297.0), (296.0, 297.0)]
+_ROUND_TRIP_FINAL = (296.0, 295.0)
+_ROUND_TRIP_TC = (300, 0)
+
+
 @pytest.mark.parametrize("eval_history", [
     None,  # [%clk] path
     [  # token path
@@ -173,14 +180,39 @@ def test_saved_comments_survive_reload(eval_history):
     """App-saved annotations come back unchanged (modulo whitespace)."""
     pgn = build_pgn(
         start_fen=None,
-        moves_uci=["e2e4", "e7e5", "g1f3", "b8c6"],
-        clock_history=[(300.0, 300.0), (298.0, 300.0), (298.0, 297.0), (296.0, 297.0)],
-        final_clocks=(296.0, 295.0),
+        moves_uci=_ROUND_TRIP_MOVES,
+        clock_history=_ROUND_TRIP_CLOCKS,
+        final_clocks=_ROUND_TRIP_FINAL,
         headers={},
         eval_history=eval_history,
         comments=_ROUND_TRIP_PROSE,
     )
     assert parse_pgn(pgn).comments == _ROUND_TRIP_PROSE
+
+
+def test_depthless_evals_survive_reload():
+    """Evals with no search depth (e.g. a Lichess [%eval] import) come back
+    as evals -- not as comment text -- with every ply's spent time intact."""
+    evals = [
+        {SCORE_CP: 30},  # White ply
+        {SCORE_CP: -20},  # Black ply (white POV)
+        {SCORE_MATE: 3},
+        {SCORE_CP: 10, SCORE_DEPTH: 21},  # with depth: token format unchanged
+    ]
+    pgn = build_pgn(
+        start_fen=None,
+        moves_uci=_ROUND_TRIP_MOVES,
+        clock_history=_ROUND_TRIP_CLOCKS,
+        final_clocks=_ROUND_TRIP_FINAL,
+        headers={},
+        time_control=_ROUND_TRIP_TC,
+        eval_history=evals,
+    )
+    pos = parse_pgn(pgn)
+    assert pos.eval_history == evals
+    assert pos.comments is None
+    assert pos.clock_history == _ROUND_TRIP_CLOCKS
+    assert (pos.final_white_time, pos.final_black_time) == _ROUND_TRIP_FINAL
 
 
 def test_parse_pgn_comments_none_when_absent():

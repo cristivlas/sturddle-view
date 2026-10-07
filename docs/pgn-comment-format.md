@@ -146,3 +146,10 @@ run configured to write bare-integer seconds can still leak, and the proper
 `[%clk]`/`[%eval]` emit fix above remains tabled. Eval extraction is
 unaffected (it reads `[%eval]` bracket tags and the `eval/depth` cutechess
 token, not the bare time).
+
+A second emit-side patch covers evals with no depth (e.g. from a Lichess
+`[%eval]` import, re-serialized after an annotation or play-from-here): a
+bare `+0.34` token has no `/depth` for the reader to anchor on, so it leaked
+into the comment and the eval was lost. `build_pgn` now writes such an eval
+as a white-POV Lichess `[%eval 0.34]` tag, and `_cutechess_time_seconds`
+ignores bracket tags so that ply's `<time>s` token still reads.
