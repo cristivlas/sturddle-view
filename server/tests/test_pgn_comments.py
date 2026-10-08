@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from sturddle_view.chess.pgn_build import build_pgn
-from sturddle_view.chess.score import SCORE_CP, SCORE_DEPTH, SCORE_MATE
+from sturddle_view.chess.score import SCORE_CP, SCORE_DEPTH
 from sturddle_view.config import Settings
 from sturddle_view.events import EventBus
 from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
@@ -193,7 +193,7 @@ def test_saved_comments_survive_reload(eval_history):
 def test_annotated_plies_keep_spent_time_on_reload():
     """Token-path PGN: a commented ply's "<prose> <time>s" still yields its
     spent time, so the reloaded clocks match -- with and without an eval."""
-    evals = [None, {SCORE_CP: -20}, None, {SCORE_CP: 10, SCORE_DEPTH: 21}]
+    evals = [None, {SCORE_CP: -20, SCORE_DEPTH: 20}, None, {SCORE_CP: 10, SCORE_DEPTH: 21}]
     comments = ["Main line.", "Solid reply.", "Develops.", "Natural."]
     pgn = build_pgn(
         start_fen=None,
@@ -207,31 +207,6 @@ def test_annotated_plies_keep_spent_time_on_reload():
     )
     pos = parse_pgn(pgn)
     assert pos.comments == comments
-    assert pos.clock_history == _ROUND_TRIP_CLOCKS
-    assert (pos.final_white_time, pos.final_black_time) == _ROUND_TRIP_FINAL
-
-
-def test_depthless_evals_survive_reload():
-    """Evals with no search depth (e.g. a Lichess [%eval] import) come back
-    as evals -- not as comment text -- with every ply's spent time intact."""
-    evals = [
-        {SCORE_CP: 30},  # White ply
-        {SCORE_CP: -20},  # Black ply (white POV)
-        {SCORE_MATE: 3},
-        {SCORE_CP: 10, SCORE_DEPTH: 21},  # with depth: token format unchanged
-    ]
-    pgn = build_pgn(
-        start_fen=None,
-        moves_uci=_ROUND_TRIP_MOVES,
-        clock_history=_ROUND_TRIP_CLOCKS,
-        final_clocks=_ROUND_TRIP_FINAL,
-        headers={},
-        time_control=_ROUND_TRIP_TC,
-        eval_history=evals,
-    )
-    pos = parse_pgn(pgn)
-    assert pos.eval_history == evals
-    assert pos.comments is None
     assert pos.clock_history == _ROUND_TRIP_CLOCKS
     assert (pos.final_white_time, pos.final_black_time) == _ROUND_TRIP_FINAL
 

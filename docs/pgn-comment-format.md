@@ -148,10 +148,3 @@ unaffected (it reads `[%eval]` bracket tags and the `eval/depth` cutechess
 token, not the bare time). The clock reader (`_cutechess_time_seconds`)
 reads that same trailing token -- one shared regex -- so a commented ply
 keeps its spent time on reload instead of zeroing the reconstructed clocks.
-
-A second emit-side patch covers evals with no depth (e.g. from a Lichess
-`[%eval]` import, re-serialized after an annotation or play-from-here): a
-bare `+0.34` token has no `/depth` for the reader to anchor on, so it leaked
-into the comment and the eval was lost. `build_pgn` now writes such an eval
-as a white-POV Lichess `[%eval 0.34]` tag, and `_cutechess_time_seconds`
-ignores bracket tags so that ply's `<time>s` token still reads.

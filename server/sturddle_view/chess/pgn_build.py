@@ -10,9 +10,6 @@ from .results import UNKNOWN_RESULT, UNTERMINATED
 from .score import CP_PER_PAWN, SCORE_CP, SCORE_DEPTH, SCORE_MATE, flip_score
 
 
-_BRACKET_EVAL_FMT = "[%eval {}]"
-
-
 def _format_eval(score: dict) -> str:
     """Format a white-POV (already flipped if needed) score dict for cutechess."""
     if SCORE_MATE in score:
@@ -20,14 +17,6 @@ def _format_eval(score: dict) -> str:
         return f"+M{n}" if n >= 0 else f"-M{-n}"
     pawns = score[SCORE_CP] / CP_PER_PAWN
     return f"{pawns:+.2f}"
-
-
-def _format_bracket_eval(score: dict) -> str:
-    """Lichess-style [%eval] for a white-POV score: float pawns or #N, no
-    depth. The reader takes the comma-less form as white POV."""
-    if SCORE_MATE in score:
-        return _BRACKET_EVAL_FMT.format(f"#{score[SCORE_MATE]}")
-    return _BRACKET_EVAL_FMT.format(f"{score[SCORE_CP] / CP_PER_PAWN:.2f}")
 
 
 def _pgn_text(game: chess.pgn.Game) -> str:
@@ -57,8 +46,7 @@ def build_pgn(
     [%clk]. When eval_history is provided, the cutechess/fastchess
     trailing token "{<eval>/<depth> <time>s}" is emitted instead and
     [%clk] is dropped. eval entries are white-POV in memory; the sign
-    is flipped at write time on black-to-move plies. An eval with no
-    depth is written as a white-POV [%eval] tag instead of the token.
+    is flipped at write time on black-to-move plies.
 
     `comments[i]` is the comment after move `i` (parallel to moves_uci).
     `root_comment` is the pre-game comment (game-root). User comments
@@ -151,15 +139,11 @@ def build_pgn(
         score = eval_history[i]
         parts: list[str] = []
         if score is not None:
+            # White-POV in memory -> STM-POV on a black-to-move ply.
+            display = score if movers_white[i] else flip_score(score)
+            eval_str = _format_eval(display)
             depth = score.get(SCORE_DEPTH)
-            if depth is None:
-                # A bare cutechess eval with no "/depth" reads back as prose;
-                # the [%eval] tag round-trips (white POV, no flip).
-                parts.append(_format_bracket_eval(score))
-            else:
-                # White-POV in memory -> STM-POV on a black-to-move ply.
-                display = score if movers_white[i] else flip_score(score)
-                parts.append(f"{_format_eval(display)}/{depth}")
+            parts.append(f"{eval_str}/{depth}" if depth is not None else eval_str)
         if elapsed is not None:
             parts.append(f"{elapsed:.1f}s")
         if parts:

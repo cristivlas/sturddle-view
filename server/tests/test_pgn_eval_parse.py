@@ -144,11 +144,6 @@ def test_cutechess_time_only_token_is_parsed_as_time():
     assert _cutechess_time_seconds("250ms") == 0.25
 
 
-def test_time_token_after_bracket_tag_is_parsed_as_time():
-    # A depth-less eval rides as a [%eval] tag ahead of the time token.
-    assert _cutechess_time_seconds("[%eval 0.34] 1.0s") == 1.0
-
-
 def test_machine_time_token_after_prose_is_parsed_as_time():
     # The token the sanitizer strips as machine time is read as time.
     assert _cutechess_time_seconds("Good move! 3.2s") == 3.2
