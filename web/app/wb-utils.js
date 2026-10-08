@@ -379,11 +379,11 @@ const SCROLL_EDGE_FUZZ_PX = 2;
 function markScrollEdges(el, target) {
   // Mobile keeps the flat thumb (styles.css), so no marking or snap-back.
   if (mqMobile.matches) return;
-  // Emptied content (zero-height wrapper, e.g. a rowless table kept wide by
-  // its colgroup) leaves a meaningless stale offset; snap back to origin.
-  // el.clientHeight>0 skips hidden panels; SLOT is boxless, never "empty".
+  // A rowless table kept wide by its colgroup leaves a meaningless stale
+  // offset; snap back to origin. Tables only: elsewhere a zero-height first
+  // child says nothing about the content after it. clientHeight>0 skips hidden panels.
   const content = el.firstElementChild;
-  if (content && content.tagName !== "SLOT" && content.offsetHeight === 0
+  if (content?.tagName === "TABLE" && content.offsetHeight === 0
       && el.clientHeight > 0 && (el.scrollTop > 0 || el.scrollLeft > 0)) {
     el.scrollTop = 0;
     el.scrollLeft = 0;
