@@ -6,7 +6,14 @@
 // once and never write a per-table compare switch.
 
 import { loadJson, saveJson } from "./storage.js";
-import { attachColumnSort, SORT_DIR } from "./col-sort.js";
+import { attachColumnSort, baseCompare, SORT_DIR } from "./col-sort.js";
+
+// Value comparator ordering by a `rank` map (value -> rank); unknown values
+// tie with each other and sort last.
+export function rankCmp(rank) {
+  const rankOf = (v) => rank[v] ?? Number.MAX_SAFE_INTEGER;
+  return (a, b) => rankOf(a) - rankOf(b);
+}
 
 // Dir-agnostic comparator derived from a column descriptor and memoized on it.
 // `field` names the data property (defaults to the column key). A `rank` map
@@ -18,12 +25,12 @@ function columnCmp(col) {
   if (col._cmp) return col._cmp;
   const field = col.field || col.key;
   if (col.rank) {
-    const rankOf = (v) => col.rank[v] ?? Number.MAX_SAFE_INTEGER;
-    col._cmp = (a, b) => rankOf(a[field]) - rankOf(b[field]);
+    const cmp = rankCmp(col.rank);
+    col._cmp = (a, b) => cmp(a[field], b[field]);
   } else if (col.numeric) {
     col._cmp = (a, b) => (Number(a[field]) || 0) - (Number(b[field]) || 0);
   } else {
-    col._cmp = (a, b) => (a[field] || "").localeCompare(b[field] || "", undefined, { sensitivity: "base" });
+    col._cmp = (a, b) => baseCompare(a[field] || "", b[field] || "");
   }
   return col._cmp;
 }

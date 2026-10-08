@@ -12,14 +12,14 @@ import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, loadRaw, saveJson, saveRaw } from "./storage.js";
 import { ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow, progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
-import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, nextDir, scrollSortedRowIntoView } from "./col-sort.js";
+import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, baseCompare, nextDir, scrollSortedRowIntoView } from "./col-sort.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { wireSplitScroll } from "./split-table.js";
 import { reportError, toast } from "./dialogs.js";
 import { debounce, escapeHtml, flashWindow, markSelectable, roveTabStop, suppressModifierClickSelect, syncRovingTabStop, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
 import { createMultiSelect, selectionTargets } from "./multi-select.js";
-import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
+import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS, STATUS_RANK } from "./tournament-events.js";
 import { newTournamentCta, removeSelected, ribbonHtml, setStartVerb, tournamentActions } from "./tournaments.js";
 import { RESULT, SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
@@ -267,14 +267,6 @@ function selectedTournaments(ctx) {
 function showStandingsTab(ctx) {
   ctx.bottomRightEl?.querySelector(".studio-tabs")?.setAttribute("active", STUDIO_TAB_STANDINGS);
 }
-
-const STATUS_RANK = Object.freeze({
-  [STATUS.RUNNING]: 0,
-  [STATUS.IDLE]: 1,
-  [STATUS.STOPPED]: 2,
-  [STATUS.DONE]: 3,
-  [STATUS.FAILED]: 4,
-});
 
 const TOURNEY_SORT_COLS = [
   { key: "status", firstDir: SORT_DIR.ASC, rank: STATUS_RANK },
@@ -817,9 +809,9 @@ function renderEnginesPane(ctx) {
   }
   const entries = Array.from(proxies, ([pid, p]) => [pid, p.engineName || pid]);
   if (ctx.enginesSort === SORT_DIR.ASC) {
-    entries.sort(([, a], [, b]) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    entries.sort(([, a], [, b]) => baseCompare(a, b));
   } else if (ctx.enginesSort === SORT_DIR.DESC) {
-    entries.sort(([, a], [, b]) => b.localeCompare(a, undefined, { sensitivity: "base" }));
+    entries.sort(([, a], [, b]) => baseCompare(b, a));
   }
   const ul = document.createElement("ul");
   ul.className = "wb-sched-list";

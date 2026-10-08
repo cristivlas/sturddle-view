@@ -10,9 +10,10 @@
 import { mqMobile, mqMobileH, mqMobileHPlay } from "./breakpoints.js";
 import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast, TOAST_DURATION_MS } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
-import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, sprtParamErrors, STATUS } from "./tournament-events.js";
+import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, sprtParamErrors, STATUS, STATUS_RANK } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
-import { scrollSortedRowIntoView } from "./col-sort.js";
+import { baseCompare, scrollSortedRowIntoView } from "./col-sort.js";
+import { rankCmp } from "./sort-stack.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import {
@@ -57,7 +58,18 @@ const REVEAL_COOLDOWN_MS = 1500;
 // tournament-id span (user-facing), not a code token. ASCII-only rule
 // does not apply to surfaced UI text.
 const ID_ELLIPSIS = "…";
-const VALID_SORTS = new Set(["name", "status", "created_at", "started_at"]);
+// Arena list sort keys: each is the tournament field it sorts on.
+const SORT_BY = Object.freeze({
+  NAME: "name", STATUS: "status", CREATED: "created_at", STARTED: "started_at",
+});
+const VALID_SORTS = new Set(Object.values(SORT_BY));
+const statusCmp = rankCmp(STATUS_RANK);
+
+function loadSortBy() {
+  const saved = loadRaw(STORAGE_KEY.TOURNAMENTS_SORT_BY);
+  return VALID_SORTS.has(saved) ? saved : SORT_BY.CREATED;
+}
+
 const IS_LOCAL = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
 // One builder for both action ribbons; prefix scopes the button classes
@@ -101,10 +113,10 @@ const PANEL_HTML = `
         <li class="tmb-menu tmb-sort-menu">
           <button class="tmb-item tmb-sort-btn">Sort</button>
           <ul class="tmb-dropdown">
-            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="name">Name</button></li>
-            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="status">Status</button></li>
-            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="created_at">Created</button></li>
-            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="started_at">Started</button></li>
+            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="${SORT_BY.NAME}">Name</button></li>
+            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="${SORT_BY.STATUS}">Status</button></li>
+            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="${SORT_BY.CREATED}">Created</button></li>
+            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="${SORT_BY.STARTED}">Started</button></li>
           </ul>
         </li>
         <li class="tmb-menu tmb-window-menu">
@@ -287,7 +299,11 @@ function sortedTournaments(ctx) {
     // Empty values sink to the bottom regardless of direction.
     if (av === "") return 1;
     if (bv === "") return -1;
-    if (ctx.sortBy === "name") return dir * av.localeCompare(bv, undefined, { sensitivity: "base" });
+    if (ctx.sortBy === SORT_BY.NAME) return dir * baseCompare(av, bv);
+    if (ctx.sortBy === SORT_BY.STATUS) {
+      const byRank = statusCmp(av, bv);
+      if (byRank) return dir * byRank;
+    }
     return dir * (av < bv ? -1 : 1);
   };
   return arr.sort(cmp);
@@ -1520,8 +1536,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     initialLoad: true,
     stoppingId: null,
     startingId: null,
-    sortBy: VALID_SORTS.has(loadRaw(STORAGE_KEY.TOURNAMENTS_SORT_BY))
-      ? loadRaw(STORAGE_KEY.TOURNAMENTS_SORT_BY) : "created_at",
+    sortBy: loadSortBy(),
     sortAsc: loadRaw(STORAGE_KEY.TOURNAMENTS_SORT_ASC) !== "false",
 
     // Persistent sort toast (reused in place to avoid flicker on re-sort).

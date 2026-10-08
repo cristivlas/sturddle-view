@@ -30,6 +30,14 @@ export const STATUS = {
   FAILED:  "failed",
 };
 
+export const STATUS_RANK = Object.freeze({
+  [STATUS.RUNNING]: 0,
+  [STATUS.IDLE]: 1,
+  [STATUS.STOPPED]: 2,
+  [STATUS.DONE]: 3,
+  [STATUS.FAILED]: 4,
+});
+
 // SPRT conclusion carried in sprt.status.
 // Cross-ref: server/sturddle_view/tournament/pgn_stats.py (SPRT_*).
 export const SPRT = {
