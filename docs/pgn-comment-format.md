@@ -1,9 +1,8 @@
-# PGN Comment Format -- Tabled
+# PGN Comment Format
 
-Status: tabled. Captures a known bug, why heuristic fixes are fragile,
-and the rough shape of a proper rewrite. Decisions still to make are
-listed at the bottom. Do not implement piecemeal -- this should land
-as a designed feature, not a patch.
+Status: decided. Output is cutechess-style tokens, one style, never
+mixed; bracket-tag emit is rejected (below). This captures the known
+leak, why heuristic fixes are fragile, and the band-aids shipped.
 
 ## The bug
 
@@ -64,75 +63,16 @@ fire. Rejected:
   problem, and it only helps PGNs *we* emit. External cutechess PGNs
   (the actual usual source of the bug) still leak on import.
 
-## The proper fix: PGN bracket tags on emit
+## Rejected: bracket tags on emit
 
-`[%clk H:MM:SS]` and `[%eval ...]` are PGN-spec bracket extensions.
-They are keyed, bracketed, unambiguously machine, and stripped
-cleanly by every PGN-aware reader. Lichess, chess.com, ChessBase,
-python-chess, and our own parser all already handle them.
-
-The plan: *emit* in this format, keep cutechess regex parsing as a
-**legacy import-only path** for external PGNs from cutechess/fastchess
-that don't know about us.
-
-Sketch:
-
-- `build_pgn` writer: emit `[%clk]` and `[%eval]` via python-chess's
-  `node.set_clock()` / `node.set_eval()` helpers instead of the
-  current trailing `<eval>/<depth> <time>` string concat.
-- `parse_pgn` reader: extend the eval extractor to read `[%eval]`
-  bracket tags as primary; keep `_CUTECHESS_EVAL_RE` as a fallback.
-  Read `[%clk]` via `node.clock()` and derive elapsed-per-ply from
-  successive values; keep `_cutechess_time_seconds` as fallback.
-- `_view_original_text` short-circuit unchanged: imported PGNs
-  round-trip verbatim until edited (existing behavior preserved).
-
-## Open decisions (must be made before implementation)
-
-1. **`[%eval]` variant.**
-   - Lichess: `[%eval 0.24]` -- float-pawns, white-POV, no depth.
-   - ChessBase: `[%eval +24,22]` -- cp-comma-depth, STM-POV by spec.
-   - Tradeoff: depth survival vs spec-correct POV/format.
-
-2. **POV on the wire.**
-   - In-memory: white-POV.
-   - Lichess emits white-POV; ChessBase comma-form is STM-POV by
-     spec. Mixing white-POV signs into the comma form risks
-     misinterpretation by strict parsers.
-   - Decision: stick to white-POV, accept the format choice it forces.
-
-3. **Depth handling, if we go Lichess float.**
-   - (a) Drop depth on emit. Cheapest, loses information we have.
-   - (b) Emit a non-standard `[%depth N]` alongside `[%eval]`. Local
-     extension, external readers strip as unknown bracket tag.
-     Clean semantics, slight emit overhead.
-
-4. **`[%clk]` precision.**
-   - Spec: `H:MM:SS` integer seconds.
-   - Lichess accepts `H:MM:SS.s` for sub-second. Today we emit `3.2s`
-     (one decimal of precision).
-   - Decision: probably `H:MM:SS.s` to preserve current precision.
-
-5. **Test fixture impact.**
-   - Input fixtures (external PGNs) are untouched -- the legacy
-     reader still parses them.
-   - Output assertions in tests that pin the exact cutechess token
-     format need rewriting (~16 sites across ~7 files).
-   - Self-generated round-trip fixtures: spot-checked, none exist
-     today.
-
-6. **Canonical hash stability.**
-   - `canonical_hash` normalizes whitespace and sorts headers but
-     does NOT collapse `[%key val]` vs cutechess-token differences.
-     Self-emitted PGNs from before vs after will hash differently.
-   - Decision needed: do we migrate stored hashes, or accept that
-     pre-rewrite play games rehash on next read?
-
-## Rough estimate
-
-Half a day's focused work if decisions above are pre-made. 1-2 days
-if surprises in `canonical_hash`, the tournament pipeline, or the
-view-mode clock reconstruction need real attention.
+`[%eval ...]` was considered as the emit format (keyed, bracketed,
+stripped by every PGN-aware reader). Rejected: the tag's point of view
+is ambiguous across tools -- Lichess writes white-POV float pawns,
+ChessBase writes STM-POV `cp,depth` -- so a reader can't know which
+one it is looking at. A custom key (`[%sv ...]`) is non-standard and
+confuses other readers. Output stays cutechess-style, and never mixes
+styles within a file, not even per ply. `[%eval]` is read on import
+only.
 
 ## Shipped band-aid (import side only)
 
@@ -148,3 +88,13 @@ unaffected (it reads `[%eval]` bracket tags and the `eval/depth` cutechess
 token, not the bare time). The clock reader (`_cutechess_time_seconds`)
 reads that same trailing token -- one shared regex -- so a commented ply
 keeps its spent time on reload instead of zeroing the reconstructed clocks.
+
+An eval with no depth (a Lichess `[%eval]` import re-serialized after an
+annotation or play-from-here; rarely, an engine whose last scored `info`
+line has no `depth`) is written as the bare cutechess token, `+0.34` or
+`+0.34 1.2s`, STM POV like every other token. The reader accepts exactly
+that shape -- signed two-decimal pawns or `[+-]M<n>`, time with unit, at
+the end of the comment (`_DEPTHLESS_EVAL_RE`) -- after the `/depth` form.
+Known cost: prose that ends in a bare `+0.50` reads as an eval. External
+cutechess/fastchess output always carries `/depth`, so only our own files
+and such prose are affected.

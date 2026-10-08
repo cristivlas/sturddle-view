@@ -152,6 +152,18 @@ _CUTECHESS_EVAL_RE = re.compile(
     rf"(?P<eval>{_CUTECHESS_EVAL_TOKEN})/(?P<depth>\d+)(?:\s+\d+(?:\.\d+)?\s*(?:ms|s)?)?\s*\}}?\s*$"
 )
 
+# Our writer's token for an eval with no depth (e.g. a Lichess import), at the
+# END and exactly as written: signed two-decimal pawns or [+-]M<n> after
+# whitespace/start, time with unit. Known cost: prose ending in "+0.50".
+_DEPTHLESS_EVAL_RE = re.compile(
+    r"(?<![^\s])(?P<eval>[+-]\d+\.\d{2}|[+-]M\d+)(?:\s+\d+(?:\.\d+)?\s*(?:ms|s))?\s*\}?\s*$"
+)
+
+# End-anchored machine tokens, most specific first; the sanitizer strips one.
+_TRAILING_MACHINE_RES = (
+    _CUTECHESS_EVAL_RE, _DEPTHLESS_EVAL_RE, _CUTECHESS_TIME_ONLY_RE, _TRAILING_MACHINE_TIME_RE,
+)
+
 # [%eval ...] bracket comment: ChessBase / GBSelect style is "<int_cp>,<depth>"
 # (STM POV). Lichess style is "<float_pawns>" or "#<n>" (white POV) with no
 # comma. Mate is "#N" or "-#N" (sign optional). Disambiguation is by comma:
@@ -173,15 +185,18 @@ _WS_RE = re.compile(r"\s+")
 def _sanitize_comment(comment: str | None) -> str | None:
     """Strip machine annotations from a PGN comment, leaving human prose
     verbatim (modulo whitespace). Removes [%...] bracket tags, the cutechess
-    "<eval>/<depth> <time>" trailing token, a remainder that is only an
-    engine PV in parens, and the "(Book)" marker. Returns None when nothing
-    readable remains."""
+    "<eval>/<depth> <time>" trailing token (and our depth-less form), a
+    remainder that is only an engine PV in parens, and the "(Book)" marker.
+    Returns None when nothing readable remains."""
     if not comment:
         return None
     s = _BRACKET_TAG_RE.sub(" ", comment)
-    s = _CUTECHESS_EVAL_RE.sub(" ", s)
-    s = _CUTECHESS_TIME_ONLY_RE.sub(" ", s)
-    s = _TRAILING_MACHINE_TIME_RE.sub("", s)
+    # Exactly one trailing machine token: a second pass would eat prose
+    # that happens to end in a token shape ("I think +0.50 <token>").
+    for rx in _TRAILING_MACHINE_RES:
+        s, n = rx.subn(" ", s)
+        if n:
+            break
     machine_stripped = s != comment
     if (machine_stripped and _ENGINE_PV_ONLY_RE.match(s)) or _BOOK_MARKER_RE.match(s):
         return None
@@ -275,6 +290,8 @@ def _parse_pgn_eval(comment: str | None, mover_white: bool) -> dict | None:
        white POV.
     3. Cutechess/fastchess trailing ``<eval>/<depth>`` -- float pawns or
        ``M<n>``, STM POV.
+    4. Our depth-less trailing ``<eval>`` (same POV), written when the
+       eval came in without a depth.
     """
     if not comment:
         return None
@@ -301,6 +318,13 @@ def _parse_pgn_eval(comment: str | None, mover_white: bool) -> dict | None:
         score = _parse_eval_token(m.group("eval"))
         if score is not None:
             return _with_depth(score if mover_white else flip_score(score), m.group("depth"))
+
+    # 4: our depth-less trailing token
+    m = _DEPTHLESS_EVAL_RE.search(comment)
+    if m:
+        score = _parse_eval_token(m.group("eval"))
+        if score is not None:
+            return score if mover_white else flip_score(score)
 
     return None
 

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from sturddle_view.chess.pgn_build import build_pgn
-from sturddle_view.chess.score import SCORE_CP, SCORE_DEPTH
+from sturddle_view.chess.score import SCORE_CP, SCORE_DEPTH, SCORE_MATE
 from sturddle_view.config import Settings
 from sturddle_view.events import EventBus
 from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
@@ -206,6 +206,33 @@ def test_annotated_plies_keep_spent_time_on_reload():
         comments=comments,
     )
     pos = parse_pgn(pgn)
+    assert pos.comments == comments
+    assert pos.clock_history == _ROUND_TRIP_CLOCKS
+    assert (pos.final_white_time, pos.final_black_time) == _ROUND_TRIP_FINAL
+
+
+def test_depthless_evals_survive_reload():
+    """Evals with no search depth (e.g. a Lichess import) come back as
+    evals -- not as comment text -- with every ply's spent time intact."""
+    evals = [
+        {SCORE_CP: 30},  # White ply
+        {SCORE_CP: -20},  # Black ply (white POV)
+        {SCORE_MATE: 3},
+        {SCORE_CP: 10, SCORE_DEPTH: 21},  # with depth: token format unchanged
+    ]
+    comments = ["Main line.", None, "Mate threat.", None]
+    pgn = build_pgn(
+        start_fen=None,
+        moves_uci=_ROUND_TRIP_MOVES,
+        clock_history=_ROUND_TRIP_CLOCKS,
+        final_clocks=_ROUND_TRIP_FINAL,
+        headers={},
+        time_control=_ROUND_TRIP_TC,
+        eval_history=evals,
+        comments=comments,
+    )
+    pos = parse_pgn(pgn)
+    assert pos.eval_history == evals
     assert pos.comments == comments
     assert pos.clock_history == _ROUND_TRIP_CLOCKS
     assert (pos.final_white_time, pos.final_black_time) == _ROUND_TRIP_FINAL

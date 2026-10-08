@@ -181,3 +181,49 @@ def test_cutechess_time_only_regex_rejects_prose():
     prose = "Brilliant move! Took 7s to find"
     assert _sanitize_comment(prose) == prose
     assert _cutechess_time_seconds(prose) is None
+
+
+# --- Depth-less cutechess token: our writer's "<eval> <time>s" with no
+# "/depth" (an eval that came in without one, e.g. a Lichess import). Exactly
+# the written shape: signed two-decimal pawns or [+-]M<n>, STM POV. ---
+
+def test_depthless_token_white_eval():
+    assert _parse_pgn_eval("+0.34", mover_white=True) == {"cp": 34}
+
+
+def test_depthless_token_black_eval_is_flipped():
+    assert _parse_pgn_eval("-0.20 1.0s", mover_white=False) == {"cp": 20}
+
+
+def test_depthless_token_mate():
+    assert _parse_pgn_eval("-M3", mover_white=False) == {"mate": 3}
+
+
+def test_depthless_token_after_prose():
+    assert _parse_pgn_eval("Good move! +0.34 1.0s", mover_white=True) == {"cp": 34}
+
+
+def test_depthless_token_time_is_parsed():
+    assert _cutechess_time_seconds("+0.34 1.0s") == 1.0
+    assert _cutechess_time_seconds("Good move! -M3 250ms") == 0.25
+
+
+def test_depthless_token_is_stripped_by_sanitize():
+    assert _sanitize_comment("Good move! +0.34 1.0s") == "Good move!"
+    assert _sanitize_comment("+0.34") is None
+
+
+def test_sanitize_strips_exactly_one_trailing_token():
+    # Prose ending in a token shape, then the one token our writer appended:
+    # only the appended token goes.
+    assert _sanitize_comment("I think +0.50 +0.34/18 1.2s") == "I think +0.50"
+    assert _sanitize_comment("took 3.2s +0.34/18 1.2s") == "took 3.2s"
+    assert _sanitize_comment("took 3.2s 1.2s") == "took 3.2s"
+    assert _parse_pgn_eval("I think +0.50 +0.34/18 1.2s", mover_white=True) == {"cp": 34, "depth": 18}
+
+
+def test_depthless_token_requires_written_shape():
+    # One decimal, unsigned, or parenthesized: not ours, left as prose.
+    for text in ("+0.3", "2.50", "Black is better (+0.50)"):
+        assert _parse_pgn_eval(text, mover_white=True) is None
+        assert _sanitize_comment(text) == text
