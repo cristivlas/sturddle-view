@@ -377,17 +377,8 @@ const SCROLL_EDGE_FUZZ_PX = 2;
 // point the scrollbar-thumb gradient at the edge that still has content;
 // no class (the untracked default) reads the same as "at top/left".
 function markScrollEdges(el, target) {
-  // Mobile keeps the flat thumb (styles.css), so no marking or snap-back.
+  // Mobile keeps the flat thumb (styles.css), so no marking.
   if (mqMobile.matches) return;
-  // A rowless table kept wide by its colgroup leaves a meaningless stale
-  // offset; snap back to origin. Tables only: elsewhere a zero-height first
-  // child says nothing about the content after it. clientHeight>0 skips hidden panels.
-  const content = el.firstElementChild;
-  if (content?.tagName === "TABLE" && content.offsetHeight === 0
-      && el.clientHeight > 0 && (el.scrollTop > 0 || el.scrollLeft > 0)) {
-    el.scrollTop = 0;
-    el.scrollLeft = 0;
-  }
   const atBottom = Math.ceil(el.scrollTop) >= el.scrollHeight - el.clientHeight - SCROLL_EDGE_FUZZ_PX;
   const midV = el.scrollTop > 0 && !atBottom;
   const atRight = Math.ceil(el.scrollLeft) >= el.scrollWidth - el.clientWidth - SCROLL_EDGE_FUZZ_PX;
