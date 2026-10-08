@@ -268,11 +268,16 @@ function showStandingsTab(ctx) {
   ctx.bottomRightEl?.querySelector(".studio-tabs")?.setAttribute("active", STUDIO_TAB_STANDINGS);
 }
 
-// Tourney table columns: one descriptor list drives the sort cycle (firstDir)
-// and the stack sorter (field / tiebreak). Games is display-only; created reads
-// created_at, which also breaks ties so order is stable.
+const STATUS_RANK = Object.freeze({
+  [STATUS.RUNNING]: 0,
+  [STATUS.IDLE]: 1,
+  [STATUS.STOPPED]: 2,
+  [STATUS.DONE]: 3,
+  [STATUS.FAILED]: 4,
+});
+
 const TOURNEY_SORT_COLS = [
-  { key: "status", firstDir: SORT_DIR.ASC },
+  { key: "status", firstDir: SORT_DIR.ASC, rank: STATUS_RANK },
   { key: "created", firstDir: SORT_DIR.DESC, field: "created_at", tiebreak: true },
   { key: "name", firstDir: SORT_DIR.ASC },
   { key: "games", sortable: false },

@@ -23,6 +23,7 @@ export const KIND = {
 };
 
 export const STATUS = {
+  IDLE:    "idle",
   RUNNING: "running",
   STOPPED: "stopped",
   DONE:    "done",
