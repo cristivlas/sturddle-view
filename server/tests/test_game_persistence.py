@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import chess
+import chess.pgn
 from fastapi.testclient import TestClient
 
 from sturddle_view.app import create_app
@@ -12,8 +15,9 @@ from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.events import EventBus
 from sturddle_view.play.game_store import GameState, GameStore
-from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
+from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
 from sturddle_view.play.mode import Mode
+from sturddle_view.recent_imports import RecentImports
 from .conftest import REGISTRY_FILE
 
 
@@ -73,13 +77,14 @@ def test_store_clear_removes_file(tmp_path):
 # -------- HumanVsEngine: persist on state changes --------
 
 
-def _make_hve(tmp_path, engine_path="/fake/engine"):
+def _make_hve(tmp_path, engine_path="/fake/engine", recents=None):
     """A bare HVE with a real GameStore and event bus, no UCI subprocess."""
     store = GameStore(path=tmp_path / "current_game.json")
     hve = HumanVsEngine(
         engine_path=engine_path,
         bus=EventBus(),
         store=store,
+        recents=recents,
     )
     # Bypass UCI: skip the popen_uci handshake and the engine reply task.
     fake_engine = MagicMock()
@@ -488,9 +493,111 @@ def test_player_name_store_roundtrip(tmp_path):
     assert loaded.player_name == "Bob"
 
     # Old save without player_name field falls back to default.
-    import json
     data = json.loads((tmp_path / "game.json").read_text())
     del data["player_name"]
     (tmp_path / "game.json").write_text(json.dumps(data))
     loaded2 = store.load()
     assert loaded2.player_name == "Human"
+
+
+# -------- comments, root comment, fork link, pre-analysis pause --------
+
+_PARENT_ID = "gid-parent"
+_PARENT_PGN = '[Result "*"]\n\n1. e4 e5 2. Nf3 Nc6 *'
+_PARENT_MOVES = ["e2e4", "e7e5", "g1f3", "b8c6"]
+_PARENT_COMMENTS = ["c1", None, "c3", None]
+_ROOT_COMMENT = "pre-game"
+
+
+def _bare_state(**extra) -> GameState:
+    return GameState(
+        game_id="g", human_white=True, tc_initial_seconds=60.0,
+        tc_increment_seconds=0.0, white_time=60.0, black_time=60.0, paused=False,
+        **extra,
+    )
+
+
+def test_store_roundtrips_comments_and_fork_link(tmp_path):
+    store = GameStore(path=tmp_path / "game.json")
+    state = _bare_state(
+        moves_uci=["e2e4", "e7e5"],
+        play_comments=["note", None],
+        play_root_comment=_ROOT_COMMENT,
+        parent_game_id=_PARENT_ID,
+        fork_ply=2,
+    )
+    store.save(state)
+    assert store.load() == state
+
+
+def test_store_loads_file_without_new_keys_with_defaults(tmp_path):
+    store = GameStore(path=tmp_path / "game.json")
+    store.save(_bare_state())
+    data = json.loads(store.path.read_text())
+    for key in ("play_comments", "play_root_comment", "parent_game_id", "fork_ply"):
+        del data[key]
+    store.path.write_text(json.dumps(data))
+    loaded = store.load()
+    assert loaded.play_comments is None
+    assert loaded.play_root_comment is None
+    assert loaded.parent_game_id is None
+    assert loaded.fork_ply is None
+
+
+def test_snapshot_in_analysis_from_paused_records_paused(tmp_path):
+    hve = _restored_unpaused(tmp_path)
+    hve._pre_analysis_mode = Mode.PAUSED
+    hve._mode = Mode.ANALYZING
+    assert hve._game_state_snapshot().paused is True
+
+
+async def _fork_with_comments(hve, recents):
+    """Fork a commented parent at its last ply; the child carries the
+    comments, root comment and fork link."""
+    await recents.save(
+        fmt="pgn", text=_PARENT_PGN, summary={"result": "*"}, game_id=_PARENT_ID,
+    )
+    await hve.enter_view_mode(
+        ViewModeParams(
+            start_fen=None,
+            moves_uci=_PARENT_MOVES,
+            clock_history=None,
+            comments=_PARENT_COMMENTS,
+            root_comment=_ROOT_COMMENT,
+        ),
+        game_id=_PARENT_ID,
+    )
+    await hve.view_last()
+    return await hve.play_from_here(tc=TimeControl(60.0, 0.0))
+
+
+async def test_snapshot_restore_roundtrips_comments_and_fork_link(tmp_path):
+    recents = RecentImports.load(root=tmp_path / "imports", cap=10)
+    hve, store = _make_hve(tmp_path, recents=recents)
+    await _fork_with_comments(hve, recents)
+
+    fresh, _store2 = _make_hve(tmp_path, recents=recents)
+    fresh.restore_from(store.load())
+    assert fresh._play_comments == _PARENT_COMMENTS
+    assert fresh._play_root_comment == _ROOT_COMMENT
+    assert fresh.fork_link == (_PARENT_ID, len(_PARENT_MOVES))
+
+
+async def test_restart_mid_game_keeps_comments_and_fork_link(tmp_path):
+    recents = RecentImports.load(root=tmp_path / "imports", cap=10)
+    hve, store = _make_hve(tmp_path, recents=recents)
+    child_id = await _fork_with_comments(hve, recents)
+    await hve.submit_move("d2d4")
+
+    fresh, _store2 = _make_hve(tmp_path, recents=recents)
+    fresh.restore_from(store.load())
+    await fresh.resign()
+
+    row, text = recents.get_by_id(child_id)
+    assert row["parent_game_id"] == _PARENT_ID
+    assert row["fork_ply"] == len(_PARENT_MOVES)
+    game = chess.pgn.read_game(io.StringIO(text))
+    assert _ROOT_COMMENT in game.comment
+    plies = [n.comment for n in game.mainline()]
+    assert "c1" in plies[0]
+    assert "c3" in plies[2]

@@ -389,9 +389,9 @@ class HumanVsEngine:
         # X-game navigation fork link. Set by play_from_here(cursor>=1):
         # (parent_game_id, fork_ply). Drained by paths that durably save
         # the child to recents (finalization via _flush_recents_save and
-        # commit_edit via the api layer). Cleared at the top of new_game
-        # so plain "new game" and import-on-top never carry a stale link
-        # forward; play_from_here re-stashes after new_game returns.
+        # commit_edit via the api layer). Set by new_game (None for a plain
+        # new game), so a stale link never carries forward. Persisted in
+        # the crash-recovery snapshot.
         self._fork_link: tuple[str, int] | None = None
         # Live play game suspended by /view/start, kept in memory so the
         # client can resume the SAME game (no fork) when it scrubs back to
@@ -769,6 +769,7 @@ class HumanVsEngine:
         seed_root_comment: str | None = None,
         seed_eval_history: list[dict | None] | None = None,
         book: BookRef | None = None,
+        fork_link: tuple[str, int] | None = None,
     ) -> str:
         """Start a fresh game.
 
@@ -788,6 +789,9 @@ class HumanVsEngine:
 
         `book` arms the PGN opening book for this game (startpos games
         only; the lookup gate also checks start_fen).
+
+        `fork_link` is the new game's ``(parent_game_id, fork_ply)``
+        (play_from_here); None for a plain new game.
         """
         async with self._lock:
             if not (self._mode & Op.NEW_GAME._mask):
@@ -841,10 +845,10 @@ class HumanVsEngine:
                 play_comments=play_comments,
                 play_root_comment=seed_root_comment or None,
             )
-            # commit: nothing below may raise. A fresh game drops any stale
-            # fork link (play_from_here re-stashes after this returns) and any
-            # /view/start suspend (so a later view entry can't resume it).
-            self._fork_link = None
+            # commit: nothing below may raise. A fresh game replaces any stale
+            # fork link and drops any /view/start suspend (so a later view
+            # entry can't resume it).
+            self._fork_link = fork_link
             self._suspended_play = None
             self._book = book
             self._out_of_book = False
@@ -1598,11 +1602,14 @@ class HumanVsEngine:
             if board.is_game_over():
                 raise RuntimeError("game is over at this ply; back up first")
             human_white = (board.turn == chess.WHITE)
-            # Capture the fork link before new_game runs. The parent's game_id
-            # is the *current* self._game_id (still in view mode pointing at
-            # it). fork_ply==0 is a degenerate fork -- a plain new game.
+            # The parent is the viewed game. A fork at ply 0 is a plain new
+            # game: no link.
             parent_game_id = self._game_id
-            fork_ply = cursor
+            fork_link = (
+                (parent_game_id, cursor)
+                if parent_game_id is not None and cursor >= 1
+                else None
+            )
             # Stay in VIEWING across the lock release: new_game (legal from
             # VIEWING) swaps in the play bundle atomically, so a failed engine
             # spawn leaves us cleanly in view mode instead of stranded.
@@ -1618,12 +1625,8 @@ class HumanVsEngine:
             seed_comments=seed_comments,
             seed_root_comment=seed_root_comment,
             seed_eval_history=seed_evals,
+            fork_link=fork_link,
         )
-        # Re-stash the fork link after new_game cleared it. Only when
-        # parent_id is known AND fork_ply >= 1 (ply 0 fork == plain new
-        # game, no link).
-        if parent_game_id is not None and fork_ply >= 1:
-            self._fork_link = (parent_game_id, fork_ply)
         return new_id
 
     async def close_view(self) -> str | None:
@@ -1756,6 +1759,9 @@ class HumanVsEngine:
             stm, over = self._board.turn, self._board.is_game_over()
             wt = self._clock.remaining(chess.WHITE, stm=stm, game_over=over)
             bt = self._clock.remaining(chess.BLACK, stm=stm, game_over=over)
+        # Analysis runs from a paused game: record where it will return.
+        mode = self._pre_analysis_mode if self._analysis_mode else self._mode
+        parent_game_id, fork_ply = self._fork_link or (None, None)
         return GameState(
             game_id=self._game_id,
             human_white=self._human_white,
@@ -1763,13 +1769,17 @@ class HumanVsEngine:
             tc_increment_seconds=self._clock.tc.increment_seconds,
             white_time=wt,
             black_time=bt,
-            paused=self._paused,
+            paused=mode is Mode.PAUSED,
             moves_uci=[m.uci() for m in self._board.move_stack],
             clock_history=[[w, b] for (w, b) in self._clock.history],
             eval_history=list(self._eval_history),
             start_fen=self._start_fen,
             game_started_wall=self._game_started_wall,
             player_name=self._player_name,
+            play_comments=None if self._play_comments is None else list(self._play_comments),
+            play_root_comment=self._play_root_comment,
+            parent_game_id=parent_game_id,
+            fork_ply=fork_ply,
         )
 
     async def _persist(self) -> None:
@@ -1834,6 +1844,13 @@ class HumanVsEngine:
             # back to all-None so the per-ply invariant holds and subsequent
             # engine searches can still extend the list.
             self._eval_history = [None] * n_plies
+        self._play_comments = _fit_seed(state.play_comments, n_plies)
+        self._play_root_comment = state.play_root_comment or None
+        self._fork_link = (
+            (state.parent_game_id, state.fork_ply)
+            if state.parent_game_id is not None and state.fork_ply is not None
+            else None
+        )
         self._mode = Mode.PAUSED if state.paused else Mode.PLAY
 
     # ----- internals -----
