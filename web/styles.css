@@ -934,12 +934,13 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   white-space: nowrap;
 }
 .status-badge.hidden { display: none; }
-.status-badge--paused {
+.status-badge--paused,
+.status-badge--editing {
   color: var(--accent);
   background: rgba(var(--accent-rgb), 0.12);
   border-color: rgba(var(--accent-rgb), 0.4);
-  cursor: pointer;
 }
+.status-badge--paused { cursor: pointer; }
 .status-badge--finished {
   color: var(--text, #ddd);
   background: rgba(255, 255, 255, 0.06);
@@ -1216,6 +1217,7 @@ main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden
   }
   .status-badge { margin-left: 0; }
   #paused-badge,
+  #editing-badge,
   #finished-badge,
   #about-btn,
   #settings-btn { flex: 0 0 auto; }

@@ -1226,15 +1226,28 @@ function syncBoardInputEnabled(state) {
   state.view.setEnabled(true);
 }
 
-// Paused badge (hidden while analyzing, which has its own affordance).
-function syncPausedUi(state) {
-  state.el.pausedBadge?.classList.toggle("hidden", !(state.paused && !state.analyzing));
+// Header status badges, one at a time: Editing wins over Paused and the
+// result; Paused also hides while analyzing (it has its own affordance).
+function syncStatusBadges(state) {
+  const { pausedBadge, editingBadge, finishedBadge } = state.el;
+  pausedBadge?.classList.toggle(
+    "hidden", !(state.paused && !state.analyzing && !state.editing),
+  );
+  editingBadge?.classList.toggle("hidden", !state.editing);
+  finishedBadge?.classList.toggle("hidden", !finishedBadge.textContent || state.editing);
 }
 
 function showFinishedBadge(state, text) {
   if (!state.el.finishedBadge) return;
   state.el.finishedBadge.textContent = text;
-  state.el.finishedBadge.classList.toggle("hidden", !text);
+  syncStatusBadges(state);
+}
+
+// Unmount: the header outlives the perspective, so its badges go too.
+function hideStatusBadges(state) {
+  const { pausedBadge, editingBadge, finishedBadge } = state.el;
+  if (finishedBadge) finishedBadge.textContent = "";
+  for (const badge of [pausedBadge, editingBadge, finishedBadge]) badge?.classList.add("hidden");
 }
 
 // Bail out of a drop taken on a held board: let rendering resume and ask the
@@ -1877,6 +1890,7 @@ function _onServerEditingStart(state) {
   state.view.enterEditMode(() => refreshButtons(state), seed);
   state.pendingAnnotation = null;
   pushNavToUi(state);
+  syncStatusBadges(state);
   refreshButtons(state);
 }
 
@@ -1894,6 +1908,7 @@ function _onServerEditingStop(state) {
   _closeEditPopovers(state); // un-float any portaled popover before edit UI hides
   state.pendingAnnotation = null;
   pushNavToUi(state);
+  syncStatusBadges(state);
   refreshButtons(state);
 }
 
@@ -2135,7 +2150,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       if (typeof evt.payload.analyzing === "boolean") {
         setAnalyzing(state, evt.payload.analyzing);
         syncBoardInputEnabled(state);
-        syncPausedUi(state);
+        syncStatusBadges(state);
         pushNavToUi(state);
         if (!state.analyzing) {
           dismissAnalysisToast(state.aiShared);
@@ -2178,7 +2193,6 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       state.resignAvailable = false;
       setDisabled(state.el.newGameBtn, false);
       state.el.boardHost.classList.add("board-idle");
-      syncPausedUi(state);
       showFinishedBadge(state, formatResult(evt.payload, state.humanWhite));
       refreshButtons(state);
       _playInProgress = false;
@@ -2192,7 +2206,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       if (typeof evt.payload.paused === "boolean" && evt.payload.paused !== state.paused) {
         state.paused = evt.payload.paused;
         syncBoardInputEnabled(state);
-        syncPausedUi(state);
+        syncStatusBadges(state);
         refreshButtons(state);
       }
       break;
@@ -2558,8 +2572,10 @@ export const playPerspective = {
     window.addEventListener(APP_EVT.RECENTS_CHANGED, onRecentsChanged);
 
     const pausedBadge = document.getElementById("paused-badge");
+    const editingBadge = document.getElementById("editing-badge");
     const finishedBadge = document.getElementById("finished-badge");
     state.el.pausedBadge = pausedBadge;
+    state.el.editingBadge = editingBadge;
     state.el.finishedBadge = finishedBadge;
 
     // Resign is enabled whenever there is an active game; cleared on
@@ -2781,8 +2797,7 @@ export const playPerspective = {
         dismissAnalysisToast(state.aiShared);
         state.dismissGameOverToast?.();
         state.dismissGameOverToast = null;
-        pausedBadge?.classList.add("hidden");
-        showFinishedBadge(state, "");
+        hideStatusBadges(state);
         offCrash();
         offEvent();
         view.unmount();

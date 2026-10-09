@@ -358,3 +358,80 @@ async def test_board_takes_moves_after_note_from_play(server, make_page):
     async with page.expect_response(posted(MOVE_PATH)):
         await drag_piece_one_rank_up(page, DRAG_FROM)
     assert_no_page_errors(errors)
+
+
+EDITING_BADGE = "#editing-badge"
+PAUSED_BADGE = "#paused-badge"
+FINISHED_BADGE = "#finished-badge"
+VIEW_EDIT_BTN = "#view-edit"
+OTHER_PERSPECTIVE = '[data-perspective="engines"]'
+CONFIRM_LEAVE_EDIT = "Leaving will cancel your position edit. Continue?"
+LEAVE_LABEL = "Leave"
+FINISHED_PGN = '[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 e5 1-0\n'
+FINISHED_PLIES = 2
+BADGE_SHOWN_JS = """(sel) => {
+  const el = document.querySelector(sel);
+  return !!el && !el.classList.contains('hidden');
+}"""
+
+
+async def _badges(page) -> dict:
+    return {
+        sel: await page.evaluate(BADGE_SHOWN_JS, sel)
+        for sel in (EDITING_BADGE, PAUSED_BADGE, FINISHED_BADGE)
+    }
+
+
+@pytest.mark.asyncio
+async def test_editing_badge_replaces_paused_from_play(server, make_page):
+    base = server
+    page, errors, obs = await _open(make_page, base)
+    await _start_live_game(page, obs, base)
+
+    await page.click(PLAY_EDIT_BTN)
+    await obs.wait_board_update(_editing)
+    assert await _badges(page) == {EDITING_BADGE: True, PAUSED_BADGE: False, FINISHED_BADGE: False}
+
+    await page.click(EDIT_CANCEL_BTN)
+    await obs.wait_board_update(_live)
+    # Edit from play paused the game on your turn: Paused is back.
+    await page.wait_for_function(BADGE_SHOWN_JS, arg=PAUSED_BADGE)
+    assert await _badges(page) == {EDITING_BADGE: False, PAUSED_BADGE: True, FINISHED_BADGE: False}
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_editing_badge_replaces_result_badge(server, make_page):
+    base = server
+    httpx.post(f"{base}/game/import", json={
+        "format": "pgn", "text": FINISHED_PGN, "land_at_ply": FINISHED_PLIES,
+    }).raise_for_status()
+    page, errors, obs = await _open(make_page, base)
+    await page.wait_for_function(BADGE_SHOWN_JS, arg=FINISHED_BADGE)
+
+    await page.click(VIEW_EDIT_BTN)
+    await obs.wait_board_update(_editing)
+    assert await _badges(page) == {EDITING_BADGE: True, PAUSED_BADGE: False, FINISHED_BADGE: False}
+
+    await page.click(EDIT_CANCEL_BTN)
+    await obs.wait_board_update(_viewing_at(FINISHED_PLIES))
+    assert await _badges(page) == {EDITING_BADGE: False, PAUSED_BADGE: False, FINISHED_BADGE: True}
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_leaving_play_mid_edit_clears_badges(server, make_page):
+    base = server
+    page, errors, obs = await _open(make_page, base)
+    await _start_live_game(page, obs, base)
+    await page.click(PLAY_EDIT_BTN)
+    await obs.wait_board_update(_editing)
+
+    await page.click(OTHER_PERSPECTIVE)
+    await _confirm(page, CONFIRM_LEAVE_EDIT, LEAVE_LABEL)
+    await page.wait_for_function(
+        "(sel) => document.querySelector(sel).classList.contains('hidden')",
+        arg=EDITING_BADGE,
+    )
+    assert await _badges(page) == {EDITING_BADGE: False, PAUSED_BADGE: False, FINISHED_BADGE: False}
+    assert_no_page_errors(errors)
