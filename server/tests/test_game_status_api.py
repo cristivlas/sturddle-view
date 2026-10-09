@@ -96,3 +96,23 @@ def test_status_after_game_end_is_idle(game_api_client):
     hve._board = None
     hve._game_id = None
     assert _status(c) == IDLE_STATUS
+
+
+def test_status_live_clone_with_moves_is_in_progress(game_api_client):
+    c, app, engine_path = game_api_client
+    install_active_game(app, engine_path=engine_path, moves_uci=MOVES)
+    r = c.post("/game/view/start", json={"suspend": True, "land_at_ply": 1})
+    assert r.status_code == 200, r.text
+    s = _status(c)
+    assert s["viewing"] is True
+    assert s["in_progress"] is True
+
+
+def test_status_zero_move_live_clone_is_not_in_progress(game_api_client):
+    c, app, engine_path = game_api_client
+    install_active_game(app, engine_path=engine_path)
+    r = c.post("/game/view/start", json={"suspend": True})
+    assert r.status_code == 200, r.text
+    s = _status(c)
+    assert s["viewing"] is True
+    assert s["in_progress"] is False

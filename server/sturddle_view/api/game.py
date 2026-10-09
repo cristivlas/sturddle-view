@@ -79,6 +79,7 @@ _TEXT_KEY = "text"
 _FEN_KEY = FEN_KEY
 _OPENING_KEY = "opening"
 _LAND_AT_PLY_KEY = "land_at_ply"
+_SUSPEND_KEY = "suspend"
 _COMMENT_TEXT_KEY = "comment_text"
 _DETECTED_FORMAT_KEY = "detected_format"
 _CHILDREN_KEY = "children"
@@ -574,16 +575,21 @@ async def view_start(payload: dict, request: Request) -> dict:
     (e.g. as a precondition to edit mode, or to scrub past moves) without
     going through `/game/import`, which saves to the recent-imports store.
 
-    With ``suspend: true`` the live play game is held in memory so the client
-    can resume the SAME game (no fork) via `/view/resume-play` -- used by the
-    scrub-back feature and the AI-prose edit entry (no discard confirm, so
-    the game stays resumable). A plain edit entry omits it (the user agreed
-    to discard; unchanged POV). Optional ``land_at_ply`` lands the cursor
-    directly at a past ply (flicker-free) instead of the default last ply.
+    With ``suspend: true`` the live game is suspended into a live clone (same
+    game_id) so the client can resume the SAME game (no fork) via
+    `/view/resume-play` -- used by the scrub-back feature and the AI-prose
+    edit entry. A plain edit entry omits it (the user agreed to discard;
+    unchanged POV). Optional ``land_at_ply`` lands the cursor directly at a
+    past ply (flicker-free) instead of the default last ply.
     """
     land_at_ply = _land_at_ply(payload)
-    suspend = bool(payload.get("suspend", False))
+    suspend = bool(payload.get(_SUSPEND_KEY, False))
     hve = await _get_hve(request)
+    if suspend:
+        await _cancel_ai_analysis(request)
+        with _runtime_error_is_bad_request():
+            game_id = await hve.enter_live_clone(land_at_ply)
+        return {_GAME_ID_KEY: game_id, _VIEWING_KEY: True}
     (
         start_fen,
         moves_uci,
@@ -616,7 +622,6 @@ async def view_start(payload: dict, request: Request) -> dict:
             ),
             fork_link=fork_link,
             land_at_ply=land_at_ply,
-            suspend_play=suspend,
         )
         # enter_view_mode already lands (and publishes) at land_at_ply when
         # given; only jump to the last ply for the default (no target) entry.

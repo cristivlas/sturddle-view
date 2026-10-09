@@ -32,6 +32,7 @@ from ..chess.pgn_tags import (
 )
 from ..chess.results import (
     DRAW,
+    SIDE_BLACK,
     SIDE_WHITE,
     UNKNOWN_RESULT,
     UNKNOWN_TERMINATION,
@@ -111,6 +112,7 @@ _ANALYSIS_STOP_GRACE_SECONDS = env_float("SV_ANALYSIS_STOP_GRACE_S", 2.0, min_va
 _FULL_MOVE_PLIES = 2
 
 _NO_ACTIVE_GAME = "no active game"
+_NO_LIVE_GAME = "no live game to clone"
 _GAME_IS_OVER = "game is over"
 _NOTHING_TO_TAKE_BACK = "nothing to take back"
 
@@ -130,6 +132,7 @@ _TURN_KEY = "turn"
 _ANALYZING_KEY = "analyzing"
 _VIEW_HASH_KEY = "view_hash"
 _VIEW_SUMMARY_KEY = "view_summary"
+_IN_PROGRESS_KEY = "in_progress"
 _ERR_ENGINE_TERMINATED = "engine_terminated"
 
 _PGN_SITE = "Sturddle View"
@@ -312,7 +315,7 @@ def _status_payload(
     view_summary: dict | None, analyzing: bool,
 ) -> dict:
     return {
-        "in_progress": in_progress,
+        _IN_PROGRESS_KEY: in_progress,
         VIEWING_KEY: viewing,
         _VIEW_HASH_KEY: view_hash,
         _VIEW_SUMMARY_KEY: view_summary,
@@ -393,10 +396,10 @@ class HumanVsEngine:
         # new game), so a stale link never carries forward. Persisted in
         # the crash-recovery snapshot.
         self._fork_link: tuple[str, int] | None = None
-        # Live play game suspended by /view/start, kept in memory so the
-        # client can resume the SAME game (no fork) when it scrubs back to
-        # the last ply. Set only by view/start; cleared by enter_view_mode
-        # (so import/edit-commit don't offer a stale resume) and on resume.
+        # Live game suspended under a live clone, kept in memory for Return
+        # to live (same game, no fork). Set only by _enter_live_clone;
+        # cleared by enter_view_mode (so import/edit-commit don't offer a
+        # stale resume), new_game, and on resume.
         self._suspended_play: GameState | None = None
         # Pre-edit view bundle stashed by enter_edit_mode; restored wholesale
         # (self._game = it) by cancel_edit and the FEN-unchanged commit_edit.
@@ -492,6 +495,11 @@ class HumanVsEngine:
     @property
     def game_id(self) -> str | None:
         return self._game_id
+
+    @property
+    def is_live_clone(self) -> bool:
+        """A view session holding a suspended live game."""
+        return self._suspended_play is not None
 
     @property
     def viewing_game_id(self) -> str | None:
@@ -928,19 +936,22 @@ class HumanVsEngine:
         if kick_engine:
             await self._engine_to_move()
 
+    @property
+    def _in_progress(self) -> bool:
+        """A live game with moves, on the board or suspended under a live
+        clone. Every game-end path nulls the board, so board presence
+        implies the game isn't over."""
+        if self._suspended_play is not None:
+            return bool(self._suspended_play.moves_uci)
+        return not self._viewing and self._board is not None and bool(self._board.move_stack)
+
     async def status(self) -> dict:
         """Server-authoritative snapshot of the state behind the client's
-        discard/replace confirmations (GET /game/status). in_progress mirrors
-        the client's moves>0 && !over && !viewing gate; every game-end path
-        nulls the board, so board presence implies the game isn't over."""
+        discard/replace confirmations (GET /game/status)."""
         async with self._lock:
             viewing = self._viewing
             return _status_payload(
-                in_progress=(
-                    not viewing
-                    and self._board is not None
-                    and bool(self._board.move_stack)
-                ),
+                in_progress=self._in_progress,
                 viewing=viewing,
                 view_hash=self._view_hash if viewing else None,
                 view_summary=self._view_summary if viewing else None,
@@ -1191,9 +1202,9 @@ class HumanVsEngine:
         """Return (comments, root_comment) from the current play-mode game.
 
         Populated only when the play game was seeded from a view fork
-        (play_from_here) that carried commentary. Used by /game/view/start
-        so the play -> view clone preserves imported annotations through
-        an edit-mode round trip."""
+        (play_from_here) that carried commentary. Used by the live clone and
+        /game/view/start so the play -> view flip preserves imported
+        annotations through an edit-mode round trip."""
         comments = list(self._play_comments) if self._play_comments is not None else None
         return comments, self._play_root_comment
 
@@ -1223,16 +1234,14 @@ class HumanVsEngine:
         game_id: str | None = None,
         fork_link: tuple[str, int] | None = None,
         land_at_ply: int | None = None,
-        suspend_play: bool = False,
     ) -> str:
-        """Load a PGN-imported game into view mode at the LAST ply.
+        """Load a game into view mode (import, FEN-edit commit).
 
         Replaces any active live game (the autosave file preserves it for
-        future load-from-history). No clocks tick, no engine thinks, no
-        autosave fires. Navigation is via view_first/back/forward/last.
-        Exit via play_from_here (seeds a fresh play game), or -- when
-        ``suspend_play`` stashed the live game -- resume_play (same game,
-        no fork).
+        future load-from-history) and drops any suspended one. No clocks
+        tick, no engine thinks, no autosave fires. Navigation is via
+        view_first/back/forward/last. Exit via play_from_here (seeds a
+        fresh play game).
 
         ``game_id`` is an opaque server-side identity for the loaded
         content. When the caller has one (e.g. import path found the
@@ -1250,78 +1259,122 @@ class HumanVsEngine:
         async with self._lock:
             if not (self._mode & Op.ENTER_VIEW_MODE._mask):
                 raise ModeConflictError(self._mode, Op.ENTER_VIEW_MODE)
-            await self._cancel_analysis()
-            await self._cancel_think()
-            await self._cancel_tick()
-            self._ensure_tablebase()
-            # Unconditional replacement: default ``None`` drops a stale
-            # link from a prior play game (import-on-top, FEN-edit
-            # commit); ``/view/start`` passes the current link through
-            # so play -> view -> edit -> annotate can record it on
-            # commit.
+            await self._install_view(params, game_id, land_at_ply)
             self._fork_link = fork_link
-            # Suspend the live play game for a no-fork resume (view/start
-            # only); every other entry (import, edit-commit) drops any stale
-            # suspend so it can't offer a bogus resume. Captured here while
-            # self._board still holds the live play position (replaced below).
-            self._suspended_play = (
-                self._game_state_snapshot(live_clocks=True)
-                if suspend_play and self._board is not None and not self._viewing
-                else None
-            )
-            try:
-                start_board = board_from(params.start_fen)
-            except ValueError as e:
-                raise RuntimeError(f"invalid FEN: {e}") from e
-            full_moves: list[chess.Move] = []
-            replay = start_board.copy()
-            for uci in params.moves_uci:
-                try:
-                    move = chess.Move.from_uci(uci)
-                except ValueError as e:
-                    raise RuntimeError(f"invalid UCI in view moves: {uci}") from e
-                if move not in replay.legal_moves:
-                    raise RuntimeError(f"illegal move in view: {uci}")
-                full_moves.append(move)
-                replay.push(move)
-            self._mode = Mode.VIEWING
-            self._view_full_moves = full_moves
-            self._view_clock_history = list(params.clock_history) if params.clock_history else []
-            self._view_final_white = params.final_white_time
-            self._view_final_black = params.final_black_time
-            self._view_white_name = params.white_name
-            self._view_black_name = params.black_name
-            self._view_pgn_result = params.pgn_result
-            self._view_pgn_termination = params.pgn_termination
-            self._view_eval_history = list(params.eval_history) if params.eval_history else None
-            self._view_comments = list(params.comments) if params.comments else None
-            self._view_root_comment = params.root_comment or None
-            self._view_hash = params.view_hash or None
-            self._view_summary = params.view_summary or None
-            self._view_original_text = params.view_original_text or None
-            self._view_edited = False
-            # Default: land at start so the user is not greeted with the
-            # end-of-game modal. Callers (e.g. x-game nav) can request a
-            # specific ply so the first published board_update is already
-            # at the target position -- avoids an animation flicker when
-            # the cursor is then re-targeted from the client.
-            if land_at_ply is not None and 0 < land_at_ply <= len(full_moves):
-                self._view_cursor = land_at_ply
-                replay = start_board.copy()
-                for m in full_moves[:land_at_ply]:
-                    replay.push(m)
-                self._board = replay
-            else:
-                self._view_cursor = 0
-                self._board = start_board
-            self._start_fen = params.start_fen
-            self._game_id = game_id if game_id is not None else str(uuid.uuid4())
-            self._game_started_wall = None  # not a play game; no autosave
-            # Clocks frozen -- irrelevant in view mode but keep types sane.
-            self._clock = ChessClock(TimeControl(0.0, 0.0))
+            self._suspended_play = None
             await self._publish_board()
             await self._publish_clock()
         return self._game_id
+
+    async def enter_live_clone(self, ply: int | None = None) -> str:
+        """Suspend the live game into a live clone at ``ply`` (default:
+        the last ply). Returns the shared game_id."""
+        async with self._lock:
+            if not (self._mode & Op.ENTER_VIEW_MODE._mask):
+                raise ModeConflictError(self._mode, Op.ENTER_VIEW_MODE)
+            await self._enter_live_clone(ply)
+            await self._publish_board()
+            await self._publish_clock()
+        return self._game_id
+
+    async def _enter_live_clone(self, ply: int | None) -> None:
+        """Only builder of a live clone: a view of the live game that keeps
+        its game_id and Recents hash and holds the game suspended for Return
+        to live. Caller holds the lock and publishes."""
+        assert self._lock.locked(), "_enter_live_clone called without lock"
+        if self._viewing or not self._has_game:
+            raise RuntimeError(_NO_LIVE_GAME)
+        n_plies = len(self._board.move_stack)
+        if ply is None:
+            ply = n_plies
+        if not 0 <= ply <= n_plies:
+            raise RuntimeError(f"ply {ply} out of range 0..{n_plies}")
+        suspended = self._game_state_snapshot(live_clocks=True)
+        summary = self.play_game_summary()
+        comments, root_comment = self.play_game_comments()
+        game_id = self._game_id
+        params = ViewModeParams(
+            start_fen=self._start_fen,
+            moves_uci=suspended.moves_uci,
+            clock_history=list(self._clock.history) or None,
+            final_white_time=self._clock.white_time,
+            final_black_time=self._clock.black_time,
+            eval_history=(
+                list(self._eval_history)
+                if any(e is not None for e in self._eval_history)
+                else None
+            ),
+            white_name=summary[SIDE_WHITE] if summary else None,
+            black_name=summary[SIDE_BLACK] if summary else None,
+            view_summary=summary,
+            comments=comments,
+            root_comment=root_comment,
+            view_hash=self._recents.hash_for_id(game_id) if self._recents else None,
+        )
+        await self._install_view(params, game_id, ply)
+        self._suspended_play = suspended
+
+    async def _install_view(
+        self, params: ViewModeParams, game_id: str | None, land_at_ply: int | None,
+    ) -> None:
+        """Validate ``params``, then stop play activity and install the view
+        session. Raises before touching any state. Caller holds the lock,
+        owns the fork link and suspend fields, and publishes."""
+        assert self._lock.locked(), "_install_view called without lock"
+        try:
+            start_board = board_from(params.start_fen)
+        except ValueError as e:
+            raise RuntimeError(f"invalid FEN: {e}") from e
+        full_moves: list[chess.Move] = []
+        replay = start_board.copy()
+        for uci in params.moves_uci:
+            try:
+                move = chess.Move.from_uci(uci)
+            except ValueError as e:
+                raise RuntimeError(f"invalid UCI in view moves: {uci}") from e
+            if move not in replay.legal_moves:
+                raise RuntimeError(f"illegal move in view: {uci}")
+            full_moves.append(move)
+            replay.push(move)
+        await self._cancel_analysis()
+        await self._cancel_think()
+        await self._cancel_tick()
+        self._ensure_tablebase()
+        self._mode = Mode.VIEWING
+        self._view_full_moves = full_moves
+        self._view_clock_history = list(params.clock_history) if params.clock_history else []
+        self._view_final_white = params.final_white_time
+        self._view_final_black = params.final_black_time
+        self._view_white_name = params.white_name
+        self._view_black_name = params.black_name
+        self._view_pgn_result = params.pgn_result
+        self._view_pgn_termination = params.pgn_termination
+        self._view_eval_history = list(params.eval_history) if params.eval_history else None
+        self._view_comments = list(params.comments) if params.comments else None
+        self._view_root_comment = params.root_comment or None
+        self._view_hash = params.view_hash or None
+        self._view_summary = params.view_summary or None
+        self._view_original_text = params.view_original_text or None
+        self._view_edited = False
+        # Default: land at start so the user is not greeted with the
+        # end-of-game modal. Callers (e.g. x-game nav) can request a
+        # specific ply so the first published board_update is already
+        # at the target position -- avoids an animation flicker when
+        # the cursor is then re-targeted from the client.
+        if land_at_ply is not None and 0 < land_at_ply <= len(full_moves):
+            self._view_cursor = land_at_ply
+            replay = start_board.copy()
+            for m in full_moves[:land_at_ply]:
+                replay.push(m)
+            self._board = replay
+        else:
+            self._view_cursor = 0
+            self._board = start_board
+        self._start_fen = params.start_fen
+        self._game_id = game_id if game_id is not None else str(uuid.uuid4())
+        self._game_started_wall = None  # not a play game; no autosave
+        # Clocks frozen -- irrelevant in view mode but keep types sane.
+        self._clock = ChessClock(TimeControl(0.0, 0.0))
 
     def _comment_nav(self, cursor: int) -> dict:
         """Return prev/next ply indices (0..n) that have a comment, nearest first."""
@@ -1747,7 +1800,7 @@ class HumanVsEngine:
     def _game_state_snapshot(self, *, live_clocks: bool = False) -> GameState:
         """Build a GameState from the live play game. Call under self._lock
         with a live (non-view) game set up. Shared by _persist (disk) and
-        view/start (in-memory suspend for no-fork resume).
+        the live clone (in-memory suspend for no-fork resume).
 
         ``live_clocks``: debit the in-progress turn's elapsed time so the
         captured clocks are the live remaining, not the banked total. Used by
@@ -2456,6 +2509,7 @@ class HumanVsEngine:
                     **(self._tb.probe(self._board) or {} if self._tb else {}),
                 },
                 _ANALYZING_KEY: self._analysis_mode,
+                _IN_PROGRESS_KEY: self._in_progress,
                 "editing": self._editing,
                 "view": view_payload,
                 "eval_history": eval_history,
@@ -2751,8 +2805,8 @@ class HumanVsEngine:
     def play_game_summary(self) -> dict | None:
         """Minimal summary dict for the in-flight play game, matching the
         shape stashed for recents on game-end. Returns None when there's
-        no live play game with moves. Used by /game/view/start to label
-        the play->view clone."""
+        no live play game with moves. Labels the live clone and the
+        /game/view/start flip."""
         if not self._has_game or not self._board.move_stack:
             return None
         white, black = self.play_side_names(self._human_white)

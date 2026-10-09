@@ -2,6 +2,7 @@
 gating of play-mode operations, autosave suppression."""
 from __future__ import annotations
 
+import re
 from unittest.mock import AsyncMock
 
 import chess
@@ -16,6 +17,7 @@ from sturddle_view.play.human_vs_engine import (
     ViewModeParams,
 )
 from sturddle_view.play.mode import Mode, ModeConflictError
+from sturddle_view.recent_imports import RecentImports
 
 
 class _StubEngine:
@@ -47,7 +49,6 @@ _UUID_RE = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 
 
 async def test_new_game_assigns_full_uuid_game_id(hve):
-    import re
     h, _ = hve
     gid = await h.new_game(human_white=True, tc=TimeControl(60.0, 0.0))
     assert re.match(_UUID_RE, gid)
@@ -55,7 +56,6 @@ async def test_new_game_assigns_full_uuid_game_id(hve):
 
 
 async def test_enter_view_mode_assigns_full_uuid_game_id(hve):
-    import re
     h, _ = hve
     gid = await h.enter_view_mode(ViewModeParams(
         start_fen=None, moves_uci=["e2e4"], clock_history=None,
@@ -1082,15 +1082,8 @@ async def test_new_view_clears_edited_flag(hve):
 # ---- no-fork resume (/view/start suspend -> /view/resume-play) -----------
 
 async def _suspend_live_play(h):
-    """Mimic /view/start: snapshot the live play game into a suspended view."""
-    sf, mu, ch, wt, bt, _eh = h.play_game_snapshot()
-    return await h.enter_view_mode(
-        ViewModeParams(
-            start_fen=sf, moves_uci=mu, clock_history=ch or None,
-            final_white_time=wt, final_black_time=bt,
-        ),
-        suspend_play=True,
-    )
+    """Suspend the live play game into a live clone at its last ply."""
+    return await h.enter_live_clone()
 
 
 async def test_resume_play_restores_same_game_and_sides(hve):
@@ -1109,8 +1102,8 @@ async def test_resume_play_restores_same_game_and_sides(hve):
     resumed_id = await h.resume_play()
     assert h._viewing is False
     assert h._mode is Mode.PLAY
-    assert resumed_id == play_id          # same game, not the view id
-    assert resumed_id != view_id
+    assert resumed_id == play_id          # same game, not a fork
+    assert view_id == play_id             # the clone shares the live id
     assert h._human_white is False        # color preserved (not side-to-move)
     assert [m.uci() for m in h._board.move_stack] == ["e2e4", "e7e5"]
     assert h._suspended_play is None      # consumed
@@ -1226,15 +1219,83 @@ async def test_new_game_clears_suspended_play(hve):
     assert h._suspended_play is None
 
 
-async def test_suspend_ignored_when_already_viewing(hve):
-    """suspend_play only captures a live play game; an import-on-top while
-    already viewing must not stash a bogus (view-board) snapshot."""
+async def test_live_clone_refused_when_already_viewing(hve):
+    """A live clone needs a live play game; from a view there is nothing to
+    suspend, so no bogus (view-board) snapshot is stashed."""
     h, _ = hve
     await h.enter_view_mode(ViewModeParams(
         start_fen=None, moves_uci=["e2e4"], clock_history=None,
     ))
-    await h.enter_view_mode(
-        ViewModeParams(start_fen=None, moves_uci=["d2d4"], clock_history=None),
-        suspend_play=True,
-    )
+    with pytest.raises(RuntimeError):
+        await h.enter_live_clone()
     assert h._suspended_play is None
+
+
+async def test_live_clone_refused_without_a_game(hve):
+    h, _ = hve
+    with pytest.raises(RuntimeError):
+        await h.enter_live_clone()
+
+
+# ---- live clone identity and in_progress ----------------------------------
+
+async def _play_two_plies(h, *, human_white=True):
+    """Live game with 1.e4 e5 played (engine reply injected)."""
+    await h.new_game(human_white=human_white, tc=TimeControl(60, 0))
+    for u in ("e2e4", "e7e5"):
+        async with h._lock:
+            h._clock.append_snapshot()
+            h._board.push(chess.Move.from_uci(u))
+            h._eval_history.append(None)
+
+
+async def test_live_clone_keeps_live_game_id(hve):
+    h, _ = hve
+    await _play_two_plies(h)
+    live_id = h.game_id
+    assert await h.enter_live_clone(1) == live_id
+    assert h.game_id == live_id
+    assert h._view_cursor == 1
+    assert h.is_live_clone is True
+
+
+async def test_live_clone_carries_recents_row_hash(hve, tmp_path):
+    h, _ = hve
+    h._recents = RecentImports.load(root=tmp_path / "imports", cap=10)
+    await _play_two_plies(h)
+    row_hash = await h.export_to_recents()
+    assert row_hash is not None
+    await h.enter_live_clone(1)
+    assert h._view_hash == row_hash
+
+
+async def test_live_clone_hash_none_without_row(hve, tmp_path):
+    h, _ = hve
+    h._recents = RecentImports.load(root=tmp_path / "imports", cap=10)
+    await _play_two_plies(h)
+    await h.enter_live_clone(1)
+    assert h._view_hash is None
+
+
+async def test_in_progress_on_live_clone_with_moves(hve):
+    h, _ = hve
+    await _play_two_plies(h)
+    await h.enter_live_clone(1)
+    assert (await h.status())["in_progress"] is True
+
+
+async def test_in_progress_false_on_zero_move_clone(hve):
+    h, _ = hve
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    await h.enter_live_clone()
+    assert h.is_live_clone is True
+    assert (await h.status())["in_progress"] is False
+
+
+async def test_in_progress_false_on_plain_view(hve):
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None, moves_uci=["e2e4", "e7e5"], clock_history=None,
+    ))
+    assert h.is_live_clone is False
+    assert (await h.status())["in_progress"] is False

@@ -313,3 +313,27 @@ async def test_board_update_view_payload_carries_comment_nav(hve):
     view = event.payload["view"]
     assert view["prev_comment"] == 1
     assert view["next_comment"] == 3
+
+
+# -- in_progress rides every board update -----------------------------------
+
+async def test_in_progress_in_play_payload(hve):
+    await hve.new_game(human_white=True, tc=TC)
+    assert hve._board_event().payload["in_progress"] is False
+    await hve.submit_move("e2e4")
+    assert hve._board_event().payload["in_progress"] is True
+
+
+async def test_in_progress_false_in_view_and_edit_payloads(hve):
+    await _enter_view(hve)
+    assert hve._board_event().payload["in_progress"] is False
+    await hve.enter_edit_mode()
+    assert hve._board_event().payload["in_progress"] is False
+
+
+async def test_live_clone_payload_carries_in_progress_and_player_color(hve):
+    await hve.new_game(human_white=False, tc=TC, start_moves_uci=SEED_MOVES)
+    await hve.enter_live_clone(1)
+    payload = hve._board_event().payload
+    assert payload["in_progress"] is True
+    assert payload["view"]["resume_human_white"] is False
