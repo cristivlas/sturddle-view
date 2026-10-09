@@ -601,3 +601,54 @@ async def test_restart_mid_game_keeps_comments_and_fork_link(tmp_path):
     plies = [n.comment for n in game.mainline()]
     assert "c1" in plies[0]
     assert "c3" in plies[2]
+
+
+# -------- a note committed on a live clone goes home --------
+
+_NOTE = "a note"
+
+
+async def _live_game_two_plies(hve):
+    await hve.new_game(human_white=True, tc=TimeControl(60.0, 0.0))
+    await hve.submit_move("e2e4")
+    async with hve._lock:
+        hve._clock.append_snapshot()
+        hve._board.push(chess.Move.from_uci("e7e5"))
+        hve._eval_history.append(None)
+        await hve._persist()
+
+
+async def _note_on_clone_at_first_ply(hve):
+    await hve.enter_live_clone(1)
+    fen = await hve.enter_edit_mode()
+    await hve.commit_edit(fen, apply_comment=True, comment_text=_NOTE)
+
+
+async def test_clone_note_written_to_store_at_commit(tmp_path):
+    hve, store = _make_hve(tmp_path)
+    await _live_game_two_plies(hve)
+    await _note_on_clone_at_first_ply(hve)
+    assert hve.is_live_clone is True
+    assert store.load().play_comments == [_NOTE, None]
+
+
+async def test_clone_note_survives_return_and_restart(tmp_path):
+    hve, store = _make_hve(tmp_path)
+    await _live_game_two_plies(hve)
+    await _note_on_clone_at_first_ply(hve)
+    await hve.view_forward()
+    assert hve.is_live_clone is False
+    assert hve._play_comments == [_NOTE, None]
+    assert store.load().play_comments == [_NOTE, None]
+    fresh, _store2 = _make_hve(tmp_path)
+    fresh.restore_from(store.load())
+    assert fresh._play_comments == [_NOTE, None]
+
+
+async def test_close_view_on_clone_keeps_note(tmp_path):
+    hve, _store = _make_hve(tmp_path)
+    await _live_game_two_plies(hve)
+    await _note_on_clone_at_first_ply(hve)
+    await hve.close_view()
+    assert hve._viewing is False
+    assert hve._play_comments == [_NOTE, None]

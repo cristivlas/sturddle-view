@@ -1518,6 +1518,8 @@ class HumanVsEngine:
                     )
                 else:
                     annot = None
+                if annot is not None and self.is_live_clone:
+                    await self._send_comments_home()
                 await self._publish_board()
                 await self._publish_clock()
             if annot is not None:
@@ -1552,12 +1554,13 @@ class HumanVsEngine:
 
     def _apply_view_annotation(
         self, *, ply: int, text: str,
-    ) -> tuple[str, str] | None:
+    ) -> tuple[str | None, str | None] | None:
         """Mutate view-state to set/clear the comment at ``ply`` (0 ==
         root, N == comment after move N), regen the PGN + canonical
         hash, update ``_view_hash``. Returns ``(pgn_text, new_hash)``
         or None when the requested annotation matches what's already
-        there (no-op).
+        there (no-op). On a live clone only the comments change:
+        returns ``(None, unchanged hash)``, as the clone never has a row.
 
         Caller MUST hold the lock. ``_view_original_text`` is intentionally
         NOT touched -- it stays the original import bytes.
@@ -1585,6 +1588,8 @@ class HumanVsEngine:
             # Collapse to None if no comments remain anywhere.
             if all(c is None for c in self._view_comments):
                 self._view_comments = None
+        if self.is_live_clone:
+            return None, self._view_hash
         built = self._build_view_pgn()
         if built is None:
             return None
@@ -1593,6 +1598,19 @@ class HumanVsEngine:
         self._view_hash = new_hash
         self._view_edited = True
         return pgn_text, new_hash
+
+    async def _send_comments_home(self) -> None:
+        """Copy a live clone's comments into its suspended game and write
+        that snapshot (``_persist`` skips views): the only carrier of notes
+        home, for Return to live and for a restart. Caller holds the lock."""
+        assert self._lock.locked(), "_send_comments_home called without lock"
+        home = self._suspended_play
+        self._suspended_play = replace(
+            home,
+            play_comments=_fit_seed(self._view_comments, len(home.moves_uci)),
+            play_root_comment=self._view_root_comment,
+        )
+        await self._save_state(self._suspended_play)
 
     async def cancel_edit(self) -> str:
         """Leave edit mode; restore the pre-edit view by swapping its bundle
@@ -1702,10 +1720,10 @@ class HumanVsEngine:
         force-deleted: the view has nothing to show anymore. No-op outside
         view. Works from VIEWING or ANALYZING (analysis is cancelled).
 
-        A suspend-origin session (/view/start) gains a recents row once an
-        annotation is committed; deleting it resumes the suspended live game
-        (returns its game_id) rather than dropping it. Otherwise tears down
-        to the idle/no-game state (fresh GameBundle) and returns None."""
+        A live clone carries its game's exported row; deleting that row
+        resumes the suspended live game (returns its game_id) rather than
+        dropping it. Otherwise tears down to the idle/no-game state (fresh
+        GameBundle) and returns None."""
         async with self._lock:
             if not self._viewing:
                 return None
@@ -1862,7 +1880,12 @@ class HumanVsEngine:
             return
         if self._viewing:
             return  # view sessions aren't persisted; the source PGN is on disk
-        state = self._game_state_snapshot()
+        await self._save_state(self._game_state_snapshot())
+
+    async def _save_state(self, state: GameState) -> None:
+        """Write ``state`` to the store off the event loop. Best-effort."""
+        if self._store is None:
+            return
         try:
             await asyncio.to_thread(self._store.save, state)
         except Exception:

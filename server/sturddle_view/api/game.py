@@ -723,8 +723,12 @@ async def edit_commit(payload: dict, request: Request) -> dict:
         raise bad_request(f"'{_COMMENT_TEXT_KEY}' must be a string")
     if len(comment_text) > MAX_ANNOTATION_LENGTH:
         raise bad_request(f"'{_COMMENT_TEXT_KEY}' exceeds maximum length")
+    recents = request.app.state.recent_imports
+    # A live clone's annotations go home to the live game, never to Recents;
+    # decided from session state (an exported live game has a row by id).
+    live_clone = hve.is_live_clone
     prev_id = hve.game_id
-    prev_hash = request.app.state.recent_imports.hash_for_id(prev_id) if prev_id else None
+    prev_hash = recents.hash_for_id(prev_id) if prev_id and not live_clone else None
     # Capture the fork link before commit_edit -- the FEN-change branch
     # routes through enter_view_mode which would clear it (correct
     # behavior: FEN edit == new lineage). Annotation-only commit does
@@ -735,10 +739,12 @@ async def edit_commit(payload: dict, request: Request) -> dict:
         result = await hve.commit_edit(
             fen, apply_comment=apply_comment, comment_text=comment_text,
         )
-    recents = request.app.state.recent_imports
     h: str | None = None
     summary = None
-    if result.changed is EditChange.FEN:
+    if result.changed is EditChange.COMMENT and live_clone:
+        h = result.view_hash
+        summary = result.summary
+    elif result.changed is EditChange.FEN:
         # FEN edit == new lineage; do NOT carry the fork link forward.
         summary = result.summary
         h = await recents.save(

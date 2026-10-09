@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from sturddle_view.app import create_app
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.config import Settings
+from sturddle_view.recent_imports import ROW_TS
 
 from .conftest import REGISTRY_FILE, _write_uci_stub
 
@@ -60,6 +61,11 @@ def _rows(c):
     r = c.get("/game/recent-imports")
     assert r.status_code == 200, r.text
     return r.json()["entries"]
+
+
+def _rows_untouched(c):
+    """Rows minus the access timestamp, which reads bump."""
+    return [{k: v for k, v in row.items() if k != ROW_TS} for row in _rows(c)]
 
 
 def _by_id(c, gid):
@@ -171,25 +177,75 @@ def test_delete_in_view_row_requires_force_then_closes_view(client):
     assert c.post("/game/view/goto", json={"ply": 1}).status_code == 400
 
 
-@pytest.mark.parametrize("analyzing", [False, True])
-def test_force_delete_of_annotated_suspended_view_resumes_live_game(client, analyzing):
-    """A suspended view (/view/start suspend) gains a recents row once an
-    annotation is committed; force-deleting that row while viewing it --
-    analysis running or not -- must hand back the live game, not drop it
-    with the view."""
-    c = client
-    c.post("/game/import", json={"format": "pgn", "text": PARENT_PGN})
+CLONE_PLY = FORK_PLY - 2
+NOTE = "Annotated on the clone."
+
+
+def _forked_live_game(c):
+    """Import the parent, fork at FORK_PLY; returns (parent_id, live_id)."""
+    parent_id = c.post("/game/import", json={"format": "pgn", "text": PARENT_PGN}).json()["game_id"]
     assert c.post("/game/view/goto", json={"ply": FORK_PLY}).status_code == 200
     live_id = c.post("/game/view/play-from-here", json={}).json()["game_id"]
+    return parent_id, live_id
 
-    r = c.post("/game/view/start", json={"suspend": True, "land_at_ply": FORK_PLY})
+
+def _note_on_clone(c):
+    r = c.post("/game/view/start", json={"suspend": True, "land_at_ply": CLONE_PLY})
     assert r.status_code == 200, r.text
     fen = c.post("/game/edit/start", json={}).json()["fen"]
     r = c.post("/game/edit/commit", json={
-        "fen": fen, "apply_comment": True, "comment_text": "Annotated copy.",
+        "fen": fen, "apply_comment": True, "comment_text": NOTE,
     })
     assert r.status_code == 200, r.text
-    h = r.json()["hash"]
+    return r.json()
+
+
+def test_clone_commit_leaves_exported_row_untouched(client):
+    c = client
+    _parent_id, live_id = _forked_live_game(c)
+    assert c.get("/game/pgn").status_code == 200  # Save PGN: exported row
+    rows_before = _rows_untouched(c)
+    row_before = _by_id(c, live_id)
+    hve = c.app.state.hve
+
+    c.post("/game/view/start", json={"suspend": True, "land_at_ply": CLONE_PLY}).raise_for_status()
+    assert hve._view_hash == row_before["hash"]
+    fen = c.post("/game/edit/start", json={}).json()["fen"]
+    body = c.post("/game/edit/commit", json={
+        "fen": fen, "apply_comment": True, "comment_text": NOTE,
+    }).json()
+
+    assert body["hash"] == row_before["hash"]
+    assert hve._view_hash == row_before["hash"]
+    assert _rows_untouched(c) == rows_before
+    assert _by_id(c, live_id)["text"] == row_before["text"]
+
+
+def test_clone_commit_adds_no_row(client):
+    c = client
+    _forked_live_game(c)
+    rows_before = _rows_untouched(c)
+    _note_on_clone(c)
+    assert _rows_untouched(c) == rows_before
+
+
+def test_clone_commit_keeps_fork_link(client):
+    c = client
+    parent_id, _live_id = _forked_live_game(c)
+    _note_on_clone(c)
+    assert c.app.state.hve.fork_link == (parent_id, FORK_PLY)
+
+
+@pytest.mark.parametrize("analyzing", [False, True])
+def test_force_delete_of_exported_row_on_clone_resumes_live_game(client, analyzing):
+    """A clone of an exported live game carries its row's hash; force-deleting
+    that row while on the clone -- analysis running or not -- hands back the
+    live game with the clone's note, not an idle board."""
+    c = client
+    _parent_id, live_id = _forked_live_game(c)
+    assert c.get("/game/pgn").status_code == 200
+    h = _by_id(c, live_id)["hash"]
+    _note_on_clone(c)
     if analyzing:
         assert c.post("/game/analysis/start", json={}).status_code == 200
 
@@ -199,6 +255,7 @@ def test_force_delete_of_annotated_suspended_view_resumes_live_game(client, anal
     hve = c.app.state.hve
     assert hve.viewing_game_id is None
     assert hve.game_id == live_id
+    assert hve._play_comments[CLONE_PLY - 1] == NOTE
 
 
 def test_delete_non_viewed_row_needs_no_force(client):
