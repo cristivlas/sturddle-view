@@ -1,6 +1,7 @@
 # Annotation Edit -- Design Sketch
 
-Status: implemented (phases 1-7 shipped).
+Status: implemented (phases 1-7 shipped). Edit from play (below):
+planned.
 
 ## Problem
 
@@ -120,22 +121,26 @@ The single lock acquisition guarantees no observer ever sees the
 | yes        | n/a            | new game_id, new FEN-only recents row         |
 | no         | yes            | same game_id, `replace_at(old_hash, ...)`     |
 
-"Comment change" is detected by comparing the regenerated PGN's hash
-against `_view_hash`. The FEN-change branch keeps its existing behavior
-(history dropped, FEN-only row written) and supersedes any in-flight
-comment edit -- the truncated game is a new game by identity.
+"Comment change" is detected by comparing the new text with the comment
+at the entry ply (a no-op commit changes nothing). The FEN-change branch
+keeps its existing behavior (history dropped, FEN-only row written) and
+supersedes any in-flight comment edit -- the truncated game is a new
+game by identity. On a live clone the FEN-change branch also leaves the
+live game (see Edit from play).
 
-### Promote-to-recents on annotation edit
+### Annotation commit always replaces a row
 
-A game can be in view mode without being in recents (e.g. play -> view
-via `/game/view/start` -> edit -> annotate). On annotation commit:
-
-- If `recents.hash_for_id(game_id)` returns a hash -> `replace_at` it.
-- Otherwise -> `replace_at(old_hash=None, ...)`, which inserts.
-
-So the act of annotating *is* the act of promoting the game to recents.
-This matches the semantic: the user cares enough to add content, so the
-game is worth preserving for future recall.
+Every view that is not a live clone has a Recents row: import and a
+position-changed commit both write one, and play -> view is a live clone
+(see Edit from play). So an annotation commit always
+`replace_at`s the row found by `recents.hash_for_id(game_id)`; a view
+with no row (test hooks only) writes nothing. The `old_hash=None` insert
+in `replace_at`, the comment branch's fork-link carry, `clear_fork_link`
+and the client's x-game refetch after a comment commit had one caller,
+the promote-on-annotate flow of the old play -> view path, and go with
+it. `replace_at` keeps its fork-link parameters: the finished-game save
+passes them. A live clone never touches Recents: its comments go home to
+the live game.
 
 ## Client mechanics
 
@@ -273,12 +278,8 @@ and annotate paths; no parallel copies of either.
 
 Either pencil -- view ribbon (`#view-edit`) or play ribbon (`#edit-pos`)
 -- with the AI turn done (`aiAnalysisDone(state)`) and visible AI prose
-(see Prefill source). From play mode the existing play -> view flip
-(`/game/view/start`) runs first, minus its discard-game confirm:
-annotating is the intent. With no confirm asked, the flip suspends the
-live game (`suspend: true`), so a cancelled edit can still resume it by
-scrubbing back to its last ply. No prose -> both pencils keep their
-confirms.
+(see Prefill source). From play mode, entry is Edit from play (below):
+the same entry as the plain pencil, plus the prefill.
 
 ### Flow
 
@@ -299,7 +300,7 @@ confirms.
    the user still confirms the edit to commit it.
 6. Cancel -> modal closes, nothing staged, edit mode stays open.
 
-Fallback: no visible prose -> normal pencil flow (confirm + editor).
+Fallback: no visible prose -> normal pencil flow.
 
 ### Prefill text
 
@@ -376,6 +377,312 @@ divider in `markAiDone`) and backs the accessor. Every round panel has
 a revision, so the dead guards go: the divider's `revision?.` and
 `noteAiPosition`'s `!entry.revision`.
 
+## Edit from play (planned)
+
+Annotate a game in progress -- by hand or from AI prose -- and keep
+playing the same game, with the notes on it.
+
+### Problem
+
+Edit runs on a view session. From play, the client first flips the live
+game into an in-memory clone (`/game/view/start`), then enters edit on
+the clone. What happens to the live game depends on how you got there:
+
+- **Plain pencil:** asks to discard the game, clones without suspending.
+  A saved comment lands on the clone, which is promoted to Recents; the
+  live game is gone. The only way on is Play from here -- a fork. Every
+  annotate-and-continue cycle adds a fork and a Recents copy.
+- **AI pencil, and scrub-back (click a past move):** suspend the live
+  game, so it can be resumed. But a saved comment still lands on the
+  clone and its Recents copy; resuming brings the live game back without
+  it. The notes end up in a side copy.
+- **Resume from an AI turn restarts the clock.** The suspend snapshot is
+  taken in ANALYZING (analysis runs only from a paused game) and records
+  `paused=False`.
+- **A restart mid-game loses comments.** The live game's crash-recovery
+  snapshot (`GameState`) has no comment fields.
+
+### Model
+
+The clone stays: it is what protects the original while the position is
+edited. But a clone of the live game is temporary and never has a row of
+its own. The live game is the only live copy; a Recents row for it is
+either a user export (Save PGN) or the save made when it is left or
+finished. Never a clone copy.
+
+- **Live clone.** A view session that suspended a live game. Every edit
+  entered from play works on one, and so does edit entered from a
+  scrubbed-back view (the view pencil while clicked back into a game in
+  progress). The clone keeps the live game's `game_id` (today it mints
+  its own): the client drops any board update whose id differs from the
+  one it shows, and only the retired resume-play path cleared that
+  filter. With one id, no operation ever switches ids. Consequences:
+  edit commit decides "live clone" from session state, not from a Recents
+  lookup by id (an exported live game has a row under that id); a forked
+  live game's parent toast shows on the clone. On entry the clone takes
+  the hash of its game's Recents row, if any (`/view/start` sets none
+  today): the dialog matches "viewing" on hash, so without it the row
+  keeps its trash, the server's by-id viewed check fires, and the
+  leftover force-delete path (`close_view`) would resume the live game
+  with the row already gone. Clone commits never touch Recents and never
+  rewrite `_view_hash` (today `_apply_view_annotation` does; on a clone
+  it updates the comments only), so the hash stays the row's. Save PGN
+  on a clone downloads the clone's PGN, notes included, and writes no
+  row, as on any view.
+- **Live clones never go to Recents.** An annotation committed on one
+  updates the clone, copies the comments into the suspended game, and
+  writes its crash-recovery snapshot (through the store directly:
+  `_persist` skips views). Views are never persisted, so
+  without this a restart mid-clone would drop the note (today it survives
+  in the clone's Recents copy).
+- **Return to live:** today's restore, unchanged (`_restore_suspended_play`
+  into `restore_from`). The comments arrive with the suspended snapshot,
+  which the clone commit already updated and wrote; there is no second
+  copy and no second write. The clone was seeded from the live game's
+  comments, so the snapshot's set is the complete, current one; the moves
+  are identical by construction (the position did not change).
+- **A live clone never rests on its last ply.** Outside edit mode, any
+  step that would leave a clone's cursor on the last ply returns to live
+  instead: a navigation op (scrub forward), or an edit exit (cancel, or a
+  commit that did not change the position). One rule covers both: edit
+  from play opens its clone at the last ply, so its exit returns to play;
+  scrub-back always lands earlier, so an edit from a scrubbed-back view
+  exits back to that view. No "entered from play" flag.
+- **Leaving the live game** for another one -- a position-changed
+  commit, Play from here mid-game, New Game, or import -- whether you are
+  on a live clone or playing: the live game (carrying the clone's
+  comments, if on one) is saved under its own `game_id` by the same pair
+  of saves as a finished game (disk PGN autosave and Recents), so both
+  copies carry the notes, then dropped. The Recents save captures the
+  fork link with its payload, as `export_to_recents` does: the
+  finished-game flush reads the live field at write time, which the
+  replacing operation has already reset (`new_game`, `enter_view_mode`),
+  and on Play from here it would read the child's fresh link and write
+  the parent as its own parent. The original is never lost.
+  Leaving runs at the replacing operation's commit point, after
+  everything that can fail (seed or FEN checks, engine spawn): a failure
+  leaves the live game or clone untouched. A game with no moves is not saved, matching the rule that
+  zero-move games never reach Recents. One server helper does this for
+  every path that replaces a live game. On a live clone the helper first
+  does Return to live without publishing (restore only: no tick, no
+  engine kick, no board update, so the client never flashes the live
+  board before the new game), then the normal save and drop. The PGN
+  builder (`_build_play_game_pgn`) reads the live in-memory state, which
+  on a clone is the view; restoring first keeps that builder the single
+  one, and the clone's comments come along through Return to live rather
+  than through a second builder over the snapshot. Dropping includes clearing the
+  crash-recovery snapshot (`GameStore`): today import and FEN-commit
+  leave it behind, so a restart would resurrect the abandoned game
+  beside its Recents copy.
+- **The game in progress cannot be imported over itself.** An import
+  whose content resolves to the live game's `game_id` (its exported row,
+  opened from the dialog or pasted verbatim, while playing or on its
+  clone) is refused with 409 `in_progress`; the client toasts. Without
+  the guard, `/game/import` resolves the id before the flip, Leaving
+  rebinds that id to the current content, and the import's own Recents
+  save then asserts on the stale hash. The dialog disables that row too,
+  tagged "playing": one matcher for the current game's row, by hash
+  (viewing) or by the live `game_id` (playing), so the row never
+  dead-ends in the toast; the 409 stays as the guard for pasted text. A
+  pasted older export is different content and imports as its own row,
+  as any PGN would.
+
+### Entry
+
+`/game/edit/start` becomes legal from play (PLAY, PAUSED, and ANALYZING
+entered from play). The server does the flip itself: suspend the live
+game into a live clone at its last ply and enter edit. One call from the
+client.
+
+- Plain pencil: no discard confirm (nothing is discarded any more).
+- AI pencil: the same call, plus the prefill. The "stop analysis?"
+  confirm still applies to an unfinished AI turn, and runs before the
+  call (today it runs after the flip, when analysis is already
+  cancelled).
+- The client's two-step flip goes: `/game/view/start` + `/game/sync` +
+  `suppressCommentsForEditTransition` on the pencil path.
+- Entry pauses the live game where pausing is allowed (your turn), so it
+  comes back paused. On the engine's turn it comes back as it was.
+- One server helper builds the live clone at a given ply: snapshot,
+  comments, summary, Recents hash. Edit-from-play and `/view/start` both
+  call it; the flip is not duplicated in the API layer (today
+  `/view/start` assembles it inline). The fork link rides in the
+  snapshot; `/view/start` stops passing it through and `enter_view_mode`
+  loses its `fork_link` parameter (no other caller). `enter_view_mode`
+  splits around one view installer: the clone helper suspends, then
+  installs; import and a position-changed commit leave, then install. So
+  `suspend_play` goes with no flag in its place.
+- Each transition publishes one board update, its final state. Entry
+  (clone, then edit) and exit (edit, then live) each run under one lock
+  with one publish. Today each half publishes (`enter_view_mode`,
+  `enter_edit_mode`, the unchanged commit, then `republish_state`); the
+  client's suppress flag existed for the race between those updates.
+- `/view/start` keeps scrub-back as its only caller, which always
+  suspends and lands on a past ply. So it always suspends, the ply is
+  required (1 to one less than the move count, else 400), and the
+  `suspend` parameter goes; the no-suspend branch and
+  the default last-ply landing (which would now return to live at once)
+  are dead.
+
+### Exit
+
+| Entered from            | Position  | Lands on                                                        |
+|-------------------------|-----------|-----------------------------------------------------------------|
+| play (either pencil)    | unchanged | live game, comments carried; paused on your turn, else as it was |
+| scrubbed-back view (k)  | unchanged | the live clone at ply k                                         |
+| either                  | changed   | live game left (saved if it has moves); new view at the FEN     |
+
+"Unchanged" covers cancel and an unchanged commit alike, with or without
+a comment. The exit applies the last-ply rule: a clone at its last ply
+(edit from play) returns to live; a clone at k (edit from a scrubbed-back
+view) stays, and its comments go home when you scrub forward. Play shows
+no comments, as today, and a clone never rests on the last ply: a note on
+the current position shows once a later move lets you scrub back to it.
+
+"Changed" means piece placement, side to move or castling rights differ
+from the entry position; en passant and the move counters are ignored.
+The editor always writes neither, while today's EPD compare keeps a
+legal en passant square: an unchanged commit right after such a double
+push reads as changed (on a plain view today, the moves are dropped).
+The server owns this rule, for plain views and live clones alike.
+
+### Scrub forward: return on the server
+
+Today the client detects a resumable view reaching its last ply
+(`resumable`, `viewReachedNonLast`) and calls `/game/view/resume-play`.
+The last-ply rule moves this to the server: a navigation op that moves a
+live clone's cursor onto the last ply returns to live. That retires
+`resumable`, `viewReachedNonLast`, `resumeLivePlay` and the resume-play
+endpoint. The AI replay buffer needs no handling here: navigation is
+refused while analysis runs, and the exits the client drives
+(`/analysis/stop`, `/edit/start`) and a failed turn already clear it.
+`resume_human_white` stays: a live clone's view payload must carry the
+player's side so a remount mid scrub-back keeps the board POV.
+
+### Play from here on a live clone
+
+A live clone is always at a ply k before the end (scrub-back lands
+there; reaching the last ply returns to live). Play from here first
+captures the seed at k as today (moves, clocks, evals and comments up to
+k, plus the game-over check), since Leaving's restore wipes the view.
+Then the engine spawns, and at the commit point the live game is left
+(saved to Recents) and the fork swaps in. The fork's parent link points at the saved live game's
+`game_id` (the clone's, since they share it), so x-game navigation back
+to the parent works.
+
+### Fixes riding along
+
+- **Paused on return:** the suspend snapshot records the pre-analysis
+  mode, so a game paused for an AI turn comes back paused.
+- **Comments in the crash-recovery snapshot:** `GameState` gains
+  `play_comments` and `play_root_comment` (defaults, no schema bump);
+  `restore_from` restores them. Fixes restart loss on its own, and the
+  suspend snapshot carries them for free.
+- **Fork link in the crash-recovery snapshot:** `GameState` also gains
+  the parent game id and fork ply (defaults, no schema bump), restored
+  by `restore_from`. Today a Play-from-here game keeps its link in
+  memory only; after a restart its Recents save (now the main path, via
+  Leaving) writes no parent link, and x-game navigation is gone.
+
+### Confirms
+
+Leaving a live game no longer loses it, but it still ends it (reopening
+from Recents gives a view, not the running game with its clocks and
+engine). So every path that leaves a live game asks one shared confirm,
+no longer styled destructive, with a per-path verb. One gate everywhere,
+matching the save rule: a live game with moves would be left. The
+server works out `in_progress` once, the same way for GET /game/status
+and for every board update: today it is false whenever a view is open,
+so it must also count a live clone whose suspended game has moves. The
+play page's confirms read a client copy computed from moves, game-over
+and viewing (`_playInProgress`), which stays false on a clone; that copy
+now reads the board update's flag and stops computing its own. A
+zero-move game (New Game, then the pencil to set up a position) is never
+saved, so it asks nothing, as today.
+
+- New Game: "Start a new game? The current game will be saved to
+  Recents."
+- Import: "Import and leave the current game? It will be saved to
+  Recents."
+- Edit commit, additionally only when the position changed. The server
+  decides: a commit that would leave a live game returns 409 unless it
+  carries `leave: true`; the client confirms and resends. The 409 keeps
+  edit mode (today the commit switches to view mode before deciding).
+  One rule, on the server, and it survives a reload mid-edit: "Apply the
+  new position and leave the current game? It will be saved to Recents."
+- Play from here: "Start a new game from here? The current game will be
+  saved to Recents."
+- Tournament replay (`tournament-live-game.js`, already gated on the
+  status call's `in_progress`): "Review this tournament game and leave
+  the current one? It will be saved to Recents." Replaces its "Discard
+  your in-progress game" wording and destructive style.
+- Fork-link toast (`openXgameTarget`, reachable on a live clone of an
+  exported Play-from-here game thanks to the shared id; today it imports
+  the parent with no confirm): "Open the parent game and leave the
+  current one? It will be saved to Recents."
+
+On a live clone the gate is true, so New Game and import take their
+in-progress branch (the leave confirm), not the discard-viewed-game
+prompt a plain view gets. Import's replace-viewed prompt runs only when a
+view is open and `in_progress` is false, so a clone never asks twice.
+
+The pencil's discard confirm (`CONFIRM_EDIT_FROM_PLAY`) goes: edit no
+longer leaves the game. Without the commit confirm, a stray drag plus
+OK would end the running game silently, which is worse than today's
+warning at entry.
+
+### Tests
+
+One per exit-table row, both pencils, and:
+- the paused-on-return case from an AI turn;
+- the leave confirm shows on a changed-position commit from a live clone,
+  on Play from here on one, and on New Game from one; not on an unchanged
+  commit, not on a plain view, and not on a zero-move game;
+- tournament replay over a live game asks the leave confirm, not the
+  discard one;
+- the parent toast on a live clone asks the leave confirm before opening
+  the parent; the live game lands in Recents with its fork link;
+- `in_progress` is true on a live clone whose game has moves, false on a
+  plain view and on a zero-move clone, in the status call and in the
+  board update alike; New Game from a live clone is driven through the
+  real UI (e2e), not only the endpoint;
+- scrub forward after an edit at ply k carries the comment home;
+- Play from here on a live clone saves the live game to Recents and the
+  fork's parent link resolves to it;
+- a live clone never appears in Recents; a commit on a clone of an
+  exported live game leaves that row untouched, and the clone carries
+  that row's hash, before and after the commit, so the dialog shows it
+  as viewing;
+- an unchanged commit right after a double push with a legal en passant
+  capture stays unchanged: on play, the live game is kept with the note;
+  on a plain view, the moves are kept;
+- a commit that would leave a live game returns 409 without `leave` and
+  stays in edit mode; after a reload mid-edit, the commit still asks;
+- import from a live clone asks once;
+- a failed engine spawn on New Game or Play from here leaves the live
+  game or clone untouched, with nothing saved;
+- the left game's Recents row keeps its fork link; on Play from here the
+  parent row is not its own parent and the child keeps its link;
+- entering edit from play and exiting it each publish one board update;
+- edit from play on a zero-move game exits back to play (its clone at
+  ply 0 is at its last ply);
+- a comment commit on a plain view never inserts a row;
+- importing the exported row of the game in progress returns 409 and
+  leaves the game running, while playing and on a clone; the dialog shows
+  that row disabled and tagged "playing" while playing;
+- with PGN autosave on, the file of a left game carries its notes;
+- `/view/start` rejects a missing ply, ply 0 and the last ply;
+- the clone's board updates carry the live game's id; edit cancel and
+  scrub forward land the client on the live board (no dropped update);
+- New Game and import from a live game with moves save it to Recents
+  (comments included, also when on a live clone); with no moves, nothing
+  is saved;
+- a restart mid-game keeps the live game's comments;
+- a restart while on a live clone keeps a note committed on it, and so
+  does a restart right after Return to live (same write, no second one);
+- after a restart, a forked game's Recents save still links to its parent;
+- a restart after leaving a live game does not resurrect it.
+
 ## Out of scope (v1)
 
 - Undo / redo within edit mode.
@@ -383,6 +690,12 @@ a revision, so the dead guards go: the divider's `revision?.` and
 - NAG editing.
 - Editing the root comment via a separate affordance (cursor=0 already
   covers it through the same flow).
-- Comment editing during live play (would require live-game PGN
-  autosave hooks; view-mode-only for v1). The play-pencil AI-prose
-  shortcut flips to view mode first, so it does not edit the live game.
+- Editing the live game in place (no clone): see Edit from play -- the
+  clone protects the original while the position is edited.
+- Opening book across a restart: `GameState` carries no book, so a
+  restart mid-opening plays on without it. Same mechanism as the comment
+  and fork-link fields, separate change.
+- Engine swap mid-analysis: selecting another engine (`swap_engine`)
+  leaves ANALYZING without stopping an AI turn or clearing its replay,
+  so navigation reopens while the turn still streams. Pre-existing,
+  separate fix.
