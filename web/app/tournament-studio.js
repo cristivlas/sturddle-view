@@ -136,6 +136,7 @@ const STUDIO_HTML = `
             <wa-tab-group class="studio-tabs">
               <wa-tab panel="livegames">Playing</wa-tab>
               <wa-tab panel="engines">Engines</wa-tab>
+              <button class="icon-btn studio-fold" slot="nav" aria-label="Playing and Engines panel"><wa-icon></wa-icon></button>
               <wa-tab-panel name="engines"><div class="studio-pane studio-pane-engines"></div></wa-tab-panel>
               <wa-tab-panel name="livegames"><div class="studio-pane studio-pane-livegames"></div></wa-tab-panel>
             </wa-tab-group>
@@ -1225,6 +1226,29 @@ function wireTabPersistence(ctx) {
   }
 }
 
+const FOLDED_CLASS = "folded";
+const FOLDED_ICON = "plus";
+const UNFOLDED_ICON = "minus";
+
+// Phone landscape: the +/- button folds the Playing | Engines panel down to
+// its tabs (CSS shows the button and applies the fold only there).
+function wireLeftTabsFold(ctx) {
+  const group = ctx.container.querySelector(".studio-bottom-left .studio-tabs");
+  const btn = group?.querySelector(".studio-fold");
+  if (!btn) return;
+  const apply = (folded) => {
+    group.classList.toggle(FOLDED_CLASS, folded);
+    btn.setAttribute("aria-expanded", String(!folded));
+    btn.querySelector("wa-icon").setAttribute("name", folded ? FOLDED_ICON : UNFOLDED_ICON);
+  };
+  apply(loadJson(STORAGE_KEY.STUDIO_LEFT_FOLDED) === true);
+  btn.addEventListener("click", () => {
+    const folded = !group.classList.contains(FOLDED_CLASS);
+    saveJson(STORAGE_KEY.STUDIO_LEFT_FOLDED, folded);
+    apply(folded);
+  });
+}
+
 function loadEnginesSort() {
   const v = loadRaw(STORAGE_KEY.STUDIO_ENGINES_SORT);
   return v === SORT_DIR.ASC || v === SORT_DIR.DESC ? v : SORT_DIR.NONE;
@@ -1431,6 +1455,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   wireTabPersistence(ctx);
   wireTabClipboard(ctx);
   wireEnginesSort(ctx);
+  wireLeftTabsFold(ctx);
   wireRibbonActions(ctx);
   announceRibbon(ctx.ribbonEl);
 

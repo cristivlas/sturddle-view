@@ -3838,6 +3838,15 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tabs wa-tab-panel { height: 100%; --padding: 0; }
 .studio-tabs wa-tab-panel::part(base) { height: 100%; box-sizing: border-box; }
 .studio-pane { height: 100%; overflow: auto; }
+/* Fold button: phone landscape only (short, any width); elsewhere the panel
+   never folds, whatever the saved state. No hover border: a tap leaves
+   :hover stuck on touch screens. */
+.studio-fold { display: none; }
+.studio-fold:hover { border-color: transparent; }
+@media (max-height: 480px) {
+  .studio-fold { display: inline-flex; margin-inline-start: auto; }
+  .studio-tabs.folded::part(body) { display: none; }
+}
 /* Chromium/WebKit only; Firefox has no thumb-length control. */
 @media (min-width: 801px) {
   .studio-tabs *::-webkit-scrollbar-thumb:vertical,
