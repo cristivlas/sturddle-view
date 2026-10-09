@@ -399,6 +399,9 @@ export function mountBoard({ element, onMove, styleId }) {
     if (seed && seed.castling) {
       castlingRights = { ...seed.castling };
     }
+    // The editor's handler replaces play input: record it off, or a later
+    // enableInput(false) (edit from play) would disable the editor.
+    inputEnabled = false;
     board.disableMoveInput();
     board.removeMarkers();
     if (!positionEditorLoaded) {

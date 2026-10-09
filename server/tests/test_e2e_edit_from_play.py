@@ -316,3 +316,38 @@ async def test_parent_toast_on_clone_asks_and_opens_parent(server, make_page):
     assert _state(base)["game_id"] == parent["game_id"]
     assert _row_text(base, live_id) is not None
     assert_no_page_errors(errors)
+
+
+BOARD_SVG = ".game-view-board svg.cm-chessboard"
+PIECE_ON = BOARD_SVG + ' [data-piece][data-square="{}"]'
+DRAG_FROM = "a2"
+DRAG_TO = "a3"
+DRAG_STEPS = 8
+
+
+async def _drag_one_rank_up(page, square: str) -> None:
+    """Drag the piece on ``square`` one rank toward Black (White at bottom)."""
+    box = await page.locator(PIECE_ON.format(square)).bounding_box()
+    x = box["x"] + box["width"] / 2
+    y = box["y"] + box["height"] / 2
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.move(x, y - box["height"], steps=DRAG_STEPS)
+    await page.mouse.up()
+
+
+@pytest.mark.asyncio
+async def test_pieces_move_in_edit_from_play(server, make_page):
+    """Edit from play installs the position editor in the same board update
+    that turns view mode on: the board must stay draggable."""
+    base = server
+    page, errors, obs = await _open(make_page, base)
+    await _start_live_game(page, obs, base)
+
+    await page.click(PLAY_EDIT_BTN)
+    await obs.wait_board_update(_editing)
+    await _drag_one_rank_up(page, DRAG_FROM)
+    await page.locator(PIECE_ON.format(DRAG_TO)).wait_for(state="attached")
+    await page.click(EDIT_CONFIRM_BTN)
+    await _confirm(page, CONFIRM_EDIT_LEAVE, KEEP_EDITING_LABEL)
+    assert_no_page_errors(errors)
