@@ -275,6 +275,17 @@ def _fit_seed(seed: list | None, n_plies: int) -> list | None:
     return fitted if any(x is not None for x in fitted) else None
 
 
+def _same_position(a: chess.Board, b: chess.Board) -> bool:
+    """Edit-commit "unchanged": piece placement, side to move and castling
+    rights match. En passant and move counters are ignored -- the editor
+    never writes them."""
+    return (
+        a.board_fen() == b.board_fen()
+        and a.turn == b.turn
+        and a.clean_castling_rights() == b.clean_castling_rights()
+    )
+
+
 def _ply_entry(per_ply: list | None, ply: int):
     """Entry for the move that reached ``ply`` in a per-ply list; None at
     ply 0, past the end, or when there is no list."""
@@ -1502,8 +1513,11 @@ class HumanVsEngine:
                 raise RuntimeError(explain_invalid(board))
             target_fen = board.fen()
             saved = self._edit_saved_view
-            pre_epd = saved.board.epd() if saved is not None and saved.board is not None else None
-            unchanged = pre_epd is not None and board.epd() == pre_epd
+            unchanged = (
+                saved is not None
+                and saved.board is not None
+                and _same_position(board, saved.board)
+            )
             self._mode = Mode.VIEWING
         if unchanged and saved is not None:
             async with self._lock:

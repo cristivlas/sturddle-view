@@ -419,3 +419,64 @@ async def test_board_update_payload_includes_editing_flag(hve: HumanVsEngine):
             latest = evt
     assert latest is not None
     assert latest.payload.get("editing") is True
+
+
+# ---- "changed" = placement, side to move, castling ---------------------------
+
+# 1.e4 a6 2.e5 d5: exd6 en passant is legal at ply 4.
+_EP_MOVES = ["e2e4", "a7a6", "e4e5", "d7d5"]
+_EP_PLY = len(_EP_MOVES)
+_NOTE = "note at the ep position"
+
+
+def _editor_fen(board: chess.Board, *, turn: bool | None = None, castling: str | None = None) -> str:
+    """FEN as the editor writes it: no en passant square, reset counters."""
+    side = board.turn if turn is None else turn
+    rights = board.castling_xfen() if castling is None else castling
+    return f"{board.board_fen()} {'w' if side else 'b'} {rights} - 0 1"
+
+
+async def _view_at_ep(h: HumanVsEngine) -> None:
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None, moves_uci=_EP_MOVES, clock_history=None,
+    ))
+    await h.view_last()
+
+
+async def test_unchanged_commit_after_double_push_keeps_moves(hve: HumanVsEngine):
+    await _view_at_ep(hve)
+    assert hve._board.ep_square is not None
+    await hve.enter_edit_mode()
+    await hve.commit_edit(_editor_fen(hve._edit_saved_view.board))
+    assert len(hve._view_full_moves) == _EP_PLY
+    assert hve._view_cursor == _EP_PLY
+
+
+async def test_unchanged_commit_on_clone_after_double_push_keeps_moves_and_note(hve: HumanVsEngine):
+    await hve.new_game(human_white=True, tc=TimeControl(60.0, 0.0))
+    for uci in _EP_MOVES + ["g1f3", "b8c6"]:
+        hve._board.push(chess.Move.from_uci(uci))
+        hve._eval_history.append(None)
+    await hve.enter_live_clone(_EP_PLY)
+    await hve.enter_edit_mode()
+    await hve.commit_edit(
+        _editor_fen(hve._edit_saved_view.board), apply_comment=True, comment_text=_NOTE,
+    )
+    assert hve.is_live_clone is True
+    assert hve._view_cursor == _EP_PLY
+    assert hve._view_comments[_EP_PLY - 1] == _NOTE
+
+
+async def test_side_to_move_change_counts_as_changed(hve: HumanVsEngine):
+    await _view_at_ep(hve)
+    await hve.enter_edit_mode()
+    board = hve._edit_saved_view.board
+    await hve.commit_edit(_editor_fen(board, turn=not board.turn))
+    assert hve._view_full_moves == []
+
+
+async def test_castling_change_counts_as_changed(hve: HumanVsEngine):
+    await _view_at_ep(hve)
+    await hve.enter_edit_mode()
+    await hve.commit_edit(_editor_fen(hve._edit_saved_view.board, castling="Qkq"))
+    assert hve._view_full_moves == []
