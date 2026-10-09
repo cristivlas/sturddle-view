@@ -13,6 +13,7 @@ import { createPvTable } from "./pv-table.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { fmtClock, fmtCount, fmtScore, flashWindow, rafCoalesce } from "./wb-utils.js";
 import { terminationPhrase } from "./format-termination.js";
+import { mqMobile } from "./breakpoints.js";
 
 // Eval-row info strings (shared by own-side and opponent rows). Each blanks
 // when its field is absent. Format: "d:<depth>/<seldepth>", "nps:<count>",
@@ -133,8 +134,9 @@ export const DEBUG_WATCH = false;
 
 const liveWindows = new Map(); // windowKey -> WinBox instance
 
-const LIVE_MIN_BOARD    = 200; // px -- smallest usable board side
-const LIVE_WINBOX_TITLE = 35;  // px -- WinBox title bar
+const LIVE_MIN_BOARD        = 200; // px -- smallest usable board side
+const LIVE_MIN_BOARD_MOBILE = 140; // px -- mobile: four fit a phone in landscape
+const LIVE_WINBOX_TITLE     = 35;  // px -- WinBox title bar
 
 // Row heights and gaps scale with the root font size. CSS rules mirror these:
 //   container gap: 0.25em
@@ -153,11 +155,12 @@ function liveFontMetrics() {
 
 const ARROW_MIN_TIME_MS = 250; // skip arrow if side-to-move has less time than this
 
-export const LIVE_MIN_WIDTH = LIVE_MIN_BOARD;
+// Fixed at load: WinBox keeps a window's min for its life anyway.
+export const LIVE_MIN_WIDTH = mqMobile.matches ? LIVE_MIN_BOARD_MOBILE : LIVE_MIN_BOARD;
 // 7 flex children: pv-top, eval-top, clock-top, board, clock-bottom, eval-bottom, pv-bottom -- 6 gaps.
 export function LIVE_MIN_HEIGHT() {
   const { clockH, evalH, pvH, gap } = liveFontMetrics();
-  return LIVE_WINBOX_TITLE + pvH * 2 + evalH * 2 + clockH * 2 + LIVE_MIN_BOARD + gap * 6;
+  return LIVE_WINBOX_TITLE + pvH * 2 + evalH * 2 + clockH * 2 + LIVE_MIN_WIDTH + gap * 6;
 }
 
 

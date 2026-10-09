@@ -29,7 +29,7 @@ import { makeH2HBody, renderH2H } from "./tournament-h2h.js";
 import { renderEventLogList } from "./tournament-eventlog.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 import { renderInfoWall } from "./tournament-info.js";
-import { mqMobile } from "./breakpoints.js";
+import { mqMobile, mqMobileH } from "./breakpoints.js";
 
 const TOURNAMENTS_ENDPOINT = "/api/tournaments";
 const TOURNAMENT_SETTINGS_ENDPOINT = "/api/tournament-settings";
@@ -858,9 +858,9 @@ function renderGamesPane(ctx) {
 // a 4-column grid (see boardCell for sizing). No free drag; re-gridded on
 // open/close/resize.
 
-// 4 columns on desktop, 1 on mobile (fill model -- the region stays bounded).
+// 4 columns; 1 when narrow and tall (phone portrait). Short = phone landscape.
 function studioCols() {
-  return mqMobile.matches ? 1 : STUDIO_COLS;
+  return mqMobile.matches && !mqMobileH.matches ? 1 : STUDIO_COLS;
 }
 
 // Cell size: width fills the region across the columns (>= the Arena board
