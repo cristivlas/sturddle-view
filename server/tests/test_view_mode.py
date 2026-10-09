@@ -834,7 +834,7 @@ async def test_commit_edit_annotation_updates_hash(hve):
     ))
     fen = await _enter_edit_at_ply(h, 1)
     result = await h.commit_edit(fen, apply_comment=True, comment_text="new")
-    assert h._view_hash == result.pgn_hash
+    assert h._view_hash == result.view_hash
     assert h._view_hash != "deadbeef" * 8
 
 

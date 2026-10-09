@@ -1382,6 +1382,8 @@ button.recent-del {
   flex-shrink: 0;
 }
 button.recent-del:hover { color: var(--status-err-fg, #d33); }
+/* Stands in for the trash on the viewed game's row; sized like it. */
+.recent-viewing { padding: 0 4px; font-size: 0.9em; flex-shrink: 0; }
 /* Explicit flex so the label shrinks + clips while the trash slot keeps its
    size, regardless of WA defaults. */
 wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }

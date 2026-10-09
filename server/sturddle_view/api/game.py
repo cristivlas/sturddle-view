@@ -735,9 +735,10 @@ async def edit_commit(payload: dict, request: Request) -> dict:
     summary = None
     if result.changed is EditChange.FEN:
         # FEN edit == new lineage; do NOT carry the fork link forward.
-        summary = parse_fen(fen).summary
+        summary = result.summary
         h = await recents.save(
             fmt=FMT_FEN, text=fen, summary=summary, game_id=result.game_id,
+            precomputed_hash=result.view_hash,
         )
     elif result.changed is EditChange.COMMENT:
         # Annotation-only commit: same game_id, content hash changed.
@@ -756,7 +757,7 @@ async def edit_commit(payload: dict, request: Request) -> dict:
             text=result.pgn_text,
             summary=summary or {},
             game_id=result.game_id,
-            precomputed_hash=result.pgn_hash,
+            precomputed_hash=result.view_hash,
             parent_game_id=parent_game_id,
             fork_ply=fork_ply,
         )

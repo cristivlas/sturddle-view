@@ -70,7 +70,7 @@ from ..events import (
     Event,
     EventBus,
 )
-from .canonical_hash import FMT_PGN, canonical_hash
+from .canonical_hash import FMT_FEN, FMT_PGN, canonical_hash
 from .chess_clock import ChessClock, TimeControl
 from .difficulty import (
     DIFFICULTY_UNAVAILABLE_ERROR,
@@ -92,7 +92,7 @@ from .engine_analysis import (
 from .engine_info_pump import pump_engine_info
 from .engine_supervisor import EngineSupervisor
 from .game_store import DEFAULT_PLAYER_NAME, GameState, GameStore
-from .import_position import explain_invalid
+from .import_position import explain_invalid, parse_fen
 from .mode import Mode, ModeConflictError, Op
 from .opening_lines import BookRef, book_reply
 from .playbook import Situation, classify
@@ -173,10 +173,10 @@ class EditChange(Enum):
 class EditCommit:
     game_id: str
     changed: EditChange
-    # Set only when changed is COMMENT: the regenerated PGN and its hash,
-    # plus the carried-through view summary.
+    # COMMENT: the regenerated PGN. COMMENT and FEN: the new view's content
+    # hash and summary, which its recents row must match.
     pgn_text: str | None = None
-    pgn_hash: str | None = None
+    view_hash: str | None = None
     summary: dict | None = None
 
 
@@ -1454,22 +1454,29 @@ class HumanVsEngine:
                     game_id=self._game_id,
                     changed=EditChange.COMMENT,
                     pgn_text=pgn_text,
-                    pgn_hash=new_hash,
+                    view_hash=new_hash,
                     summary=self._view_summary,
                 )
             return EditCommit(game_id=self._game_id, changed=EditChange.NONE)
-        # FEN changed -- drop history, enter fresh view at new position.
+        # FEN changed -- drop history, enter fresh view at new position. Its
+        # hash and summary are the recents row's (as on import), so the
+        # client can tell that row is the game in view.
         try:
-            game_id = await self.enter_view_mode(
-                ViewModeParams(start_fen=target_fen, moves_uci=[], clock_history=None)
-            )
+            view_hash = canonical_hash(target_fen, FMT_FEN)
+            summary = parse_fen(target_fen).summary
+            game_id = await self.enter_view_mode(ViewModeParams(
+                start_fen=target_fen, moves_uci=[], clock_history=None,
+                view_hash=view_hash, view_summary=summary,
+            ))
         except Exception:
             async with self._lock:
                 self._mode = Mode.EDITING
             raise
         async with self._lock:
             self._edit_saved_view = None
-        return EditCommit(game_id=game_id, changed=EditChange.FEN)
+        return EditCommit(
+            game_id=game_id, changed=EditChange.FEN, view_hash=view_hash, summary=summary,
+        )
 
     def _apply_view_annotation(
         self, *, ply: int, text: str,

@@ -50,11 +50,6 @@ VIEW_FORWARD_BTN = "#view-forward"
 EDIT_RIBBON = "#edit-controls"
 VIEW_RIBBON = "#view-controls"
 PLAY_RIBBON = "#board-controls"
-VIEW_OPEN_BTN = "#view-import"
-RECENTS_SELECT = "wa-dialog[open] wa-select"
-RECENT_DELETE_BTN = 'wa-option[data-hash="{}"] .recent-del'
-DELETE_LABEL = "Delete"
-SAVED_NOTE = "Annotated copy."
 OPEN_DIALOG = "wa-dialog[open]"
 ANNOTATION_TEXTAREA = f"{OPEN_DIALOG} wa-textarea"
 DIALOG_BUTTON = f"{OPEN_DIALOG} wa-button"
@@ -82,11 +77,6 @@ READY_JS = """(done) => document.body.classList.contains('xgame-nav-locked')
 RIBBON_SHOWN_JS = """(sel) => {
   const el = document.querySelector(sel);
   return !!el && getComputedStyle(el).display !== 'none';
-}"""
-LIVE_BOARD_JS = """([ribbon, fen]) => {
-  const el = document.querySelector(ribbon);
-  return !!el && getComputedStyle(el).display !== 'none'
-    && document.querySelector('.fen-text')?.textContent === fen;
 }"""
 
 
@@ -285,40 +275,6 @@ async def test_play_pencil_cancel_leaves_game_resumable(server, make_page):
     await page.click(VIEW_BACK_BTN)
     await page.click(VIEW_FORWARD_BTN)
     await page.wait_for_function(RIBBON_SHOWN_JS, arg=PLAY_RIBBON)
-    assert_no_page_errors(errors)
-
-
-@pytest.mark.asyncio
-async def test_force_deleting_annotated_suspended_copy_resumes_live_game(server, make_page):
-    """The suspended view's annotated copy, deleted from the Open dialog while
-    analysis runs, hands back the live game. The server publishes the resume
-    before it responds, so this exercises update-first arrival only."""
-    base = server
-    _import_at_last_ply(base, None)
-    httpx.post(f"{base}/game/view/play-from-here", json={}).raise_for_status()
-    live_fen = httpx.get(f"{base}/_test/hve/state").json()["board_fen"]
-    httpx.post(f"{base}/game/view/start",
-               json={"suspend": True, "land_at_ply": PGN_PLIES}).raise_for_status()
-    fen = httpx.post(f"{base}/game/edit/start", json={}).json()["fen"]
-    r = httpx.post(f"{base}/game/edit/commit", json={
-        "fen": fen, "apply_comment": True, "comment_text": SAVED_NOTE,
-    })
-    r.raise_for_status()
-    h = r.json()["hash"]
-    httpx.post(f"{base}/game/analysis/start").raise_for_status()
-
-    _ctx, page = await make_page(viewport={"width": 1600, "height": 1000})
-    errors = watch_page_errors(page)
-    await page.goto(base + "/")
-    await wait_perspective_ready(page)
-    await page.wait_for_function(RIBBON_SHOWN_JS, arg=VIEW_RIBBON)
-    await page.click(VIEW_OPEN_BTN)
-    await page.click(RECENTS_SELECT)
-    await page.click(RECENT_DELETE_BTN.format(h))
-    # The row is the one in view: confirm the forced delete.
-    await page.locator(DIALOG_BUTTON, has_text=DELETE_LABEL).click()
-    # The live position, not the idle startpos (which also shows this ribbon).
-    await page.wait_for_function(LIVE_BOARD_JS, arg=[PLAY_RIBBON, live_fen])
     assert_no_page_errors(errors)
 
 

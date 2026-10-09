@@ -1499,7 +1499,10 @@ async function onImportImpl(state) {
     okLabel: MSG.IMPORT,
   })) return;
   // Dialog validates (parse errors surface inline) but does not import.
-  const result = await showImportPositionDialog({ api: state.ctx.api });
+  const result = await showImportPositionDialog({
+    api: state.ctx.api,
+    viewingHash: state.viewing ? _viewingHash : null,
+  });
   if (!result) return;
   // Same game already in view -- stay put, no re-import needed.
   if (state.viewing && result.hash && result.hash === _viewingHash) {

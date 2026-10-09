@@ -534,6 +534,8 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
 
 const RECENTS_CACHE_KEY = STORAGE_KEY.IMPORT_RECENTS;
 const RECENTS_DISPLAY_CAP = 10;
+// Marks the viewed game's row in place of its delete button.
+const VIEWING_TAG = "viewing";
 
 function loadRecentsCache() {
   const v = loadJson(RECENTS_CACHE_KEY, []);
@@ -564,6 +566,13 @@ function detectFormatFromName(name) {
   return null;
 }
 
+// The row of the game open in view: re-importing it would be a no-op and
+// deleting it would pull the board out from under the viewer. Matched by
+// content hash, like play.js's same-game-in-view check (aliases share it).
+function isViewedEntry(entry, viewingHash) {
+  return !!viewingHash && entry.hash === viewingHash;
+}
+
 // Recents dropdown: the <wa-select> in the dialog label + its options,
 // delete buttons, and the local-cache/server-refresh logic. Reads/writes
 // `ctx.recentsCache` and reads `ctx.format`; controller hooks
@@ -588,6 +597,15 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
     labelEl.className = "recent-label";
     labelEl.textContent = shown;
     opt.append(labelEl);
+    if (isViewedEntry(entry, ctx.viewingHash)) {
+      opt.disabled = true;
+      const tag = document.createElement("span");
+      tag.slot = "end";
+      tag.className = `recent-viewing ${MUTED_CLASS}`;
+      tag.textContent = VIEWING_TAG;
+      opt.append(tag);
+      return opt;
+    }
     const delBtn = document.createElement("button");
     delBtn.slot = "end";
     delBtn.className = "recent-del";
@@ -725,7 +743,7 @@ function openingFromLabel(label) {
  *  or null on cancel. The dialog validates via /game/import/validate (parse
  *  errors surface inline) but does NOT import -- the caller owns the import
  *  POST so it can do hash comparison and confirmation first. */
-export function showImportPositionDialog({ api }) {
+export function showImportPositionDialog({ api, viewingHash = null }) {
   return showDialog({
     label: DIALOG_TITLE,
     width: mqNarrowDialog.matches ? DIALOG_WIDTH_NARROW : DIALOG_WIDTH_WIDE,
@@ -734,7 +752,9 @@ export function showImportPositionDialog({ api }) {
       // controller AND read by the extracted recents dropdown, so they live
       // on a ctx object (not locals) -- both sides see writes. recentsCache
       // is reassigned in both the recents handler and submit().
-      const ctx = { format: TAB.PGN, submitting: false, recentsCache: loadRecentsCache() };
+      const ctx = {
+        format: TAB.PGN, submitting: false, recentsCache: loadRecentsCache(), viewingHash,
+      };
 
       const wrap = document.createElement("div");
       wrap.className = "import-pos-form";

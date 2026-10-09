@@ -98,6 +98,17 @@ def test_edit_commit_records_recent(client):
     assert text == EDITED_FEN
 
 
+def test_edit_commit_view_carries_its_recents_hash_and_summary(client):
+    # The new view at the edited FEN is that recents row: the client keys
+    # "this row is the game in view" on the view's hash.
+    client.post("/game/view/start", json={}).raise_for_status()
+    client.post("/game/edit/start", json={}).raise_for_status()
+    body = client.post("/game/edit/commit", json={"fen": EDITED_FEN}).json()
+    hve = client.app.state.hve
+    assert hve._view_hash == body["hash"]
+    assert hve._view_summary == body["summary"]
+
+
 def test_edit_cancel_does_not_record_recent(client):
     client.post("/game/view/start", json={}).raise_for_status()
     client.post("/game/edit/start", json={}).raise_for_status()

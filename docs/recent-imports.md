@@ -96,8 +96,14 @@ All under `/game/recent-imports`, behind the same auth token as other
   recall. A future "hover preview" feature must use the index, not
   this endpoint, to avoid bumping ts on hover.)
 
-- `DELETE /game/recent-imports/{hash}` *(optional, for future "Clear
-  history" UI)*. Removes the index row and the blob.
+- `DELETE /game/recent-imports/{hash}`. Removes the index row and the
+  blob. The dialog never offers it for the game open in view: that row
+  is disabled (no trash, a muted "viewing" tag), since re-importing it
+  is a no-op and deleting it would pull the board out from under the
+  viewer. The server still has the path the old flow used -- a 409
+  `in_view`, then `?force=1` closing the view (`close_view`, which also
+  resumes a suspended live game) -- now unreachable from the bundled UI
+  and a candidate for cleanup.
 
 There is **no standalone `POST /game/recent-imports`** — saving is a
 side effect of two endpoints:
