@@ -1299,3 +1299,66 @@ async def test_in_progress_false_on_plain_view(hve):
     ))
     assert h.is_live_clone is False
     assert (await h.status())["in_progress"] is False
+
+
+# ---- last-ply rule: a live clone never rests on its last ply ---------------
+
+async def _clone_at_second_last(h, *, human_white=True):
+    """Live game 1.e4 e5 (n=2) suspended into a clone at ply 1."""
+    await _play_two_plies(h, human_white=human_white)
+    live_id = h.game_id
+    await h.enter_live_clone(1)
+    return live_id
+
+
+@pytest.mark.parametrize("navigate", [
+    lambda h: h.view_forward(),
+    lambda h: h.view_last(),
+    lambda h: h.view_goto(2),
+])
+async def test_navigation_onto_last_ply_returns_to_live(hve, navigate):
+    h, _ = hve
+    live_id = await _clone_at_second_last(h)
+    await navigate(h)
+    assert h._viewing is False
+    assert h.is_live_clone is False
+    assert h._mode is Mode.PLAY
+    assert h.game_id == live_id
+    assert [m.uci() for m in h._board.move_stack] == ["e2e4", "e7e5"]
+
+
+async def test_navigation_before_last_ply_stays_a_clone(hve):
+    h, _ = hve
+    await _clone_at_second_last(h)
+    await h.view_first()
+    await h.view_goto(1)
+    assert h.is_live_clone is True
+    assert h._view_cursor == 1
+
+
+async def test_plain_view_at_last_ply_stays_a_view(hve):
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None, moves_uci=["e2e4", "e7e5"], clock_history=None,
+    ))
+    await h.view_last()
+    assert h._mode is Mode.VIEWING
+    assert h._view_cursor == 2
+
+
+async def test_return_to_live_keeps_pause(hve):
+    h, _ = hve
+    await _play_two_plies(h)
+    await h.pause()
+    await h.enter_live_clone(1)
+    await h.view_forward()
+    assert h._mode is Mode.PAUSED
+
+
+async def test_return_to_live_on_engine_turn_kicks_engine(hve):
+    h, _ = hve
+    await _clone_at_second_last(h, human_white=False)
+    h._engine_to_move.reset_mock()
+    await h.view_forward()
+    assert h._mode is Mode.PLAY
+    h._engine_to_move.assert_awaited_once()

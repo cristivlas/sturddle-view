@@ -1396,7 +1396,8 @@ class HumanVsEngine:
     async def view_goto(self, ply: int) -> None:
         """Move the view cursor to ``ply`` (0..len(full_moves)). Rebuilds
         the board by replaying from start. Rejected during analysis.
-        Comment-nav state is shipped in the resulting board_update payload."""
+        Comment-nav state is shipped in the resulting board_update payload.
+        A live clone landing on its last ply returns to live instead."""
         async with self._lock:
             if not (self._mode & Op.VIEW_GOTO._mask):
                 raise ModeConflictError(self._mode, Op.VIEW_GOTO)
@@ -1410,8 +1411,22 @@ class HumanVsEngine:
                 board.push(m)
             self._view_cursor = ply
             self._board = board
-            await self._publish_board()
-            await self._publish_clock()
+            returned = await self._return_to_live_at_last_ply()
+            if not returned:
+                await self._publish_board()
+                await self._publish_clock()
+        if returned:
+            await self.republish_state()
+
+    async def _return_to_live_at_last_ply(self) -> bool:
+        """Last-ply rule: a live clone never rests on its last ply. Returns
+        to live when the cursor is there; True if it did. Caller holds the
+        lock and calls ``republish_state`` after releasing it."""
+        assert self._lock.locked(), "_return_to_live_at_last_ply called without lock"
+        if not self.is_live_clone or self._view_cursor != len(self._view_full_moves):
+            return False
+        await self._restore_suspended_play()
+        return True
 
     async def view_first(self) -> None:
         await self.view_goto(0)
