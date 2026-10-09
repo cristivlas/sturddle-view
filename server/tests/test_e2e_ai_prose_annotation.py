@@ -54,7 +54,6 @@ DIALOG_BUTTON = f"{OPEN_DIALOG} wa-button"
 OK_LABEL = "OK"
 CONFIRM_MESSAGE = f"{OPEN_DIALOG} .confirm-message"
 STOP_ANALYSIS_CONFIRM = "Stop analysis and edit the position?"
-DISCARD_GAME_CONFIRM = "Cancel the game in progress and edit the position?"
 ANALYSIS_DONE = "Analysis Done"
 PARAGRAPH_BREAK = "\n\n"
 # The PGN's plies; the comment sits on the last one.
@@ -273,10 +272,11 @@ async def test_play_pencil_cancel_returns_to_play(server, make_page):
 
 
 @pytest.mark.asyncio
-async def test_play_pencil_without_prose_keeps_discard_confirm(server, make_page):
+async def test_play_pencil_without_prose_asks_only_to_stop_analysis(server, make_page):
+    # Edit from play discards nothing: no discard confirm, only analysis's.
     page, errors = await _play_with_finished_ai(
         make_page, server, rounds=[(LEAKED_PROSE, "hide")],
     )
     await page.click(PLAY_EDIT_BTN)
-    assert await _confirm_message(page) == DISCARD_GAME_CONFIRM
+    assert await _confirm_message(page) == STOP_ANALYSIS_CONFIRM
     assert_no_page_errors(errors)

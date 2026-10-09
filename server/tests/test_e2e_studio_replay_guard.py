@@ -30,7 +30,7 @@ from .conftest import (  # noqa: E402
 
 FAKE_ENGINE_PATH = "/nonexistent/engine"
 PERSPECTIVE_LS_KEY = "sturddle:active-perspective"
-DISCARD_MSG = "Discard your in-progress game"
+LEAVE_MSG = "Review this tournament game and leave the current one?"
 PLAY_MOVES = ["e2e4", "e7e5"]
 
 _GAME_PGN = "\n".join([
@@ -98,7 +98,7 @@ async def test_studio_replay_confirms_without_play_mount(tmp_path, make_page):
         # The reload bug: no confirm appeared and the game was clobbered.
         await page.wait_for_selector(".confirm-message")
         msg = await page.text_content(".confirm-message")
-        assert DISCARD_MSG in msg, f"unexpected confirm text: {msg!r}"
+        assert LEAVE_MSG in msg, f"unexpected confirm text: {msg!r}"
 
         # Cancel must leave the server-side game untouched.
         await page.click('wa-dialog wa-button:has-text("Cancel")')

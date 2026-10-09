@@ -7,7 +7,7 @@ import { APP_EVT } from "../app-events.js";
 import { KIND, AI_KIND_PREFIX } from "../game-events.js";
 import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
-import { alert as showAlert, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportAiError, reportError, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
+import { alert as showAlert, apiErrorObject, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportAiError, reportError, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, clearUciLog, isMobileLayout, setPvLineBoard } from "../play-dock-windows.js";
 import {
@@ -241,6 +241,10 @@ const FORCED_TERMINATIONS = new Set([
   "fivefold_repetition",
 ]);
 
+// Server 409 error codes this page answers.
+const ERR_WOULD_LEAVE = "would_leave";
+const ERR_IN_PROGRESS = "in_progress";
+
 // User-facing copy, grouped for an eventual move to a shared i18n
 // catalog. HTML-template aria-labels stay inline (static markup).
 const MSG = {
@@ -285,10 +289,15 @@ const MSG = {
   DIFFICULTY_GENERIC_ENGINE: "This engine",
   DIFFICULTY_DETAILS_ARIA: "Difficulty details",
   // Confirm dialogs.
-  CONFIRM_NEW_GAME: "Cancel the game in progress and start a new one?",
+  CONFIRM_NEW_GAME: "Start a new game? The current game will be saved to Recents.",
   CONFIRM_RESIGN: "Resign the current game?",
-  CONFIRM_IMPORT: "Cancel the current game and import another?",
-  CONFIRM_EDIT_FROM_PLAY: "Cancel the game in progress and edit the position?",
+  CONFIRM_IMPORT: "Import and leave the current game? It will be saved to Recents.",
+  CONFIRM_EDIT_LEAVE:
+    "Apply the new position and leave the current game? It will be saved to Recents.",
+  CONFIRM_PLAY_FROM_HERE:
+    "Start a new game from here? The current game will be saved to Recents.",
+  CONFIRM_OPEN_PARENT:
+    "Open the parent game and leave the current one? It will be saved to Recents.",
   CONFIRM_EDIT_STOP_ANALYSIS: "Stop analysis and edit the position?",
   CONFIRM_MOVE_STOP_ANALYSIS: "Stop analysis and play this move?",
   CONFIRM_LEAVE_EDIT: "Leaving will cancel your position edit. Continue?",
@@ -297,9 +306,14 @@ const MSG = {
   STAY_PAUSED: "Stay paused",
   KEEP_PLAYING: "Keep playing",
   KEEP_ANALYZING: "Keep analyzing",
+  KEEP_EDITING: "Keep editing",
   PLAY_MOVE: "Play move",
   NEW_GAME: "New game",
   EDIT_POSITION: "Edit position",
+  APPLY: "Apply",
+  PLAY_FROM_HERE: "Play from here",
+  OPEN_GAME: "Open",
+  IMPORT_IN_PROGRESS: "That is the game in progress.",
   RESIGN: "Resign",
   IMPORT: "Import",
   LEAVE: "Leave",
@@ -796,7 +810,9 @@ function buildParentToast(state) {
   link.addEventListener("click", () => {
     if (state.analyzing) return;
     if (state.xgame.parentGameId) {
-      openXgameTarget(state, state.xgame.parentGameId, { landAtPly: state.xgame.forkPly });
+      openXgameTarget(state, state.xgame.parentGameId, {
+        landAtPly: state.xgame.forkPly, leaveMessage: MSG.CONFIRM_OPEN_PARENT,
+      });
     }
   });
   text.append(link);
@@ -912,6 +928,7 @@ async function openXgameTarget(state, gameId, opts = {}) {
   // Fetch the target's text from recents, then drive a normal import
   // (server-side enter_view_mode swap). landAtPly: optional cursor ply to
   // land on after import (fork_ply for both directions; see x-game-navigation.md).
+  // leaveMessage: asked first when the import would leave a game in progress.
   const landAtPly = opts.landAtPly ?? null;
   // Short-circuit: already viewing this game at the target ply.
   // A re-import would re-animate cm-chessboard to the same
@@ -923,6 +940,9 @@ async function openXgameTarget(state, gameId, opts = {}) {
   ) {
     return true;
   }
+  if (opts.leaveMessage && !await _confirmLeaveLiveGame({
+    message: opts.leaveMessage, okLabel: MSG.OPEN_GAME,
+  })) return false;
   try {
     const target = await state.api(
       "GET", `/game/recent-imports/by-id/${encodeURIComponent(gameId)}`,
@@ -954,16 +974,12 @@ async function openXgameTarget(state, gameId, opts = {}) {
 
 // Confirm/import/nav helpers operating on the shared `state`.
 
-// Prompt before discarding an active play game. Returns true if the
-// caller should proceed (no active game, or user confirmed).
-async function _confirmDiscardActiveGame({ message, okLabel }) {
+// Leaving a game in progress saves it to Recents but ends it: ask first.
+// Returns true if the caller should proceed (no game in progress, or the
+// user confirmed).
+async function _confirmLeaveLiveGame({ message, okLabel }) {
   if (!_playInProgress) return true;
-  return await confirm({
-    message,
-    okLabel,
-    cancelLabel: MSG.KEEP_PLAYING,
-    destructive: true,
-  });
+  return await confirm({ message, okLabel, cancelLabel: MSG.KEEP_PLAYING });
 }
 
 // Prompt before replacing the currently viewed game. Skips when nothing
@@ -1451,7 +1467,7 @@ async function onPauseImpl(state) {
 
 async function onNewGameImpl(state) {
   if (_playInProgress) {
-    if (!await _confirmDiscardActiveGame({
+    if (!await _confirmLeaveLiveGame({
       message: MSG.CONFIRM_NEW_GAME,
       okLabel: MSG.NEW_GAME,
     })) return;
@@ -1494,7 +1510,7 @@ async function onNewGameImpl(state) {
 }
 
 async function onImportImpl(state) {
-  if (!await _confirmDiscardActiveGame({
+  if (!await _confirmLeaveLiveGame({
     message: MSG.CONFIRM_IMPORT,
     okLabel: MSG.IMPORT,
   })) return;
@@ -1502,6 +1518,7 @@ async function onImportImpl(state) {
   const result = await showImportPositionDialog({
     api: state.ctx.api,
     viewingHash: state.viewing ? _viewingHash : null,
+    playingGameId: _playInProgress && !state.viewing ? state.viewingGameId : null,
   });
   if (!result) return;
   // Same game already in view -- stay put, no re-import needed.
@@ -1509,8 +1526,11 @@ async function onImportImpl(state) {
     if (state.viewingGameId) toast(`Viewing ${state.viewingGameId}`);
     return;
   }
-  // Different game while viewing -- confirm before replacing.
-  if (!await _confirmReplaceViewedGame(state, { incomingHash: result.hash, incomingSummary: result.summary })) return;
+  // Different game while viewing -- confirm before replacing. A live clone
+  // already asked the leave confirm above.
+  if (!_playInProgress && !await _confirmReplaceViewedGame(state, {
+    incomingHash: result.hash, incomingSummary: result.summary,
+  })) return;
   try {
     closeAi();
     const r = await state.ctx.api("POST", "/game/import", {
@@ -1519,7 +1539,11 @@ async function onImportImpl(state) {
     state.view.setGameId(r.game_id);
     state.ctx.api("POST", "/game/sync", {}).catch(() => {});
   } catch (e) {
-    reportError(state.ctx, MSG.IMPORT_FAILED, e);
+    if (apiErrorObject(e)?.error === ERR_IN_PROGRESS) {
+      toast(MSG.IMPORT_IN_PROGRESS, { variant: "warning" });
+    } else {
+      reportError(state.ctx, MSG.IMPORT_FAILED, e);
+    }
   }
 }
 
@@ -1527,24 +1551,19 @@ function canEnterViewAtPly(state, ply) {
   return !state.analyzing && !state.viewing && ply + 1 < state.movesPlayed;
 }
 
-// Play -> view: flip the live play game into server view mode landing at a
-// past ply. The live game is suspended server-side (no fork) so scrubbing to
-// the last ply can resume it (see resumeLivePlay). Ignores clicks on the
-// live last move (already there) and during analysis.
+// Play -> view: suspend the live game into a live clone (same game_id) at a
+// past ply. Scrubbing onto the last ply returns to the live game
+// server-side. Ignores clicks on the live last move (already there) and
+// during analysis.
 async function enterViewAtPly(state, plyIndex) {
   if (!canEnterViewAtPly(state, plyIndex)) return;
   if (state.enterViewInflight) return;  // debounce double-click (esp. eval bar)
   state.enterViewInflight = true;
   try {
     closeAi();
-    // Clear gameId so the view-mode board_update (fresh game_id) isn't
-    // dropped by GameView's game_id filter; restore from the response.
-    state.view.setGameId(null);
-    // suspend:true holds the live game for a no-fork resume at the last ply.
-    const r = await state.ctx.api(
+    await state.ctx.api(
       "POST", "/game/view/start", { land_at_ply: plyIndex + 1, suspend: true },
     );
-    if (r?.game_id) state.view.setGameId(r.game_id);
   } catch (e) {
     reportError(state.ctx, MSG.OPEN_GAME_FAILED, e);
   } finally {
@@ -1552,25 +1571,16 @@ async function enterViewAtPly(state, plyIndex) {
   }
 }
 
-// View -> play: resume the SAME suspended play game (no fork). Fired when a
-// resumable view session scrubs to its last ply (see handleBusEvent).
-async function resumeLivePlay(state) {
-  if (state.resumeInflight) return;  // debounce racing board_updates
-  state.resumeInflight = true;
-  try {
-    state.view.setGameId(null);
-    const r = await state.ctx.api("POST", "/game/view/resume-play", {});
-    if (r?.game_id) state.view.setGameId(r.game_id);
-  } catch (e) {
-    reportError(state.ctx, MSG.RESUME_FAILED, e);
-  } finally {
-    state.resumeInflight = false;
-  }
-}
-
 async function onPlayFromHereImpl(state) {
   if (state.playFromHereInflight) return;  // debounce double-click
   state.playFromHereInflight = true;
+  if (!await _confirmLeaveLiveGame({
+    message: MSG.CONFIRM_PLAY_FROM_HERE,
+    okLabel: MSG.PLAY_FROM_HERE,
+  })) {
+    state.playFromHereInflight = false;
+    return;
+  }
   setDisabled(state.el.viewPlayFromHereBtn, true);
   // Reset gameId so the racing board_update from new_game (which fires
   // BEFORE the API response carrying the new id) isn't dropped by the
@@ -1609,26 +1619,44 @@ async function onEditCancelImpl(state) {
 }
 
 async function onEditConfirmImpl(state) {
-  const fen = state.view.getEditFen();
-  // Server mints a fresh game_id on a real position change. Clear the
-  // filter so the board_update SSE (which races the POST response) isn't
-  // dropped for not matching our stale id.
-  state.view.setGameId(null);
-  const payload = { fen };
+  const payload = { fen: state.view.getEditFen() };
   if (state.pendingAnnotation !== null) {
     payload.apply_comment = true;
     payload.comment_text = state.pendingAnnotation;
   }
   try {
+    await _commitEdit(state, payload);
+  } catch (e) {
+    // A changed position would leave the game in progress: the server
+    // keeps editing until the user confirms (asked again after a reload).
+    if (apiErrorObject(e)?.error !== ERR_WOULD_LEAVE) {
+      reportError(state.ctx, MSG.INVALID_POSITION, e);
+      return;
+    }
+    if (!await confirm({
+      message: MSG.CONFIRM_EDIT_LEAVE,
+      okLabel: MSG.APPLY,
+      cancelLabel: MSG.KEEP_EDITING,
+    })) return;
+    try {
+      await _commitEdit(state, { ...payload, leave: true });
+    } catch (e2) {
+      reportError(state.ctx, MSG.INVALID_POSITION, e2);
+    }
+  }
+}
+
+async function _commitEdit(state, payload) {
+  // Server mints a fresh game_id on a real position change. Clear the
+  // filter so the board_update (which races the POST response) isn't
+  // dropped; a refused commit keeps editing the same game.
+  state.view.setGameId(null);
+  try {
     const r = await state.ctx.api("POST", "/game/edit/commit", payload);
     state.view.setGameId(r.game_id);
-    // Annotation-only commit can promote an unsaved fork child to
-    // recents (xgame nav "lazy commit"). Game_id is unchanged so
-    // the board_update doesn't trigger fetchXgameInfo -- refetch
-    // explicitly so the fork glyph + banner state catch up.
-    if (r.game_id) fetchXgameInfo(state, r.game_id);
   } catch (e) {
-    reportError(state.ctx, MSG.INVALID_POSITION, e);
+    state.view.setGameId(state.viewingGameId);
+    throw e;
   }
 }
 
@@ -1828,8 +1856,7 @@ function showEngineCrashToast() {
 
 function syncCommentsVisibility(state) {
   if (!state.el.dockLeft) return;
-  const shouldShow = state.viewing && state.showPgnComments && !isMobileLayout()
-    && !state.suppressCommentsForEditTransition;
+  const shouldShow = state.viewing && state.showPgnComments && !isMobileLayout();
   const open = isCommentaryOpen();
   if (shouldShow) {
     if (!open) openCommentary();
@@ -1862,16 +1889,9 @@ function _annotateCarriedAiProse(state) {
   state.aiProsePrefill = null;
 }
 
-function _clearEditTransitionSuppression(state) {
-  if (!state.suppressCommentsForEditTransition) return;
-  state.suppressCommentsForEditTransition = false;
-  syncCommentsVisibility(state);
-}
-
 function _onServerEditingStop(state) {
   state.view.exitEditMode();
   _closeEditPopovers(state); // un-float any portaled popover before edit UI hides
-  _clearEditTransitionSuppression(state);
   state.pendingAnnotation = null;
   pushNavToUi(state);
   refreshButtons(state);
@@ -1917,9 +1937,9 @@ function enterIdleAfterViewDelete(state) {
   }));
 }
 
-// Force-deleting a suspend-origin view's copy resumed the live game. Its
-// board_update races the DELETE response and the view's game-id filter may
-// have dropped it: adopt the live id, then resync for a fresh board_update.
+// Force-deleting the live game's exported row while on its clone resumed the
+// live game (same game_id). Adopt that id and resync so the board shows the
+// live game.
 async function adoptResumedAfterViewDelete(state, gameId) {
   state.view.setGameId(gameId);
   try {
@@ -1943,34 +1963,6 @@ async function _enterEditFromCurrentMode(state) {
   // Finished AI prose goes on to the annotation modal (see
   // _annotateCarriedAiProse). Read it before anything closes the panel.
   const aiProse = aiAnalysisDone(state) ? latestVisibleAiProse() : null;
-  // Server requires view mode before edit. From play mode, flip into
-  // view via /game/view/start (no recents write); /game/import would
-  // pollute the recents history with the current play position.
-  if (!state.viewing) {
-    // No discard confirm when carrying AI prose: annotating is the intent.
-    if (aiProse === null && !await _confirmDiscardActiveGame({
-      message: MSG.CONFIRM_EDIT_FROM_PLAY,
-      okLabel: MSG.EDIT_POSITION,
-    })) return;
-    // Suppress the commentary dock for the duration of the transient
-    // play->view->edit flip. Without this, syncCommentsVisibility
-    // races view_last() and resets the cursor to 0.
-    state.suppressCommentsForEditTransition = true;
-    try {
-      closeAi();
-      // No confirm was asked, so keep the game resumable (scrub back, then to
-      // the last ply) should the edit be cancelled. Land there directly: a
-      // pass through ply 0 would trip that auto-resume.
-      const flip = aiProse === null ? {} : { suspend: true, land_at_ply: state.movesPlayed };
-      const r = await state.ctx.api("POST", "/game/view/start", flip);
-      state.view.setGameId(r.game_id);
-      await state.ctx.api("POST", "/game/sync", {});
-    } catch (e) {
-      _clearEditTransitionSuppression(state);
-      reportError(state.ctx, MSG.EDIT_POSITION_FAILED, e);
-      return;
-    }
-  }
   // No confirm when the AI turn is done: its prose carries over.
   if (state.analyzing && aiProse === null) {
     const ok = await confirm({
@@ -1979,18 +1971,16 @@ async function _enterEditFromCurrentMode(state) {
       cancelLabel: MSG.KEEP_ANALYZING,
       destructive: true,
     });
-    if (!ok) {
-      _clearEditTransitionSuppression(state);
-      return;
-    }
+    if (!ok) return;
   }
+  // From play the server edits a live clone of the game (one call, no
+  // confirm): nothing is discarded, and exiting returns to the game.
   try {
     state.aiProsePrefill = aiProse;
     closeAi();
     await state.ctx.api("POST", "/game/edit/start", {});
   } catch (e) {
     state.aiProsePrefill = null;
-    _clearEditTransitionSuppression(state);
     reportError(state.ctx, MSG.EDIT_POSITION_FAILED, e);
   }
 }
@@ -2061,10 +2051,6 @@ function handleBusEvent(state, ai, aiCtx, evt) {
           // fetchXgameInfo then repopulates and re-renders.
           resetXgame(state);
           fetchXgameInfo(state, state.viewingGameId);
-          // New view session: require visiting an earlier ply before the
-          // last-ply auto-resume can fire (the landing event itself must not
-          // self-trigger).
-          state.viewReachedNonLast = false;
         }
         state.viewCursor = v.cursor ?? 0;
         state.viewTotalPlies = v.total_plies ?? 0;
@@ -2074,15 +2060,6 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         // mid-game cursors of finished games report game_over false.
         state.viewPositionTerminal =
           state.viewGameOver && FORCED_TERMINATIONS.has(v.termination);
-        // Auto-return to the SAME play game (no fork) when a resumable
-        // session (entered via /view/start on the live game) scrubs to the
-        // last ply. The viewReachedNonLast gate (set only when cursor was
-        // earlier than the end) keeps the landing event from self-firing.
-        if (state.viewCursor < state.viewTotalPlies) state.viewReachedNonLast = true;
-        if (v.resumable && state.viewReachedNonLast
-            && state.viewCursor === state.viewTotalPlies) {
-          resumeLivePlay(state);
-        }
         state.lastViewComment = v.comment ?? null;
         _viewingHash = v.view_hash ?? null;
         _viewingSummary = v.view_summary ?? null;
@@ -2107,10 +2084,10 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         state.resignAvailable = false;
         // Board is read-only in view mode; the user navigates via ribbon.
         state.view.setEnabled(false);
-        // On entry (incl. /game/sync remount, wasViewing false): resumable
+        // On entry (incl. /game/sync remount, wasViewing false): a live clone
         // takes the player's POV from the payload color -- it survives
-        // remount, unlike state.humanWhite. Both resumable-without-color and
-        // imported fall back to the flip preference.
+        // remount, unlike state.humanWhite. Imported games fall back to the
+        // flip preference.
         if (!wasViewing) {
           if (typeof v.resume_human_white === "boolean") {
             state.humanWhite = v.resume_human_white;
@@ -2185,7 +2162,8 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       state.el.boardHost.classList.remove("board-idle");
       setDisabled(state.el.newGameBtn, false);
       refreshButtons(state);
-      _playInProgress = state.movesPlayed > 0 && !state.gameOver && !state.viewing;
+      // Server-computed: a live game with moves, playing or on its clone.
+      _playInProgress = !!evt.payload.in_progress;
       // GameView cleared arrows above (runs before this handler on the same
       // bus); restore the AI recommendation arrow.
       reapplyAiRecommendation(state, evt.payload.fen);
@@ -2239,7 +2217,6 @@ export const playPerspective = {
       lastViewNavKind: "precise",
       editing: false,
       showPgnComments: true,
-      suppressCommentsForEditTransition: false,
       lastViewComment: null,
       gameTcInitial: null,
       gameTcIncrement: null,
@@ -2257,9 +2234,7 @@ export const playPerspective = {
       commentNavPrev: null,
       commentNavNext: null,
       playFromHereInflight: false,
-      resumeInflight: false,
       enterViewInflight: false,
-      viewReachedNonLast: false,
       // Set while this client drives an analysis stop/restart round trip: its
       // own panel sequencing wins over the events that transition emits.
       analysisTransitionInFlight: false,

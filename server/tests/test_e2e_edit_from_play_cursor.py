@@ -3,9 +3,10 @@ cursor at the last ply (the live position the user wants to edit), not
 at ply 0.
 
 Bug: with view_show_pgn_comments=true, syncCommentsVisibility's
-seeding POST /view/goto fires on the first board_update (cursor=0
-from enter_view_mode), overwriting the cursor=n produced by
-view_last() in /game/view/start.
+seeding POST /view/goto fired on the first board_update (cursor=0
+from enter_view_mode), overwriting the cursor=n of the play -> view
+flip. The pencil now makes one /game/edit/start call, which opens the
+editor on a live clone at the last ply.
 
 Adjacent paths whose existing behavior must be preserved:
   * /game/import (PGN/FEN import) lands at cursor=0.
@@ -149,17 +150,8 @@ async def test_edit_from_play_lands_at_last_ply_with_comments_on(server, make_pa
     n_plies = _n_plies(base)
     assert n_plies == 2, f"precondition: 2 plies in play; got {n_plies}"
 
-    # Click Edit position; accept the confirm dialog (a wa-button whose
-    # label is "Edit position", distinct from the ribbon button id).
+    # Click Edit position: no confirm, nothing is discarded.
     await page.click("#edit-pos")
-    await page.wait_for_function(
-        "() => Array.from(document.querySelectorAll('wa-button'))"
-        ".some(b => /Edit position/.test(b.textContent || ''))"
-    )
-    await page.evaluate(
-        "() => Array.from(document.querySelectorAll('wa-button'))"
-        ".find(b => /Edit position/.test(b.textContent || '')).click()"
-    )
     # Deterministic settle: editing=true has arrived from server AND any
     # spurious /view/goto the JS may have fired has resolved.
     await obs.wait_board_update(_editing_started)

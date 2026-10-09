@@ -212,8 +212,10 @@ async def test_custom_name_roundtrip_export_import(server, page):
     # Save half: the exported PGN carries the custom name.
     assert f'[White "{CUSTOM_NAME}"]' in pgn, pgn
 
-    # Load half: import the exact exported text and hard-reload into view
+    # Load half: end the game (the game in progress can't be imported over
+    # itself), import the exact exported text and hard-reload into view
     # mode; the clock names must come from the PGN headers.
+    httpx.post(f"{base}/game/resign", json={}).raise_for_status()
     httpx.post(
         f"{base}/game/import",
         json={"text": pgn, "format": "pgn"},

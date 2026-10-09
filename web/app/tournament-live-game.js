@@ -70,10 +70,9 @@ export async function replayTournamentGame({ tournamentId, gameN, token, pairId 
   }
   if (status.in_progress) {
     const ok = await confirm({
-      message: "Discard your in-progress game and review this tournament game?",
+      message: "Review this tournament game and leave the current one? It will be saved to Recents.",
       okLabel: "Review",
       cancelLabel: "Cancel",
-      destructive: true,
     });
     if (!ok) return;
   } else if (status.viewing) {
