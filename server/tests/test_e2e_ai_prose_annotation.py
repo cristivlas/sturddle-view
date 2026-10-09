@@ -32,13 +32,14 @@ from sturddle_view.engines import EngineRegistry  # noqa: E402
 from .conftest import (  # noqa: E402
     REGISTRY_FILE,
     assert_no_page_errors,
+    drag_piece_one_rank_up,
     e2e_env,
     make_searching_fake_uci,
+    posted,
     run_uvicorn_subprocess,
     wait_perspective_ready,
     watch_page_errors,
 )
-
 
 VIEW_EDIT_BTN = "#view-edit"
 PLAY_EDIT_BTN = "#edit-pos"
@@ -48,6 +49,10 @@ EDIT_CANCEL_BTN = "#edit-cancel"
 EDIT_RIBBON = "#edit-controls"
 VIEW_RIBBON = "#view-controls"
 PLAY_RIBBON = "#board-controls"
+PAUSE_BTN = "#pause"
+MOVE_POST_PATH = "/game/move"
+# White to move at the PGN's last ply: a2-a3 is legal.
+MOVE_FROM = "a2"
 OPEN_DIALOG = "wa-dialog[open]"
 ANNOTATION_TEXTAREA = f"{OPEN_DIALOG} wa-textarea"
 DIALOG_BUTTON = f"{OPEN_DIALOG} wa-button"
@@ -272,6 +277,10 @@ async def test_play_pencil_ok_then_confirm_returns_to_play_paused(server, make_p
     state = httpx.get(f"{server}/_test/hve/state").json()
     assert state["viewing"] is False
     assert state["paused"] is True
+    # Resume, then the board takes a move again.
+    await page.click(PAUSE_BTN)
+    async with page.expect_response(posted(MOVE_POST_PATH)):
+        await drag_piece_one_rank_up(page, MOVE_FROM)
     assert_no_page_errors(errors)
 
 

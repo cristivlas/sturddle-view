@@ -7,8 +7,6 @@ non-destructive confirm and saves the game to Recents with its notes.
 """
 from __future__ import annotations
 
-from urllib.parse import urlparse
-
 import httpx
 import pytest
 
@@ -18,11 +16,14 @@ pytestmark = pytest.mark.e2e
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
 from .conftest import (  # noqa: E402
+    PIECE_ON,
     REGISTRY_FILE,
     PageObserver,
     assert_no_page_errors,
+    drag_piece_one_rank_up,
     e2e_env,
     make_searching_fake_uci,
+    posted,
     run_uvicorn_subprocess,
     wait_perspective_ready,
     watch_page_errors,
@@ -70,7 +71,6 @@ LIVE_PLIES = 2
 NEW_GAME_PATH = "/game/new"
 IMPORT_PATH = "/game/import"
 EDIT_COMMIT_PATH = "/game/edit/commit"
-POST = "POST"
 
 RIBBON_SHOWN_JS = """(sel) => {
   const el = document.querySelector(sel);
@@ -127,14 +127,6 @@ def _viewing_game(cursor: int, total: int):
     return pred
 
 
-def _posted(path: str):
-    """Response predicate: the POST to ``path`` -- it returns after the
-    left game's Recents save."""
-    def pred(resp):
-        return urlparse(resp.url).path == path and resp.request.method == POST
-    return pred
-
-
 def _editing(p):
     return p.get("editing") is True
 
@@ -179,13 +171,14 @@ def _note_on_clone(base: str) -> None:
 
 
 async def _confirm(page, expected: str, button: str, *, posts: str | None = None) -> None:
-    """Answer the confirm; with ``posts``, also await that POST's response."""
+    """Answer the confirm; with ``posts``, also await that POST's response
+    (it returns after a left game's Recents save)."""
     await page.wait_for_selector(CONFIRM_MESSAGE)
     assert await page.locator(CONFIRM_MESSAGE).text_content() == expected
     if posts is None:
         await page.click(CONFIRM_BUTTON.format(button))
     else:
-        async with page.expect_response(_posted(posts)):
+        async with page.expect_response(posted(posts)):
             await page.click(CONFIRM_BUTTON.format(button))
     await page.wait_for_selector(CONFIRM_MESSAGE, state="detached")
 
@@ -285,7 +278,7 @@ async def test_import_from_clone_asks_once(server, make_page):
     await _confirm(page, CONFIRM_IMPORT, IMPORT_LABEL)
     await page.click(RECENTS_SELECT)
     # A second (replace-viewed) confirm would block the import.
-    async with page.expect_response(_posted(IMPORT_PATH)):
+    async with page.expect_response(posted(IMPORT_PATH)):
         await page.locator(ROW.format(other["hash"])).click()
     assert _state(base)["game_id"] == other["game_id"]
     assert await page.locator(CONFIRM_MESSAGE).count() == 0
@@ -318,22 +311,8 @@ async def test_parent_toast_on_clone_asks_and_opens_parent(server, make_page):
     assert_no_page_errors(errors)
 
 
-BOARD_SVG = ".game-view-board svg.cm-chessboard"
-PIECE_ON = BOARD_SVG + ' [data-piece][data-square="{}"]'
 DRAG_FROM = "a2"
 DRAG_TO = "a3"
-DRAG_STEPS = 8
-
-
-async def _drag_one_rank_up(page, square: str) -> None:
-    """Drag the piece on ``square`` one rank toward Black (White at bottom)."""
-    box = await page.locator(PIECE_ON.format(square)).bounding_box()
-    x = box["x"] + box["width"] / 2
-    y = box["y"] + box["height"] / 2
-    await page.mouse.move(x, y)
-    await page.mouse.down()
-    await page.mouse.move(x, y - box["height"], steps=DRAG_STEPS)
-    await page.mouse.up()
 
 
 @pytest.mark.asyncio
@@ -346,8 +325,36 @@ async def test_pieces_move_in_edit_from_play(server, make_page):
 
     await page.click(PLAY_EDIT_BTN)
     await obs.wait_board_update(_editing)
-    await _drag_one_rank_up(page, DRAG_FROM)
+    await drag_piece_one_rank_up(page, DRAG_FROM)
     await page.locator(PIECE_ON.format(DRAG_TO)).wait_for(state="attached")
     await page.click(EDIT_CONFIRM_BTN)
     await _confirm(page, CONFIRM_EDIT_LEAVE, KEEP_EDITING_LABEL)
+    assert_no_page_errors(errors)
+
+
+PAUSE_BTN = "#pause"
+EDIT_ANNOTATE_BTN = "#edit-annotate"
+DIALOG_OK = 'wa-dialog[open] wa-button:has-text("OK")'
+ANNOTATION_TEXTAREA = "wa-dialog[open] wa-textarea"
+MOVE_PATH = "/game/move"
+
+
+@pytest.mark.asyncio
+async def test_board_takes_moves_after_note_from_play(server, make_page):
+    """Edit from play, note, confirm (back to play, paused), resume: the
+    board takes a move again."""
+    base = server
+    page, errors, obs = await _open(make_page, base)
+    await _start_live_game(page, obs, base)
+
+    await page.click(PLAY_EDIT_BTN)
+    await obs.wait_board_update(_editing)
+    await page.click(EDIT_ANNOTATE_BTN)
+    await page.locator(ANNOTATION_TEXTAREA).locator("textarea").fill(NOTE)
+    await page.click(DIALOG_OK)
+    await page.click(EDIT_CONFIRM_BTN)
+    await obs.wait_board_update(_live)
+    await page.click(PAUSE_BTN)
+    async with page.expect_response(posted(MOVE_PATH)):
+        await drag_piece_one_rank_up(page, DRAG_FROM)
     assert_no_page_errors(errors)

@@ -193,14 +193,20 @@ export function mountBoard({ element, onMove, styleId }) {
   let inputEnabled = false;
   let lastMoveUci = null;
 
+  // Move input off, flag and handler together: a handler disabled behind
+  // a flag still reading "on" makes the next enableInput(true) a no-op.
+  function disarmInput() {
+    inputEnabled = false;
+    board.disableMoveInput();
+  }
+
   function setSide(side) {
     const next = side === SIDE.BLACK ? COLOR.black : COLOR.white;
     if (next === myColor) return;
     myColor = next;
     board.setOrientation(myColor);
     if (inputEnabled) {
-      board.disableMoveInput();
-      inputEnabled = false;
+      disarmInput();
       enableInput(true);
     }
   }
@@ -401,8 +407,7 @@ export function mountBoard({ element, onMove, styleId }) {
     }
     // The editor's handler replaces play input: record it off, or a later
     // enableInput(false) (edit from play) would disable the editor.
-    inputEnabled = false;
-    board.disableMoveInput();
+    disarmInput();
     board.removeMarkers();
     if (!positionEditorLoaded) {
       positionEditorLoaded = true;
@@ -429,7 +434,9 @@ export function mountBoard({ element, onMove, styleId }) {
     editPositionChangeCb = null;
     castlingRights = { wK: false, wQ: false, bK: false, bQ: false };
     board.removeMarkers(MARKER_TYPE.dot);
-    board.disableMoveInput();
+    // A play input enabled earlier in the same update (exit to live) must
+    // read as off once disabled here.
+    disarmInput();
     if (positionEditorLoaded) {
       board.getExtension(PositionEditor).props.enabled = false;
     }

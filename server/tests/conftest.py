@@ -8,6 +8,7 @@ import json
 import os
 import socket
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -15,12 +16,23 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock
+from urllib.parse import urlparse, urlsplit
 
 import chess
 import pytest
 import pytest_asyncio
+import uvicorn
 from fastapi.testclient import TestClient
 
+import sturddle_view.api.tournaments as tournaments_api
+import sturddle_view.app as app_mod
+import sturddle_view.config as cfg
+import sturddle_view.engines as engines_mod
+import sturddle_view.play.game_store as gs
+import sturddle_view.recent_imports as ri_mod
+import sturddle_view.tournament.store as ts_mod
+from sturddle_view import key_store
+from sturddle_view._uvicorn_signal import make_signalling_server
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
@@ -58,7 +70,6 @@ class _InMemoryKeyring:
 @pytest.fixture(autouse=True)
 def _isolate_keyring(monkeypatch):
     """Force every test to use an in-memory keyring -- never the OS one."""
-    from sturddle_view import key_store
     fake = _InMemoryKeyring()
     monkeypatch.setattr(key_store, "_keyring", lambda: fake)
     yield
@@ -136,7 +147,6 @@ def make_position_aware_fake_uci(
     against the latest `position` line concatenated with the current
     `go` line (so callers can key on FEN, played moves, OR `searchmoves`
     args in `go`). First match wins, otherwise `default_score_cp`."""
-    import json
     table_json = json.dumps(score_by_substring)
     extra = (
         "    elif line.startswith('position'):\n"
@@ -329,6 +339,32 @@ class PageObserver:
         return fut.result()
 
 
+_POST = "POST"
+
+
+def posted(path: str):
+    """``page.expect_response`` predicate: the POST to exactly ``path``."""
+    def pred(resp) -> bool:
+        return urlparse(resp.url).path == path and resp.request.method == _POST
+    return pred
+
+
+BOARD_SVG = ".game-view-board svg.cm-chessboard"
+PIECE_ON = BOARD_SVG + ' [data-piece][data-square="{}"]'
+_DRAG_STEPS = 8
+
+
+async def drag_piece_one_rank_up(page, square: str) -> None:
+    """Drag the piece on ``square`` one rank toward Black (White at bottom)."""
+    box = await page.locator(PIECE_ON.format(square)).bounding_box()
+    x = box["x"] + box["width"] / 2
+    y = box["y"] + box["height"] / 2
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.move(x, y - box["height"], steps=_DRAG_STEPS)
+    await page.mouse.up()
+
+
 def free_port() -> int:
     """Allocate an ephemeral TCP port on localhost."""
     with socket.socket() as s:
@@ -371,8 +407,6 @@ def run_uvicorn_subprocess(
     ``SV_IMPORTS_DIR``, ``SV_SETTINGS_FILE``, ``SV_GAME_STATE_PATH``,
     ``SV_TOKEN``, ``SV_AUTH_DISABLED``. Pass them in ``env_overrides``.
     """
-    import subprocess
-
     if port is None:
         port = free_port()
     env = dict(os.environ)
@@ -386,13 +420,11 @@ def run_uvicorn_subprocess(
     # Each subprocess gets a private instance-lock so the user's real
     # lock file doesn't collide with the test run.
     if "SV_INSTANCE_LOCK_PATH" not in env:
-        import tempfile
         env["SV_INSTANCE_LOCK_PATH"] = str(
             Path(tempfile.gettempdir()) / f"sturddle-test-{port}.lock"
         )
 
-    import tempfile as _tempfile
-    log_path = Path(_tempfile.gettempdir()) / f"sturddle-test-uvicorn-{port}.log"
+    log_path = Path(tempfile.gettempdir()) / f"sturddle-test-uvicorn-{port}.log"
     base = f"http://127.0.0.1:{port}"
     log_fh = open(log_path, "wb")
 
@@ -456,10 +488,6 @@ def run_uvicorn(app, *, port: int | None = None) -> Iterator[tuple[str, object]]
     cleanup, etc. actually runs) before the loop is closed. The
     ``page``/``make_page`` fixtures close Playwright contexts before
     this teardown runs, so WS connections drain cleanly."""
-    import uvicorn
-
-    from sturddle_view._uvicorn_signal import make_signalling_server
-
     if port is None:
         port = free_port()
     config = uvicorn.Config(
@@ -580,7 +608,6 @@ def pytest_runtest_makereport(item, call):
         try:
             shot_path = f"/tmp/sv-e2e-fail-{item.name}-p{idx}.png"
             if sys.platform.startswith("win"):
-                import tempfile
                 shot_path = str(Path(tempfile.gettempdir()) / f"sv-e2e-fail-{item.name}-p{idx}.png")
             loop.run_until_complete(page.screenshot(path=shot_path, full_page=True))
             sections.append(f"  screenshot: {shot_path}")
@@ -593,7 +620,6 @@ def pytest_runtest_makereport(item, call):
             url = page.url
         except Exception:
             continue
-        from urllib.parse import urlsplit
         parts = urlsplit(url)
         base = f"{parts.scheme}://{parts.netloc}"
         log_path = _SERVER_LOGS.get(base)
@@ -846,13 +872,6 @@ def _isolate_user_config(tmp_path, monkeypatch):
     (e.g. ``GameStore``, ``EngineRegistry(path=...)``, or
     ``Settings.tournament_root``) instead of relying on these defaults.
     """
-    import sturddle_view.api.tournaments as tournaments_api
-    import sturddle_view.app as app_mod
-    import sturddle_view.config as cfg
-    import sturddle_view.engines as engines_mod
-    import sturddle_view.play.game_store as gs
-    import sturddle_view.recent_imports as ri_mod
-    import sturddle_view.tournament.store as ts_mod
     monkeypatch.setattr(
         gs, "default_state_path", lambda: tmp_path / "current_game.json"
     )
