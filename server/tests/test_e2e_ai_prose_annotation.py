@@ -260,6 +260,22 @@ async def test_play_pencil_carries_prose_without_confirm(server, make_page):
 
 
 @pytest.mark.asyncio
+async def test_play_pencil_ok_then_confirm_returns_to_play_paused(server, make_page):
+    page, errors = await _play_with_finished_ai(make_page, server, rounds=[(VERDICT, None)])
+    await page.click(PLAY_EDIT_BTN)
+    assert await _annotation_text(page) == VERDICT
+    await page.locator(DIALOG_BUTTON, has_text=OK_LABEL).click()
+    await page.wait_for_selector(OPEN_DIALOG, state="detached")
+    await page.click(EDIT_CONFIRM_BTN)
+    # The clone sat on the last ply: the commit returns to the live game.
+    await page.wait_for_function(RIBBON_SHOWN_JS, arg=PLAY_RIBBON)
+    state = httpx.get(f"{server}/_test/hve/state").json()
+    assert state["viewing"] is False
+    assert state["paused"] is True
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
 async def test_play_pencil_cancel_returns_to_play(server, make_page):
     page, errors = await _play_with_finished_ai(make_page, server, rounds=[(VERDICT, None)])
     await page.click(PLAY_EDIT_BTN)

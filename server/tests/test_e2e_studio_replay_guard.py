@@ -31,6 +31,8 @@ from .conftest import (  # noqa: E402
 FAKE_ENGINE_PATH = "/nonexistent/engine"
 PERSPECTIVE_LS_KEY = "sturddle:active-perspective"
 LEAVE_MSG = "Review this tournament game and leave the current one?"
+REVIEW_BUTTON = 'wa-dialog wa-button:has-text("Review")'
+DANGER_VARIANT = "danger"
 PLAY_MOVES = ["e2e4", "e7e5"]
 
 _GAME_PGN = "\n".join([
@@ -99,6 +101,9 @@ async def test_studio_replay_confirms_without_play_mount(tmp_path, make_page):
         await page.wait_for_selector(".confirm-message")
         msg = await page.text_content(".confirm-message")
         assert LEAVE_MSG in msg, f"unexpected confirm text: {msg!r}"
+        # Leaving saves the game: not styled destructive.
+        variant = await page.locator(REVIEW_BUTTON).evaluate("(b) => b.variant")
+        assert variant != DANGER_VARIANT
 
         # Cancel must leave the server-side game untouched.
         await page.click('wa-dialog wa-button:has-text("Cancel")')

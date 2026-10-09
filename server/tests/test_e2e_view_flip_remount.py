@@ -4,8 +4,8 @@ remount (View -> Engines/Tournaments -> back).
 Regression for: in View mode the server sends ``human_white: null`` (the
 user isn't "playing" at the cursor), so the client's ``state.humanWhite``
 is never refreshed and falls back to its mount default (True = White at
-bottom). On perspective remount of a *resumable* view session (a live game
-scrubbed back via /view/start), play.js re-derived orientation from that
+bottom). On perspective remount of a live clone (a live game scrubbed back
+via /view/start), play.js re-derived orientation from that
 stale ``state.humanWhite`` -- so a Black player's board snapped to
 White-bottom. Play mode is unaffected because its board_update carries a
 real ``human_white`` boolean.
@@ -51,7 +51,7 @@ _FIRST_FILE_LABEL = (
 
 
 @pytest.mark.asyncio
-async def test_resumable_view_orientation_survives_perspective_remount(server, page):
+async def test_live_clone_orientation_survives_perspective_remount(server, page):
     """A Black player who scrubs a live game into view mode must keep
     Black-bottom after navigating away and back."""
     base = server
@@ -75,9 +75,8 @@ async def test_resumable_view_orientation_survives_perspective_remount(server, p
     # Play mode, Black at bottom.
     await page.wait_for_function(f"{_FIRST_FILE_LABEL} === 'h'")
 
-    # Scrub the live game into a resumable view session (the same path the
-    # scrub-back UI uses). Land one ply back so we stay in view (the
-    # last-ply auto-resume can't fire on the landing event).
+    # Scrub the live game into a live clone (the same path the scrub-back
+    # UI uses), one ply back: on the last ply it would return to live.
     httpx.post(
         f"{base}/game/view/start",
         json={"suspend": True, "land_at_ply": 1},
@@ -86,7 +85,7 @@ async def test_resumable_view_orientation_survives_perspective_remount(server, p
         "() => getComputedStyle(document.querySelector('#view-controls'))"
         ".display !== 'none'",
     )
-    # Still Black-bottom in view mode (resumable keeps the player's POV).
+    # Still Black-bottom in view mode (a live clone keeps the player's POV).
     await page.wait_for_function(f"{_FIRST_FILE_LABEL} === 'h'")
 
     # Navigate to the Engines/Tournaments perspective (drops Play's DOM),
@@ -106,6 +105,6 @@ async def test_resumable_view_orientation_survives_perspective_remount(server, p
     # The board must still be Black-bottom. The bug snapped it to "a".
     label = await page.evaluate(_FIRST_FILE_LABEL)
     assert label == "h", (
-        f"resumable view orientation lost on remount: first file label is "
+        f"live clone orientation lost on remount: first file label is "
         f"{label!r} (expected 'h' = Black at bottom)"
     )
