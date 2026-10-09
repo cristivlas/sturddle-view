@@ -319,3 +319,40 @@ def test_delete_edited_row_needs_no_force_and_keeps_edit_session(client):
     assert c.delete(f"/game/recent-imports/{h}").status_code == 200
     # Edit session survives: cancel still works (back to view mode).
     assert c.post("/game/edit/cancel", json={}).status_code == 200
+
+
+IN_PROGRESS_ERROR = "in_progress"
+
+
+def _import(c, text):
+    return c.post("/game/import", json={"format": "pgn", "text": text})
+
+
+@pytest.mark.parametrize("on_clone", [False, True])
+def test_import_of_live_games_own_row_is_refused(client, on_clone):
+    c = client
+    _parent_id, live_id = _forked_live_game(c)
+    assert c.get("/game/pgn").status_code == 200
+    text = _by_id(c, live_id)["text"]
+    if on_clone:
+        c.post("/game/view/start", json={"suspend": True, "land_at_ply": CLONE_PLY}).raise_for_status()
+
+    r = _import(c, text)
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["error"] == IN_PROGRESS_ERROR
+    hve = c.app.state.hve
+    assert hve.game_id == live_id
+    assert hve.is_live_clone is on_clone
+
+
+def test_import_of_older_export_is_its_own_row(client):
+    c = client
+    _parent_id, live_id = _forked_live_game(c)
+    assert c.get("/game/pgn").status_code == 200
+    older = _by_id(c, live_id)["text"]
+    assert c.post("/game/move", json={"uci": "d2d4"}).status_code == 200
+    assert c.get("/game/pgn").status_code == 200
+
+    r = _import(c, older)
+    assert r.status_code == 200, r.text
+    assert r.json()["game_id"] != live_id

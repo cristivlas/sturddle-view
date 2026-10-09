@@ -85,6 +85,7 @@ _DETECTED_FORMAT_KEY = "detected_format"
 _CHILDREN_KEY = "children"
 _EVENTS_KEY = "events"
 _ERROR_KEY = ERROR_KEY
+_IN_PROGRESS_ERROR = "in_progress"
 # Import `format` values: FEN, PGN, or try FEN then PGN.
 _FMT_AUTO = "auto"
 _VALID_FORMATS = (FMT_FEN, FMT_PGN, _FMT_AUTO)
@@ -379,6 +380,10 @@ async def import_game(payload: dict, request: Request) -> dict:
     view_hash = _import_hash(pos, detected, raw_text)
     recents = request.app.state.recent_imports
     game_id = _resolve_game_id_for_import(recents, payload, view_hash)
+    # The game in progress cannot be imported over itself: Leaving would
+    # rebind its id before the import's own Recents save.
+    if game_id == hve.live_game_id:
+        raise conflict({_ERROR_KEY: _IN_PROGRESS_ERROR})
     # Used by x-game nav to open parent/child at the fork ply in a single
     # round-trip, which avoids an animation flicker when the FEN at the
     # target ply is identical to what was on screen.

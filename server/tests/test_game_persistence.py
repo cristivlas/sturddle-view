@@ -652,3 +652,11 @@ async def test_close_view_on_clone_keeps_note(tmp_path):
     await hve.close_view()
     assert hve._viewing is False
     assert hve._play_comments == [_NOTE, None]
+
+
+async def test_leaving_clears_store(tmp_path):
+    hve, store = _make_hve(tmp_path)
+    await _live_game_two_plies(hve)
+    assert store.load() is not None
+    await hve.enter_view_mode(ViewModeParams(start_fen=None, moves_uci=["d2d4"], clock_history=None))
+    assert store.load() is None

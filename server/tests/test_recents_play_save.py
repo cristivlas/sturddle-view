@@ -655,3 +655,168 @@ async def test_fork_t6_no_clk_partial_comments(hve):
     assert plies[1] is None, f"ply 1 should have no comment: {plies[1]!r}"
     assert plies[2] is not None and "c2" in plies[2]
     assert plies[3] is None, f"ply 3 should have no comment: {plies[3]!r}"
+
+
+# ---- Leaving: replacing a live game saves it to recents ----
+
+NOTE = "a note on the live game"
+NOTE_PLY = 1
+EDITED_FEN = "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
+
+
+async def _note_on_clone(h):
+    """Live 1.e4 e5 with a note at ply 1 committed on a clone; stays on it."""
+    await _start_play_game_with_moves(h)
+    await h.enter_live_clone(NOTE_PLY)
+    fen = await h.enter_edit_mode()
+    await h.commit_edit(fen, apply_comment=True, comment_text=NOTE)
+
+
+async def _live_with_note(h):
+    """As _note_on_clone, then back to live (scrub forward)."""
+    await _note_on_clone(h)
+    await h.view_forward()
+    assert h.is_live_clone is False
+
+
+def _text_by_id(recents, gid):
+    got = recents.get_by_id(gid)
+    assert got is not None, f"{gid} not in recents"
+    return got[1]
+
+
+async def _import_other(h):
+    await h.enter_view_mode(
+        ViewModeParams(start_fen=None, moves_uci=["d2d4"], clock_history=None),
+        game_id="gid-other",
+    )
+
+
+async def test_new_game_saves_left_game_with_its_notes(hve):
+    h, recents = hve
+    await _live_with_note(h)
+    left_id = h.game_id
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    assert NOTE in _text_by_id(recents, left_id)
+
+
+async def test_import_saves_left_game_with_its_notes(hve):
+    h, recents = hve
+    await _live_with_note(h)
+    left_id = h.game_id
+    await _import_other(h)
+    assert NOTE in _text_by_id(recents, left_id)
+
+
+async def test_leaving_zero_move_game_saves_nothing(hve):
+    h, recents = hve
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    await _import_other(h)
+    assert recents.list() == []
+
+
+async def test_leaving_exported_game_updates_its_row(hve):
+    h, recents = hve
+    await _live_with_note(h)
+    left_id = h.game_id
+    await h.export_to_recents()
+    await h.submit_move("g1f3")
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    rows = [r for r in recents.list() if r["game_id"] == left_id]
+    assert len(rows) == 1
+    assert "Nf3" in _text_by_id(recents, left_id)
+
+
+async def test_new_game_from_clone_saves_clone_note(hve):
+    h, recents = hve
+    await _note_on_clone(h)
+    left_id = h.game_id
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    assert h.is_live_clone is False
+    assert NOTE in _text_by_id(recents, left_id)
+
+
+async def test_fen_commit_from_clone_saves_live_game_and_views_fen(hve):
+    h, recents = hve
+    await _note_on_clone(h)
+    left_id = h.game_id
+    await h.enter_edit_mode()
+    result = await h.commit_edit(EDITED_FEN)
+    assert NOTE in _text_by_id(recents, left_id)
+    assert h.is_live_clone is False
+    assert h._viewing is True
+    assert h._board.fen() == EDITED_FEN
+    assert result.game_id != left_id
+
+
+async def test_play_from_here_on_clone_saves_live_game_as_parent(hve):
+    h, recents = hve
+    await _note_on_clone(h)
+    left_id = h.game_id
+    child_id = await h.play_from_here(tc=TimeControl(60, 0))
+    assert NOTE in _text_by_id(recents, left_id)
+    assert h.fork_link == (left_id, NOTE_PLY)
+    assert h._play_comments == [NOTE]
+    left_row = recents.get_by_id(left_id)[0]
+    assert left_row.get("parent_game_id") is None
+    await h.resign()
+    child_row = recents.get_by_id(child_id)[0]
+    assert child_row["parent_game_id"] == left_id
+    assert child_row["fork_ply"] == NOTE_PLY
+
+
+async def test_left_fork_keeps_its_link(hve):
+    h, recents = hve
+    parent_id = await _import_parent(h, recents)
+    await h.view_last()
+    child_id = await h.play_from_here(tc=TimeControl(60, 0))
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    child_row = recents.get_by_id(child_id)[0]
+    assert child_row["parent_game_id"] == parent_id
+    assert child_row["fork_ply"] == 4
+
+
+async def test_play_from_here_on_clone_of_fork_keeps_both_links(hve):
+    """The left game (a fork) keeps its own parent; the new child links to
+    the left game -- never the left game as its own parent."""
+    h, recents = hve
+    parent_id = await _import_parent(h, recents)
+    await h.view_last()
+    left_id = await h.play_from_here(tc=TimeControl(60, 0))
+    await h.submit_move("d2d4")
+    await h.enter_live_clone(4)
+    child_id = await h.play_from_here(tc=TimeControl(60, 0))
+    left_row = recents.get_by_id(left_id)[0]
+    assert left_row["parent_game_id"] == parent_id
+    assert h.fork_link == (left_id, 4)
+    await h.resign()
+    assert recents.get_by_id(child_id)[0]["parent_game_id"] == left_id
+
+
+async def _failing_spawn():
+    raise FileNotFoundError("engine gone")
+
+
+async def test_failed_spawn_on_new_game_leaves_live_game(hve):
+    h, recents = hve
+    await _live_with_note(h)
+    live_id = h.game_id
+    h._ensure_engine = _failing_spawn
+    with pytest.raises(FileNotFoundError):
+        await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    assert h.game_id == live_id
+    assert len(h._board.move_stack) == 2
+    assert recents.list() == []
+
+
+async def test_failed_spawn_on_play_from_here_leaves_clone(hve):
+    h, recents = hve
+    await _note_on_clone(h)
+    live_id = h.game_id
+    h._ensure_engine = _failing_spawn
+    with pytest.raises(FileNotFoundError):
+        await h.play_from_here(tc=TimeControl(60, 0))
+    assert h.is_live_clone is True
+    assert h.game_id == live_id
+    assert recents.list() == []
