@@ -2065,7 +2065,9 @@ function handleBusEvent(state, ai, aiCtx, evt) {
           // the in-band refreshXgameToasts (so it can't fire on prior-game data).
           // fetchXgameInfo then repopulates and re-renders.
           resetXgame(state);
-          fetchXgameInfo(state, state.viewingGameId);
+          // Only a view with a recents row (it carries its hash) has fork
+          // links: an unsaved live clone would just 404.
+          fetchXgameInfo(state, v.view_hash ? state.viewingGameId : null);
         }
         state.viewCursor = v.cursor ?? 0;
         state.viewTotalPlies = v.total_plies ?? 0;
@@ -2567,7 +2569,7 @@ export const playPerspective = {
         enterIdleAfterViewDelete(state);
         return;
       }
-      if (state.viewing && state.viewingGameId) fetchXgameInfo(state, state.viewingGameId);
+      if (state.viewing && _viewingHash) fetchXgameInfo(state, state.viewingGameId);
     };
     window.addEventListener(APP_EVT.RECENTS_CHANGED, onRecentsChanged);
 
