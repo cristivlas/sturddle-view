@@ -288,7 +288,7 @@ async def test_play_from_here_then_resign_writes_fork_row(hve):
     # Cursor at last ply (4) when we fork.
     await h.view_last()
     await h.play_from_here(tc=TimeControl(60, 0))
-    assert h.fork_link == (parent_id, 4)
+    assert h._fork_link == (parent_id, 4)
     child_id = h.game_id
     await h.submit_move("d2d4")  # one play move to make the PGN non-empty
     await h.resign()
@@ -303,7 +303,7 @@ async def test_play_from_here_then_resign_writes_fork_row(hve):
     parent_row = recents.get_by_id(parent_id)[0]
     assert parent_row["refs"] == [{"game_id": child_id, "fork_ply": 4}]
     # And the stash is cleared after consumption.
-    assert h.fork_link is None
+    assert h._fork_link is None
 
 
 async def test_play_from_here_at_ply_zero_is_not_a_fork(hve):
@@ -313,7 +313,7 @@ async def test_play_from_here_at_ply_zero_is_not_a_fork(hve):
     parent_id = await _import_parent(h, recents)
     await h.view_first()  # cursor = 0
     await h.play_from_here(tc=TimeControl(60, 0))
-    assert h.fork_link is None
+    assert h._fork_link is None
     await h.submit_move("e2e4")
     await h.resign()
     parent_row = recents.get_by_id(parent_id)[0]
@@ -327,10 +327,10 @@ async def test_new_game_clears_stale_fork_link(hve):
     await _import_parent(h, recents)
     await h.view_last()
     await h.play_from_here(tc=TimeControl(60, 0))
-    assert h.fork_link is not None
+    assert h._fork_link is not None
     # User abandons fork -> plain new game.
     await h.new_game(human_white=True, tc=TimeControl(60, 0))
-    assert h.fork_link is None
+    assert h._fork_link is None
     new_game_id = h.game_id
     await h.submit_move("e2e4")
     await h.resign()
@@ -346,32 +346,28 @@ async def test_enter_view_mode_drops_link_by_default(hve):
     await _import_parent(h, recents)
     await h.view_last()
     await h.play_from_here(tc=TimeControl(60, 0))
-    assert h.fork_link is not None
+    assert h._fork_link is not None
     # Simulate import-on-top: new view mode WITHOUT preserve.
     await h.enter_view_mode(
         ViewModeParams(start_fen=None, moves_uci=[], clock_history=None),
         game_id="gid-fresh",
     )
-    assert h.fork_link is None
+    assert h._fork_link is None
 
 
-async def test_enter_view_mode_preserves_link_when_asked(hve):
-    """``/view/start``-style transition passes fork_link through so the
-    play->view state-flip can hand the link to a downstream commit."""
+async def test_live_clone_round_trip_keeps_link(hve):
+    """The fork link rides in the suspended snapshot: scrub back to a live
+    clone and return, and the live game still carries it."""
     h, recents = hve
     parent_id = await _import_parent(h, recents)
     await h.view_last()
     await h.play_from_here(tc=TimeControl(60, 0))
-    link_before = h.fork_link
-    assert link_before == (parent_id, 4)
-    # Simulate /view/start: it captures the live link and passes it
-    # through enter_view_mode.
-    await h.enter_view_mode(
-        ViewModeParams(start_fen=None, moves_uci=[], clock_history=None),
-        game_id="gid-view-snapshot",
-        fork_link=link_before,
-    )
-    assert h.fork_link == link_before
+    await h.submit_move("d2d4")
+    await h.enter_live_clone(4)
+    assert h._suspended_play.parent_game_id == parent_id
+    await h.view_last()
+    assert h.is_live_clone is False
+    assert h._fork_link == (parent_id, 4)
 
 
 # ---- x-game fork PGN preservation matrix (B9 + sanity) ----
@@ -756,7 +752,7 @@ async def test_play_from_here_on_clone_saves_live_game_as_parent(hve):
     left_id = h.game_id
     child_id = await h.play_from_here(tc=TimeControl(60, 0))
     assert NOTE in _text_by_id(recents, left_id)
-    assert h.fork_link == (left_id, NOTE_PLY)
+    assert h._fork_link == (left_id, NOTE_PLY)
     assert h._play_comments == [NOTE]
     left_row = recents.get_by_id(left_id)[0]
     assert left_row.get("parent_game_id") is None
@@ -789,7 +785,7 @@ async def test_play_from_here_on_clone_of_fork_keeps_both_links(hve):
     child_id = await h.play_from_here(tc=TimeControl(60, 0))
     left_row = recents.get_by_id(left_id)[0]
     assert left_row["parent_game_id"] == parent_id
-    assert h.fork_link == (left_id, 4)
+    assert h._fork_link == (left_id, 4)
     await h.resign()
     assert recents.get_by_id(child_id)[0]["parent_game_id"] == left_id
 

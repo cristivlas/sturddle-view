@@ -107,6 +107,8 @@ set of ~two dozen):
 - `test_e2e_perspective_sync.py`: cross-perspective state sync.
 - `test_e2e_play_from_here.py` / `test_e2e_xgame_toasts.py`: fork-a-game
   flow and its toasts.
+- `test_e2e_edit_from_play.py`: edit from play on a live clone, the
+  shared leave confirm, and the Recents save of a left game.
 - `test_e2e_ai_done_ribbon.py` / `test_e2e_ai_thinking_replay.py`: AI
   analysis done-ribbon + thinking replay.
 

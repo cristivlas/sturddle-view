@@ -438,8 +438,8 @@ class HumanVsEngine:
         self._fork_link: tuple[str, int] | None = None
         # Live game suspended under a live clone, kept in memory for Return
         # to live (same game, no fork). Set only by _enter_live_clone;
-        # cleared by its restore: on resume, navigation onto the last ply,
-        # and Leaving (new_game, enter_view_mode).
+        # cleared by its restore: navigation or an edit exit onto the last
+        # ply, close_view, and Leaving (new_game, enter_view_mode).
         self._suspended_play: GameState | None = None
         # Pre-edit view bundle stashed by enter_edit_mode; restored wholesale
         # (self._game = it) by cancel_edit and the FEN-unchanged commit_edit.
@@ -1235,29 +1235,12 @@ class HumanVsEngine:
         is set up yet. Read-only; does not acquire the lock."""
         return self._board.fen() if self._board is not None else None
 
-    def play_game_snapshot(
-        self,
-    ) -> tuple[str | None, list[str], list[tuple[float, float]], float, float, list[dict | None]]:
-        """Return (start_fen, moves_uci, clock_history, white_time, black_time, eval_history)
-        from the current play-mode game. Safe to call without the lock."""
-        board = self._board
-        moves = [m.uci() for m in board.move_stack] if board else []
-        return (
-            self._start_fen,
-            moves,
-            list(self._clock.history),
-            self._clock.white_time,
-            self._clock.black_time,
-            list(self._eval_history),
-        )
-
     def play_game_comments(self) -> tuple[list[str | None] | None, str | None]:
         """Return (comments, root_comment) from the current play-mode game.
 
         Populated only when the play game was seeded from a view fork
-        (play_from_here) that carried commentary. Used by the live clone and
-        /game/view/start so the play -> view flip preserves imported
-        annotations through an edit-mode round trip."""
+        (play_from_here) or committed on a live clone. Seeds the live
+        clone's view."""
         comments = list(self._play_comments) if self._play_comments is not None else None
         return comments, self._play_root_comment
 
@@ -1269,23 +1252,10 @@ class HumanVsEngine:
         comments = list(self._view_comments) if self._view_comments is not None else None
         return comments, self._view_root_comment
 
-    @property
-    def fork_link(self) -> tuple[str, int] | None:
-        """Read-only view of the current fork link, if any. Used by the
-        API layer to pass the link across an ``enter_view_mode`` boundary
-        when the transition preserves lineage (``/view/start``)."""
-        return self._fork_link
-
-    def clear_fork_link(self) -> None:
-        """Drop the current fork link. Used by the API layer once the
-        link has been consumed by a recents write."""
-        self._fork_link = None
-
     async def enter_view_mode(
         self,
         params: ViewModeParams,
         game_id: str | None = None,
-        fork_link: tuple[str, int] | None = None,
         land_at_ply: int | None = None,
     ) -> str:
         """Load a game into view mode (import, FEN-edit commit).
@@ -1300,14 +1270,8 @@ class HumanVsEngine:
         content. When the caller has one (e.g. import path found the
         content already in the store), pass it through so the live
         session and the store agree. When omitted, a fresh uuid4 is
-        minted.
-
-        ``fork_link``: optional ``(parent_game_id, fork_ply)``. The
-        store is replaced unconditionally with this value -- so the
-        default ``None`` drops any stale link from a prior play game
-        (import-on-top, FEN-edit commit), and ``/view/start`` passes
-        its current link through so it survives the play -> view ->
-        edit -> annotate flow.
+        minted. A view has no fork link: its lineage lives in its
+        Recents row.
         """
         async with self._lock:
             if not (self._mode & Op.ENTER_VIEW_MODE._mask):
@@ -1315,18 +1279,24 @@ class HumanVsEngine:
             parsed = _parse_view(params)
             await self._leave_live_game()
             await self._install_view(params, parsed, game_id, land_at_ply)
-            self._fork_link = fork_link
+            self._fork_link = None
             await self._publish_board()
             await self._publish_clock()
         await self._flush_recents_save()
         return self._game_id
 
-    async def enter_live_clone(self, ply: int | None = None) -> str:
-        """Suspend the live game into a live clone at ``ply`` (default:
-        the last ply). Returns the shared game_id."""
+    async def enter_live_clone(self, ply: int) -> str:
+        """Scrub back: suspend the live game into a live clone at ``ply``,
+        a past ply (1 to one less than the move count). Returns the shared
+        game_id."""
         async with self._lock:
             if not (self._mode & Op.ENTER_VIEW_MODE._mask):
                 raise ModeConflictError(self._mode, Op.ENTER_VIEW_MODE)
+            if self._viewing or not self._has_game:
+                raise RuntimeError(_NO_LIVE_GAME)
+            n_plies = len(self._board.move_stack)
+            if not 1 <= ply < n_plies:
+                raise RuntimeError(f"ply {ply} out of range 1..{n_plies - 1}")
             await self._enter_live_clone(ply)
             await self._publish_board()
             await self._publish_clock()
@@ -1821,21 +1791,6 @@ class HumanVsEngine:
                 self._game = GameBundle()
                 self._fork_link = None
                 return None
-        await self.republish_state()
-        return self._game_id
-
-    async def resume_play(self) -> str:
-        """Exit view mode back into the SAME play game suspended by
-        /view/start -- no fork, original game_id/clocks/engine restored.
-
-        Raises RuntimeError when there is nothing to resume (not viewing,
-        or the view session didn't originate from /view/start)."""
-        async with self._lock:
-            if not (self._mode & Op.PLAY_FROM_HERE._mask):
-                raise ModeConflictError(self._mode, Op.PLAY_FROM_HERE)
-            if self._suspended_play is None:
-                raise RuntimeError("no suspended play game to resume")
-            await self._restore_suspended_play()
         await self.republish_state()
         return self._game_id
 
@@ -2599,13 +2554,9 @@ class HumanVsEngine:
             "comment": comment_at_cursor,
             "has_comment": has_any_comment,
             "game_over": game_over,
-            # True when this view session can flip back to the SAME play game
-            # (entered via /view/start). Drives the client's auto-resume at
-            # the last ply (no play-from-here fork).
-            "resumable": self._suspended_play is not None,
-            # The suspended player's color, so the client can restore the
+            # A live clone's player color, so the client can restore the
             # board POV on remount (the board event's human_white is null in
-            # view mode). None for non-resumable (imported) sessions.
+            # view mode). None for other views.
             "resume_human_white": (
                 self._suspended_play.human_white if self._suspended_play else None
             ),
@@ -2953,8 +2904,7 @@ class HumanVsEngine:
     def play_game_summary(self) -> dict | None:
         """Minimal summary dict for the in-flight play game, matching the
         shape stashed for recents on game-end. Returns None when there's
-        no live play game with moves. Labels the live clone and the
-        /game/view/start flip."""
+        no live play game with moves. Labels the live clone."""
         if not self._has_game or not self._board.move_stack:
             return None
         white, black = self.play_side_names(self._human_white)

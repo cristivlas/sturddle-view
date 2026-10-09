@@ -337,3 +337,4 @@ async def test_live_clone_payload_carries_in_progress_and_player_color(hve):
     payload = hve._board_event().payload
     assert payload["in_progress"] is True
     assert payload["view"]["resume_human_white"] is False
+    assert "resumable" not in payload["view"]

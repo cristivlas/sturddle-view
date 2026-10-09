@@ -79,7 +79,7 @@ async def test_live_clone_orientation_survives_perspective_remount(server, page)
     # UI uses), one ply back: on the last ply it would return to live.
     httpx.post(
         f"{base}/game/view/start",
-        json={"suspend": True, "land_at_ply": 1},
+        json={"land_at_ply": 1},
     ).raise_for_status()
     await page.wait_for_function(
         "() => getComputedStyle(document.querySelector('#view-controls'))"

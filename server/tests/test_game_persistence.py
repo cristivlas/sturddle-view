@@ -580,7 +580,7 @@ async def test_snapshot_restore_roundtrips_comments_and_fork_link(tmp_path):
     fresh.restore_from(store.load())
     assert fresh._play_comments == _PARENT_COMMENTS
     assert fresh._play_root_comment == _ROOT_COMMENT
-    assert fresh.fork_link == (_PARENT_ID, len(_PARENT_MOVES))
+    assert fresh._fork_link == (_PARENT_ID, len(_PARENT_MOVES))
 
 
 async def test_restart_mid_game_keeps_comments_and_fork_link(tmp_path):

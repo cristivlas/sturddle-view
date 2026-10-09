@@ -368,23 +368,15 @@ def test_replace_at_evicts_old_inserts_new_rebinds_game_id(store, tmp_path):
     assert store.hash_for_id("gid-1") == h2
 
 
-def test_replace_at_with_old_hash_none_promotes_to_recents(store):
-    """No pre-edit row -> insert at new_hash, bind game_id. This is the
-    play -> view -> edit -> annotate path."""
-    h = _run(store.replace_at(
-        old_hash=None, fmt="pgn", text="1. d4 *", summary="annotated", game_id="gid-promote",
-    ))
-    row, _ = store.get(h)
-    assert row["game_id"] == "gid-promote"
-    assert row["summary"] == "annotated"
-    assert store.hash_for_id("gid-promote") == h
+# A hash with no row: replace_at inserts.
+_ABSENT_HASH = "deadbeef" * 8
 
 
 def test_replace_at_missing_old_hash_treated_as_insert(store):
     """old_hash provided but absent from index (already evicted?) -> just
     insert at new_hash. No error."""
     h = _run(store.replace_at(
-        old_hash="deadbeef" * 8, fmt="pgn", text="1. c4 *", summary="s", game_id="gid",
+        old_hash=_ABSENT_HASH, fmt="pgn", text="1. c4 *", summary="s", game_id="gid",
     ))
     assert store.get(h) is not None
 
@@ -610,15 +602,16 @@ def test_replace_at_preserves_refs_on_parent_edit(store):
     assert row["refs"] == [{"game_id": "gid-child", "fork_ply": 5}]
 
 
-def test_replace_at_explicit_fork_link_promotes_child(store):
-    """Caller can promote an unsaved child into recents with an explicit
-    fork link. Parent's refs gets appended atomically."""
+def test_replace_at_explicit_fork_link_on_unlinked_row(store):
+    """A save may carry a link its old row lacks (an export written
+    without it). Parent's refs gets appended atomically."""
     h_parent = _save_parent(store)
-    # Child has never been in recents; promote it via replace_at with
-    # old_hash=None and explicit (parent_game_id, fork_ply).
+    h_old = _run(store.save(
+        fmt="pgn", text="1. e4 e5 2. Nf3 *", summary={"white": "C"}, game_id="gid-child",
+    ))
     h_child = _run(store.replace_at(
-        old_hash=None, fmt="pgn",
-        text="1. e4 e5 2. Nf3 *", summary={"white": "C"},
+        old_hash=h_old, fmt="pgn",
+        text="1. e4 e5 2. Nf3 Nc6 *", summary={"white": "C"},
         game_id="gid-child",
         parent_game_id="gid-parent", fork_ply=4,
     ))
@@ -649,13 +642,13 @@ def test_replace_at_rejects_partial_fork_link(store):
     _save_parent(store)
     with pytest.raises(AssertionError):
         _run(store.replace_at(
-            old_hash=None, fmt="pgn",
+            old_hash=_ABSENT_HASH, fmt="pgn",
             text="1. d4 *", summary={}, game_id="g",
             parent_game_id="gid-parent",
         ))
     with pytest.raises(AssertionError):
         _run(store.replace_at(
-            old_hash=None, fmt="pgn",
+            old_hash=_ABSENT_HASH, fmt="pgn",
             text="1. d4 *", summary={}, game_id="g",
             fork_ply=3,
         ))
@@ -665,7 +658,7 @@ def test_replace_at_rejects_zero_fork_ply(store):
     _save_parent(store)
     with pytest.raises(AssertionError):
         _run(store.replace_at(
-            old_hash=None, fmt="pgn",
+            old_hash=_ABSENT_HASH, fmt="pgn",
             text="1. d4 *", summary={}, game_id="g",
             parent_game_id="gid-parent", fork_ply=0,
         ))

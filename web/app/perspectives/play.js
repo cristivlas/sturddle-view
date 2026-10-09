@@ -1562,7 +1562,7 @@ async function enterViewAtPly(state, plyIndex) {
   try {
     closeAi();
     await state.ctx.api(
-      "POST", "/game/view/start", { land_at_ply: plyIndex + 1, suspend: true },
+      "POST", "/game/view/start", { land_at_ply: plyIndex + 1 },
     );
   } catch (e) {
     reportError(state.ctx, MSG.OPEN_GAME_FAILED, e);

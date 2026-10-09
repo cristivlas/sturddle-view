@@ -874,8 +874,8 @@ async def test_commit_edit_unchanged_no_annotation_returns_none(hve):
 
 async def test_play_to_view_via_edit_round_trip_preserves_comments(hve):
     """Repro for the user-reported bug:
-       import w/ comments -> play_from_here -> enter_view_mode (the play
-       -> view flip used by /game/view/start) -> enter edit -> cancel.
+       import w/ comments -> play_from_here -> scrub back (live clone) ->
+       enter edit -> cancel.
     The restored view must still have the imported comments."""
     h, _ = hve
     await h.enter_view_mode(ViewModeParams(
@@ -887,16 +887,7 @@ async def test_play_to_view_via_edit_round_trip_preserves_comments(hve):
     ))
     await h.view_last()
     await h.play_from_here(tc=TimeControl(60, 0))
-    # Simulate /game/view/start: snapshot play state + comments, enter view.
-    start_fen, moves, _, _, _, _ = h.play_game_snapshot()
-    comments, root = h.play_game_comments()
-    await h.enter_view_mode(ViewModeParams(
-        start_fen=start_fen,
-        moves_uci=moves,
-        clock_history=None,
-        comments=comments,
-        root_comment=root,
-    ))
+    await h.enter_live_clone(2)
     assert h._view_comments == ["c1", "c2", "c3"]
     assert h._view_root_comment == "pre"
     # Now enter edit then cancel -- the post-cancel view must still see them.
@@ -1079,49 +1070,35 @@ async def test_new_view_clears_edited_flag(hve):
     assert h._view_edited is False
 
 
-# ---- no-fork resume (/view/start suspend -> /view/resume-play) -----------
+# ---- live clone: suspend, then Return to live ------------------------------
 
-async def _suspend_live_play(h):
-    """Suspend the live play game into a live clone at its last ply."""
-    return await h.enter_live_clone()
+_LIVE_PLIES = ("e2e4", "e7e5")
 
 
-async def test_resume_play_restores_same_game_and_sides(hve):
-    """resume_play returns to the SAME game (no fork): original game_id,
-    human color, and moves preserved -- unlike play_from_here."""
-    h, _ = hve
-    h._engine_to_move = AsyncMock()
-    play_id = await h.new_game(human_white=False, tc=TimeControl(60, 0))
-    # Two plies -> White (the engine) is to move again at the last ply.
-    for u in ("e2e4", "e7e5"):
+async def _clone_of_two_plies(h, *, human_white: bool) -> str:
+    """Live 1.e4 e5 (pushed directly; engine mocked) cloned at ply 1.
+    Returns the live game_id."""
+    play_id = await h.new_game(human_white=human_white, tc=TimeControl(60, 0))
+    for u in _LIVE_PLIES:
         h._board.push(chess.Move.from_uci(u))
         h._eval_history.append(None)
-    view_id = await _suspend_live_play(h)
+    assert await h.enter_live_clone(1) == play_id
+    return play_id
+
+
+async def test_return_to_live_restores_same_game_and_sides(hve):
+    """Return to live brings back the SAME game (no fork): game_id, human
+    color, and moves preserved -- unlike play_from_here."""
+    h, _ = hve
+    play_id = await _clone_of_two_plies(h, human_white=False)
     assert h._suspended_play is not None
-    h._engine_to_move.reset_mock()
-    resumed_id = await h.resume_play()
+    await h.view_forward()
     assert h._viewing is False
     assert h._mode is Mode.PLAY
-    assert resumed_id == play_id          # same game, not a fork
-    assert view_id == play_id             # the clone shares the live id
+    assert h.game_id == play_id
     assert h._human_white is False        # color preserved (not side-to-move)
-    assert [m.uci() for m in h._board.move_stack] == ["e2e4", "e7e5"]
+    assert [m.uci() for m in h._board.move_stack] == list(_LIVE_PLIES)
     assert h._suspended_play is None      # consumed
-
-
-async def test_resume_play_kicks_engine_when_its_turn(hve):
-    """On resume the engine resumes thinking if it is its move."""
-    h, _ = hve
-    h._engine_to_move = AsyncMock()
-    await h.new_game(human_white=False, tc=TimeControl(60, 0))  # engine = White
-    for u in ("e2e4", "e7e5"):  # White (engine) to move at the last ply
-        h._board.push(chess.Move.from_uci(u))
-        h._eval_history.append(None)
-    await _suspend_live_play(h)
-    h._engine_to_move.reset_mock()
-    await h.resume_play()
-    assert h._board.turn == chess.WHITE
-    h._engine_to_move.assert_awaited_once()
 
 
 async def test_suspend_snapshot_uses_live_clocks(hve):
@@ -1141,46 +1118,31 @@ async def test_suspend_snapshot_uses_live_clocks(hve):
     assert live.white_time == pytest.approx(55.0)
 
 
-async def test_resume_play_restores_clocks(hve):
-    """Resumed game's clocks come from the suspend snapshot, not a reset."""
+async def test_return_to_live_restores_clocks(hve):
+    """The returned game's clocks come from the suspend snapshot, not a reset."""
     h, _ = hve
-    h._engine_to_move = AsyncMock()
     await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    for u in _LIVE_PLIES:
+        h._board.push(chess.Move.from_uci(u))
+        h._eval_history.append(None)
     h._clock.white_time = 42.0
     h._clock.black_time = 17.0
     # Stop the turn new_game started: the suspend snapshot debits real wall
     # time from a running turn, which is nondeterministic under suite load.
     # The debit itself is covered by test_suspend_snapshot_uses_live_clocks.
     h._clock.stop_turn()
-    await _suspend_live_play(h)
-    await h.resume_play()
+    await h.enter_live_clone(1)
+    await h.view_forward()
     assert h._clock.white_time == pytest.approx(42.0)
     assert h._clock.black_time == pytest.approx(17.0)
-
-
-async def test_resumable_flag_true_only_when_suspended(hve):
-    """The view payload's `resumable` flag tracks _suspended_play: set by a
-    suspend entry, absent for a plain import."""
-    h, _ = hve
-    h._engine_to_move = AsyncMock()
-    await h.new_game(human_white=True, tc=TimeControl(60, 0))
-    await _suspend_live_play(h)
-    assert h._board_event().payload["view"]["resumable"] is True
-    # Import-on-top (no suspend) drops it.
-    await h.enter_view_mode(ViewModeParams(
-        start_fen=None, moves_uci=["d2d4"], clock_history=None,
-    ))
-    assert h._board_event().payload["view"]["resumable"] is False
 
 
 async def test_view_payload_carries_suspended_player_color(hve):
     """resume_human_white mirrors the suspended game's human color so the
     client can restore the board POV on remount (the board event's
-    human_white is null in view mode). None for a non-resumable import."""
+    human_white is null in view mode). None for an imported view."""
     h, _ = hve
-    h._engine_to_move = AsyncMock()
-    await h.new_game(human_white=False, tc=TimeControl(60, 0))
-    await _suspend_live_play(h)
+    await _clone_of_two_plies(h, human_white=False)
     assert h._board_event().payload["view"]["resume_human_white"] is False
     await h.enter_view_mode(ViewModeParams(
         start_fen=None, moves_uci=["d2d4"], clock_history=None,
@@ -1188,33 +1150,11 @@ async def test_view_payload_carries_suspended_player_color(hve):
     assert h._board_event().payload["view"]["resume_human_white"] is None
 
 
-async def test_resume_play_raises_without_suspended_game(hve):
-    """A view session that didn't suspend (e.g. a plain import) can't resume."""
-    h, _ = hve
-    await h.enter_view_mode(ViewModeParams(
-        start_fen=None, moves_uci=["e2e4", "e7e5"], clock_history=None,
-    ))
-    with pytest.raises(RuntimeError, match="no suspended"):
-        await h.resume_play()
-
-
-async def test_resume_play_rejected_outside_view(hve):
-    """resume_play is a view-mode exit; play mode must reject it."""
-    h, _ = hve
-    h._engine_to_move = AsyncMock()
-    await h.new_game(human_white=True, tc=TimeControl(60, 0))
-    with pytest.raises(ModeConflictError):
-        await h.resume_play()
-
-
 async def test_new_game_clears_suspended_play(hve):
-    """A fork/new game drops the suspended snapshot so a later view entry
-    can't resume a game that no longer exists."""
+    """A new game leaves the clone's game, so a later view entry can't
+    resume a game that no longer exists."""
     h, _ = hve
-    h._engine_to_move = AsyncMock()
-    await h.new_game(human_white=True, tc=TimeControl(60, 0))
-    await _suspend_live_play(h)
-    assert h._suspended_play is not None
+    await _clone_of_two_plies(h, human_white=True)
     await h.new_game(human_white=True, tc=TimeControl(60, 0))
     assert h._suspended_play is None
 
@@ -1224,17 +1164,31 @@ async def test_live_clone_refused_when_already_viewing(hve):
     suspend, so no bogus (view-board) snapshot is stashed."""
     h, _ = hve
     await h.enter_view_mode(ViewModeParams(
-        start_fen=None, moves_uci=["e2e4"], clock_history=None,
+        start_fen=None, moves_uci=["e2e4", "e7e5"], clock_history=None,
     ))
     with pytest.raises(RuntimeError):
-        await h.enter_live_clone()
+        await h.enter_live_clone(1)
     assert h._suspended_play is None
 
 
 async def test_live_clone_refused_without_a_game(hve):
     h, _ = hve
     with pytest.raises(RuntimeError):
-        await h.enter_live_clone()
+        await h.enter_live_clone(1)
+
+
+@pytest.mark.parametrize("ply", [0, len(_LIVE_PLIES)])
+async def test_live_clone_needs_a_past_ply(hve, ply):
+    """Scrub-back lands before the last ply (there it would return at once)
+    and after the start."""
+    h, _ = hve
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    for u in _LIVE_PLIES:
+        h._board.push(chess.Move.from_uci(u))
+        h._eval_history.append(None)
+    with pytest.raises(RuntimeError):
+        await h.enter_live_clone(ply)
+    assert h.is_live_clone is False
 
 
 # ---- live clone identity and in_progress ----------------------------------
@@ -1285,9 +1239,10 @@ async def test_in_progress_on_live_clone_with_moves(hve):
 
 
 async def test_in_progress_false_on_zero_move_clone(hve):
+    """Only edit from play clones a game with no moves."""
     h, _ = hve
     await h.new_game(human_white=True, tc=TimeControl(60, 0))
-    await h.enter_live_clone()
+    await h.enter_edit_mode()
     assert h.is_live_clone is True
     assert (await h.status())["in_progress"] is False
 

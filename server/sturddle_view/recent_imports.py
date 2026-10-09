@@ -341,7 +341,7 @@ class RecentImports:
 
     async def replace_at(
         self,
-        old_hash: str | None,
+        old_hash: str,
         fmt: str,
         text: str,
         summary: dict,
@@ -353,7 +353,8 @@ class RecentImports:
         """Atomically swap content for a preserved ``game_id``.
 
         Under one lock acquisition:
-        - If ``old_hash`` is given and present, evict that row + blob.
+        - If ``old_hash`` is present, evict that row + blob (absent: a
+          plain insert).
         - Insert/upsert the new ``(fmt, text, summary)`` row, binding
           ``game_id`` to the new hash.
 
@@ -363,9 +364,7 @@ class RecentImports:
         - Annotation edit on a game already in recents: pass the
           pre-edit hash as ``old_hash``; the row is replaced in place
           with the same ``game_id``.
-        - Annotation edit on a game NOT yet in recents (e.g. play ->
-          view -> edit -> annotate flow): pass ``old_hash=None`` and
-          the game is promoted to recents.
+        - A play game's save over its earlier export (finished or left).
 
         ``old_hash == new_hash`` (content unchanged) collapses to a
         summary/ts refresh -- effectively the same as ``save`` upsert.
@@ -382,10 +381,8 @@ class RecentImports:
         recents -- acceptable given the probability.
 
         Fork link (optional): pass ``parent_game_id`` AND ``fork_ply``
-        together to attach a fresh link on the new row. Used by the
-        play -> view -> edit -> annotate path where the child is being
-        promoted into recents for the first time. Explicit values
-        override any link preserved from the old row. The parent's
+        together to attach a link on the new row (a play game's save).
+        Explicit values override any link preserved from the old row. The parent's
         ``refs`` is appended atomically. Asserts both-or-neither and
         ``fork_ply >= 1``.
         """
@@ -401,19 +398,17 @@ class RecentImports:
             preserved_parent_id: str | None = None
             preserved_fork_ply: int | None = None
             preserved_refs: list[dict] = []
-            if old_hash is not None:
-                old_row = self._index.get(old_hash)
-                if old_row is not None:
-                    preserved_parent_id = old_row.get(ROW_PARENT_GAME_ID)
-                    preserved_fork_ply = old_row.get(ROW_FORK_PLY)
-                    preserved_refs = list(old_row.get(ROW_REFS) or [])
+            old_row = self._index.get(old_hash)
+            if old_row is not None:
+                preserved_parent_id = old_row.get(ROW_PARENT_GAME_ID)
+                preserved_fork_ply = old_row.get(ROW_FORK_PLY)
+                preserved_refs = list(old_row.get(ROW_REFS) or [])
 
-            # Explicit fork-link wins over preserved -- used when the
-            # caller is promoting a previously-unsaved child into recents
-            # for the first time. parent_ref_to_append is set only when
-            # the explicit link is *new* (preserved == None), so we don't
-            # double-append to the parent's refs when the link was just
-            # carried across an in-place rewrite.
+            # Explicit fork-link wins over preserved -- a game's save may
+            # carry a link its old row lacks. parent_ref_to_append is set
+            # only when the explicit link is *new* (preserved == None), so
+            # we don't double-append to the parent's refs when the link was
+            # just carried across an in-place rewrite.
             parent_ref_to_append: tuple[str, int] | None = None
             if parent_game_id is not None:
                 if preserved_parent_id is None:
@@ -424,7 +419,7 @@ class RecentImports:
             # Aliases on the outgoing row follow the game record to its
             # new content (their ids must stay resolvable).
             migrated_aliases: list[str] = []
-            if old_hash is not None and old_hash != new_hash:
+            if old_hash != new_hash:
                 old_row = self._index.get(old_hash)
                 if old_row is not None:
                     bound_id = old_row.get(ROW_GAME_ID)

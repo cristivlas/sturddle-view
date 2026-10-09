@@ -1,11 +1,12 @@
-"""Tests for the play -> view -> edit data path:
+"""Tests for the scrub-back and edit data paths:
 
-- ``POST /game/view/start`` enters view mode at the current board's FEN
-  without writing to the recent-imports store.
+- ``POST /game/view/start`` suspends the live game into a live clone at a
+  past ply (1 to one less than the move count) without writing to the
+  recent-imports store.
 - ``POST /game/edit/commit`` records the accepted position in recents.
 - ``POST /game/edit/cancel`` records nothing.
 
-Together these guarantee that entering the editor from play mode does
+Together these guarantee that scrubbing back or editing from play does
 not pollute the import history, but a committed edit is recallable.
 """
 from __future__ import annotations
@@ -18,16 +19,18 @@ from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.play.human_vs_engine import HumanVsEngine
 from sturddle_view.recent_imports import RecentImports
-from .conftest import REGISTRY_FILE
+from .conftest import REGISTRY_FILE, install_active_game
 
-SAMPLE_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 # Edited position: black to move, distinct from the startpos so dedupe
 # logic doesn't mask a missing write.
 EDITED_FEN = "r3kbnr/ppp1pppp/2n5/3p4/3P4/2N5/PPP1PPPP/R3KBNR b Kq - 0 1"
+LIVE_MOVES = ["e2e4", "e7e5"]
+VIEWED_PGN = '[Event "T"]\n[White "A"]\n[Black "B"]\n[Result "*"]\n\n1. e4 *\n\n'
+NOTE = "A note."
 
 
 def _make_app(tmp_path):
-    settings = Settings(token="test-token")
+    settings = Settings(token="test-token", test_mode=True)
     registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     e = registry.add(name="MyEngine", path=str(tmp_path / "fake-engine"))
     registry.select(e.id)
@@ -50,58 +53,83 @@ def client(tmp_path):
         yield c
 
 
-def test_view_start_enters_view_without_recents_write(client):
-    r = client.post("/game/view/start", json={})
+def _live_game(client) -> str:
+    """A live game with LIVE_MOVES played, human to move."""
+    app = client.app
+    hve = install_active_game(app, engine_path=app.state.hve.engine_path, moves_uci=LIVE_MOVES)
+    return hve.game_id
+
+
+def _rows(client) -> list[dict]:
+    return client.get("/game/recent-imports").json()["entries"]
+
+
+def _import_view(client) -> dict:
+    r = client.post("/game/import", json={"format": "pgn", "text": VIEWED_PGN})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_view_start_clones_live_game_without_recents_write(client):
+    live_id = _live_game(client)
+    r = client.post("/game/view/start", json={"land_at_ply": 1})
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["viewing"] is True
-    assert body["game_id"]
-    # No recents entry was created.
-    listed = client.get("/game/recent-imports").json()["entries"]
-    assert listed == []
+    assert body["game_id"] == live_id
+    assert _rows(client) == []
+
+
+@pytest.mark.parametrize("payload", [{}, {"land_at_ply": 0}, {"land_at_ply": len(LIVE_MOVES)}])
+def test_view_start_requires_a_past_ply(client, payload):
+    _live_game(client)
+    r = client.post("/game/view/start", json=payload)
+    assert r.status_code == 400, r.text
+    assert client.app.state.hve.is_live_clone is False
 
 
 def test_view_start_rejects_bool_land_at_ply(client):
     # bool is an int subclass; the scrub-back ply must not silently coerce.
+    _live_game(client)
     r = client.post("/game/view/start", json={"land_at_ply": True})
     assert r.status_code == 400, r.text
 
 
 def test_view_start_rejects_non_int_land_at_ply(client):
+    _live_game(client)
     r = client.post("/game/view/start", json={"land_at_ply": "3"})
     assert r.status_code == 400, r.text
 
 
-def test_resume_play_without_suspend_is_400(client):
-    # Plain /view/start (no suspend) leaves nothing to resume.
-    client.post("/game/view/start", json={}).raise_for_status()
+def test_resume_play_endpoint_is_gone(client):
+    _live_game(client)
+    client.post("/game/view/start", json={"land_at_ply": 1}).raise_for_status()
     r = client.post("/game/view/resume-play", json={})
-    assert r.status_code == 400, r.text
+    assert r.status_code == 404, r.text
 
 
 def test_edit_commit_records_recent(client):
-    client.post("/game/view/start", json={}).raise_for_status()
+    viewed = _import_view(client)
     client.post("/game/edit/start", json={}).raise_for_status()
     r = client.post("/game/edit/commit", json={"fen": EDITED_FEN})
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["hash"]
     assert body["summary"]
-    listed = client.get("/game/recent-imports").json()["entries"]
-    assert len(listed) == 1
-    assert listed[0]["format"] == "fen"
+    rows = {row["hash"]: row for row in _rows(client)}
+    assert set(rows) == {viewed["hash"], body["hash"]}
+    assert rows[body["hash"]]["format"] == "fen"
     # New row carries the active HVE session's current game_id.
-    assert listed[0]["game_id"] == body["game_id"]
+    assert rows[body["hash"]]["game_id"] == body["game_id"]
     # Round-trip the text and confirm it's the committed FEN.
-    h = listed[0]["hash"]
-    text = client.get(f"/game/recent-imports/{h}").json()["text"]
+    text = client.get(f"/game/recent-imports/{body['hash']}").json()["text"]
     assert text == EDITED_FEN
 
 
 def test_edit_commit_view_carries_its_recents_hash_and_summary(client):
     # The new view at the edited FEN is that recents row: the client keys
     # "this row is the game in view" on the view's hash.
-    client.post("/game/view/start", json={}).raise_for_status()
+    _import_view(client)
     client.post("/game/edit/start", json={}).raise_for_status()
     body = client.post("/game/edit/commit", json={"fen": EDITED_FEN}).json()
     hve = client.app.state.hve
@@ -110,22 +138,18 @@ def test_edit_commit_view_carries_its_recents_hash_and_summary(client):
 
 
 def test_edit_cancel_does_not_record_recent(client):
-    client.post("/game/view/start", json={}).raise_for_status()
+    viewed = _import_view(client)
     client.post("/game/edit/start", json={}).raise_for_status()
     r = client.post("/game/edit/cancel", json={})
     assert r.status_code == 200, r.text
-    listed = client.get("/game/recent-imports").json()["entries"]
-    assert listed == []
+    assert [row["hash"] for row in _rows(client)] == [viewed["hash"]]
 
 
 def test_edit_commit_annotation_replaces_recents_row_in_place(client):
     """End-to-end: import a PGN -> edit-start -> commit with apply_comment
     -> recents now has ONE row at the new hash, same game_id, no FEN row.
     """
-    pgn = '[Event "T"]\n[White "A"]\n[Black "B"]\n[Result "*"]\n\n1. e4 *\n\n'
-    r = client.post("/game/import", json={"format": "pgn", "text": pgn})
-    assert r.status_code == 200, r.text
-    body = r.json()
+    body = _import_view(client)
     pre_id = body["game_id"]
     pre_hash = body["hash"]
     # Enter edit mode (cursor stays at 0 -- imports land at the start).
@@ -145,7 +169,7 @@ def test_edit_commit_annotation_replaces_recents_row_in_place(client):
     assert new_hash is not None
     assert new_hash != pre_hash  # content hash changed
     # Recents now has ONE row at the new hash (old evicted in place).
-    listed = client.get("/game/recent-imports").json()["entries"]
+    listed = _rows(client)
     assert len(listed) == 1
     assert listed[0]["hash"] == new_hash
     assert listed[0]["game_id"] == pre_id
@@ -173,7 +197,7 @@ def test_edit_commit_annotation_no_text_change_no_recents_write(client):
     # this text, replay yields 'none'. We accept either 'none' OR 'comment'
     # but in the latter case ensure the original row didn't survive too.
     body = r.json()
-    listed = client.get("/game/recent-imports").json()["entries"]
+    listed = _rows(client)
     # In either branch we never have BOTH the old and new row.
     assert all(e["hash"] != pre_hash for e in listed) or len(listed) == 1
     if body["hash"] is None:
@@ -181,13 +205,30 @@ def test_edit_commit_annotation_no_text_change_no_recents_write(client):
         assert any(e["hash"] == pre_hash for e in listed)
 
 
-def test_play_to_edit_via_view_start_yields_clean_recents(client):
-    """The full play -> view -> edit -> cancel round trip writes nothing
-    to recents. Regression: the old client used /game/import as the
+def test_comment_commit_on_view_without_row_writes_nothing(client):
+    """A view with no recents row (test hooks only) is never promoted
+    into recents by an annotation commit."""
+    r = client.post("/_test/hve/install", json={
+        "engine_path": client.app.state.hve.engine_path,
+        "view_mode": True,
+        "view_moves_uci": LIVE_MOVES,
+    })
+    r.raise_for_status()
+    fen = client.post("/game/edit/start", json={}).json()["fen"]
+    r = client.post("/game/edit/commit", json={
+        "fen": fen, "apply_comment": True, "comment_text": NOTE,
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["hash"] is None
+    assert _rows(client) == []
+
+
+def test_play_to_edit_and_cancel_yields_clean_recents(client):
+    """The full play -> edit -> cancel round trip writes nothing to
+    recents. Regression: the old client used /game/import as the
     view-entry path, which always wrote the current play FEN to recents.
     """
-    client.post("/game/view/start", json={}).raise_for_status()
+    _live_game(client)
     client.post("/game/edit/start", json={}).raise_for_status()
     client.post("/game/edit/cancel", json={}).raise_for_status()
-    listed = client.get("/game/recent-imports").json()["entries"]
-    assert listed == []
+    assert _rows(client) == []

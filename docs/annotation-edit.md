@@ -1,7 +1,6 @@
 # Annotation Edit -- Design Sketch
 
-Status: implemented (phases 1-7 shipped). Edit from play (below):
-planned.
+Status: implemented, including Edit from play (below).
 
 ## Problem
 
@@ -377,7 +376,7 @@ divider in `markAiDone`) and backs the accessor. Every round panel has
 a revision, so the dead guards go: the divider's `revision?.` and
 `noteAiPosition`'s `!entry.revision`.
 
-## Edit from play (planned)
+## Edit from play
 
 Annotate a game in progress -- by hand or from AI prose -- and keep
 playing the same game, with the notes on it.

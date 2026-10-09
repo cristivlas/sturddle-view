@@ -190,7 +190,7 @@ def _forked_live_game(c):
 
 
 def _note_on_clone(c):
-    r = c.post("/game/view/start", json={"suspend": True, "land_at_ply": CLONE_PLY})
+    r = c.post("/game/view/start", json={"land_at_ply": CLONE_PLY})
     assert r.status_code == 200, r.text
     fen = c.post("/game/edit/start", json={}).json()["fen"]
     r = c.post("/game/edit/commit", json={
@@ -208,7 +208,7 @@ def test_clone_commit_leaves_exported_row_untouched(client):
     row_before = _by_id(c, live_id)
     hve = c.app.state.hve
 
-    c.post("/game/view/start", json={"suspend": True, "land_at_ply": CLONE_PLY}).raise_for_status()
+    c.post("/game/view/start", json={"land_at_ply": CLONE_PLY}).raise_for_status()
     assert hve._view_hash == row_before["hash"]
     fen = c.post("/game/edit/start", json={}).json()["fen"]
     body = c.post("/game/edit/commit", json={
@@ -233,7 +233,7 @@ def test_clone_commit_keeps_fork_link(client):
     c = client
     parent_id, _live_id = _forked_live_game(c)
     _note_on_clone(c)
-    assert c.app.state.hve.fork_link == (parent_id, FORK_PLY)
+    assert c.app.state.hve._fork_link == (parent_id, FORK_PLY)
 
 
 @pytest.mark.parametrize("analyzing", [False, True])
@@ -335,7 +335,7 @@ def test_import_of_live_games_own_row_is_refused(client, on_clone):
     assert c.get("/game/pgn").status_code == 200
     text = _by_id(c, live_id)["text"]
     if on_clone:
-        c.post("/game/view/start", json={"suspend": True, "land_at_ply": CLONE_PLY}).raise_for_status()
+        c.post("/game/view/start", json={"land_at_ply": CLONE_PLY}).raise_for_status()
 
     r = _import(c, text)
     assert r.status_code == 409, r.text

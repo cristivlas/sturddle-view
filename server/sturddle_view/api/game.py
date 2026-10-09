@@ -80,7 +80,6 @@ _TEXT_KEY = "text"
 _FEN_KEY = FEN_KEY
 _OPENING_KEY = "opening"
 _LAND_AT_PLY_KEY = "land_at_ply"
-_SUSPEND_KEY = "suspend"
 _COMMENT_TEXT_KEY = "comment_text"
 _DETECTED_FORMAT_KEY = "detected_format"
 _CHILDREN_KEY = "children"
@@ -510,10 +509,10 @@ async def delete_recent_import(h: str, request: Request, force: bool = False) ->
     children (refs non-empty); the row is pinned in that case and not
     deleted. Returns 409 ``{"error": "in_view"}`` when the row is the
     currently-viewed game and ``force`` is not set; with ``force=1`` the
-    row is deleted and the view session is closed: idle board, or -- for a
-    suspend-origin view -- the live game resumed, its id returned as
-    ``resumed_game_id`` (else null). The children pin is not overridable
-    by force.
+    row is deleted and the view session is closed: idle board, or -- on a
+    live clone of the game the row belongs to -- the live game resumed,
+    its id returned as ``resumed_game_id`` (else null). The children pin
+    is not overridable by force.
     """
     store = request.app.state.recent_imports
     hve = request.app.state.hve
@@ -576,65 +575,17 @@ async def export_pgn(request: Request) -> Response:
 
 @router.post("/view/start")
 async def view_start(payload: dict, request: Request) -> dict:
-    """Enter view mode at the current play-mode position.
-
-    State flip only: no parsing, no recents write. Intended as the
-    play -> view transition for clients that want to reach view mode
-    (e.g. as a precondition to edit mode, or to scrub past moves) without
-    going through `/game/import`, which saves to the recent-imports store.
-
-    With ``suspend: true`` the live game is suspended into a live clone (same
-    game_id) so the client can resume the SAME game (no fork) via
-    `/view/resume-play` -- used by the scrub-back feature and the AI-prose
-    edit entry. A plain edit entry omits it (the user agreed to discard;
-    unchanged POV). Optional ``land_at_ply`` lands the cursor directly at a
-    past ply (flicker-free) instead of the default last ply.
-    """
-    land_at_ply = _land_at_ply(payload)
-    suspend = bool(payload.get(_SUSPEND_KEY, False))
+    """Scrub back: suspend the live game into a live clone (same game_id)
+    at ``land_at_ply``, a past ply (1 to one less than the move count; else
+    400). No recents write; navigating onto the last ply returns to the
+    live game."""
+    ply = _land_at_ply(payload)
+    if ply is None:
+        raise bad_request(f"missing '{_LAND_AT_PLY_KEY}'")
     hve = await _get_hve(request)
-    if suspend:
-        await _cancel_ai_analysis(request)
-        with _runtime_error_is_bad_request():
-            game_id = await hve.enter_live_clone(land_at_ply)
-        return {_GAME_ID_KEY: game_id, _VIEWING_KEY: True}
-    (
-        start_fen,
-        moves_uci,
-        clock_history,
-        white_time,
-        black_time,
-        eval_history,
-    ) = hve.play_game_snapshot()
-    summary = hve.play_game_summary()
-    comments, root_comment = hve.play_game_comments()
-    # Preserve the fork link across the play -> view state-flip so a
-    # downstream annotation-only edit can still record it. (Import or
-    # FEN-edit branches do NOT preserve.)
-    fork_link = hve.fork_link
     await _cancel_ai_analysis(request)
     with _runtime_error_is_bad_request():
-        game_id = await hve.enter_view_mode(
-            ViewModeParams(
-                start_fen=start_fen,
-                moves_uci=moves_uci,
-                clock_history=clock_history or None,
-                final_white_time=white_time,
-                final_black_time=black_time,
-                eval_history=eval_history if any(e is not None for e in eval_history) else None,
-                white_name=summary[SIDE_WHITE] if summary else None,
-                black_name=summary[SIDE_BLACK] if summary else None,
-                view_summary=summary,
-                comments=comments,
-                root_comment=root_comment,
-            ),
-            fork_link=fork_link,
-            land_at_ply=land_at_ply,
-        )
-        # enter_view_mode already lands (and publishes) at land_at_ply when
-        # given; only jump to the last ply for the default (no target) entry.
-        if land_at_ply is None:
-            await hve.view_last()
+        game_id = await hve.enter_live_clone(ply)
     return {_GAME_ID_KEY: game_id, _VIEWING_KEY: True}
 
 
@@ -699,17 +650,6 @@ async def view_play_from_here(payload: dict, request: Request) -> dict:
     return {_GAME_ID_KEY: game_id, _VIEWING_KEY: False}
 
 
-@router.post("/view/resume-play")
-async def view_resume_play(request: Request) -> dict:
-    """Exit view mode back into the SAME play game suspended by /view/start
-    (no fork). 400 when there is no suspended game to resume."""
-    hve = await _get_hve(request)
-    await _cancel_ai_analysis(request)
-    with _runtime_error_is_bad_request():
-        game_id = await hve.resume_play()
-    return {_GAME_ID_KEY: game_id, _VIEWING_KEY: False}
-
-
 @router.post("/edit/start")
 async def edit_start(request: Request) -> dict:
     hve = await _get_hve(request)
@@ -738,12 +678,6 @@ async def edit_commit(payload: dict, request: Request) -> dict:
     live_clone = hve.is_live_clone
     prev_id = hve.game_id
     prev_hash = recents.hash_for_id(prev_id) if prev_id and not live_clone else None
-    # Capture the fork link before commit_edit -- the FEN-change branch
-    # routes through enter_view_mode which would clear it (correct
-    # behavior: FEN edit == new lineage). Annotation-only commit does
-    # NOT go through enter_view_mode, so the live HVE link stays, but
-    # we capture here anyway so the call site is symmetric.
-    pre_commit_fork_link = hve.fork_link
     try:
         with _runtime_error_is_bad_request():
             result = await hve.commit_edit(
@@ -764,17 +698,10 @@ async def edit_commit(payload: dict, request: Request) -> dict:
             fmt=FMT_FEN, text=fen, summary=summary, game_id=result.game_id,
             precomputed_hash=result.view_hash,
         )
-    elif result.changed is EditChange.COMMENT:
-        # Annotation-only commit: same game_id, content hash changed.
-        # Replace the pre-edit recents row (if any) with the new PGN.
-        # Carry the fork link through so a previously-unsaved child
-        # gets promoted into recents with the link attached.
+    elif result.changed is EditChange.COMMENT and prev_hash is not None:
+        # Annotation-only commit: same game_id, content hash changed. Replace
+        # the view's row; a view without one (test hooks) writes nothing.
         summary = result.summary
-        parent_game_id, fork_ply = (
-            pre_commit_fork_link
-            if pre_commit_fork_link is not None
-            else (None, None)
-        )
         h = await recents.replace_at(
             old_hash=prev_hash,
             fmt=FMT_PGN,
@@ -782,12 +709,7 @@ async def edit_commit(payload: dict, request: Request) -> dict:
             summary=summary or {},
             game_id=result.game_id,
             precomputed_hash=result.view_hash,
-            parent_game_id=parent_game_id,
-            fork_ply=fork_ply,
         )
-        # Consumed -- clear the live link so it doesn't re-fire on a
-        # subsequent transition.
-        hve.clear_fork_link()
     return {_GAME_ID_KEY: result.game_id, _HASH_KEY: h, _SUMMARY_KEY: summary}
 
 
