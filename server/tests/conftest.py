@@ -349,6 +349,33 @@ def posted(path: str):
     return pred
 
 
+# Fork-link lookup by game id (GET /game/recent-imports/by-id/{id}).
+XGAME_BY_ID_PATH = "/game/recent-imports/by-id/"
+XGAME_BY_ID_ROUTE = f"**{XGAME_BY_ID_PATH}**"
+# Mirrors APP_EVT.XGAME_INFO_APPLIED in web/app/app-events.js.
+XGAME_APPLIED_EVT = "sturddle:xgame-info-applied"
+
+
+async def count_xgame_applies(page) -> None:
+    """Count XGAME_INFO_APPLIED on a window slot from document start, so the
+    listener exists before any page script runs (a listener added after goto
+    would miss the initial mount's fetch)."""
+    await page.add_init_script(f"""
+        window.__xgameApplied = 0;
+        window.addEventListener('{XGAME_APPLIED_EVT}', () => {{ window.__xgameApplied += 1; }});
+    """)
+
+
+async def await_xgame_apply(page) -> None:
+    """Block until the x-game fetch continuation (json -> cached board_update
+    apply -> arrow restore) has run once since the last reset."""
+    await page.wait_for_function("() => window.__xgameApplied >= 1")
+
+
+async def reset_xgame_apply_count(page) -> None:
+    await page.evaluate("() => { window.__xgameApplied = 0; }")
+
+
 BOARD_SVG = ".game-view-board svg.cm-chessboard"
 PIECE_ON = BOARD_SVG + ' [data-piece][data-square="{}"]'
 _DRAG_STEPS = 8

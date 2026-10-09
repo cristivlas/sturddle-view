@@ -732,7 +732,9 @@ function applyBoardUpdate(ctx, evt) {
   setOpening(ctx, evt.payload.opening);
   setTablebase(ctx, evt.payload.tablebase);
   if (ctx.showEngineInfo && evt.payload.view) applyViewEval(ctx, evt);
-  if (ctx.interactive && !ctx.editing) board.enableInput(true);
+  // Every path applying a board update (the bus, a direct re-apply) agrees:
+  // a view is read-only, play takes moves.
+  if (ctx.interactive && !ctx.editing) board.enableInput(!ctx.viewing);
   announcePlayLineGate(ctx);
 }
 

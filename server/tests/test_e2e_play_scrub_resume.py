@@ -17,6 +17,7 @@ from sturddle_view.engines import EngineRegistry  # noqa: E402
 
 from .conftest import (  # noqa: E402
     REGISTRY_FILE,
+    XGAME_BY_ID_PATH,
     PageObserver,
     e2e_env,
     make_searching_fake_uci,
@@ -27,7 +28,6 @@ from .conftest import (  # noqa: E402
 _VIEW_FORWARD = "#view-forward"
 _MOVE_CELL = ".move-cell.clickable"
 _VIEWPORT = {"width": 1600, "height": 1000}
-_BY_ID_PATH = "/game/recent-imports/by-id/"
 
 
 @pytest.fixture
@@ -151,7 +151,7 @@ async def test_scrub_back_in_unsaved_game_skips_fork_lookup(server, make_page):
     base = server
     _ctx, page = await make_page(base_url=base, viewport=_VIEWPORT)
     obs = PageObserver(page)
-    by_id_calls = _requests_to(page, _BY_ID_PATH)
+    by_id_calls = _requests_to(page, XGAME_BY_ID_PATH)
     await _setup_play(page, obs)
 
     await page.locator(_MOVE_CELL).first.click()

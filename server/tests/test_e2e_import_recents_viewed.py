@@ -22,8 +22,11 @@ from sturddle_view.engines import EngineRegistry  # noqa: E402
 
 from .conftest import (  # noqa: E402
     REGISTRY_FILE,
+    XGAME_BY_ID_PATH,
     PageObserver,
     assert_no_page_errors,
+    await_xgame_apply,
+    count_xgame_applies,
     e2e_env,
     make_searching_fake_uci,
     run_uvicorn_subprocess,
@@ -176,7 +179,7 @@ async def test_game_in_progress_row_tagged_playing_then_viewing(play_server, mak
     await obs.wait_board_update(_live_with_plies)
     live_id = httpx.get(f"{base}/_test/hve/state").json()["game_id"]
     httpx.get(f"{base}/game/pgn").raise_for_status()
-    row_hash = httpx.get(f"{base}/game/recent-imports/by-id/{live_id}").json()["hash"]
+    row_hash = httpx.get(f"{base}{XGAME_BY_ID_PATH}{live_id}").json()["hash"]
 
     assert await _row_tag(page, PLAY_OPEN_BTN, row_hash) == (True, PLAYING_TEXT)
 
@@ -189,4 +192,26 @@ async def test_game_in_progress_row_tagged_playing_then_viewing(play_server, mak
         "fen": fen, "apply_comment": True, "comment_text": NOTE,
     }).raise_for_status()
     assert await _row_tag(page, VIEW_OPEN_BTN, row_hash) == (True, VIEWING_TEXT)
+    assert_no_page_errors(errors)
+
+
+# ---- a view's board stays read-only after its fork-link lookup ----
+
+INPUT_ENABLED = ".game-view-board .input-enabled"
+
+
+@pytest.mark.asyncio
+async def test_view_board_stays_read_only_after_fork_lookup(server, make_page):
+    """Entering a view whose game is in recents looks up its fork links;
+    the lookup's re-render must not make the board draggable."""
+    base = server
+    _import(base, VIEWED_PGN)
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await count_xgame_applies(page)
+    await page.goto(base + "/")
+    await wait_perspective_ready(page)
+    # The lookup's continuation (re-applying the board update) has run.
+    await await_xgame_apply(page)
+    assert await page.locator(INPUT_ENABLED).count() == 0
     assert_no_page_errors(errors)

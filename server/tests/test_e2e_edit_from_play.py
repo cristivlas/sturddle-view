@@ -18,6 +18,7 @@ from sturddle_view.engines import EngineRegistry  # noqa: E402
 from .conftest import (  # noqa: E402
     PIECE_ON,
     REGISTRY_FILE,
+    XGAME_BY_ID_PATH,
     PageObserver,
     assert_no_page_errors,
     drag_piece_one_rank_up,
@@ -100,7 +101,7 @@ def _import(base: str, text: str) -> dict:
 
 
 def _row_text(base: str, game_id: str) -> str | None:
-    r = httpx.get(f"{base}/game/recent-imports/by-id/{game_id}")
+    r = httpx.get(f"{base}{XGAME_BY_ID_PATH}{game_id}")
     return r.json()["text"] if r.status_code == 200 else None
 
 

@@ -2099,8 +2099,6 @@ function handleBusEvent(state, ai, aiCtx, evt) {
           state.dismissGameOverToast = toast(node, { variant: "neutral", duration: 6000 });
         }
         state.resignAvailable = false;
-        // Board is read-only in view mode; the user navigates via ribbon.
-        state.view.setEnabled(false);
         // On entry (incl. /game/sync remount, wasViewing false): a live clone
         // takes the player's POV from the payload color -- it survives
         // remount, unlike state.humanWhite. Imported games fall back to the
