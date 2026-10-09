@@ -45,8 +45,6 @@ PLAY_EDIT_BTN = "#edit-pos"
 EDIT_ANNOTATE_BTN = "#edit-annotate"
 EDIT_CONFIRM_BTN = "#edit-confirm"
 EDIT_CANCEL_BTN = "#edit-cancel"
-VIEW_BACK_BTN = "#view-back"
-VIEW_FORWARD_BTN = "#view-forward"
 EDIT_RIBBON = "#edit-controls"
 VIEW_RIBBON = "#view-controls"
 PLAY_RIBBON = "#board-controls"
@@ -263,17 +261,13 @@ async def test_play_pencil_carries_prose_without_confirm(server, make_page):
 
 
 @pytest.mark.asyncio
-async def test_play_pencil_cancel_leaves_game_resumable(server, make_page):
+async def test_play_pencil_cancel_returns_to_play(server, make_page):
     page, errors = await _play_with_finished_ai(make_page, server, rounds=[(VERDICT, None)])
     await page.click(PLAY_EDIT_BTN)
     await _annotation_text(page)
     await _close_dialog(page)
     await page.click(EDIT_CANCEL_BTN)
-    await page.wait_for_function(RIBBON_SHOWN_JS, arg=VIEW_RIBBON)
-    # No confirm was asked, so the game was suspended, not discarded:
-    # scrubbing back to its last ply resumes it.
-    await page.click(VIEW_BACK_BTN)
-    await page.click(VIEW_FORWARD_BTN)
+    # The edit ran on a live clone at its last ply: cancel returns to play.
     await page.wait_for_function(RIBBON_SHOWN_JS, arg=PLAY_RIBBON)
     assert_no_page_errors(errors)
 

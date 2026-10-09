@@ -356,3 +356,38 @@ def test_import_of_older_export_is_its_own_row(client):
     r = _import(c, older)
     assert r.status_code == 200, r.text
     assert r.json()["game_id"] != live_id
+
+
+WOULD_LEAVE_ERROR = "would_leave"
+OTHER_FEN = "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
+
+
+def test_changed_commit_from_play_asks_then_leaves(client):
+    c = client
+    _parent_id, live_id = _forked_live_game(c)
+    assert c.post("/game/edit/start", json={}).status_code == 200
+    hve = c.app.state.hve
+
+    r = c.post("/game/edit/commit", json={"fen": OTHER_FEN})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["error"] == WOULD_LEAVE_ERROR
+    assert hve._editing is True
+    assert hve.game_id == live_id
+
+    r = c.post("/game/edit/commit", json={"fen": OTHER_FEN, "leave": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["game_id"] != live_id
+    assert hve._board.fen() == OTHER_FEN
+    assert c.get(f"/game/recent-imports/by-id/{live_id}").status_code == 200
+
+
+def test_edit_cancel_from_play_lands_on_live_game(client):
+    c = client
+    _parent_id, live_id = _forked_live_game(c)
+    assert c.post("/game/edit/start", json={}).status_code == 200
+    r = c.post("/game/edit/cancel", json={})
+    assert r.status_code == 200, r.text
+    assert r.json()["game_id"] == live_id
+    hve = c.app.state.hve
+    assert hve._viewing is False
+    assert hve.is_live_clone is False

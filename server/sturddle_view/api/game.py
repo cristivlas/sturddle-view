@@ -34,6 +34,7 @@ from ..play.human_vs_engine import (
     HumanVsEngine,
     TimeControl,
     ViewModeParams,
+    WouldLeaveError,
     idle_status,
 )
 from ..play.import_position import (
@@ -86,6 +87,8 @@ _CHILDREN_KEY = "children"
 _EVENTS_KEY = "events"
 _ERROR_KEY = ERROR_KEY
 _IN_PROGRESS_ERROR = "in_progress"
+_WOULD_LEAVE_ERROR = "would_leave"
+_LEAVE_KEY = "leave"
 # Import `format` values: FEN, PGN, or try FEN then PGN.
 _FMT_AUTO = "auto"
 _VALID_FORMATS = (FMT_FEN, FMT_PGN, _FMT_AUTO)
@@ -723,6 +726,7 @@ async def edit_commit(payload: dict, request: Request) -> dict:
     if not isinstance(fen, str) or not fen:
         raise bad_request(f"missing '{_FEN_KEY}'")
     apply_comment = bool(payload.get("apply_comment", False))
+    leave = bool(payload.get(_LEAVE_KEY, False))
     comment_text = payload.get(_COMMENT_TEXT_KEY, "")
     if not isinstance(comment_text, str):
         raise bad_request(f"'{_COMMENT_TEXT_KEY}' must be a string")
@@ -740,10 +744,14 @@ async def edit_commit(payload: dict, request: Request) -> dict:
     # NOT go through enter_view_mode, so the live HVE link stays, but
     # we capture here anyway so the call site is symmetric.
     pre_commit_fork_link = hve.fork_link
-    with _runtime_error_is_bad_request():
-        result = await hve.commit_edit(
-            fen, apply_comment=apply_comment, comment_text=comment_text,
-        )
+    try:
+        with _runtime_error_is_bad_request():
+            result = await hve.commit_edit(
+                fen, apply_comment=apply_comment, comment_text=comment_text, leave=leave,
+            )
+    except WouldLeaveError as e:
+        # Still editing: the client confirms, then resends with leave.
+        raise conflict({_ERROR_KEY: _WOULD_LEAVE_ERROR}) from e
     h: str | None = None
     summary = None
     if result.changed is EditChange.COMMENT and live_clone:

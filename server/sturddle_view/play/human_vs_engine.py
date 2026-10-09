@@ -165,6 +165,11 @@ class ViewModeParams:
     view_original_text: str | None = None
 
 
+class WouldLeaveError(Exception):
+    """A position-changed edit commit would leave the live game; the
+    caller must confirm and resend with ``leave=True``."""
+
+
 class EditChange(Enum):
     """What commit_edit changed; the API dispatches the recents write on it."""
     FEN = "fen"
@@ -1142,11 +1147,16 @@ class HumanVsEngine:
                 raise RuntimeError(_GAME_IS_OVER)
             if self._board.turn != self.human_color():
                 raise RuntimeError("can only pause on your turn")
-            self._clock.pause(self._board.turn)
-            self._mode = Mode.PAUSED
+            await self._pause_locked()
             await self._persist()
-            await self._cancel_tick()
             await self._publish_clock()
+
+    async def _pause_locked(self) -> None:
+        """Bake the side to move's elapsed time and stop the tick. Caller
+        holds the lock and has checked it is the human's turn."""
+        self._clock.pause(self._board.turn)
+        self._mode = Mode.PAUSED
+        await self._cancel_tick()
 
     async def resume(self) -> None:
         kick_engine = False
@@ -1480,28 +1490,47 @@ class HumanVsEngine:
         await self.view_goto(len(self._view_full_moves))
 
     async def enter_edit_mode(self) -> str:
-        """Enter board editing. Must be in view mode; live play rejects.
-        Stops analysis if running. Snapshots the current FEN so cancel
-        can restore it. Returns the snapshotted FEN.
+        """Enter board editing on a view, or from play on a live clone at
+        the last ply. Stops analysis if running. Snapshots the current FEN
+        so cancel can restore it. Returns the snapshotted FEN. One lock,
+        one board update.
         """
         async with self._lock:
             if not (self._mode & Op.ENTER_EDIT_MODE._mask):
                 raise ModeConflictError(self._mode, Op.ENTER_EDIT_MODE)
             if self._board is None:
                 raise RuntimeError("no position")
-            need_cancel_analysis = self._mode is Mode.ANALYZING
-            if need_cancel_analysis:
+            if not self._viewing:
+                await self._clone_live_game_for_edit()
+            elif self._mode is Mode.ANALYZING:
+                await self._cancel_analysis()
                 self._mode = Mode.VIEWING
             pre_fen = self._board.fen()
             # Stash a copy of the view bundle (mode is VIEWING here) so cancel
             # / FEN-unchanged commit can restore it by swapping it back in.
             self._edit_saved_view = self._game.copy()
             self._mode = Mode.EDITING
-        if need_cancel_analysis:
-            await self._cancel_analysis()
-        async with self._lock:
             await self._publish_board()
+            await self._publish_clock()
         return pre_fen
+
+    async def _clone_live_game_for_edit(self) -> None:
+        """Edit from play: stop analysis or the engine's search, pause on
+        the human's turn, then clone the live game at its last ply. Caller
+        holds the lock and publishes."""
+        assert self._lock.locked(), "_clone_live_game_for_edit called without lock"
+        if self._analysis_mode:
+            await self._cancel_analysis()
+            self._mode = self._pre_analysis_mode
+        await self._cancel_think()
+        if (
+            self._mode is Mode.PLAY
+            and self._board.turn == self.human_color()
+            and not self._board.is_game_over()
+        ):
+            await self._pause_locked()
+            await self._persist()
+        await self._enter_live_clone(None)
 
     async def commit_edit(
         self,
@@ -1509,6 +1538,7 @@ class HumanVsEngine:
         *,
         apply_comment: bool = False,
         comment_text: str = "",
+        leave: bool = False,
     ) -> EditCommit:
         """Apply the edited FEN (and optionally an annotation at the
         edit-entry ply) as the next view-mode state. On any failure
@@ -1525,6 +1555,10 @@ class HumanVsEngine:
         Returns an EditCommit. The API layer uses ``changed`` to dispatch
         the recents-store write (FEN -> save a FEN-only row; COMMENT ->
         replace_at; NONE -> no recents touch).
+
+        A changed position on a live clone whose game has moves would
+        leave that game: raises WouldLeaveError, still editing, unless
+        ``leave``. An unchanged exit applies the last-ply rule.
         """
         async with self._lock:
             if not (self._mode & Op.COMMIT_EDIT._mask):
@@ -1542,6 +1576,8 @@ class HumanVsEngine:
                 and saved.board is not None
                 and _same_position(board, saved.board)
             )
+            if not unchanged and not leave and self._in_progress:
+                raise WouldLeaveError()
             self._mode = Mode.VIEWING
         if unchanged and saved is not None:
             async with self._lock:
@@ -1558,18 +1594,24 @@ class HumanVsEngine:
                     annot = None
                 if annot is not None and self.is_live_clone:
                     await self._send_comments_home()
-                await self._publish_board()
-                await self._publish_clock()
-            if annot is not None:
-                pgn_text, new_hash = annot
-                return EditCommit(
-                    game_id=self._game_id,
-                    changed=EditChange.COMMENT,
-                    pgn_text=pgn_text,
-                    view_hash=new_hash,
-                    summary=self._view_summary,
-                )
-            return EditCommit(game_id=self._game_id, changed=EditChange.NONE)
+                if annot is not None:
+                    pgn_text, new_hash = annot
+                    commit = EditCommit(
+                        game_id=self._game_id,
+                        changed=EditChange.COMMENT,
+                        pgn_text=pgn_text,
+                        view_hash=new_hash,
+                        summary=self._view_summary,
+                    )
+                else:
+                    commit = EditCommit(game_id=self._game_id, changed=EditChange.NONE)
+                returned = await self._return_to_live_at_last_ply()
+                if not returned:
+                    await self._publish_board()
+                    await self._publish_clock()
+            if returned:
+                await self.republish_state()
+            return commit
         # FEN changed -- drop history, enter fresh view at new position. Its
         # hash and summary are the recents row's (as on import), so the
         # client can tell that row is the game in view.
@@ -1652,7 +1694,8 @@ class HumanVsEngine:
 
     async def cancel_edit(self) -> str:
         """Leave edit mode; restore the pre-edit view by swapping its bundle
-        back in (its mode is VIEWING, so this also leaves edit mode)."""
+        back in (its mode is VIEWING, so this also leaves edit mode). A live
+        clone at its last ply (edit from play) returns to live."""
         async with self._lock:
             if not (self._mode & Op.CANCEL_EDIT._mask):
                 raise ModeConflictError(self._mode, Op.CANCEL_EDIT)
@@ -1660,8 +1703,12 @@ class HumanVsEngine:
             assert saved is not None, "enter_edit_mode always sets _edit_saved_view"
             self._game = saved
             self._edit_saved_view = None
-            await self._publish_board()
-            await self._publish_clock()
+            returned = await self._return_to_live_at_last_ply()
+            if not returned:
+                await self._publish_board()
+                await self._publish_clock()
+        if returned:
+            await self.republish_state()
         return self._game_id
 
     async def play_from_here(

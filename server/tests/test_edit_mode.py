@@ -8,8 +8,13 @@ import chess
 import pytest
 
 from sturddle_view.config import Settings
-from sturddle_view.events import EventBus
-from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
+from sturddle_view.events import EVT_BOARD_UPDATE, EventBus
+from sturddle_view.play.human_vs_engine import (
+    HumanVsEngine,
+    TimeControl,
+    ViewModeParams,
+    WouldLeaveError,
+)
 from sturddle_view.play.import_position import parse_pgn
 from sturddle_view.play.mode import Mode, ModeConflictError
 
@@ -47,8 +52,8 @@ async def _enter_view(h: HumanVsEngine, fen: str | None = None) -> None:
     ))
 
 
-async def test_enter_edit_mode_requires_view_mode(hve: HumanVsEngine):
-    with pytest.raises(ModeConflictError):
+async def test_enter_edit_mode_requires_a_game(hve: HumanVsEngine):
+    with pytest.raises(RuntimeError):
         await hve.enter_edit_mode()
 
 
@@ -158,6 +163,7 @@ async def test_enter_edit_mode_from_viewing_transitions_to_editing(hve: HumanVsE
 async def test_enter_edit_from_analyzing_cancels_analysis(hve: HumanVsEngine):
     """ANALYZING -> EDITING: analysis is cancelled, mode lands in EDITING."""
     await _enter_view(hve)
+    hve._pre_analysis_mode = Mode.VIEWING
     hve._mode = Mode.ANALYZING
     cancel_called = []
 
@@ -480,3 +486,164 @@ async def test_castling_change_counts_as_changed(hve: HumanVsEngine):
     await hve.enter_edit_mode()
     await hve.commit_edit(_editor_fen(hve._edit_saved_view.board, castling="Qkq"))
     assert hve._view_full_moves == []
+
+
+# ---- edit from play: a live clone at the last ply ----------------------------
+
+_LIVE_MOVES = ["e2e4", "e7e5", "g1f3", "b8c6"]
+_LIVE_NOTE = "note from play"
+_OTHER_FEN = "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
+
+
+async def _live_game(h: HumanVsEngine, moves=_LIVE_MOVES, *, human_white=True) -> str:
+    """Live game with ``moves`` played (engine replies injected)."""
+    await h.new_game(human_white=human_white, tc=TimeControl(60.0, 0.0))
+    for uci in moves:
+        h._clock.append_snapshot()
+        h._board.push(chess.Move.from_uci(uci))
+        h._eval_history.append(None)
+    return h.game_id
+
+
+def _board_updates(q) -> int:
+    n = 0
+    while not q.empty():
+        if q.get_nowait().kind == EVT_BOARD_UPDATE:
+            n += 1
+    return n
+
+
+async def test_edit_from_play_on_your_turn_pauses_and_clones_last_ply(hve: HumanVsEngine):
+    live_id = await _live_game(hve)
+    fen = await hve.enter_edit_mode()
+    assert fen == hve._edit_saved_view.board.fen()
+    assert hve._editing is True
+    assert hve.is_live_clone is True
+    assert hve.game_id == live_id
+    assert hve._edit_saved_view.view_cursor == len(_LIVE_MOVES)
+    assert hve._suspended_play.paused is True
+
+
+async def test_edit_from_play_cancel_returns_paused(hve: HumanVsEngine):
+    live_id = await _live_game(hve)
+    await hve.enter_edit_mode()
+    await hve.cancel_edit()
+    assert hve._mode is Mode.PAUSED
+    assert hve.is_live_clone is False
+    assert hve.game_id == live_id
+    assert len(hve._board.move_stack) == len(_LIVE_MOVES)
+
+
+async def test_edit_from_engine_turn_cancels_think_and_rekicks(hve: HumanVsEngine):
+    await _live_game(hve, human_white=False)
+    hve._cancel_think = AsyncMock()
+    await hve.enter_edit_mode()
+    hve._cancel_think.assert_awaited()
+    assert hve._suspended_play.paused is False
+    hve._engine_to_move.reset_mock()
+    await hve.cancel_edit()
+    assert hve._mode is Mode.PLAY
+    hve._engine_to_move.assert_awaited_once()
+
+
+async def test_edit_from_paused_returns_paused(hve: HumanVsEngine):
+    await _live_game(hve)
+    await hve.pause()
+    await hve.enter_edit_mode()
+    await hve.cancel_edit()
+    assert hve._mode is Mode.PAUSED
+
+
+async def test_edit_from_analysis_from_play_returns_paused(hve: HumanVsEngine):
+    await _live_game(hve)
+    await hve.pause()
+    hve._pre_analysis_mode = Mode.PAUSED
+    hve._mode = Mode.ANALYZING
+    hve._cancel_analysis = AsyncMock()
+    await hve.enter_edit_mode()
+    hve._cancel_analysis.assert_awaited()
+    assert hve.is_live_clone is True
+    await hve.cancel_edit()
+    assert hve._mode is Mode.PAUSED
+
+
+async def test_unchanged_commit_from_play_with_note_returns_live_with_note(hve: HumanVsEngine):
+    live_id = await _live_game(hve)
+    fen = await hve.enter_edit_mode()
+    await hve.commit_edit(fen, apply_comment=True, comment_text=_LIVE_NOTE)
+    assert hve.is_live_clone is False
+    assert hve._mode is Mode.PAUSED
+    assert hve.game_id == live_id
+    assert hve._play_comments[len(_LIVE_MOVES) - 1] == _LIVE_NOTE
+
+
+async def test_edit_from_scrubbed_clone_exits_to_clone(hve: HumanVsEngine):
+    await _live_game(hve)
+    await hve.enter_live_clone(2)
+    fen = await hve.enter_edit_mode()
+    await hve.cancel_edit()
+    assert hve.is_live_clone is True
+    assert hve._view_cursor == 2
+    await hve.enter_edit_mode()
+    await hve.commit_edit(fen, apply_comment=True, comment_text=_LIVE_NOTE)
+    assert hve.is_live_clone is True
+    assert hve._view_cursor == 2
+
+
+async def test_changed_commit_from_play_needs_leave(hve: HumanVsEngine):
+    await _live_game(hve)
+    await hve.enter_edit_mode()
+    with pytest.raises(WouldLeaveError):
+        await hve.commit_edit(_OTHER_FEN)
+    assert hve._editing is True
+    assert hve.is_live_clone is True
+
+
+async def test_changed_commit_from_play_with_leave_views_fen(hve: HumanVsEngine):
+    live_id = await _live_game(hve)
+    await hve.enter_edit_mode()
+    result = await hve.commit_edit(_OTHER_FEN, leave=True)
+    assert result.game_id != live_id
+    assert hve.is_live_clone is False
+    assert hve._viewing is True
+    assert hve._board.fen() == _OTHER_FEN
+
+
+async def test_zero_move_game_changed_commit_needs_no_leave(hve: HumanVsEngine):
+    await _live_game(hve, moves=[])
+    await hve.enter_edit_mode()
+    await hve.commit_edit(_OTHER_FEN)
+    assert hve._viewing is True
+    assert hve._board.fen() == _OTHER_FEN
+
+
+async def test_zero_move_game_cancel_returns_to_play(hve: HumanVsEngine):
+    live_id = await _live_game(hve, moves=[])
+    await hve.enter_edit_mode()
+    await hve.cancel_edit()
+    assert hve._viewing is False
+    assert hve.game_id == live_id
+
+
+async def test_edit_from_play_after_double_push_unchanged_commit_keeps_note(hve: HumanVsEngine):
+    await _live_game(hve, moves=_EP_MOVES)
+    await hve.enter_edit_mode()
+    await hve.commit_edit(
+        _editor_fen(hve._edit_saved_view.board), apply_comment=True, comment_text=_LIVE_NOTE,
+    )
+    assert hve.is_live_clone is False
+    assert len(hve._board.move_stack) == _EP_PLY
+    assert hve._play_comments[_EP_PLY - 1] == _LIVE_NOTE
+
+
+async def test_edit_from_play_entry_and_exit_publish_one_board_update_each(hve: HumanVsEngine):
+    await _live_game(hve)
+    q = await hve._bus.subscribe()
+    fen = await hve.enter_edit_mode()
+    assert _board_updates(q) == 1
+    await hve.commit_edit(fen, apply_comment=True, comment_text=_LIVE_NOTE)
+    assert _board_updates(q) == 1
+    await hve.enter_edit_mode()
+    _board_updates(q)
+    await hve.cancel_edit()
+    assert _board_updates(q) == 1

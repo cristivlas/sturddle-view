@@ -742,7 +742,7 @@ async def test_fen_commit_from_clone_saves_live_game_and_views_fen(hve):
     await _note_on_clone(h)
     left_id = h.game_id
     await h.enter_edit_mode()
-    result = await h.commit_edit(EDITED_FEN)
+    result = await h.commit_edit(EDITED_FEN, leave=True)
     assert NOTE in _text_by_id(recents, left_id)
     assert h.is_live_clone is False
     assert h._viewing is True
