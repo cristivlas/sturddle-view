@@ -120,6 +120,9 @@ export const CONFIRM_DIALOG_WIDTH = "min(440px, 92vw)";
 
 // Default dwell for error/warning toasts that carry a line worth reading.
 export const TOAST_DURATION_MS = 8000;
+// Brief "copied to clipboard" confirmation.
+const COPIED_TOAST_MS = 1500;
+const COPY_FAILED_MSG = "Could not copy to clipboard";
 
 /** Modal confirm. Resolves true on confirm, false otherwise.
  *  No title by design — the message itself carries the question, the
@@ -1003,6 +1006,32 @@ export function reportError(ctx, action, error, opts = {}) {
   }
   ctx?.log?.(`${action}: ${message}`);
   return dismiss;
+}
+
+// Legacy copy path: the async Clipboard API is undefined outside a secure
+// context (https/localhost), e.g. the app served over plain-http LAN.
+function execCommandCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove();
+  if (!ok) throw new Error("execCommand copy failed");
+}
+
+/** Copy `text` and confirm with a toast naming `what` ("FEN", "Event log"),
+ *  or report the failure. Every copy control goes through here. */
+export async function copyToClipboard(text, what) {
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+    else execCommandCopy(text);
+    toast(`${what} copied to clipboard`, { variant: "success", duration: COPIED_TOAST_MS });
+  } catch {
+    toast(COPY_FAILED_MSG, { variant: "danger" });
+  }
 }
 
 /** Transient toast. Pass duration: 0 (or Infinity) to keep it open until the

@@ -2,7 +2,7 @@
 // Used by Play (interactive, full-size) and Observe (read-only, in a WinBox).
 
 import { mountBoard } from "./board.js";
-import { toast } from "./dialogs.js";
+import { copyToClipboard } from "./dialogs.js";
 import {
   DOCK_DROP_ELIGIBLE_CLASS,
   DOCK_EMPTY_CLASS,
@@ -25,7 +25,6 @@ const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const MAX_CLOCK_NAME_DESKTOP = 48;
 const MAX_CLOCK_NAME_MOBILE = 24;
 
-const FEN_COPY_TOAST_MS = 1500;
 // 50-move-rule warning: highlight the halfmove clock at/after this many plies.
 const HALFMOVE_WARN_PLIES = 40;
 
@@ -165,29 +164,8 @@ function setFen(ctx, fen) {
   if (ctx.fenText) ctx.fenText.textContent = ctx.currentFen;
 }
 
-async function copyFen(ctx) {
-  if (!ctx.currentFen) return;
-  // Prefer the async Clipboard API (works on https + localhost). Fall
-  // back to the legacy execCommand path for plain-http hosts where the
-  // async API is blocked.
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(ctx.currentFen);
-    } else {
-      const ta = document.createElement("textarea");
-      ta.value = ctx.currentFen;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand("copy");
-      ta.remove();
-      if (!ok) throw new Error("execCommand failed");
-    }
-    toast("FEN copied", { variant: "success", duration: FEN_COPY_TOAST_MS });
-  } catch {
-    toast("Could not copy FEN", { variant: "danger" });
-  }
+function copyFen(ctx) {
+  if (ctx.currentFen) copyToClipboard(ctx.currentFen, "FEN");
 }
 
 // The game's own opening; a line show only borrows the label (see

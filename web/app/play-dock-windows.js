@@ -29,7 +29,7 @@
 // considered but rejected for the UX regressions (broken toggle buttons,
 // no resize-back recovery, divergent localStorage state).
 
-import { toast } from "./dialogs.js";
+import { copyToClipboard } from "./dialogs.js";
 import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
@@ -38,7 +38,9 @@ import { createPvTable } from "./pv-table.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
 import {
+  addTitleControl,
   AUTOSCROLL_SLACK_LINE_PX,
+  DOCK_LABEL,
   headerBottomPx,
   isPinnedToBottom,
   markSelectable,
@@ -671,9 +673,10 @@ function detachBody(slot, body) {
   slot.querySelector(".dock-slot-body").removeChild(body);
 }
 
+const DOCK_CTRL_CLASS = "wb-dock-ctrl";
+
 function addDockButton(wb, onDock) {
-  wb.addControl({ class: "wb-dock-ctrl", index: 0, click: onDock });
-  wb.g.querySelector(".wb-dock-ctrl").title = "Dock";
+  addTitleControl(wb, DOCK_CTRL_CLASS, DOCK_LABEL, onDock);
 }
 
 // -- dockable window factory -------------------------------------------------
@@ -924,23 +927,10 @@ export function createDockableWindow(config) {
     // re-clamp so a stale geometry can't sit above the header line.
     if (wb.y < wb.top) wb.move(wb.x, wb.top);
     attachFloatDragDock();
-    // WinBox addControl with index:0 PREPENDS into .wb-control, so the
-    // LAST call ends up leftmost. Add dock first so it stays rightmost,
-    // then actions in declaration order (each new one goes leftmost).
-    // Wrap dock: the click handler's event arg must not become toContainer.
+    // Controls prepend (see addTitleControl): dock first so it stays rightmost,
+    // then actions in order. Wrap dock: its event arg must not become toContainer.
     addDockButton(wb, () => dock(null, { persistDest: true }));
-    for (const a of titleActions) {
-      wb.addControl({ class: a.className, index: 0, click: a.onClick });
-      // WinBox's addControl does not accept title/aria; set them
-      // post-mount via querySelector. Caller must keep className unique
-      // to avoid colliding with anything in body content.
-      const outer = wb.body?.parentElement;
-      const btn = outer?.querySelector(`.wb-control > .${a.className}`);
-      if (btn) {
-        btn.title = a.title || "";
-        btn.setAttribute("aria-label", a.title || "");
-      }
-    }
+    for (const a of titleActions) addTitleControl(wb, a.className, a.title || "", a.onClick);
     const ws = loadWinState();
     if (ws === "min") wb.minimize();
     else if (ws === "max") wb.maximize();
@@ -1189,12 +1179,8 @@ function buildUciLogBody(events, { setOff }) {
 
   copyBtn.disabled = true;
   pauseChk.addEventListener("change", () => { paused = pauseChk.checked; });
-  copyBtn.addEventListener("click", () => {
-    const text = Array.from(lines.children).map(d => d.textContent).join("\n");
-    navigator.clipboard.writeText(text)
-      .then(() => toast("UCI log copied to clipboard", { variant: "success", duration: 1500 }))
-      .catch((e) => toast(`Copy failed: ${e.message}`, { variant: "danger" }));
-  });
+  copyBtn.addEventListener("click", () => copyToClipboard(
+    Array.from(lines.children).map(d => d.textContent).join("\n"), "UCI log"));
   clearBtn.addEventListener("click", clear);
 
   // Autoscroll only when the user is already pinned to the bottom; otherwise

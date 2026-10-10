@@ -22,10 +22,12 @@ import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { SIDE } from "./chess-consts.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
-import { loadJson, saveJson, removeKey } from "./storage.js";
+import { loadJson, saveJson, saveRaw, removeKey } from "./storage.js";
+import { attachButtonSort, loadSortDir, SORT_ASC_LABEL, SORT_DESC_LABEL, SORT_DIR } from "./col-sort.js";
 import { gatedStart } from "./tournament-restart.js";
-import { apiErrorDetail, toast } from "./dialogs.js";
+import { apiErrorDetail, copyToClipboard, toast } from "./dialogs.js";
 import {
+  addTitleControl,
   AUTOSCROLL_SLACK_ROW_PX,
   cssVarPx,
   escapeHtml,
@@ -40,8 +42,8 @@ import {
   addLogEntry, applyEventKind, createLiveState, seedFromDetail,
 } from "./tournament-live-state.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
-import { renderEventLogList } from "./tournament-eventlog.js";
-import { ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow } from "./tournament-row.js";
+import { eventLogText, renderEventLogList } from "./tournament-eventlog.js";
+import { engineRowEntries, ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow } from "./tournament-row.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 
 const STORAGE_KEY_PREFIX = STORAGE_KEY.WORKSPACE_PREFIX;
@@ -1045,10 +1047,9 @@ function renderEngines(ctx) {
   ctx.enginesBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
   const list = ctx.enginesBody.querySelector(".wb-sched-list");
   markSelectable(list, { rows: "li" });
-  for (const [pid, p] of ctx.activeProxies) {
+  for (const [pid, engineLabel] of engineRowEntries(ctx.activeProxies, ctx.enginesSort)) {
     const li = document.createElement("li");
     li.className = "wb-sched-live";
-    const engineLabel = p.engineName || pid;
     li.innerHTML = `
       <span class="wb-sched-icon">${ICON_ENGINE_ROW}</span>
       <span class="wb-sched-game" title="${escapeHtml(engineLabel)}">${escapeHtml(engineLabel)}</span>
@@ -1176,6 +1177,33 @@ function renderEventLog(ctx) {
 }
 
 
+const ENGINES_SORT_KEY = "name";
+const SORT_ASC_CTRL = "wb-sort-asc-ctrl";
+const SORT_DESC_CTRL = "wb-sort-desc-ctrl";
+const LOG_COPY_CTRL = "wb-log-copy-ctrl";
+const LOG_COPY_LABEL = "Copy event log";
+const LOG_COPY_WHAT = "Event log";
+
+// A-Z / Z-A title-bar buttons on Engine Instances: the same toggle pair as the
+// Engines page (click the lit one to clear), persisted across workspaces.
+function wireEnginesSort(ctx, wb) {
+  // index:0 prepends, so add Z-A first to end up with A-Z, Z-A.
+  const descBtn = addTitleControl(wb, SORT_DESC_CTRL, SORT_DESC_LABEL);
+  const ascBtn = addTitleControl(wb, SORT_ASC_CTRL, SORT_ASC_LABEL);
+  attachButtonSort({
+    ascBtn,
+    descBtn,
+    key: ENGINES_SORT_KEY,
+    get: () => (ctx.enginesSort === SORT_DIR.NONE ? null : { key: ENGINES_SORT_KEY, dir: ctx.enginesSort }),
+    set: (state) => {
+      ctx.enginesSort = state ? state.dir : SORT_DIR.NONE;
+      saveRaw(STORAGE_KEY.TOURNAMENTS_ENGINES_SORT, ctx.enginesSort);
+      renderEngines(ctx);
+    },
+  });
+}
+
+
 // ---- Window spec table --------------------------------------------------
 
 function buildWindowSpecs(ctx) {
@@ -1204,47 +1232,15 @@ function buildWindowSpecs(ctx) {
       makeBody: makeEnginesBody,
       setBody: (b) => { ctx.enginesBody = b; },
       render: () => renderEngines(ctx),
+      postCreate: (wb) => wireEnginesSort(ctx, wb),
     },
     log: {
       title: "Event Log",
       makeBody: makeLogBody,
       setBody: (b) => { ctx.logBody = b; },
       render: () => renderEventLog(ctx),
-      postCreate: (wb) => {
-        wb.addControl({
-          class: "wb-log-copy-ctrl",
-          index: 0,
-          click: () => {
-            const text = ctx.eventLog
-              .filter(e => e.payload?.kind !== KIND.PROXY_UNPAIRED)
-              .map(e => {
-                const ts = e.ts || "";
-                const inner = e.payload?.kind;
-                const line = e.payload?.line;
-                if (inner === KIND.RUNNER_LOG && line) return `${ts} ${line}`;
-                const parts = [e.kind];
-                if (inner) parts.push(inner);
-                if (inner === KIND.PROXY_PAIRED)
-                  parts.push(`${e.payload?.engine_a}(${e.payload?.proxy_a||""}) vs ${e.payload?.engine_b}(${e.payload?.proxy_b||""})`);
-                else if (inner === KIND.GAME_FINISHED) {
-                  const result = e.payload?.result;
-                  const termination = e.payload?.termination;
-                  const tail = (result && termination && termination !== "unknown")
-                    ? `${result} ${termination}` : (result || "");
-                  const gn = e.payload?.game_n;
-                  if (gn != null) parts[parts.length - 1] = `${parts[parts.length - 1]} #${gn}`;
-                  parts.push(`${e.payload?.engine_a} vs ${e.payload?.engine_b}`,
-                             ...(tail ? [tail] : []));
-                }
-                return `${ts} ${parts.join(" ")}`;
-              }).join("\n");
-            navigator.clipboard.writeText(text)
-              .then(() => toast("Event log copied to clipboard", { variant: "success", duration: 1500 }))
-              .catch(() => {});
-          },
-        });
-        wb.g.querySelector(".wb-log-copy-ctrl").title = "Copy event log";
-      },
+      postCreate: (wb) => addTitleControl(wb, LOG_COPY_CTRL, LOG_COPY_LABEL,
+        () => copyToClipboard(eventLogText(ctx.eventLog), LOG_COPY_WHAT)),
     },
   };
 }
@@ -1358,6 +1354,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     activeLayout: initialLayout,
     boardStyleCached: null, detail: null,
     otherActiveId: null, otherActiveName: null,
+    enginesSort: loadSortDir(STORAGE_KEY.TOURNAMENTS_ENGINES_SORT),
     _schedulePending: false, _enginesPending: false, _eventLogPending: false,
     unsubscribe: null,
     // True when close() / closeAll() drove the tear-down. Distinguishes from

@@ -90,6 +90,7 @@ export const STORAGE_KEY = {
   TOURNAMENTS_STANDINGS_COL_PCTS: "sturddle:tournaments:standingsColPcts",
   TOURNAMENTS_STANDINGS_SORT: "sturddle:tournaments:standingsSort",
   TOURNAMENTS_STANDINGS_STACK: "sturddle:tournaments:standingsStack",
+  TOURNAMENTS_ENGINES_SORT: "sturddle:tournaments:enginesSort",
   TOURNAMENTS_SORT_BY: "sturddle:tournaments:sortBy",
   TOURNAMENTS_SORT_ASC: "sturddle:tournaments:sortAsc",
 };

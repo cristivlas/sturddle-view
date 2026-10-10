@@ -7,7 +7,7 @@
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
-import { headerBottomPx } from "./wb-utils.js";
+import { addTitleControl, DOCK_LABEL, headerBottomPx, wireSpanButton } from "./wb-utils.js";
 
 // LocalStorage keys: side selection ("left"|"right"|"float"), the
 // WinBox geometry, and orientation ("h"|"v") for the floating mode.
@@ -16,6 +16,8 @@ const GEO_KEY = STORAGE_KEY.RIBBON_GEO;
 const ORIENT_KEY = STORAGE_KEY.RIBBON_ORIENT;
 const ORIENT_H = "h";
 const ORIENT_V = "v";
+const ROTATE_CTRL_CLASS = "wb-ribbon-rotate-ctrl";
+const ROTATE_LABEL = "Rotate orientation";
 const DEFAULT_GEO_X = 8;      // px -- default float window left offset
 const WB_VERT_W = 50;         // px -- WinBox width when ribbon is vertical
 const WB_VERT_H = 480;        // px -- WinBox height when ribbon is vertical
@@ -169,23 +171,13 @@ export function openRibbonWindow(el) {
       window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_MOVED));
     },
   });
-  // Orientation toggle button on the title bar.
-  wb.addControl({
-    class: "wb-ribbon-rotate-ctrl",
-    index: 0,
-    click: toggleOrientation,
-  });
-  // Cache the outer WinBox element and set a11y label on the new control.
+  addTitleControl(wb, ROTATE_CTRL_CLASS, ROTATE_LABEL, toggleOrientation);
   wbOuter = wb.body?.parentElement || null;
-  const rotateBtn = wbOuter?.querySelector(".wb-ribbon-rotate-ctrl");
-  if (rotateBtn) {
-    rotateBtn.title = "Rotate orientation";
-    rotateBtn.setAttribute("aria-label", "Rotate orientation");
-  }
+  // Close re-docks the ribbon, so label it that way.
   const closeBtn = wbOuter?.querySelector(".wb-close");
   if (closeBtn) {
-    closeBtn.title = "Dock";
-    closeBtn.setAttribute("aria-label", "Dock");
+    closeBtn.title = DOCK_LABEL;
+    wireSpanButton(closeBtn, DOCK_LABEL);
   }
   mountEl(el);
 }

@@ -243,6 +243,20 @@ export function wireSpanButton(el, label) {
   });
 }
 
+// Title-bar label for a control that docks its window.
+export const DOCK_LABEL = "Dock";
+
+// A custom WinBox title-bar control: WinBox mounts a bare span (index:0
+// prepends, so the last call lands leftmost); promote it to a labeled,
+// keyboard-operable button. Scoped to .wb-control so body content can't match.
+export function addTitleControl(wb, cls, label, click) {
+  wb.addControl({ class: cls, index: 0, click });
+  const btn = wb.g.querySelector(`.wb-control > .${cls}`);
+  btn.title = label;
+  wireSpanButton(btn, label);
+  return btn;
+}
+
 // Single-tab-stop navigation: the container is one Tab stop and the arrows
 // move the selection between its `rows`. `select(row, i)` owns what selecting
 // means -- the helper only picks the next row and scrolls it into view, so

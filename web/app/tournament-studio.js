@@ -11,8 +11,8 @@
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, loadRaw, saveJson, saveRaw } from "./storage.js";
-import { ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow, progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
-import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, baseCompare, nextDir, scrollSortedRowIntoView } from "./col-sort.js";
+import { engineRowEntries, ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow, progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
+import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, loadSortDir, nextDir, scrollSortedRowIntoView } from "./col-sort.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { wireSplitScroll } from "./split-table.js";
@@ -808,15 +808,9 @@ function renderEnginesPane(ctx) {
     pane.innerHTML = `<div class="wb-empty">${NO_ENGINES_MSG}</div>`;
     return;
   }
-  const entries = Array.from(proxies, ([pid, p]) => [pid, p.engineName || pid]);
-  if (ctx.enginesSort === SORT_DIR.ASC) {
-    entries.sort(([, a], [, b]) => baseCompare(a, b));
-  } else if (ctx.enginesSort === SORT_DIR.DESC) {
-    entries.sort(([, a], [, b]) => baseCompare(b, a));
-  }
   const ul = document.createElement("ul");
   ul.className = "wb-sched-list";
-  for (const [pid, label] of entries) {
+  for (const [pid, label] of engineRowEntries(proxies, ctx.enginesSort)) {
     const li = liveRow(ICON_ENGINE_ROW, label);
     markEngineRow(li, ctx.live.livePairings.has(pid));
     addWatchControls(ctx, li, pid, { proxyId: pid, label, engineName: label });
@@ -1249,11 +1243,6 @@ function wireLeftTabsFold(ctx) {
   });
 }
 
-function loadEnginesSort() {
-  const v = loadRaw(STORAGE_KEY.STUDIO_ENGINES_SORT);
-  return v === SORT_DIR.ASC || v === SORT_DIR.DESC ? v : SORT_DIR.NONE;
-}
-
 const ENGINES_SORT_TITLE = {
   [SORT_DIR.NONE]: "Engines (double-click to sort A-Z)",
   [SORT_DIR.ASC]: "Engines, sorted A-Z (double-click to sort Z-A)",
@@ -1403,7 +1392,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     // Tourneys data + selection (selection restored from last session).
     tournaments: [], activeId: null, listGen: 0,
     selectedId: loadRaw(STORAGE_KEY.STUDIO_SELECTED_ID),
-    enginesSort: loadEnginesSort(),
+    enginesSort: loadSortDir(STORAGE_KEY.STUDIO_ENGINES_SORT),
     // Sort stacks are getter fns assigned by build{Tourney,History}Table.
     tourneyTbody: null, tourneyStack: null,
     historyTbody: null, historyStack: null,

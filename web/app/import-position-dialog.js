@@ -11,7 +11,7 @@ import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { wireSplitScroll } from "./split-table.js";
-import { SORT_DIR, attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
+import { SORT_DIR, attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView, SORT_ASC_LABEL, SORT_DESC_LABEL } from "./col-sort.js";
 import { loadJson, saveJson } from "./storage.js";
 import { mqNarrowDialog } from "./breakpoints.js";
 import { markSelectable, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
@@ -349,10 +349,10 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
       <button class="ribbon-btn openings-search-btn" type="button" aria-label="Search openings" title="Search openings">
         <wa-icon name="magnifying-glass"></wa-icon>
       </button>
-      <button class="ribbon-btn openings-sort-asc" type="button" aria-label="Sort A-Z" title="Sort A-Z">
+      <button class="ribbon-btn openings-sort-asc" type="button" aria-label="${SORT_ASC_LABEL}" title="${SORT_ASC_LABEL}">
         <wa-icon name="arrow-down-a-z"></wa-icon>
       </button>
-      <button class="ribbon-btn openings-sort-desc" type="button" aria-label="Sort Z-A" title="Sort Z-A">
+      <button class="ribbon-btn openings-sort-desc" type="button" aria-label="${SORT_DESC_LABEL}" title="${SORT_DESC_LABEL}">
         <wa-icon name="arrow-down-z-a"></wa-icon>
       </button>
     </div>

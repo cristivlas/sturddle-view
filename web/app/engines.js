@@ -14,7 +14,7 @@ import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs
 import { guard, markSelectable, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 import { attachEngineColResize, createWrapSizer } from "./engines-list-layout.js";
-import { attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
+import { attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView, SORT_ASC_LABEL, SORT_DESC_LABEL } from "./col-sort.js";
 import { saveRaw } from "./storage.js";
 import { wireSplitScroll } from "./split-table.js";
 
@@ -83,10 +83,10 @@ const ENGINES_LIST_HTML = `
         <button class="ribbon-btn engines-search-btn" aria-label="Search engines" title="Search engines">
           <wa-icon name="magnifying-glass"></wa-icon>
         </button>
-        <button class="ribbon-btn engines-sort-asc" aria-label="Sort A-Z" title="Sort A-Z">
+        <button class="ribbon-btn engines-sort-asc" aria-label="${SORT_ASC_LABEL}" title="${SORT_ASC_LABEL}">
           <wa-icon name="arrow-down-a-z"></wa-icon>
         </button>
-        <button class="ribbon-btn engines-sort-desc" aria-label="Sort Z-A" title="Sort Z-A">
+        <button class="ribbon-btn engines-sort-desc" aria-label="${SORT_DESC_LABEL}" title="${SORT_DESC_LABEL}">
           <wa-icon name="arrow-down-z-a"></wa-icon>
         </button>
         <span class="ribbon-sep" aria-hidden="true"></span>

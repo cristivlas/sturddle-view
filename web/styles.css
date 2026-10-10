@@ -1772,6 +1772,8 @@ body .side-popover.popover-floating {
 .wb-dock-ctrl,
 .wb-ribbon-rotate-ctrl,
 .wb-log-copy-ctrl,
+.wb-sort-asc-ctrl,
+.wb-sort-desc-ctrl,
 .winbox.sturddle-wb-ribbon .wb-close {
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
   -webkit-mask-position: center; mask-position: center;
@@ -4628,12 +4630,30 @@ wa-dialog.tournament-info-dialog::part(body) {
 .h2h-tbl .h2h-side { color: var(--muted); padding-left: 16px; }
 .h2h-tbl .h2h-wld { color: var(--muted); }
 .wb-sched-list, .wb-eventlog-list { list-style: none; padding: 0; margin: 0; }
-.wb-log-copy-ctrl {
-  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
-  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
+/* Arena window title-bar icons: Event Log copy, Engine Instances A-Z / Z-A. */
+.wb-log-copy-ctrl,
+.wb-sort-asc-ctrl,
+.wb-sort-desc-ctrl {
   -webkit-mask-size: 14px;
   mask-size: 14px;
   background-color: rgba(255,255,255,0.9) !important;
+}
+.wb-log-copy-ctrl {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
+}
+.wb-sort-asc-ctrl {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-down-a-z.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-down-a-z.svg);
+}
+.wb-sort-desc-ctrl {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-down-z-a.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-down-z-a.svg);
+}
+/* The lit sort button takes the brand color, like the Engines page's. */
+.wb-sort-asc-ctrl.is-active,
+.wb-sort-desc-ctrl.is-active {
+  background-color: var(--wa-color-brand-90) !important;
 }
 .wb-sched-list li { padding: 3px 0; font-size: 0.8125rem; border-bottom: 1px solid var(--border-subtle); }
 .wb-sched-icon { display: inline-block; width: 18px; color: var(--accent); }
