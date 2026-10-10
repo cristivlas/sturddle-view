@@ -136,6 +136,18 @@ export function applyReconciled(s, evt, tournamentId) {
   }));
 }
 
+// One event from the REST history: log rows, plus reconciles so
+// resolvedGames is seeded for games that resolved before a reload. The live
+// maps come from the detail seed, not history. Returns true when the log
+// may have changed.
+export function backfillEvent(s, evt, tournamentId) {
+  if (evt.payload?.kind === KIND.GAME_RECONCILED) {
+    applyReconciled(s, evt, tournamentId);
+    return true;
+  }
+  return addLogEntry(s, evt);
+}
+
 // Apply one event's effect to the proxy/pairing/resolved maps.
 export function applyEventKind(s, evt, inner, tournamentId) {
   if (inner === KIND.PROXY_STARTED) {

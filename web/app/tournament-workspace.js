@@ -39,7 +39,7 @@ import {
 } from "./wb-utils.js";
 import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
 import {
-  addLogEntry, applyEventKind, createLiveState, seedFromDetail,
+  addLogEntry, applyEventKind, backfillEvent, createLiveState, seedFromDetail,
 } from "./tournament-live-state.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { eventLogText, renderEventLogList } from "./tournament-eventlog.js";
@@ -47,6 +47,9 @@ import { engineRowEntries, ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow } from 
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 
 const STORAGE_KEY_PREFIX = STORAGE_KEY.WORKSPACE_PREFIX;
+
+// How long the "ended while away" restore toast stays up.
+const ENDED_WHILE_AWAY_TOAST_MS = 7000;
 
 // Reserved strip at the bottom so minimized WinBoxes have a place to dock.
 // Source of truth is the --wb-min-footer-h CSS token (toast stacks lift
@@ -708,7 +711,7 @@ async function backfillEvents(ctx) {
     let added = false;
     for (const e of (res.events || [])) {
       if (!e.kind?.startsWith(EVT_PREFIX)) continue;
-      if (addLogEntry(ctx.live, e)) added = true;
+      if (backfillEvent(ctx.live, e, ctx.tournament.id)) added = true;
     }
     if (added) scheduleRender(ctx, "_eventLogPending", renderEventLog);
   } catch (e) {
@@ -930,32 +933,30 @@ async function initWorkspace(ctx) {
       // Don't restore minimized-window geometry -- it's the dock
       // position, not the pre-minimize rect.
       const rect = s.min ? null : { x: s.x, y: s.y, w: s.width, h: s.height };
-      if (s.resolved) {
-        // Resolved at snapshot time -- rehydrate from PGN, no WS.
-        // Seed resolvedGames so subsequent snapshotLive() calls can
-        // re-persist `resolved` (frozen windows don't produce live
-        // game_reconciled events that would refill the map).
-        if (s.gameId) ctx.resolvedGames.set(s.gameId, s.resolved);
+      // Resolved at snapshot time, or (per the backfill) while away.
+      const resolved = s.resolved ?? (s.gameId ? ctx.resolvedGames.get(s.gameId) : null);
+      if (resolved) {
+        // Rehydrate from PGN, no WS. Seed resolvedGames so subsequent
+        // snapshotLive() calls can re-persist `resolved` (frozen windows
+        // don't produce live game_reconciled events that would refill it).
+        if (s.gameId) ctx.resolvedGames.set(s.gameId, resolved);
         const fres = openFrozenGameWindow({
           proxyId: s.proxyId, gameId: s.gameId,
           label: s.label, engineName: s.engineName,
           token: ctx.token, tournamentId: ctx.tournament.id,
-          gameN: s.resolved.gameN,
-          result: s.resolved.result,
-          termination: s.resolved.termination,
+          gameN: resolved.gameN,
+          result: resolved.result,
+          termination: resolved.termination,
           top: ctx.top, left: ctx.left, right: ctx.getRightInset(),
           boardStyle: ctx.boardStyleCached,
           initialRect: rect, min: !!s.min, max: !!s.max, flash: false,
         });
         if (fres?.wb && !fres.alreadyOpen) wireLayoutHandlers(ctx, fres.wb);
       } else if (running) {
-        // Live-reattach only if the server still considers this pair
-        // alive; otherwise the WS would auto-close on first {ended}
-        // and the user would see a window flash and vanish.
-        const stillLive = s.gameId
-          ? ctx.livePairings.get(s.proxyId)?.pairId === s.gameId
-          : ctx.activeProxies.has(s.proxyId);
-        if (stillLive) {
+        // Game windows always reattach: for a game that ended while away
+        // the server replays the final board and result. An exited engine
+        // has nothing to show; drop it, count for toast.
+        if (s.gameId || ctx.activeProxies.has(s.proxyId)) {
           attachWatch(ctx, null, s.gameId ?? s.proxyId, {
             proxyId: s.proxyId, gameId: s.gameId ?? null,
             label: s.label, engineName: s.engineName,
@@ -974,9 +975,9 @@ async function initWorkspace(ctx) {
     }
     if (endedWhileAway > 0) {
       const msg = endedWhileAway === 1
-        ? "1 watched game finished while away."
-        : `${endedWhileAway} watched games finished while away.`;
-      toast(msg, { variant: "warning", duration: 7000 });
+        ? "1 watched board ended while away."
+        : `${endedWhileAway} watched boards ended while away.`;
+      toast(msg, { variant: "warning", duration: ENDED_WHILE_AWAY_TOAST_MS });
     }
     requestAnimationFrame(() => reapplyLayout(ctx));
   }

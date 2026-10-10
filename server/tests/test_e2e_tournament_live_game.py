@@ -14,6 +14,7 @@ Also covers the window surviving a dropped socket (mobile backgrounding).
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from contextlib import asynccontextmanager
 
@@ -24,14 +25,18 @@ pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
 from sturddle_view.app import create_app  # noqa: E402
+from sturddle_view.chess.results import UNKNOWN_TERMINATION  # noqa: E402
 from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament import fastchess as fc_mod  # noqa: E402
 from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
+from sturddle_view.tournament.pgn_reconcile import ReconciledMatch  # noqa: E402
 
 from .conftest import (  # noqa: E402
     REGISTRY_FILE,
     free_port,
+    TOURNAMENT_UX_KEY,
+    TOURNAMENT_UX_STUDIO,
     pin_arena_tournament_ux,
     run_uvicorn,
     wait_perspective_ready,
@@ -51,6 +56,26 @@ while i < len(sys.argv):
 
 
 _PROXY_ID = "proxy-white"
+_PROXY_ID_BLACK = "proxy-black"
+_GAME_WINDOW = ".winbox.sturddle-wb-live-game"
+_FROZEN_WINDOW = ".winbox.sturddle-wb-live-frozen"
+_RECONCILED_RESULT = "1-0"
+# Moves deliberately differ from the watched pair's, so the live PGN tailer
+# can't race the test's own reconcile.
+_RECONCILED_PGN = "\n".join([
+    '[Event "live-e2e"]',
+    '[Round "1"]',
+    '[White "Engine A"]',
+    '[Black "Engine B"]',
+    f'[Result "{_RECONCILED_RESULT}"]',
+    "",
+    f"1. d4 d5 {_RECONCILED_RESULT}",
+    "",
+])
+_PERSPECTIVE_LS_KEY = "sturddle:active-perspective"
+_STUDIO_SELECTED_ID_KEY = "sturddle:studio:selectedId"
+_STUDIO_BOARDS_PREFIX = "sturddle:studio:boards:"
+_WORKSPACE_PREFIX = "sturddle:workspace:"
 _PROXY_WS_PATTERN = "**/ws/tournament/proxy/**"
 
 
@@ -111,10 +136,10 @@ async def _running_tournament(tmp_path, monkeypatch):
                 pass
 
 
-async def _post_proxy(base, secret, lines, **extra):
+async def _post_proxy(base, secret, lines, *, proxy_id=_PROXY_ID, **extra):
     async with AsyncClient(base_url=base) as http:
         r = await http.post("/internal/proxy", json={
-            "proxy_id": _PROXY_ID, "secret": secret, "lines": lines, **extra,
+            "proxy_id": proxy_id, "secret": secret, "lines": lines, **extra,
         })
     # 200 (want-info gate signaled) or 204 (steady-state); both succeed.
     assert r.is_success, f"proxy post failed: {r.status_code} {r.text}"
@@ -326,5 +351,102 @@ async def test_live_game_window_survives_dropped_socket(tmp_path, monkeypatch, m
         # Reaches the window via the live feed or the snapshot replay.
         await _post_proxy(base, secret, ["info depth 14 score cp 80 pv e7e5"])
         await _wait_eval_change(page, first_eval)
+        assert await page.locator(".winbox.sturddle-wb-live").count() == 1
+        assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
+
+
+async def _finished_game(app, base, secret):
+    """Confirm a white/black pair, then end its game via ucinewgame (the
+    pair dissolves server-side). Returns the pair id."""
+    orch = app.state.tournament_orch
+    await _post_proxy(base, secret, [], proxy_id=_PROXY_ID_BLACK, engine_name="Engine B")
+    await _post_proxy(base, secret, ["position startpos", "bestmove e2e4"])
+    await _post_proxy(base, secret, ["position startpos moves e2e4"], proxy_id=_PROXY_ID_BLACK)
+    pair_id = next(iter(orch._pair_proxies))
+    await _post_proxy(base, secret, ["ucinewgame"])
+    assert pair_id not in orch._pair_proxies
+    return pair_id
+
+
+def _saved_game_board(pair_id):
+    return {
+        "proxyId": _PROXY_ID, "gameId": pair_id,
+        "label": "Engine A vs Engine B", "engineName": "Engine A",
+        "min": False, "max": False,
+    }
+
+
+async def _reconcile_while_away(app, t, pair_id):
+    """Resolve the ended game (PGN on disk + game_reconciled in the event
+    history) before any page connects."""
+    app.state.tournament_store.pgn_path(t.id).write_text(_RECONCILED_PGN, encoding="utf-8")
+    await app.state.tournament_orch._emit_reconciled(ReconciledMatch(
+        pair_id=pair_id, white_proxy=_PROXY_ID, black_proxy=_PROXY_ID_BLACK,
+        white_engine="Engine A", black_engine="Engine B",
+        pgn_white="Engine A", pgn_black="Engine B",
+        result=_RECONCILED_RESULT, termination=UNKNOWN_TERMINATION,
+        game_n=1, ply_count=2,
+    ))
+
+
+async def _load_studio(page, base, t, board):
+    await page.add_init_script(
+        f"localStorage.setItem({json.dumps(TOURNAMENT_UX_KEY)}, {json.dumps(TOURNAMENT_UX_STUDIO)});"
+        f"localStorage.setItem({json.dumps(_PERSPECTIVE_LS_KEY)}, 'engines');"
+        f"localStorage.setItem({json.dumps(_STUDIO_SELECTED_ID_KEY)}, {json.dumps(t.id)});"
+        f"localStorage.setItem({json.dumps(_STUDIO_BOARDS_PREFIX + t.id)},"
+        f" {json.dumps(json.dumps([board]))});"
+    )
+    await page.goto(f"{base}/")
+    await page.wait_for_selector(".studio-panel")
+    await wait_perspective_ready(page)
+
+
+async def _load_arena(page, base, t, board):
+    await pin_arena_tournament_ux(page)
+    saved = {"live": [{
+        **board, "x": "262px", "y": "108px", "width": "280px", "height": "396px", "z": 15,
+    }]}
+    await page.add_init_script(
+        f"localStorage.setItem({json.dumps(_WORKSPACE_PREFIX + t.id)},"
+        f" {json.dumps(json.dumps(saved))});"
+    )
+    await page.goto(f"{base}/")
+    await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
+    await page.click('button[data-perspective="engines"]')
+    await page.click(".tournament-row")
+    await page.click(".tournaments-ribbon .t-workspace")
+
+
+_LOADERS = pytest.mark.parametrize("load_ui", [_load_studio, _load_arena], ids=["studio", "arena"])
+
+
+@_LOADERS
+@pytest.mark.asyncio
+async def test_reload_restores_finished_game_board(tmp_path, monkeypatch, make_page, load_ui):
+    """Mobile discards the backgrounded tab; on reload a saved board whose
+    game ended while away must come back with its result banner."""
+    async with _running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+        pair_id = await _finished_game(app, base, secret)
+        page, page_errors = await _open_page(make_page)
+        await load_ui(page, base, t, _saved_game_board(pair_id))
+        await page.wait_for_selector(f"{_GAME_WINDOW} .lg-result-overlay", state="visible")
+        assert await page.locator(_GAME_WINDOW).count() == 1
+        assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
+
+
+@_LOADERS
+@pytest.mark.asyncio
+async def test_reload_restores_reconciled_game_board_frozen(tmp_path, monkeypatch, make_page, load_ui):
+    """Reconciled while away: the backfilled game_reconciled resolves the
+    board, so it reopens frozen (with Replay) instead of live."""
+    async with _running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+        pair_id = await _finished_game(app, base, secret)
+        await _reconcile_while_away(app, t, pair_id)
+        page, page_errors = await _open_page(make_page)
+        await load_ui(page, base, t, _saved_game_board(pair_id))
+        await page.wait_for_selector(f"{_FROZEN_WINDOW} .lg-result-replay", state="visible")
+        assert await page.locator(f"{_FROZEN_WINDOW} .lg-result-score").text_content() == _RECONCILED_RESULT
         assert await page.locator(".winbox.sturddle-wb-live").count() == 1
         assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)

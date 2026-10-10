@@ -47,6 +47,53 @@ return the windows are gone.
 - Server: subscribing to a dissolved pair replays the recorded final
   positions, then a sentinel carrying the real result and termination.
 
+## Reload restore (live-test finding)
+
+Mobile may discard the backgrounded tab instead of just dropping its
+sockets. The page then reloads and the watch windows are rebuilt from
+the saved board list, not reconnected. Observed in Studio: engine
+windows came back, finished game windows were gone, no toast.
+
+- Cause: both restore paths drop a saved game board that is neither
+  `resolved` (no `game_reconciled` seen before the reload) nor still
+  live (`livePairings` no longer maps its proxy to that pair_id).
+  Studio `restoreBoards` drops silently; Arena `initWorkspace` counts
+  it into the "finished while away" toast. The drop predates this
+  work: attaching would have hit a bare `ended` sentinel, and the
+  window would have flashed and vanished.
+- Fix: while the tournament is running, reattach such a board live
+  (`openBoard` / `attachWatch` as for a still-live one). The server's
+  dissolved-pair replay now paints the final board and the real result
+  (upgraded by reconcile), and the window stays.
+- Studio: in `restoreBoards`, the `live` check gates only the
+  not-running case; running => always `openBoard`.
+- Arena: in `initWorkspace`, the `stillLive` branch becomes
+  unconditional under `running`; the toast counts only the not-running
+  case. Update the stale comment about auto-close on first `ended`.
+  Arena is desktop-only (the workspace closes on mobile), so this is
+  for consistency.
+- Still dropped: a tournament that finished while away. The server's
+  per-tournament state (dissolved map included) is reset on the
+  terminal event, so there is nothing to replay. The client-side
+  `gameId && currentFen === null` auto-close on `ended` stays as the
+  guard for that path.
+- Test: e2e per UI -- save a game board, dissolve the pair on the
+  server, reload, assert the board is present with the result banner.
+
+## Deferred
+
+- History cap: restore learns a game is resolved from `game_reconciled`
+  in the REST event history, a ring of `SV_EVENT_HISTORY_MAX` (200)
+  events. Each game emits several, so after a long absence an old
+  game's reconcile is evicted; its board reattaches live with the real
+  result but no Review button, and the next reload repeats that.
+  Fix: `_DissolvedPair` keeps `game_n` (set in `_emit_reconciled`), the
+  game sentinel carries it, the live window calls `setReplayGameN` and
+  exposes the resolution so Studio/Arena snapshots persist it.
+- Opponent name: dissolved-pair replay frames lack `engine_name`, so a
+  board reattached live to an unreconciled ended game shows "Black"
+  (or "White") for the opponent. Fix: include it in the replay payloads.
+
 ## Resolved
 
 - The second `wb.onclose` in `tournament-live-game.js` belongs to the

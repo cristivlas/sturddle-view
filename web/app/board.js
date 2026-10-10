@@ -474,6 +474,9 @@ export function mountBoard({ element, onMove, styleId }) {
   }
 
   function destroy() {
+    // A board destroyed before its first position (e.g. an auto-closed
+    // watch window) must not leave a reveal gate waiting on `ready`.
+    reveal();
     lineShow.destroy();
     board.positionAnimationsQueue.destroy();
     board.destroy();

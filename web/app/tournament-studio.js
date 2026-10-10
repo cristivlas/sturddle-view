@@ -22,7 +22,7 @@ import { createMultiSelect, selectionTargets } from "./multi-select.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS, STATUS_RANK } from "./tournament-events.js";
 import { newTournamentCta, removeSelected, ribbonHtml, setStartVerb, tournamentActions } from "./tournaments.js";
 import { RESULT, SIDE } from "./chess-consts.js";
-import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
+import { addLogEntry, applyEventKind, backfillEvent, createLiveState, seedFromDetail } from "./tournament-live-state.js";
 import { closeAllLiveGames, getLiveWindows, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow, replayTournamentGame, syncWaitingOverlays } from "./tournament-live-game.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { makeH2HBody, renderH2H } from "./tournament-h2h.js";
@@ -537,7 +537,7 @@ function startLive(ctx, tid) {
   ]).then(async ([detail, ev]) => {
     if (gen !== ctx.liveGen || !ctx.live) return;
     seedFromDetail(ctx.live, detail);
-    for (const e of (ev.events || [])) if (e.kind?.startsWith(EVT_PREFIX)) addLogEntry(ctx.live, e);
+    for (const e of (ev.events || [])) if (e.kind?.startsWith(EVT_PREFIX)) backfillEvent(ctx.live, e, tid);
     ctx.selDetail = detail;
     setSelPending(ctx, false);
     renderLivePanes(ctx);
@@ -1178,8 +1178,8 @@ function saveBoards(ctx) {
   saveJson(STORAGE_KEY.STUDIO_BOARDS_PREFIX + ctx.liveTid, snapshotBoards(ctx));
 }
 
-// Reopen saved boards: resolved ones as frozen (from PGN), still-live ones
-// live; drop those that ended while away with no resolution. Resolves once
+// Reopen saved boards: resolved ones as frozen (from PGN), the rest live
+// (runs only while the tourney is running); drop exited engines. Resolves once
 // every reopened board is fully drawn, so the caller can gate a reveal.
 function restoreBoards(ctx) {
   const saved = loadJson(STORAGE_KEY.STUDIO_BOARDS_PREFIX + ctx.liveTid);
@@ -1187,13 +1187,15 @@ function restoreBoards(ctx) {
   const opened = [];
   for (const b of saved) {
     let res;
-    if (b.resolved) {
-      res = openFrozenBoard(ctx, b, false);
+    // Resolved before the save, or (per the backfill) while away.
+    const resolved = b.resolved ?? (b.gameId ? ctx.live.resolvedGames.get(b.gameId) : null);
+    if (resolved) {
+      res = openFrozenBoard(ctx, { ...b, resolved }, false);
     } else {
-      const live = b.gameId
-        ? ctx.live.livePairings.get(b.proxyId)?.pairId === b.gameId
-        : ctx.live.activeProxies.has(b.proxyId);
-      if (live) res = openBoard(ctx, { proxyId: b.proxyId, gameId: b.gameId, label: b.label, engineName: b.engineName }, !!b.min, false);
+      // Game boards always reattach: the server replays a game that ended
+      // while away (final board + result). An exited engine has nothing.
+      const reattach = b.gameId || ctx.live.activeProxies.has(b.proxyId);
+      if (reattach) res = openBoard(ctx, { proxyId: b.proxyId, gameId: b.gameId, label: b.label, engineName: b.engineName }, !!b.min, false);
     }
     if (res?.wb && b.max) {
       // Trayed-while-maximized: chip restores to max. Visible: maximize now.
