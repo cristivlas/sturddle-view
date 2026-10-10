@@ -8,12 +8,17 @@ binaries are required.
 The single-proxy attach goes through the Engines window (proxy_id
 WS path), not Live Games (game_id WS path). Live Games requires two
 proxies to confirm a pair and is covered by other tests.
+
+Also covers the window surviving a dropped socket (mobile backgrounding).
 """
 from __future__ import annotations
 
+import asyncio
 import sys
+from contextlib import asynccontextmanager
 
 import pytest
+from httpx import AsyncClient
 
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
@@ -45,10 +50,14 @@ while i < len(sys.argv):
 """
 
 
-@pytest.mark.asyncio
-async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_page):
-    from httpx import AsyncClient
+_PROXY_ID = "proxy-white"
+_PROXY_WS_PATTERN = "**/ws/tournament/proxy/**"
 
+
+@asynccontextmanager
+async def _running_tournament(tmp_path, monkeypatch):
+    """Serve the app with a running tournament and one registered proxy.
+    Yields (app, base, tournament, proxy secret)."""
     monkeypatch.setattr(
         FastchessRunner, "detect_binary",
         staticmethod(lambda configured: configured),
@@ -90,174 +99,232 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
             secret = orch.proxy_secret()
             assert secret, "orchestrator must have a secret while running"
 
-            async with AsyncClient(base_url=base) as http:
-                r = await http.post("/internal/proxy", json={
-                    "proxy_id": "proxy-white",
-                    "secret": secret,
-                    "engine_name": "Engine A",
-                    "lines": [],
-                })
-                # 200 (want-info gate signaled) or 204 (steady-state); both
-                # mean proxy_session_started ran and the proxy is registered.
-                assert r.is_success, f"proxy register failed: {r.status_code} {r.text}"
-
+            await _post_proxy(base, secret, [], engine_name="Engine A")
             # The success above means proxy_session_started ran in the uvicorn
             # loop; the proxy is registered before we touch the browser.
-            assert orch.engine_name_for("proxy-white") == "Engine A"
-
-            _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
-            page_errors: list[str] = []
-            page.on("pageerror", lambda exc: page_errors.append(str(exc)))
-            page.on("console", lambda msg: page_errors.append(
-                f"console.{msg.type}: {msg.text}"
-            ) if msg.type == "error" else None)
-
-            await pin_arena_tournament_ux(page)
-            await page.goto(f"{base}/")
-            await page.wait_for_selector("#play-perspective")
-            await wait_perspective_ready(page)
-            await page.click('button[data-perspective="engines"]')
-            await page.wait_for_selector(".tournament-row")
-
-            # Open workspace. Default opens 3 windows
-            # (Standings + Live Games + Event log; the log window
-            # auto-opens for running tournaments via initWorkspace).
-            await page.click(".tournament-row")
-            await page.click(".tournaments-ribbon .t-workspace")
-            await page.wait_for_function(
-                "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
-            )
-
-            # Open the Engines window via the workspace JS API.
-            # Hovering the nested submenu (Window -> Tournament ->
-            # Engines) is brittle in Playwright; the API call is
-            # what the menu handler invokes anyway.
-            await page.evaluate(
-                """async () => {
-                    const m = await import('/ui/app/tournament-workspace.js');
-                    m.getActiveWorkspace().openSystemWindow('engines');
-                }"""
-            )
-            await page.wait_for_function(
-                "() => document.querySelectorAll('.winbox.sturddle-wb').length === 4",
-            )
-
-            # The workspace seeds from `proxies_active` on its
-            # initial refresh -- the active proxy should appear
-            # immediately as an Engines row.
-            await page.wait_for_selector(
-                ".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn",
-            )
-
-            # Click the watch button -> live game window opens.
-            await page.click(
-                ".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn"
-            )
-            # Window opens on watch click. The body is revealed only once the
-            # board's first position lands (paint-before-reveal gating), so
-            # assert the board is attached here and check visibility after the
-            # position stream below.
-            await page.wait_for_selector(".wb-livegame .lg-board", state="attached")
-
-            # Drive the proxy stream:
-            #   1. position -> engine learns it's playing Black (FEN
-            #      side-to-move = "b").
-            #   2. go -> triggers orientation flip + clock display.
-            #   3. info -> eval score renders.
-            async with AsyncClient(base_url=base) as http:
-                r = await http.post("/internal/proxy", json={
-                    "proxy_id": "proxy-white",
-                    "secret": secret,
-                    "lines": [
-                        "position startpos moves e2e4",
-                        "go wtime 300000 btime 300000",
-                        "info depth 12 score cp 35 pv e7e5",
-                    ],
-                })
-                assert r.is_success, f"proxy post failed: {r.status_code} {r.text}"
-
-            # The first position resolves board.ready, which reveals the body.
-            await page.wait_for_selector(".wb-livegame .lg-board", state="visible")
-
-            await page.wait_for_function(
-                """() => {
-                    const e = document.querySelector('.wb-livegame .lg-eval-score-bottom');
-                    return e && e.textContent !== '';
-                }""",
-            )
-
-            # Bug 4 regression check: when the engine plays Black,
-            # the board must orient with Black at the bottom.
-            # cm-chessboard's setOrientation goes through an async
-            # animation queue, so wait for it to settle before
-            # reading the rendered coord labels.
-            top_rank_label = await page.wait_for_function(
-                """() => {
-                    const root = document.querySelector('.wb-livegame .lg-board');
-                    if (!root) return null;
-                    const ranks = [...root.querySelectorAll('text.coordinate.rank')];
-                    if (!ranks.length) return null;
-                    ranks.sort((a, b) => parseFloat(a.getAttribute('y')) - parseFloat(b.getAttribute('y')));
-                    const top = ranks[0].textContent.trim();
-                    // Black-at-bottom => topmost rank label is "1".
-                    return top === "1" ? top : false;
-                }""",
-            )
-            top_rank_label = await top_rank_label.json_value()
-            assert top_rank_label == "1", (
-                f"Bug 4 regression: expected top rank label '1' "
-                f"(black-at-bottom), got {top_rank_label!r}"
-            )
-
-            # Waiting overlay must match a filled result banner's height.
-            # Review button is pulled out of layout: a post-reconcile
-            # addition the waiting box is not meant to match.
-            wait_h, result_h = await page.evaluate(
-                """() => {
-                    const wait = document.querySelector('.wb-livegame .lg-waiting-overlay');
-                    const result = document.querySelector('.wb-livegame .lg-result-overlay');
-                    const btn = result.querySelector('.lg-result-replay');
-                    result.querySelector('.lg-result-score').textContent = '1-0';
-                    result.querySelector('.lg-result-termination').textContent = 'checkmate';
-                    wait.hidden = false;
-                    result.hidden = false;
-                    btn.style.display = 'none';
-                    const h = [
-                        wait.getBoundingClientRect().height,
-                        result.getBoundingClientRect().height,
-                    ];
-                    btn.style.display = '';
-                    wait.hidden = true;
-                    result.hidden = true;
-                    return h;
-                }"""
-            )
-            assert abs(wait_h - result_h) < 0.5, (
-                f"overlay heights diverged: waiting {wait_h}px vs result {result_h}px"
-            )
-
-            # Close-on-terminal: stopping the tournament closes
-            # stale live windows (proxy-id attaches are always
-            # stale) but keeps standard windows so the user can
-            # review final state. 5 .winbox up before stop:
-            # Standings + Live Games + Event log + Engines (4
-            # standard) + 1 live (watch). After stop: 4 standard,
-            # 0 live.
-            assert await page.locator(".winbox.sturddle-wb").count() == 5
-            assert await page.locator(".winbox.sturddle-wb-live").count() == 1
-
-            await app.state.tournament_orch.stop(t.id)
-
-            # Live window goes away (proxy-id, stale on terminal).
-            await page.wait_for_function(
-                "() => document.querySelectorAll('.winbox.sturddle-wb-live').length === 0",
-            )
-            # Standard windows remain.
-            assert await page.locator(".winbox.sturddle-wb").count() == 4
-
-            assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
+            assert orch.engine_name_for(_PROXY_ID) == "Engine A"
+            yield app, base, t, secret
         finally:
             try:
                 await app.state.tournament_orch.stop(t.id)
             except Exception:
                 pass
+
+
+async def _post_proxy(base, secret, lines, **extra):
+    async with AsyncClient(base_url=base) as http:
+        r = await http.post("/internal/proxy", json={
+            "proxy_id": _PROXY_ID, "secret": secret, "lines": lines, **extra,
+        })
+    # 200 (want-info gate signaled) or 204 (steady-state); both succeed.
+    assert r.is_success, f"proxy post failed: {r.status_code} {r.text}"
+
+
+async def _open_page(make_page):
+    _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
+    page_errors: list[str] = []
+    page.on("pageerror", lambda exc: page_errors.append(str(exc)))
+    page.on("console", lambda msg: page_errors.append(
+        f"console.{msg.type}: {msg.text}"
+    ) if msg.type == "error" else None)
+    return page, page_errors
+
+
+async def _watch_proxy(page, base, secret):
+    """Open the workspace, watch the proxy from the Engines window, and
+    stream a first position/go/info so the board and eval render."""
+    await pin_arena_tournament_ux(page)
+    await page.goto(f"{base}/")
+    await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
+    await page.click('button[data-perspective="engines"]')
+    await page.wait_for_selector(".tournament-row")
+
+    # Open workspace. Default opens 3 windows
+    # (Standings + Live Games + Event log; the log window
+    # auto-opens for running tournaments via initWorkspace).
+    await page.click(".tournament-row")
+    await page.click(".tournaments-ribbon .t-workspace")
+    await page.wait_for_function(
+        "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
+    )
+
+    # Open the Engines window via the workspace JS API.
+    # Hovering the nested submenu (Window -> Tournament ->
+    # Engines) is brittle in Playwright; the API call is
+    # what the menu handler invokes anyway.
+    await page.evaluate(
+        """async () => {
+            const m = await import('/ui/app/tournament-workspace.js');
+            m.getActiveWorkspace().openSystemWindow('engines');
+        }"""
+    )
+    await page.wait_for_function(
+        "() => document.querySelectorAll('.winbox.sturddle-wb').length === 4",
+    )
+
+    # The workspace seeds from `proxies_active` on its
+    # initial refresh -- the active proxy should appear
+    # immediately as an Engines row.
+    await page.wait_for_selector(
+        ".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn",
+    )
+
+    # Click the watch button -> live game window opens.
+    await page.click(
+        ".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn"
+    )
+    # Window opens on watch click. The body is revealed only once the
+    # board's first position lands (paint-before-reveal gating), so
+    # assert the board is attached here and check visibility after the
+    # position stream below.
+    await page.wait_for_selector(".wb-livegame .lg-board", state="attached")
+
+    # Drive the proxy stream:
+    #   1. position -> engine learns it's playing Black (FEN
+    #      side-to-move = "b").
+    #   2. go -> triggers orientation flip + clock display.
+    #   3. info -> eval score renders.
+    await _post_proxy(base, secret, [
+        "position startpos moves e2e4",
+        "go wtime 300000 btime 300000",
+        "info depth 12 score cp 35 pv e7e5",
+    ])
+
+    # The first position resolves board.ready, which reveals the body.
+    await page.wait_for_selector(".wb-livegame .lg-board", state="visible")
+    return await _wait_eval_change(page, "")
+
+
+async def _wait_eval_change(page, previous):
+    """Wait for the own-side eval text to differ from `previous`; return it."""
+    handle = await page.wait_for_function(
+        """(previous) => {
+            const e = document.querySelector('.wb-livegame .lg-eval-score-bottom');
+            const text = e ? e.textContent : '';
+            return text !== '' && text !== previous ? text : null;
+        }""",
+        arg=previous,
+    )
+    return await handle.json_value()
+
+
+@pytest.mark.asyncio
+async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_page):
+    async with _running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+        page, page_errors = await _open_page(make_page)
+        await _watch_proxy(page, base, secret)
+
+        # Bug 4 regression check: when the engine plays Black,
+        # the board must orient with Black at the bottom.
+        # cm-chessboard's setOrientation goes through an async
+        # animation queue, so wait for it to settle before
+        # reading the rendered coord labels.
+        top_rank_label = await page.wait_for_function(
+            """() => {
+                const root = document.querySelector('.wb-livegame .lg-board');
+                if (!root) return null;
+                const ranks = [...root.querySelectorAll('text.coordinate.rank')];
+                if (!ranks.length) return null;
+                ranks.sort((a, b) => parseFloat(a.getAttribute('y')) - parseFloat(b.getAttribute('y')));
+                const top = ranks[0].textContent.trim();
+                // Black-at-bottom => topmost rank label is "1".
+                return top === "1" ? top : false;
+            }""",
+        )
+        top_rank_label = await top_rank_label.json_value()
+        assert top_rank_label == "1", (
+            f"Bug 4 regression: expected top rank label '1' "
+            f"(black-at-bottom), got {top_rank_label!r}"
+        )
+
+        # Waiting overlay must match a filled result banner's height.
+        # Review button is pulled out of layout: a post-reconcile
+        # addition the waiting box is not meant to match.
+        wait_h, result_h = await page.evaluate(
+            """() => {
+                const wait = document.querySelector('.wb-livegame .lg-waiting-overlay');
+                const result = document.querySelector('.wb-livegame .lg-result-overlay');
+                const btn = result.querySelector('.lg-result-replay');
+                result.querySelector('.lg-result-score').textContent = '1-0';
+                result.querySelector('.lg-result-termination').textContent = 'checkmate';
+                wait.hidden = false;
+                result.hidden = false;
+                btn.style.display = 'none';
+                const h = [
+                    wait.getBoundingClientRect().height,
+                    result.getBoundingClientRect().height,
+                ];
+                btn.style.display = '';
+                wait.hidden = true;
+                result.hidden = true;
+                return h;
+            }"""
+        )
+        assert abs(wait_h - result_h) < 0.5, (
+            f"overlay heights diverged: waiting {wait_h}px vs result {result_h}px"
+        )
+
+        # Close-on-terminal: stopping the tournament closes
+        # stale live windows (proxy-id attaches are always
+        # stale) but keeps standard windows so the user can
+        # review final state. 5 .winbox up before stop:
+        # Standings + Live Games + Event log + Engines (4
+        # standard) + 1 live (watch). After stop: 4 standard,
+        # 0 live.
+        assert await page.locator(".winbox.sturddle-wb").count() == 5
+        assert await page.locator(".winbox.sturddle-wb-live").count() == 1
+
+        await app.state.tournament_orch.stop(t.id)
+
+        # Live window goes away (proxy-id, stale on terminal).
+        await page.wait_for_function(
+            "() => document.querySelectorAll('.winbox.sturddle-wb-live').length === 0",
+        )
+        # Standard windows remain.
+        assert await page.locator(".winbox.sturddle-wb").count() == 4
+
+        assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
+
+
+@pytest.mark.asyncio
+async def test_live_game_window_survives_dropped_socket(tmp_path, monkeypatch, make_page):
+    """Mobile backgrounding drops the watcher socket; the window must stay
+    open, reconnect, and repaint from the server's snapshot replay."""
+    async with _running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+        page, page_errors = await _open_page(make_page)
+        # (page side, server side) per watcher connection.
+        connections = []
+        reconnected = asyncio.Event()
+
+        def route_proxy_ws(route):
+            connections.append((route, route.connect_to_server()))
+            if len(connections) > 1:
+                reconnected.set()
+
+        await page.route_web_socket(_PROXY_WS_PATTERN, route_proxy_ws)
+        first_eval = await _watch_proxy(page, base, secret)
+
+        page_side, server_side = connections[0]
+        # Playwright's server-side close is synchronous; the page side's is not.
+        server_side.close()
+        await page_side.close()
+        # Whichever comes first: the reconnect, or the window closing. The
+        # latter's default Playwright timeout bounds the wait if neither fires.
+        reconnect = asyncio.ensure_future(reconnected.wait())
+        window_gone = asyncio.ensure_future(page.wait_for_selector(
+            ".winbox.sturddle-wb-live", state="detached",
+        ))
+        await asyncio.wait({reconnect, window_gone}, return_when=asyncio.FIRST_COMPLETED)
+        for f in (reconnect, window_gone):
+            if f.done():
+                f.exception()  # retrieve, so a timeout can't warn unretrieved
+            else:
+                f.cancel()
+        assert reconnected.is_set(), "watch window closed instead of reconnecting"
+
+        # Reaches the window via the live feed or the snapshot replay.
+        await _post_proxy(base, secret, ["info depth 14 score cp 80 pv e7e5"])
+        await _wait_eval_change(page, first_eval)
+        assert await page.locator(".winbox.sturddle-wb-live").count() == 1
+        assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)

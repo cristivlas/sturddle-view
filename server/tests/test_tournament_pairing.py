@@ -43,7 +43,9 @@ class _FakeRunner:
 @pytest.fixture
 def orch(tmp_path):
     store = TournamentStore(tmp_path / "tournaments")
-    return Orchestrator(store, _FakeRunner())
+    o = Orchestrator(store, _FakeRunner())
+    o._active_id = "tournament-x"
+    return o
 
 
 def _board_after(*ucis: str) -> chess.Board:

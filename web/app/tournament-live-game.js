@@ -14,6 +14,7 @@ import { STORAGE_KEY } from "./storage-keys.js";
 import { fmtClock, fmtCount, fmtScore, flashWindow, rafCoalesce } from "./wb-utils.js";
 import { terminationPhrase } from "./format-termination.js";
 import { mqMobile } from "./breakpoints.js";
+import { connect } from "./ws.js";
 
 // Eval-row info strings (shared by own-side and opponent rows). Each blanks
 // when its field is absent. Format: "d:<depth>/<seldepth>", "nps:<count>",
@@ -488,7 +489,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
 }
 
 // oversized-ok: stateful live-game controller -- a WebSocket feed, clock
-// timers, and board paint all coordinate over shared state (ws, engineColor,
+// timers, and board paint all coordinate over shared state (conn, engineColor,
 // currentFen, positionGen, clock fields). Closures return a control API;
 // splitting would scatter the feed/clock/paint coordination.
 export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, right = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, max = false, flash = true, root = null, variantClass = null }) {
@@ -539,7 +540,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   pvTableBlackEl.appendChild(pvSideBlack.el);
   evalGraphHostEl.appendChild(evalGraph.el);
 
-  let ws = null;
+  let conn = null;
   let engineColor = null;
   let opponentName = null;
   let timerInterval = null;
@@ -591,23 +592,10 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     pvSideWhite.dispose();
     pvSideBlack.dispose();
     evalGraph.dispose();
-    if (ws) try { ws.close(); } catch { /* */ }
+    if (conn) conn.close();
     disposeShared();
     return false;
   };
-
-  // Open WS subscription. Auth carried by cookie.
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const wsTarget = gameId
-    ? `game/${encodeURIComponent(gameId)}`
-    : `proxy/${encodeURIComponent(proxyId)}`;
-  const url = `${proto}//${location.host}/ws/tournament/${wsTarget}`;
-  if (DEBUG_WATCH) console.log("[WATCH] ws connect", { windowKey, url });
-  ws = new WebSocket(url);
-
-  ws.addEventListener("open", () => {
-    if (DEBUG_WATCH) console.log("[WATCH] ws open", { windowKey });
-  });
 
   function stopTimer() {
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
@@ -615,48 +603,21 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     clockBottomEl.classList.remove("active");
   }
 
-  ws.addEventListener("close", (e) => {
-    if (DEBUG_WATCH) console.log("[WATCH] ws close", { windowKey, code: e.code, reason: e.reason, wasClean: e.wasClean });
-    stopTimer();
-    // User-initiated close already tore the window down; calling
-    // wb.close() again here corrupts WinBox's focus tracker and breaks
-    // click-to-front globally.
-    if (wbClosed) return;
-    try { wb.close(); } catch { /* */ }
-  });
-
-  ws.addEventListener("error", (e) => {
-    console.error("[WATCH] ws error", { windowKey, event: e });
-    stopTimer();
-  });
-
-  ws.addEventListener("message", (ev) => {
-    let msg;
-    try {
-      msg = JSON.parse(ev.data);
-    } catch {
-      return;
-    }
+  function onMessage(msg) {
     if (msg.ended) {
+      stopTimer();
+      conn.close();
       // Late-attach race: sentinel arrived before any position. The
       // window has nothing to show -- auto-close instead of leaving a
       // startpos banner behind.
       if (gameId && currentFen === null) {
-        stopTimer();
-        try { ws.close(); } catch { /* */ }
         try { wb.close(); } catch { /* */ }
         return;
       }
       // game-id WS sends result + termination on dissolution => banner.
       // proxy-id WS sends bare {ended:true} when the engine process
-      // exits (typically tournament shutdown) => quiet status text.
-      if (msg.result) {
-        showResult(msg.result, msg.termination);
-      } else {
-      }
-      stopTimer();
-      wbClosed = true; // suppress wb.close() in the WS close handler
-      try { ws.close(); } catch { /* */ }
+      // exits (typically tournament shutdown).
+      if (msg.result) showResult(msg.result, msg.termination);
       return;
     }
     const parsed = msg.parsed;
@@ -668,6 +629,23 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       return;
     }
     handleParsed(parsed, !!msg.snapshot);
+  }
+
+  // Reconnects on a dropped socket (e.g. a backgrounded mobile tab); the
+  // server's snapshot replay repaints the board. Stops on `ended` or close.
+  const wsTarget = gameId
+    ? `game/${encodeURIComponent(gameId)}`
+    : `proxy/${encodeURIComponent(proxyId)}`;
+  const path = `/ws/tournament/${wsTarget}`;
+  if (DEBUG_WATCH) console.log("[WATCH] ws connect", { windowKey, path });
+  conn = connect({
+    path,
+    onOpen: () => { if (DEBUG_WATCH) console.log("[WATCH] ws open", { windowKey }); },
+    onClose: () => {
+      if (DEBUG_WATCH) console.log("[WATCH] ws close", { windowKey });
+      stopTimer();
+    },
+    onEvent: onMessage,
   });
 
   // Route own/opponent info feeds to the color-fixed panels. Before the
@@ -832,10 +810,11 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
           addEvalSample(pendingOwnPly, lastOwnInfo, engineColor);
           lastOwnInfo = null;
         }
+        if (currentFen && p.move) applyBestMove(p.move);
+        if (snapshot) break;
         if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
         clockBottomEl.classList.remove("active");
         clockTopEl.classList.toggle("active", !!engineColor);
-        if (currentFen && p.move) applyBestMove(p.move);
         if (engineColor && lastWtime != null && lastBtime != null) {
           const oppMs = engineColor === SIDE.WHITE ? lastBtime : lastWtime;
           activeDeadline = Date.now() + oppMs;

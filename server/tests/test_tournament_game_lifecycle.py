@@ -15,6 +15,7 @@ import pytest
 
 from sturddle_view.chess.results import UNKNOWN_RESULT, UNKNOWN_TERMINATION
 from sturddle_view.tournament.orchestrator import CoalescingQueue, Orchestrator
+from sturddle_view.tournament.pgn_reconcile import ReconciledMatch
 from sturddle_view.tournament.runner import RunSpec
 from sturddle_view.tournament.store import TournamentStore
 
@@ -53,6 +54,13 @@ def emitted(orch):
 
 def _events_of(emitted, kind: str) -> list[dict]:
     return [p for k, p in emitted if k == kind]
+
+
+def _drain(q: CoalescingQueue) -> list[dict]:
+    out = []
+    while not q.empty():
+        out.append(q.get_nowait())
+    return out
 
 
 async def _confirm_pair(orch, pid_white: str, pid_black: str) -> None:
@@ -189,8 +197,7 @@ async def test_dissolve_sends_ws_sentinel(orch):
     await _confirm_pair(orch, _PROXY_A, _PROXY_B)
     pair_id = next(iter(orch._pair_proxies))
     q = orch.subscribe_to_game(pair_id)
-    while not q.empty():
-        q.get_nowait()
+    _drain(q)
 
     await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
 
@@ -306,6 +313,91 @@ async def test_subscribe_to_dissolved_pair_returns_sentinel(orch):
 
 
 @pytest.mark.asyncio
+async def test_subscribe_to_dissolved_pair_replays_final_board(orch):
+    """A watcher reconnecting after the game ended gets each proxy's final
+    position, then the sentinel with the dissolve-time result."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    pair_id = next(iter(orch._pair_proxies))
+    await orch._dissolve_pair(pair_id, "1-0", "adjudication")
+
+    q = orch.subscribe_to_game(pair_id)
+
+    replay = _drain(q)
+    # A's bestmove follows its position: the board's last ply.
+    assert [(m["proxy_id"], m["line"]) for m in replay] == [
+        (_PROXY_A, "position startpos"),
+        (_PROXY_A, "bestmove e2e4"),
+        (_PROXY_B, "position startpos moves e2e4"),
+    ]
+    assert all(m["snapshot"] and m["parsed"] for m in replay)
+    assert q.terminal["result"] == "1-0"
+    assert q.terminal["termination"] == "adjudication"
+    assert q.terminal["proxy_id"] == _PROXY_A
+
+
+@pytest.mark.asyncio
+async def test_reconcile_upgrades_dissolved_pair_result(orch):
+    """ucinewgame dissolves with UNKNOWN; the later PGN match must reach a
+    watcher that reconnects afterwards."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    pair_id = next(iter(orch._pair_proxies))
+    await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
+
+    await orch._emit_reconciled(ReconciledMatch(
+        pair_id=pair_id, white_proxy=_PROXY_A, black_proxy=_PROXY_B,
+        white_engine=_ENGINE_A, black_engine=_ENGINE_B,
+        pgn_white=_ENGINE_A, pgn_black=_ENGINE_B,
+        result="0-1", termination="adjudication", game_n=1, ply_count=1,
+    ))
+
+    q = orch.subscribe_to_game(pair_id)
+    assert q.terminal["result"] == "0-1"
+    assert q.terminal["termination"] == "adjudication"
+
+
+@pytest.mark.asyncio
+async def test_proxy_snapshot_replays_bestmove_after_position(orch):
+    """A watcher (re)attaching after its engine moved sees that move."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.ingest_proxy_lines(_PROXY_A, ["position startpos", "bestmove e2e4"])
+
+    lines = [m["line"] for m in _drain(orch.subscribe_to_proxy(_PROXY_A))]
+    assert lines == ["position startpos", "bestmove e2e4"]
+
+    # The next position supersedes the bestmove.
+    await orch.ingest_proxy_lines(_PROXY_A, ["position startpos moves e2e4 e7e5"])
+    lines = [m["line"] for m in _drain(orch.subscribe_to_proxy(_PROXY_A))]
+    assert lines == ["position startpos moves e2e4 e7e5"]
+
+
+@pytest.mark.asyncio
+async def test_subscribe_to_ended_proxy_returns_sentinel(orch):
+    """A watcher reconnecting to an exited engine must not sit stale."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_ended(_PROXY_A)
+
+    q = orch.subscribe_to_proxy(_PROXY_A)
+
+    assert q.terminal == {"proxy_id": _PROXY_A, "ended": True}
+    assert _PROXY_A not in orch._proxy_subscribers
+
+
+@pytest.mark.asyncio
+async def test_subscribe_to_proxy_without_tournament_returns_sentinel(orch):
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    orch._active_id = None
+
+    q = orch.subscribe_to_proxy(_PROXY_A)
+
+    assert q.terminal == {"proxy_id": _PROXY_A, "ended": True}
+    assert _PROXY_A not in orch._proxy_subscribers
+
+
+@pytest.mark.asyncio
 async def test_info_burst_coalesces_to_latest(orch):
     """Fast TC: many infos arrive within the coalesce window. The
     queue receives only the latest -- earlier infos are overwritten in
@@ -315,8 +407,7 @@ async def test_info_burst_coalesces_to_latest(orch):
     await _confirm_pair(orch, _PROXY_A, _PROXY_B)
     pair_id = next(iter(orch._pair_proxies))
     q = orch.subscribe_to_game(pair_id)
-    while not q.empty():
-        q.get_nowait()
+    _drain(q)
 
     # Burst of 5 infos within the coalesce window (well under 100ms).
     await orch.ingest_proxy_lines(_PROXY_A, [
@@ -330,8 +421,7 @@ async def test_info_burst_coalesces_to_latest(orch):
     # for it instead of polling.
     first = await q.get()
     items = [first]
-    while not q.empty():
-        items.append(q.get_nowait())
+    items.extend(_drain(q))
     infos = [m for m in items if isinstance(m.get("line"), str)
              and m["line"].lstrip().startswith("info ")]
     assert len(infos) == 1
@@ -347,8 +437,7 @@ async def test_slow_info_flushes_each_through(orch):
     await _confirm_pair(orch, _PROXY_A, _PROXY_B)
     pair_id = next(iter(orch._pair_proxies))
     q = orch.subscribe_to_game(pair_id)
-    while not q.empty():
-        q.get_nowait()
+    _drain(q)
 
     items: list[dict] = []
     for cp in (10, 20, 30):
@@ -359,8 +448,7 @@ async def test_slow_info_flushes_each_through(orch):
         # queue before sending the next one.
         items.append(await q.get())
 
-    while not q.empty():
-        items.append(q.get_nowait())
+    items.extend(_drain(q))
     infos = [m for m in items if isinstance(m.get("line"), str)
              and m["line"].lstrip().startswith("info ")]
     assert len(infos) == 3
@@ -374,8 +462,7 @@ async def test_non_info_event_flushes_pending_info(orch):
     await _confirm_pair(orch, _PROXY_A, _PROXY_B)
     pair_id = next(iter(orch._pair_proxies))
     q = orch.subscribe_to_game(pair_id)
-    while not q.empty():
-        q.get_nowait()
+    _drain(q)
 
     # Info, then bestmove (non-info) before the coalesce timer fires.
     await orch.ingest_proxy_lines(_PROXY_A, [
@@ -383,9 +470,7 @@ async def test_non_info_event_flushes_pending_info(orch):
         "bestmove e2e4",
     ])
 
-    items = []
-    while not q.empty():
-        items.append(q.get_nowait())
+    items = _drain(q)
     lines = [m["line"] for m in items if isinstance(m.get("line"), str)]
     info_idx = next(i for i, ln in enumerate(lines) if ln.startswith("info "))
     bestmove_idx = next(i for i, ln in enumerate(lines) if ln.startswith("bestmove "))
@@ -402,8 +487,7 @@ async def test_scoreless_info_cannot_evict_scored_info(orch):
     await _confirm_pair(orch, _PROXY_A, _PROXY_B)
     pair_id = next(iter(orch._pair_proxies))
     q = orch.subscribe_to_game(pair_id)
-    while not q.empty():
-        q.get_nowait()
+    _drain(q)
 
     # Scored info, then scoreless trailers, then bestmove -- all within
     # the coalesce window.
@@ -414,9 +498,7 @@ async def test_scoreless_info_cannot_evict_scored_info(orch):
         "bestmove e2e4",
     ])
 
-    items = []
-    while not q.empty():
-        items.append(q.get_nowait())
+    items = _drain(q)
     lines = [m["line"] for m in items if isinstance(m.get("line"), str)]
     infos = [ln for ln in lines if ln.startswith("info ")]
     assert infos == ["info depth 12 score cp 50 pv e2e4"]
@@ -451,8 +533,7 @@ async def test_paired_info_survives_move_boundary_race(orch):
     await orch.ingest_proxy_lines(_PROXY_B, ["bestmove e7e5"])
     await orch.ingest_proxy_lines(_PROXY_A, ["position startpos moves e2e4 e7e5"])
     q = orch.subscribe_to_proxy(_PROXY_A)
-    while not q.empty():
-        q.get_nowait()
+    _drain(q)
 
     # Race hole: B thinks at the new position while A's bestmove is in
     # flight; A's late bestmove then flushes the coalescing slot.
@@ -460,9 +541,7 @@ async def test_paired_info_survives_move_boundary_race(orch):
     await orch.ingest_proxy_lines(_PROXY_B, ["info depth 12 score cp 33 pv d7d5"])
     await orch.ingest_proxy_lines(_PROXY_A, ["bestmove g1f3"])
 
-    items = []
-    while not q.empty():
-        items.append(q.get_nowait())
+    items = _drain(q)
     paired_infos = [m for m in items if m.get("paired")
                     and isinstance(m.get("line"), str)
                     and m["line"].lstrip().startswith("info ")]

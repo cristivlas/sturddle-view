@@ -78,6 +78,23 @@ async def test_streamer_delivers_terminal_when_already_set_on_attach():
 
 
 @pytest.mark.asyncio
+async def test_streamer_flushes_replay_before_terminal_on_attach():
+    """Reconnect after a game ended: the replayed final board precedes the
+    sentinel, parsed-enriched like live frames."""
+    q = CoalescingQueue(maxsize=8)
+    q.put_other({"proxy_id": "p1", "line": "position startpos moves e2e4"})
+    q.put_sentinel({"ended": True, "result": "1-0"})
+    ws = _FakeWS()
+    ws.recv_blocks_forever()
+
+    await _stream_queue_to_websocket(ws, q)
+
+    assert [f.get("line") for f in ws.sent] == ["position startpos moves e2e4", None]
+    assert ws.sent[0]["parsed"]["kind"] == "position"
+    assert ws.sent[1] == {"ended": True, "result": "1-0"}
+
+
+@pytest.mark.asyncio
 async def test_streamer_forwards_normal_frames_with_parsed_enrichment():
     q = CoalescingQueue(maxsize=8)
     q.put_other({"proxy_id": "p1", "line": "position startpos"})

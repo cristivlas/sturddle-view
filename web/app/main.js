@@ -240,7 +240,7 @@ function setConnected(yes) {
 }
 
 connect({
-  token,
+  path: "/ws",
   onOpen: () => setConnected(true),
   onClose: () => setConnected(false),
   onEvent: (evt) => events.emit(evt),
