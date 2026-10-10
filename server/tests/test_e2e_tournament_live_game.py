@@ -422,6 +422,31 @@ async def _load_arena(page, base, t, board):
 _LOADERS = pytest.mark.parametrize("load_ui", [_load_studio, _load_arena], ids=["studio", "arena"])
 
 
+async def _studio_saved_resolved(page, t):
+    return await page.evaluate(
+        "(k) => JSON.parse(localStorage.getItem(k))[0].resolved ?? null",
+        _STUDIO_BOARDS_PREFIX + t.id,
+    )
+
+
+async def _arena_saved_resolved(page, t):
+    # Arena persists its snapshot on beforeunload.
+    return await page.evaluate(
+        """(k) => {
+            window.dispatchEvent(new Event('beforeunload'));
+            return JSON.parse(localStorage.getItem(k)).live[0].resolved ?? null;
+        }""",
+        _WORKSPACE_PREFIX + t.id,
+    )
+
+
+_UIS = pytest.mark.parametrize(
+    "load_ui, saved_resolved",
+    [(_load_studio, _studio_saved_resolved), (_load_arena, _arena_saved_resolved)],
+    ids=["studio", "arena"],
+)
+
+
 @_LOADERS
 @pytest.mark.asyncio
 async def test_reload_restores_finished_game_board(tmp_path, monkeypatch, make_page, load_ui):
@@ -450,3 +475,30 @@ async def test_reload_restores_reconciled_game_board_frozen(tmp_path, monkeypatc
         assert await page.locator(f"{_FROZEN_WINDOW} .lg-result-score").text_content() == _RECONCILED_RESULT
         assert await page.locator(".winbox.sturddle-wb-live").count() == 1
         assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
+
+
+@_UIS
+@pytest.mark.asyncio
+async def test_reload_resolves_board_whose_reconcile_left_history(
+    tmp_path, monkeypatch, make_page, load_ui, saved_resolved,
+):
+    """The REST event history is a capped ring: after a long absence the
+    game's game_reconciled is gone, so the board reattaches live. The
+    replay's end message must still carry the game number (Review) and the
+    opponent's name, and the resolution must persist for the next reload."""
+    async with _running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+        pair_id = await _finished_game(app, base, secret)
+        await _reconcile_while_away(app, t, pair_id)
+        # Stand-in for ring eviction after many later games.
+        app.state.tournament_orch._event_history[t.id].clear()
+        page, page_errors = await _open_page(make_page)
+        await load_ui(page, base, t, _saved_game_board(pair_id))
+
+        await page.wait_for_selector(f"{_GAME_WINDOW} .lg-result-replay", state="visible")
+        assert await page.locator(f"{_GAME_WINDOW} .lg-result-score").text_content() == _RECONCILED_RESULT
+        assert await page.locator(f"{_GAME_WINDOW} .lg-top-name").text_content() == "Engine B"
+        resolved = await saved_resolved(page, t)
+        assert resolved == {
+            "gameN": 1, "result": _RECONCILED_RESULT, "termination": UNKNOWN_TERMINATION,
+        }
+        assert page_errors == [], page_errors

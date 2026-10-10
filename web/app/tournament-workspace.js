@@ -801,6 +801,7 @@ function finalize(ctx) {
   window.removeEventListener(APP_EVT.CONNECTION, ctx.onReconnect);
   window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onRefreshWatchButtons);
   window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onLiveGameClosedReapply);
+  window.removeEventListener(APP_EVT.LIVEGAME_RESOLVED, ctx.onBoardResolved);
   detachResizeListeners(ctx);
   if (ctx.liveWatcherAttached) {
     window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onLiveGameClosed);
@@ -1435,6 +1436,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   window.addEventListener(APP_EVT.CONNECTION, ctx.onReconnect);
   window.addEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onRefreshWatchButtons);
   window.addEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onLiveGameClosedReapply);
+  ctx.onBoardResolved = (e) => ctx.resolvedGames.set(e.detail.pairId, e.detail.resolved);
+  window.addEventListener(APP_EVT.LIVEGAME_RESOLVED, ctx.onBoardResolved);
   attachResizeListeners(ctx);
 
   const workspace = {

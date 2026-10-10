@@ -332,6 +332,12 @@ async def test_subscribe_to_dissolved_pair_replays_final_board(orch):
         (_PROXY_B, "position startpos moves e2e4"),
     ]
     assert all(m["snapshot"] and m["parsed"] for m in replay)
+    # Engine names let the window label the opponent.
+    assert {m["proxy_id"]: m["engine_name"] for m in replay} == {
+        _PROXY_A: _ENGINE_A, _PROXY_B: _ENGINE_B,
+    }
+    # Not reconciled yet: no game number.
+    assert "game_n" not in q.terminal
     assert q.terminal["result"] == "1-0"
     assert q.terminal["termination"] == "adjudication"
     assert q.terminal["proxy_id"] == _PROXY_A
@@ -357,6 +363,7 @@ async def test_reconcile_upgrades_dissolved_pair_result(orch):
     q = orch.subscribe_to_game(pair_id)
     assert q.terminal["result"] == "0-1"
     assert q.terminal["termination"] == "adjudication"
+    assert q.terminal["game_n"] == 1
 
 
 @pytest.mark.asyncio

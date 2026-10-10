@@ -6,6 +6,9 @@ export const APP_EVT = {
   LAYOUT_CHANGED: "sturddle:layout-changed",
   SETTINGS_CHANGED: "sturddle:settings-changed",
   LIVEGAME_CLOSED: "sturddle:livegame-closed",
+  // A live game window learned its game's resolution from the server's end
+  // message; hosts record it in resolvedGames. detail: { pairId, resolved }.
+  LIVEGAME_RESOLVED: "sturddle:livegame-resolved",
   // Active ribbon element changed (perspective mount/unmount); detail.el.
   RIBBON_ACTIVE: "sturddle:ribbon-active",
   // User closed the floating ribbon WinBox; revert to last docked side.

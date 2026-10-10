@@ -308,19 +308,30 @@ def _proxy_end_sentinel(proxy_id: str) -> dict:
     return {_PROXY_ID_KEY: proxy_id, _ENDED_KEY: True}
 
 
-def _game_end_sentinel(proxy_id: str, result: str, termination: str | None) -> dict:
-    return {
+def _game_end_sentinel(
+    proxy_id: str, result: str, termination: str | None, game_n: int | None = None,
+) -> dict:
+    sentinel = {
         **_proxy_end_sentinel(proxy_id),
         _RESULT_KEY: result,
         _TERMINATION_KEY: termination,
     }
+    # Known once reconciled: lets a window that missed game_reconciled
+    # still offer Review.
+    if game_n is not None:
+        sentinel[_GAME_N_KEY] = game_n
+    return sentinel
 
 
-def _snapshot_payload(proxy_id: str, line: str, *, with_parsed: bool) -> dict:
+def _snapshot_payload(
+    proxy_id: str, line: str, *, with_parsed: bool, engine_name: str | None = None,
+) -> dict:
     payload = {_PROXY_ID_KEY: proxy_id, LINE_KEY: line}
     if with_parsed:
         payload[PARSED_KEY] = parse_uci_line(line)
     payload[_SNAPSHOT_KEY] = True
+    if engine_name:
+        payload[_ENGINE_NAME_KEY] = engine_name
     return payload
 
 
@@ -328,11 +339,14 @@ def _snapshot_payload(proxy_id: str, line: str, *, with_parsed: bool) -> dict:
 class _DissolvedPair:
     """What a subscriber reconnecting after the game ended needs: each
     proxy's final ``position`` (+ ``bestmove``) as (proxy_id, line), then
-    the end sentinel."""
+    the end sentinel. Result, termination and game number are upgraded on
+    reconcile."""
     white_pid: str
     result: str
     termination: str | None
     lines: list[tuple[str, str]]
+    engine_names: dict[str, str]
+    game_n: int | None = None
 
 
 @dataclass
@@ -1127,6 +1141,7 @@ class Orchestrator:
         if dissolved is not None:
             dissolved.result = m.result
             dissolved.termination = m.termination
+            dissolved.game_n = m.game_n
         log.info(
             "reconciled pair=%s game_n=%d result=%s termination=%s plies=%d",
             short_id(m.pair_id), m.game_n, m.result,
@@ -1219,8 +1234,12 @@ class Orchestrator:
                 line = snap.get(command)
                 if line:
                     final_lines.append((pid, line))
+        engine_names = {
+            pid: name for pid in (white_pid, black_pid)
+            if (name := self._proxy_engine_names.get(pid))
+        }
         self._dissolved_pairs[pair_id] = _DissolvedPair(
-            white_pid, result, termination, final_lines,
+            white_pid, result, termination, final_lines, engine_names,
         )
         game_subs = self._game_subscribers.pop(pair_id, None)
         if _DEBUG_PAIRING:
@@ -1409,7 +1428,10 @@ class Orchestrator:
             line = snap.get(command)
             if not line:
                 continue
-            payload = _snapshot_payload(proxy_id, line, with_parsed=with_parsed)
+            payload = _snapshot_payload(
+                proxy_id, line, with_parsed=with_parsed,
+                engine_name=self._proxy_engine_names.get(proxy_id),
+            )
             if command == UCI_INFO:
                 q.put_info(payload)
             else:
@@ -1440,9 +1462,13 @@ class Orchestrator:
                 q.put_sentinel(_game_end_sentinel("", UNKNOWN_RESULT, UNKNOWN_TERMINATION))
                 return q
             for pid, line in dissolved.lines:
-                q.put_other(_snapshot_payload(pid, line, with_parsed=True))
+                q.put_other(_snapshot_payload(
+                    pid, line, with_parsed=True,
+                    engine_name=dissolved.engine_names.get(pid),
+                ))
             q.put_sentinel(_game_end_sentinel(
                 dissolved.white_pid, dissolved.result, dissolved.termination,
+                dissolved.game_n,
             ))
             return q
         self._game_subscribers.setdefault(pair_id, set()).add(q)

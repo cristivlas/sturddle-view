@@ -528,7 +528,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       if (visible) { pvSideWhite.fit(); pvSideBlack.fit(); }
     },
   });
-  const { wb, body, board, refs, showResult, disposeShared } = built;
+  const { wb, body, board, refs, showResult, setReplayGameN, disposeShared } = built;
   const {
     evalScoreEl, evalDepthEl, evalNpsEl, evalHashEl, evalTbhitsEl, pvEl,
     oppEvalScoreEl, oppEvalDepthEl, oppEvalNpsEl, oppEvalHashEl, oppEvalTbhitsEl, oppPvEl,
@@ -618,6 +618,17 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       // proxy-id WS sends bare {ended:true} when the engine process
       // exits (typically tournament shutdown).
       if (msg.result) showResult(msg.result, msg.termination);
+      // Reconciled game: Review + a resolution hosts can persist, even if
+      // this window missed game_reconciled (e.g. evicted from history).
+      if (msg.game_n != null) {
+        setReplayGameN(msg.game_n);
+        window.dispatchEvent(new CustomEvent(APP_EVT.LIVEGAME_RESOLVED, {
+          detail: {
+            pairId: gameId,
+            resolved: { gameN: msg.game_n, result: msg.result, termination: msg.termination },
+          },
+        }));
+      }
       return;
     }
     const parsed = msg.parsed;

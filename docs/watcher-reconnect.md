@@ -80,21 +80,18 @@ windows came back, finished game windows were gone, no toast.
 - Test: e2e per UI -- save a game board, dissolve the pair on the
   server, reload, assert the board is present with the result banner.
 
-## Deferred
+## Resolved
 
 - History cap: restore learns a game is resolved from `game_reconciled`
   in the REST event history, a ring of `SV_EVENT_HISTORY_MAX` (200)
-  events. Each game emits several, so after a long absence an old
-  game's reconcile is evicted; its board reattaches live with the real
-  result but no Review button, and the next reload repeats that.
-  Fix: `_DissolvedPair` keeps `game_n` (set in `_emit_reconciled`), the
-  game sentinel carries it, the live window calls `setReplayGameN` and
-  exposes the resolution so Studio/Arena snapshots persist it.
-- Opponent name: dissolved-pair replay frames lack `engine_name`, so a
-  board reattached live to an unreconciled ended game shows "Black"
-  (or "White") for the opponent. Fix: include it in the replay payloads.
-
-## Resolved
+  events, so after a long absence an old game's reconcile is evicted.
+  `_DissolvedPair` now keeps `game_n` (set in `_emit_reconciled`) and
+  the game sentinel carries it. The live window then shows Review and
+  dispatches `LIVEGAME_RESOLVED` with the resolution; Studio/Arena record
+  it in `resolvedGames` (Studio also saves), so the next reload reopens
+  the board frozen.
+- Opponent name: snapshot and dissolved-pair replay frames now carry
+  `engine_name`.
 
 - The second `wb.onclose` in `tournament-live-game.js` belongs to the
   frozen (finished-game) window, which has no socket; no change needed.

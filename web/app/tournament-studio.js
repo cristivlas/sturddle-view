@@ -1472,6 +1472,12 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   // board-area height change between desktop and mobile).
   ctx.onMqMobile = () => regridBoards(ctx);
   window.addEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onBoardClosed);
+  ctx.onBoardResolved = (e) => {
+    if (!ctx.live) return;
+    ctx.live.resolvedGames.set(e.detail.pairId, e.detail.resolved);
+    saveBoards(ctx);
+  };
+  window.addEventListener(APP_EVT.LIVEGAME_RESOLVED, ctx.onBoardResolved);
   window.addEventListener("resize", ctx.onBoardResize);
   mqMobile.addEventListener("change", ctx.onMqMobile);
 
@@ -1504,6 +1510,7 @@ function unmountStudio(ctx) {
   // Remove the board-closed listener before stopLive's closeAllLiveGames so
   // teardown doesn't re-save (and wipe) the board set.
   window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onBoardClosed);
+  window.removeEventListener(APP_EVT.LIVEGAME_RESOLVED, ctx.onBoardResolved);
   window.removeEventListener("resize", ctx.onBoardResize);
   mqMobile.removeEventListener("change", ctx.onMqMobile);
   // stopLive unsubscribes, nulls liveTid (so a pending standings refresh
