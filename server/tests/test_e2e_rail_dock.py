@@ -1,8 +1,9 @@
 """E2E: the rail dock under the moves list holds two stacked windows.
 
 Covers rail capacity and drop targeting (web/app/play-dock-windows.js) and
-band sizing (web/app/game-view.js): the band grows to fit a stack, and its
-lift grip stops at that floor. Windows reach the rail either by restore
+band sizing (web/app/game-view.js): the band grows to fit a stack, its lift
+grip stops at that floor, and with nothing above it the band spans from the
+top clock row. Windows reach the rail either by restore
 (seeded localStorage) or by dragging a slot header onto the band. Every wait
 is a predicate on the DOM/geometry the assertions then read.
 
@@ -30,10 +31,14 @@ from .conftest import (  # noqa: E402
 PLAY_PERSP = "#play-perspective"
 VIEWPORT = {"width": 1600, "height": 1000}
 SETTING_EVAL_GRAPH = "play_show_eval_graph"
+# Off: the viewed game would otherwise open Commentary in the main dock.
+SETTING_PGN_COMMENTS = "view_show_pgn_comments"
 
 RAIL = ".play-rail-dock"
 MAIN_DOCK = ".play-dock-left"
 SIDE_HOST = ".play-side-host"
+CLOCK_TOP = ".clock-row.clock-top"
+MOVE_ROW = ".move-list .move-row"
 RAIL_LIFT_GRIP = ".play-rail-grip"
 RAIL_GRIP = f"{RAIL} > .dock-grip"
 RAIL_GHOST = f"{RAIL} .dock-ghost"
@@ -60,6 +65,10 @@ AI_OPEN = "sturddle:ai:open"
 AI_DOCKED = "sturddle:ai:docked"
 OPEN_ON = "1"
 DEST_RAIL = "rail"
+
+# A viewed game with moves, so the moves list sits above the band; an empty
+# board instead lets the band span up from the top clock row.
+VIEW_MOVES = ["e2e4", "e7e5", "g1f3"]
 
 # Mirrors game-view.js RAIL_SLOT_MIN_REM: room the band gives each stacked
 # window, in rem.
@@ -98,16 +107,33 @@ def _seed_js(open_keys, rail_docked_keys):
     )
 
 
-async def _open_play(make_page, base, *, open_keys, rail_keys, eval_graph=False):
+def _install_view_game(base):
+    httpx.post(f"{base}/_test/hve/install",
+               json={"view_mode": True, "view_moves_uci": VIEW_MOVES}).raise_for_status()
+
+
+async def _show_moves(page, base):
+    """Replay the installed game to the page and wait for its moves."""
+    httpx.post(f"{base}/game/sync", json={}).raise_for_status()
+    await page.wait_for_selector(MOVE_ROW)
+
+
+async def _open_play(make_page, base, *, open_keys, rail_keys, eval_graph=False, with_moves=True):
     """Load Play with `open_keys` windows open and `rail_keys` homed in the
-    rail. The eval graph is off unless asked: it would claim a rail slot."""
-    httpx.put(f"{base}/settings", json={SETTING_EVAL_GRAPH: eval_graph}).raise_for_status()
+    rail. The eval graph is off unless asked: it would claim a rail slot.
+    `with_moves` views a short game so the moves list sits above the band."""
+    httpx.put(f"{base}/settings",
+              json={SETTING_EVAL_GRAPH: eval_graph, SETTING_PGN_COMMENTS: False}).raise_for_status()
+    if with_moves:
+        _install_view_game(base)
     ctx, page = await make_page(viewport=VIEWPORT)
     errors = watch_page_errors(page)
     await ctx.add_init_script(_seed_js(open_keys, rail_keys))
     await page.goto(base + "/")
     await page.wait_for_selector(PLAY_PERSP)
     await wait_perspective_ready(page)
+    if with_moves:
+        await _show_moves(page, base)
     return page, errors
 
 
@@ -327,4 +353,34 @@ async def test_lift_grip_stops_at_the_stack_floor(server, make_page):
     await page.mouse.move(grip_x, grip_y + LIFT_DOWN_PX, steps=DRAG_STEPS)
     await _wait_band_near(page, floor)
     await page.mouse.up()
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_band_spans_from_top_clock_until_moves_arrive(server, make_page):
+    """Empty board, no engine panel: nothing sits above the band, so it spans
+    from the top clock row like the dock column on the other side, and the
+    lift grip (nothing to trade height with) is hidden. Once moves land, the
+    band drops back under the moves list and the grip returns."""
+    page, errors = await _open_play(
+        make_page, server, open_keys=[PV_OPEN], rail_keys=[PV_DOCKED], with_moves=False,
+    )
+    await _wait_rail_slots(page, 1)
+    await page.wait_for_function(
+        "([rail, clock, slack]) => Math.abs(document.querySelector(rail).getBoundingClientRect().top"
+        " - document.querySelector(clock).getBoundingClientRect().top) <= slack",
+        arg=[RAIL, CLOCK_TOP, LAYOUT_SLACK_PX],
+    )
+    grip = page.locator(RAIL_LIFT_GRIP)
+    assert await grip.count() == 1
+    assert await grip.is_hidden()
+
+    _install_view_game(server)
+    await _show_moves(page, server)
+    await page.wait_for_function(
+        "([rail, side]) => document.querySelector(rail).getBoundingClientRect().top"
+        " >= document.querySelector(side).getBoundingClientRect().bottom",
+        arg=[RAIL, SIDE_HOST],
+    )
+    assert await grip.is_visible()
     assert_no_page_errors(errors)
