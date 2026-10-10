@@ -669,8 +669,8 @@ export function appendAiToolCall({
       freezeThinkingLabel(entry, thinkingMs);
       container = entry.tools;
     }
-    // Dot/label/arrow live in a nowrap head that scrolls horizontally,
-    // so a long label never wraps the arrow onto its own line.
+    // Dot/label/arrow live in a one-line head; a long label truncates with an
+    // ellipsis (full text in the tooltip), so the arrow never wraps.
     const head = document.createElement("div");
     head.className = TOOL_HEAD_CLASS;
     line.append(head);
@@ -679,7 +679,7 @@ export function appendAiToolCall({
     head.append(dot);
     const label = document.createElement("span");
     label.className = "play-ai-tool-label";
-    label.textContent = friendlyToolLabel(name, input, parent);
+    label.textContent = label.title = friendlyToolLabel(name, input, parent);
     head.append(label);
     const args = formatToolArgs(input);
     const raw = args ? `${name}(${args})` : `${name}()`;

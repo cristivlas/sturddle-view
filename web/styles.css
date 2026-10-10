@@ -606,16 +606,15 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
      .play-ai-tool-children) to the parent dot, not the children box. */
   position: relative;
 }
-/* Dot + label + arrow stay on one line and scroll horizontally rather than
-   wrapping the arrow under a long label. Full-width so details/children
-   (flex-basis 100%) still break onto their own lines beneath. */
+/* Dot + label + arrow stay on one line; a long label truncates with an
+   ellipsis. Full-width so details/children (flex-basis 100%) still break
+   onto their own lines beneath. */
 .play-ai-tool-head {
   flex: 1 1 100%;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  overflow-x: auto;
 }
 .play-ai-tool-dot {
   width: 8px;
@@ -711,18 +710,19 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
 }
 /* Verifier verdict on a delegate row: refuted badges a red cross, holds a
    green check, after the label. The dot keeps the delegate color so the row
-   still reads as a verification step. Direct child (> head > label) so the
-   badge lands on the delegate row's own label, not a nested one's. */
+   still reads as a verification step. Direct child (> head) so the badge
+   lands on the delegate row's own head, not a nested one's. A head flex item,
+   not label::after, so the label's ellipsis can't clip it. */
 .play-ai-tool-call-refuted > .play-ai-tool-head > .play-ai-tool-dot {
   background: var(--wa-color-danger-60, #d9534f);
 }
-.play-ai-tool-call-refuted > .play-ai-tool-head > .play-ai-tool-label::after {
-  content: " \2717";
+.play-ai-tool-call-refuted > .play-ai-tool-head::after {
+  content: "\2717";
   color: var(--wa-color-danger-60, #d9534f);
   font-weight: 600;
 }
-.play-ai-tool-call-holds > .play-ai-tool-head > .play-ai-tool-label::after {
-  content: " \2713";
+.play-ai-tool-call-holds > .play-ai-tool-head::after {
+  content: "\2713";
   color: var(--wa-color-success-60, #28a745);
   font-weight: 600;
 }
@@ -773,8 +773,10 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
   width: calc(100% + var(--tool-box-indent) + 16px);
 }
 .play-ai-tool-label {
-  /* Stay on one line; the head scrolls horizontally if needed. */
+  min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .play-ai-tool-toggle {
   font-size: 0.65em;
@@ -782,6 +784,7 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
   cursor: pointer;
   user-select: none;
   flex: 0 0 auto;
+  order: 1;  /* after the verdict badge (head::after), as before */
   /* A clip-path triangle in a fixed box, rotated about the box center
      (a text glyph's ink is off-center in its advance box, so it drifts). */
   display: inline-block;
