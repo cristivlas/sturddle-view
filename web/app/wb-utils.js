@@ -243,6 +243,20 @@ export function wireSpanButton(el, label) {
   });
 }
 
+// Title-bar label for a control that docks its window.
+export const DOCK_LABEL = "Dock";
+
+// A custom WinBox title-bar control: WinBox mounts a bare span (index:0
+// prepends, so the last call lands leftmost); promote it to a labeled,
+// keyboard-operable button. Scoped to .wb-control so body content can't match.
+export function addTitleControl(wb, cls, label, click) {
+  wb.addControl({ class: cls, index: 0, click });
+  const btn = wb.g.querySelector(`.wb-control > .${cls}`);
+  btn.title = label;
+  wireSpanButton(btn, label);
+  return btn;
+}
+
 // Single-tab-stop navigation: the container is one Tab stop and the arrows
 // move the selection between its `rows`. `select(row, i)` owns what selecting
 // means -- the helper only picks the next row and scrolls it into view, so
@@ -377,17 +391,8 @@ const SCROLL_EDGE_FUZZ_PX = 2;
 // point the scrollbar-thumb gradient at the edge that still has content;
 // no class (the untracked default) reads the same as "at top/left".
 function markScrollEdges(el, target) {
-  // Mobile keeps the flat thumb (styles.css), so no marking or snap-back.
+  // Mobile keeps the flat thumb (styles.css), so no marking.
   if (mqMobile.matches) return;
-  // Emptied content (zero-height wrapper, e.g. a rowless table kept wide by
-  // its colgroup) leaves a meaningless stale offset; snap back to origin.
-  // el.clientHeight>0 skips hidden panels; SLOT is boxless, never "empty".
-  const content = el.firstElementChild;
-  if (content && content.tagName !== "SLOT" && content.offsetHeight === 0
-      && el.clientHeight > 0 && (el.scrollTop > 0 || el.scrollLeft > 0)) {
-    el.scrollTop = 0;
-    el.scrollLeft = 0;
-  }
   const atBottom = Math.ceil(el.scrollTop) >= el.scrollHeight - el.clientHeight - SCROLL_EDGE_FUZZ_PX;
   const midV = el.scrollTop > 0 && !atBottom;
   const atRight = Math.ceil(el.scrollLeft) >= el.scrollWidth - el.clientWidth - SCROLL_EDGE_FUZZ_PX;

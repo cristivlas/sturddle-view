@@ -22,10 +22,12 @@ import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { SIDE } from "./chess-consts.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
-import { loadJson, saveJson, removeKey } from "./storage.js";
+import { loadJson, saveJson, saveRaw, removeKey } from "./storage.js";
+import { attachButtonSort, loadSortDir, SORT_ASC_LABEL, SORT_DESC_LABEL, SORT_DIR } from "./col-sort.js";
 import { gatedStart } from "./tournament-restart.js";
-import { apiErrorDetail, toast } from "./dialogs.js";
+import { apiErrorDetail, copyToClipboard, toast } from "./dialogs.js";
 import {
+  addTitleControl,
   AUTOSCROLL_SLACK_ROW_PX,
   cssVarPx,
   escapeHtml,
@@ -37,14 +39,17 @@ import {
 } from "./wb-utils.js";
 import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
 import {
-  addLogEntry, applyEventKind, createLiveState, seedFromDetail,
+  addLogEntry, applyEventKind, backfillEvent, createLiveState, seedFromDetail,
 } from "./tournament-live-state.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
-import { renderEventLogList } from "./tournament-eventlog.js";
-import { ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow } from "./tournament-row.js";
+import { eventLogText, renderEventLogList } from "./tournament-eventlog.js";
+import { engineRowEntries, ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow } from "./tournament-row.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 
 const STORAGE_KEY_PREFIX = STORAGE_KEY.WORKSPACE_PREFIX;
+
+// How long the "ended while away" restore toast stays up.
+const ENDED_WHILE_AWAY_TOAST_MS = 7000;
 
 // Reserved strip at the bottom so minimized WinBoxes have a place to dock.
 // Source of truth is the --wb-min-footer-h CSS token (toast stacks lift
@@ -706,7 +711,7 @@ async function backfillEvents(ctx) {
     let added = false;
     for (const e of (res.events || [])) {
       if (!e.kind?.startsWith(EVT_PREFIX)) continue;
-      if (addLogEntry(ctx.live, e)) added = true;
+      if (backfillEvent(ctx.live, e, ctx.tournament.id)) added = true;
     }
     if (added) scheduleRender(ctx, "_eventLogPending", renderEventLog);
   } catch (e) {
@@ -796,6 +801,7 @@ function finalize(ctx) {
   window.removeEventListener(APP_EVT.CONNECTION, ctx.onReconnect);
   window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onRefreshWatchButtons);
   window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onLiveGameClosedReapply);
+  window.removeEventListener(APP_EVT.LIVEGAME_RESOLVED, ctx.onBoardResolved);
   detachResizeListeners(ctx);
   if (ctx.liveWatcherAttached) {
     window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onLiveGameClosed);
@@ -928,32 +934,30 @@ async function initWorkspace(ctx) {
       // Don't restore minimized-window geometry -- it's the dock
       // position, not the pre-minimize rect.
       const rect = s.min ? null : { x: s.x, y: s.y, w: s.width, h: s.height };
-      if (s.resolved) {
-        // Resolved at snapshot time -- rehydrate from PGN, no WS.
-        // Seed resolvedGames so subsequent snapshotLive() calls can
-        // re-persist `resolved` (frozen windows don't produce live
-        // game_reconciled events that would refill the map).
-        if (s.gameId) ctx.resolvedGames.set(s.gameId, s.resolved);
+      // Resolved at snapshot time, or (per the backfill) while away.
+      const resolved = s.resolved ?? (s.gameId ? ctx.resolvedGames.get(s.gameId) : null);
+      if (resolved) {
+        // Rehydrate from PGN, no WS. Seed resolvedGames so subsequent
+        // snapshotLive() calls can re-persist `resolved` (frozen windows
+        // don't produce live game_reconciled events that would refill it).
+        if (s.gameId) ctx.resolvedGames.set(s.gameId, resolved);
         const fres = openFrozenGameWindow({
           proxyId: s.proxyId, gameId: s.gameId,
           label: s.label, engineName: s.engineName,
           token: ctx.token, tournamentId: ctx.tournament.id,
-          gameN: s.resolved.gameN,
-          result: s.resolved.result,
-          termination: s.resolved.termination,
+          gameN: resolved.gameN,
+          result: resolved.result,
+          termination: resolved.termination,
           top: ctx.top, left: ctx.left, right: ctx.getRightInset(),
           boardStyle: ctx.boardStyleCached,
           initialRect: rect, min: !!s.min, max: !!s.max, flash: false,
         });
         if (fres?.wb && !fres.alreadyOpen) wireLayoutHandlers(ctx, fres.wb);
       } else if (running) {
-        // Live-reattach only if the server still considers this pair
-        // alive; otherwise the WS would auto-close on first {ended}
-        // and the user would see a window flash and vanish.
-        const stillLive = s.gameId
-          ? ctx.livePairings.get(s.proxyId)?.pairId === s.gameId
-          : ctx.activeProxies.has(s.proxyId);
-        if (stillLive) {
+        // Game windows always reattach: for a game that ended while away
+        // the server replays the final board and result. An exited engine
+        // has nothing to show; drop it, count for toast.
+        if (s.gameId || ctx.activeProxies.has(s.proxyId)) {
           attachWatch(ctx, null, s.gameId ?? s.proxyId, {
             proxyId: s.proxyId, gameId: s.gameId ?? null,
             label: s.label, engineName: s.engineName,
@@ -972,9 +976,9 @@ async function initWorkspace(ctx) {
     }
     if (endedWhileAway > 0) {
       const msg = endedWhileAway === 1
-        ? "1 watched game finished while away."
-        : `${endedWhileAway} watched games finished while away.`;
-      toast(msg, { variant: "warning", duration: 7000 });
+        ? "1 watched board ended while away."
+        : `${endedWhileAway} watched boards ended while away.`;
+      toast(msg, { variant: "warning", duration: ENDED_WHILE_AWAY_TOAST_MS });
     }
     requestAnimationFrame(() => reapplyLayout(ctx));
   }
@@ -1045,10 +1049,9 @@ function renderEngines(ctx) {
   ctx.enginesBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
   const list = ctx.enginesBody.querySelector(".wb-sched-list");
   markSelectable(list, { rows: "li" });
-  for (const [pid, p] of ctx.activeProxies) {
+  for (const [pid, engineLabel] of engineRowEntries(ctx.activeProxies, ctx.enginesSort)) {
     const li = document.createElement("li");
     li.className = "wb-sched-live";
-    const engineLabel = p.engineName || pid;
     li.innerHTML = `
       <span class="wb-sched-icon">${ICON_ENGINE_ROW}</span>
       <span class="wb-sched-game" title="${escapeHtml(engineLabel)}">${escapeHtml(engineLabel)}</span>
@@ -1176,6 +1179,33 @@ function renderEventLog(ctx) {
 }
 
 
+const ENGINES_SORT_KEY = "name";
+const SORT_ASC_CTRL = "wb-sort-asc-ctrl";
+const SORT_DESC_CTRL = "wb-sort-desc-ctrl";
+const LOG_COPY_CTRL = "wb-log-copy-ctrl";
+const LOG_COPY_LABEL = "Copy event log";
+const LOG_COPY_WHAT = "Event log";
+
+// A-Z / Z-A title-bar buttons on Engine Instances: the same toggle pair as the
+// Engines page (click the lit one to clear), persisted across workspaces.
+function wireEnginesSort(ctx, wb) {
+  // index:0 prepends, so add Z-A first to end up with A-Z, Z-A.
+  const descBtn = addTitleControl(wb, SORT_DESC_CTRL, SORT_DESC_LABEL);
+  const ascBtn = addTitleControl(wb, SORT_ASC_CTRL, SORT_ASC_LABEL);
+  attachButtonSort({
+    ascBtn,
+    descBtn,
+    key: ENGINES_SORT_KEY,
+    get: () => (ctx.enginesSort === SORT_DIR.NONE ? null : { key: ENGINES_SORT_KEY, dir: ctx.enginesSort }),
+    set: (state) => {
+      ctx.enginesSort = state ? state.dir : SORT_DIR.NONE;
+      saveRaw(STORAGE_KEY.TOURNAMENTS_ENGINES_SORT, ctx.enginesSort);
+      renderEngines(ctx);
+    },
+  });
+}
+
+
 // ---- Window spec table --------------------------------------------------
 
 function buildWindowSpecs(ctx) {
@@ -1204,47 +1234,15 @@ function buildWindowSpecs(ctx) {
       makeBody: makeEnginesBody,
       setBody: (b) => { ctx.enginesBody = b; },
       render: () => renderEngines(ctx),
+      postCreate: (wb) => wireEnginesSort(ctx, wb),
     },
     log: {
       title: "Event Log",
       makeBody: makeLogBody,
       setBody: (b) => { ctx.logBody = b; },
       render: () => renderEventLog(ctx),
-      postCreate: (wb) => {
-        wb.addControl({
-          class: "wb-log-copy-ctrl",
-          index: 0,
-          click: () => {
-            const text = ctx.eventLog
-              .filter(e => e.payload?.kind !== KIND.PROXY_UNPAIRED)
-              .map(e => {
-                const ts = e.ts || "";
-                const inner = e.payload?.kind;
-                const line = e.payload?.line;
-                if (inner === KIND.RUNNER_LOG && line) return `${ts} ${line}`;
-                const parts = [e.kind];
-                if (inner) parts.push(inner);
-                if (inner === KIND.PROXY_PAIRED)
-                  parts.push(`${e.payload?.engine_a}(${e.payload?.proxy_a||""}) vs ${e.payload?.engine_b}(${e.payload?.proxy_b||""})`);
-                else if (inner === KIND.GAME_FINISHED) {
-                  const result = e.payload?.result;
-                  const termination = e.payload?.termination;
-                  const tail = (result && termination && termination !== "unknown")
-                    ? `${result} ${termination}` : (result || "");
-                  const gn = e.payload?.game_n;
-                  if (gn != null) parts[parts.length - 1] = `${parts[parts.length - 1]} #${gn}`;
-                  parts.push(`${e.payload?.engine_a} vs ${e.payload?.engine_b}`,
-                             ...(tail ? [tail] : []));
-                }
-                return `${ts} ${parts.join(" ")}`;
-              }).join("\n");
-            navigator.clipboard.writeText(text)
-              .then(() => toast("Event log copied to clipboard", { variant: "success", duration: 1500 }))
-              .catch(() => {});
-          },
-        });
-        wb.g.querySelector(".wb-log-copy-ctrl").title = "Copy event log";
-      },
+      postCreate: (wb) => addTitleControl(wb, LOG_COPY_CTRL, LOG_COPY_LABEL,
+        () => copyToClipboard(eventLogText(ctx.eventLog), LOG_COPY_WHAT)),
     },
   };
 }
@@ -1358,6 +1356,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     activeLayout: initialLayout,
     boardStyleCached: null, detail: null,
     otherActiveId: null, otherActiveName: null,
+    enginesSort: loadSortDir(STORAGE_KEY.TOURNAMENTS_ENGINES_SORT),
     _schedulePending: false, _enginesPending: false, _eventLogPending: false,
     unsubscribe: null,
     // True when close() / closeAll() drove the tear-down. Distinguishes from
@@ -1437,6 +1436,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   window.addEventListener(APP_EVT.CONNECTION, ctx.onReconnect);
   window.addEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onRefreshWatchButtons);
   window.addEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onLiveGameClosedReapply);
+  ctx.onBoardResolved = (e) => ctx.resolvedGames.set(e.detail.pairId, e.detail.resolved);
+  window.addEventListener(APP_EVT.LIVEGAME_RESOLVED, ctx.onBoardResolved);
   attachResizeListeners(ctx);
 
   const workspace = {

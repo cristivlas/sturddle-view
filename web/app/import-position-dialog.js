@@ -11,7 +11,7 @@ import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { wireSplitScroll } from "./split-table.js";
-import { SORT_DIR, attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView } from "./col-sort.js";
+import { SORT_DIR, attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView, SORT_ASC_LABEL, SORT_DESC_LABEL } from "./col-sort.js";
 import { loadJson, saveJson } from "./storage.js";
 import { mqNarrowDialog } from "./breakpoints.js";
 import { markSelectable, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
@@ -349,10 +349,10 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
       <button class="ribbon-btn openings-search-btn" type="button" aria-label="Search openings" title="Search openings">
         <wa-icon name="magnifying-glass"></wa-icon>
       </button>
-      <button class="ribbon-btn openings-sort-asc" type="button" aria-label="Sort A-Z" title="Sort A-Z">
+      <button class="ribbon-btn openings-sort-asc" type="button" aria-label="${SORT_ASC_LABEL}" title="${SORT_ASC_LABEL}">
         <wa-icon name="arrow-down-a-z"></wa-icon>
       </button>
-      <button class="ribbon-btn openings-sort-desc" type="button" aria-label="Sort Z-A" title="Sort Z-A">
+      <button class="ribbon-btn openings-sort-desc" type="button" aria-label="${SORT_DESC_LABEL}" title="${SORT_DESC_LABEL}">
         <wa-icon name="arrow-down-z-a"></wa-icon>
       </button>
     </div>
@@ -534,6 +534,9 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
 
 const RECENTS_CACHE_KEY = STORAGE_KEY.IMPORT_RECENTS;
 const RECENTS_DISPLAY_CAP = 10;
+// Mark the current game's row in place of its delete button.
+const VIEWING_TAG = "viewing";
+const PLAYING_TAG = "playing";
 
 function loadRecentsCache() {
   const v = loadJson(RECENTS_CACHE_KEY, []);
@@ -564,6 +567,16 @@ function detectFormatFromName(name) {
   return null;
 }
 
+// The current game's row: the one in view, by content hash like play.js's
+// same-game-in-view check (aliases share it), or the game in progress, by
+// id. Re-importing it is a no-op or refused, and deleting it would pull the
+// board out from under the user. Returns its tag, or null.
+function currentEntryTag(entry, ctx) {
+  if (ctx.viewingHash && entry.hash === ctx.viewingHash) return VIEWING_TAG;
+  if (ctx.playingGameId && entry.game_id === ctx.playingGameId) return PLAYING_TAG;
+  return null;
+}
+
 // Recents dropdown: the <wa-select> in the dialog label + its options,
 // delete buttons, and the local-cache/server-refresh logic. Reads/writes
 // `ctx.recentsCache` and reads `ctx.format`; controller hooks
@@ -588,6 +601,16 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
     labelEl.className = "recent-label";
     labelEl.textContent = shown;
     opt.append(labelEl);
+    const currentTag = currentEntryTag(entry, ctx);
+    if (currentTag) {
+      opt.disabled = true;
+      const tag = document.createElement("span");
+      tag.slot = "end";
+      tag.className = `recent-viewing ${MUTED_CLASS}`;
+      tag.textContent = currentTag;
+      opt.append(tag);
+      return opt;
+    }
     const delBtn = document.createElement("button");
     delBtn.slot = "end";
     delBtn.className = "recent-del";
@@ -618,13 +641,18 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
     render();
     const qs = force ? "?force=1" : "";
     api("DELETE", `${RECENT_IMPORTS_PATH}/${removed.hash}${qs}`)
-      .then(async () => {
+      .then(async (resp) => {
         // Notify other perspectives that recents changed so they
         // can refresh derived state (e.g. play.js x-game info,
         // for the fork glyph + banner). Bus-style decoupling so
         // the dialog stays unaware of who is listening.
         window.dispatchEvent(new CustomEvent(APP_EVT.RECENTS_CHANGED, {
-          detail: { deletedHash: removed.hash, deletedGameId: removed.game_id ?? null },
+          detail: {
+            deletedHash: removed.hash,
+            deletedGameId: removed.game_id ?? null,
+            // Set when deleting the viewed copy resumed a suspended live game.
+            resumedGameId: resp?.resumed_game_id ?? null,
+          },
         }));
         if (recentSel.querySelectorAll("wa-option").length >= RECENTS_DISPLAY_CAP) return;
         try {
@@ -720,7 +748,7 @@ function openingFromLabel(label) {
  *  or null on cancel. The dialog validates via /game/import/validate (parse
  *  errors surface inline) but does NOT import -- the caller owns the import
  *  POST so it can do hash comparison and confirmation first. */
-export function showImportPositionDialog({ api }) {
+export function showImportPositionDialog({ api, viewingHash = null, playingGameId = null }) {
   return showDialog({
     label: DIALOG_TITLE,
     width: mqNarrowDialog.matches ? DIALOG_WIDTH_NARROW : DIALOG_WIDTH_WIDE,
@@ -729,7 +757,10 @@ export function showImportPositionDialog({ api }) {
       // controller AND read by the extracted recents dropdown, so they live
       // on a ctx object (not locals) -- both sides see writes. recentsCache
       // is reassigned in both the recents handler and submit().
-      const ctx = { format: TAB.PGN, submitting: false, recentsCache: loadRecentsCache() };
+      const ctx = {
+        format: TAB.PGN, submitting: false, recentsCache: loadRecentsCache(),
+        viewingHash, playingGameId,
+      };
 
       const wrap = document.createElement("div");
       wrap.className = "import-pos-form";

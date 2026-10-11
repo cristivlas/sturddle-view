@@ -11,7 +11,7 @@
 // Coexists with col-resize: clicks that originate on a .th-grip (the resize
 // handle) are ignored, so dragging a divider never triggers a sort.
 
-import { loadJson, saveJson } from "./storage.js";
+import { loadJson, loadRaw, saveJson } from "./storage.js";
 
 // Sort direction vocabulary, shared with sort-stack.js and table callers
 // (column firstDir). NONE is the cleared/no-sort sentinel.
@@ -78,6 +78,16 @@ export function nextDir(current, firstDir) {
   if (current === firstDir) return other;
   if (current === other) return SORT_DIR.NONE;
   return firstDir;
+}
+
+// Labels for the asc/desc button pair (see attachButtonSort).
+export const SORT_ASC_LABEL = "Sort A-Z";
+export const SORT_DESC_LABEL = "Sort Z-A";
+
+// A persisted sort direction; anything unrecognized reads as NONE.
+export function loadSortDir(storageKey) {
+  const v = loadRaw(storageKey);
+  return v === SORT_DIR.ASC || v === SORT_DIR.DESC ? v : SORT_DIR.NONE;
 }
 
 // Companion controller for a pair of direction buttons (asc / desc) that sort

@@ -11,25 +11,25 @@
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, loadRaw, saveJson, saveRaw } from "./storage.js";
-import { ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow, progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
-import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, nextDir, scrollSortedRowIntoView } from "./col-sort.js";
+import { engineRowEntries, ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow, progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
+import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, loadSortDir, nextDir, scrollSortedRowIntoView } from "./col-sort.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { wireSplitScroll } from "./split-table.js";
 import { reportError, toast } from "./dialogs.js";
 import { debounce, escapeHtml, flashWindow, markSelectable, roveTabStop, suppressModifierClickSelect, syncRovingTabStop, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
 import { createMultiSelect, selectionTargets } from "./multi-select.js";
-import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
+import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS, STATUS_RANK } from "./tournament-events.js";
 import { newTournamentCta, removeSelected, ribbonHtml, setStartVerb, tournamentActions } from "./tournaments.js";
 import { RESULT, SIDE } from "./chess-consts.js";
-import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
+import { addLogEntry, applyEventKind, backfillEvent, createLiveState, seedFromDetail } from "./tournament-live-state.js";
 import { closeAllLiveGames, getLiveWindows, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow, replayTournamentGame, syncWaitingOverlays } from "./tournament-live-game.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { makeH2HBody, renderH2H } from "./tournament-h2h.js";
 import { renderEventLogList } from "./tournament-eventlog.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 import { renderInfoWall } from "./tournament-info.js";
-import { mqMobile } from "./breakpoints.js";
+import { mqMobile, mqMobileH } from "./breakpoints.js";
 
 const TOURNAMENTS_ENDPOINT = "/api/tournaments";
 const TOURNAMENT_SETTINGS_ENDPOINT = "/api/tournament-settings";
@@ -136,6 +136,7 @@ const STUDIO_HTML = `
             <wa-tab-group class="studio-tabs">
               <wa-tab panel="livegames">Playing</wa-tab>
               <wa-tab panel="engines">Engines</wa-tab>
+              <button class="icon-btn studio-fold" slot="nav" aria-label="Playing and Engines panel"><wa-icon></wa-icon></button>
               <wa-tab-panel name="engines"><div class="studio-pane studio-pane-engines"></div></wa-tab-panel>
               <wa-tab-panel name="livegames"><div class="studio-pane studio-pane-livegames"></div></wa-tab-panel>
             </wa-tab-group>
@@ -268,11 +269,8 @@ function showStandingsTab(ctx) {
   ctx.bottomRightEl?.querySelector(".studio-tabs")?.setAttribute("active", STUDIO_TAB_STANDINGS);
 }
 
-// Tourney table columns: one descriptor list drives the sort cycle (firstDir)
-// and the stack sorter (field / tiebreak). Games is display-only; created reads
-// created_at, which also breaks ties so order is stable.
 const TOURNEY_SORT_COLS = [
-  { key: "status", firstDir: SORT_DIR.ASC },
+  { key: "status", firstDir: SORT_DIR.ASC, rank: STATUS_RANK },
   { key: "created", firstDir: SORT_DIR.DESC, field: "created_at", tiebreak: true },
   { key: "name", firstDir: SORT_DIR.ASC },
   { key: "games", sortable: false },
@@ -539,7 +537,7 @@ function startLive(ctx, tid) {
   ]).then(async ([detail, ev]) => {
     if (gen !== ctx.liveGen || !ctx.live) return;
     seedFromDetail(ctx.live, detail);
-    for (const e of (ev.events || [])) if (e.kind?.startsWith(EVT_PREFIX)) addLogEntry(ctx.live, e);
+    for (const e of (ev.events || [])) if (e.kind?.startsWith(EVT_PREFIX)) backfillEvent(ctx.live, e, tid);
     ctx.selDetail = detail;
     setSelPending(ctx, false);
     renderLivePanes(ctx);
@@ -810,15 +808,9 @@ function renderEnginesPane(ctx) {
     pane.innerHTML = `<div class="wb-empty">${NO_ENGINES_MSG}</div>`;
     return;
   }
-  const entries = Array.from(proxies, ([pid, p]) => [pid, p.engineName || pid]);
-  if (ctx.enginesSort === SORT_DIR.ASC) {
-    entries.sort(([, a], [, b]) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  } else if (ctx.enginesSort === SORT_DIR.DESC) {
-    entries.sort(([, a], [, b]) => b.localeCompare(a, undefined, { sensitivity: "base" }));
-  }
   const ul = document.createElement("ul");
   ul.className = "wb-sched-list";
-  for (const [pid, label] of entries) {
+  for (const [pid, label] of engineRowEntries(proxies, ctx.enginesSort)) {
     const li = liveRow(ICON_ENGINE_ROW, label);
     markEngineRow(li, ctx.live.livePairings.has(pid));
     addWatchControls(ctx, li, pid, { proxyId: pid, label, engineName: label });
@@ -861,9 +853,9 @@ function renderGamesPane(ctx) {
 // a 4-column grid (see boardCell for sizing). No free drag; re-gridded on
 // open/close/resize.
 
-// 4 columns on desktop, 1 on mobile (fill model -- the region stays bounded).
+// 4 columns; 1 when narrow and tall (phone portrait). Short = phone landscape.
 function studioCols() {
-  return mqMobile.matches ? 1 : STUDIO_COLS;
+  return mqMobile.matches && !mqMobileH.matches ? 1 : STUDIO_COLS;
 }
 
 // Cell size: width fills the region across the columns (>= the Arena board
@@ -1186,8 +1178,8 @@ function saveBoards(ctx) {
   saveJson(STORAGE_KEY.STUDIO_BOARDS_PREFIX + ctx.liveTid, snapshotBoards(ctx));
 }
 
-// Reopen saved boards: resolved ones as frozen (from PGN), still-live ones
-// live; drop those that ended while away with no resolution. Resolves once
+// Reopen saved boards: resolved ones as frozen (from PGN), the rest live
+// (runs only while the tourney is running); drop exited engines. Resolves once
 // every reopened board is fully drawn, so the caller can gate a reveal.
 function restoreBoards(ctx) {
   const saved = loadJson(STORAGE_KEY.STUDIO_BOARDS_PREFIX + ctx.liveTid);
@@ -1195,13 +1187,15 @@ function restoreBoards(ctx) {
   const opened = [];
   for (const b of saved) {
     let res;
-    if (b.resolved) {
-      res = openFrozenBoard(ctx, b, false);
+    // Resolved before the save, or (per the backfill) while away.
+    const resolved = b.resolved ?? (b.gameId ? ctx.live.resolvedGames.get(b.gameId) : null);
+    if (resolved) {
+      res = openFrozenBoard(ctx, { ...b, resolved }, false);
     } else {
-      const live = b.gameId
-        ? ctx.live.livePairings.get(b.proxyId)?.pairId === b.gameId
-        : ctx.live.activeProxies.has(b.proxyId);
-      if (live) res = openBoard(ctx, { proxyId: b.proxyId, gameId: b.gameId, label: b.label, engineName: b.engineName }, !!b.min, false);
+      // Game boards always reattach: the server replays a game that ended
+      // while away (final board + result). An exited engine has nothing.
+      const reattach = b.gameId || ctx.live.activeProxies.has(b.proxyId);
+      if (reattach) res = openBoard(ctx, { proxyId: b.proxyId, gameId: b.gameId, label: b.label, engineName: b.engineName }, !!b.min, false);
     }
     if (res?.wb && b.max) {
       // Trayed-while-maximized: chip restores to max. Visible: maximize now.
@@ -1228,9 +1222,27 @@ function wireTabPersistence(ctx) {
   }
 }
 
-function loadEnginesSort() {
-  const v = loadRaw(STORAGE_KEY.STUDIO_ENGINES_SORT);
-  return v === SORT_DIR.ASC || v === SORT_DIR.DESC ? v : SORT_DIR.NONE;
+const FOLDED_CLASS = "folded";
+const FOLDED_ICON = "plus";
+const UNFOLDED_ICON = "minus";
+
+// Phone landscape: the +/- button folds the Playing | Engines panel down to
+// its tabs (CSS shows the button and applies the fold only there).
+function wireLeftTabsFold(ctx) {
+  const group = ctx.container.querySelector(".studio-bottom-left .studio-tabs");
+  const btn = group?.querySelector(".studio-fold");
+  if (!btn) return;
+  const apply = (folded) => {
+    group.classList.toggle(FOLDED_CLASS, folded);
+    btn.setAttribute("aria-expanded", String(!folded));
+    btn.querySelector("wa-icon").setAttribute("name", folded ? FOLDED_ICON : UNFOLDED_ICON);
+  };
+  apply(loadJson(STORAGE_KEY.STUDIO_LEFT_FOLDED) === true);
+  btn.addEventListener("click", () => {
+    const folded = !group.classList.contains(FOLDED_CLASS);
+    saveJson(STORAGE_KEY.STUDIO_LEFT_FOLDED, folded);
+    apply(folded);
+  });
 }
 
 const ENGINES_SORT_TITLE = {
@@ -1382,7 +1394,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     // Tourneys data + selection (selection restored from last session).
     tournaments: [], activeId: null, listGen: 0,
     selectedId: loadRaw(STORAGE_KEY.STUDIO_SELECTED_ID),
-    enginesSort: loadEnginesSort(),
+    enginesSort: loadSortDir(STORAGE_KEY.STUDIO_ENGINES_SORT),
     // Sort stacks are getter fns assigned by build{Tourney,History}Table.
     tourneyTbody: null, tourneyStack: null,
     historyTbody: null, historyStack: null,
@@ -1412,6 +1424,9 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   ctx.logListEl = document.createElement("ul");
   ctx.logListEl.className = "wb-eventlog-list";
   ctx.logPaneEl?.appendChild(ctx.logListEl);
+  // Its own region: the tab group (a custom element) never takes focus, so a
+  // click on a log line leaves Ctrl+A with no enclosing focused region.
+  markSelectable(ctx.logListEl, { rows: "li" });
   ctx.ms = createMultiSelect({
     getRows: () => (ctx.tourneyTbody ? ctx.tourneyTbody.querySelectorAll(TOURNEY_ROW_SEL) : []),
     getAnchorId: () => ctx.selectedId,
@@ -1431,6 +1446,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   wireTabPersistence(ctx);
   wireTabClipboard(ctx);
   wireEnginesSort(ctx);
+  wireLeftTabsFold(ctx);
   wireRibbonActions(ctx);
   announceRibbon(ctx.ribbonEl);
 
@@ -1456,6 +1472,12 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   // board-area height change between desktop and mobile).
   ctx.onMqMobile = () => regridBoards(ctx);
   window.addEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onBoardClosed);
+  ctx.onBoardResolved = (e) => {
+    if (!ctx.live) return;
+    ctx.live.resolvedGames.set(e.detail.pairId, e.detail.resolved);
+    saveBoards(ctx);
+  };
+  window.addEventListener(APP_EVT.LIVEGAME_RESOLVED, ctx.onBoardResolved);
   window.addEventListener("resize", ctx.onBoardResize);
   mqMobile.addEventListener("change", ctx.onMqMobile);
 
@@ -1488,6 +1510,7 @@ function unmountStudio(ctx) {
   // Remove the board-closed listener before stopLive's closeAllLiveGames so
   // teardown doesn't re-save (and wipe) the board set.
   window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onBoardClosed);
+  window.removeEventListener(APP_EVT.LIVEGAME_RESOLVED, ctx.onBoardResolved);
   window.removeEventListener("resize", ctx.onBoardResize);
   mqMobile.removeEventListener("change", ctx.onMqMobile);
   // stopLive unsubscribes, nulls liveTid (so a pending standings refresh

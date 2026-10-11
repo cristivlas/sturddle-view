@@ -1,18 +1,22 @@
 // Minimal WebSocket client with exponential-backoff reconnect.
 
+const BACKOFF_INITIAL_MS = 500;
+const BACKOFF_MAX_MS = 15000;
+const BACKOFF_FACTOR = 1.7;
+
 // First epoch observed this page-load. If the server restarts, the next
 // event carries a different epoch and we reload to drop stale UI state
 // (view-mode cursor, dismissed toasts, edit drafts) that the new server
 // session can't honor.
 let _sessionEpoch = null;
 
-export function connect({ onOpen, onClose, onEvent }) {
+// `path` is resolved against the page's host. Auth carried by the HttpOnly
+// cookie set during the /auth handshake.
+export function connect({ path, onOpen, onClose, onEvent }) {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  // Auth carried by HttpOnly cookie set during /auth handshake.
-  const url = `${proto}//${location.host}/ws`;
+  const url = `${proto}//${location.host}${path}`;
 
-  let backoff = 500;
-  const maxBackoff = 15000;
+  let backoff = BACKOFF_INITIAL_MS;
   let ws;
   let stopped = false;
   let reconnectTimer = null;
@@ -20,7 +24,7 @@ export function connect({ onOpen, onClose, onEvent }) {
   function open() {
     ws = new WebSocket(url);
     ws.addEventListener("open", () => {
-      backoff = 500;
+      backoff = BACKOFF_INITIAL_MS;
       onOpen?.();
     });
     ws.addEventListener("message", (e) => {
@@ -45,7 +49,7 @@ export function connect({ onOpen, onClose, onEvent }) {
       onClose?.();
       if (stopped) return;
       reconnectTimer = setTimeout(() => { reconnectTimer = null; open(); }, backoff);
-      backoff = Math.min(maxBackoff, Math.round(backoff * 1.7));
+      backoff = Math.min(BACKOFF_MAX_MS, Math.round(backoff * BACKOFF_FACTOR));
     });
     ws.addEventListener("error", () => ws.close());
   }

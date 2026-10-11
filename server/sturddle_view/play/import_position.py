@@ -25,6 +25,7 @@ from ..chess.pgn_tags import (
 )
 from ..chess.pgn_walk import walk_mainline
 from ..chess.results import DECISIVE_RESULTS, UNKNOWN_RESULT
+from ..chess.san_patterns import SAN_MOVE, SAN_MOVE_NUMBER
 from ..chess.score import CP_PER_PAWN, SCORE_CP, SCORE_DEPTH, SCORE_MATE, flip_score
 
 _ILLEGAL_POSITION = "illegal position"
@@ -117,12 +118,17 @@ def _parse_pgn_timecontrol(tc: str | None) -> tuple[float | None, float]:
     return initial, increment
 
 
+# Cutechess / fastchess eval: signed (+0.06, -2, +M2, -M3), bare mate (M5)
+# or unsigned decimal (0.00). An unsigned integer is not engine output, so
+# prose like "holds the draw, 1/2" is never read as an eval/depth token.
+_CUTECHESS_EVAL_TOKEN = r"(?:[+-]?M\d+|[+-]\d+(?:\.\d+)?|\d+\.\d+)"
+
 # Cutechess / fastchess inline comment: "<eval>/<depth> <time>" at the END
 # of the comment (allowing a leading variation in parens or other prose).
-# Eval forms: +0.06, -0.44, 0.00, M5, -M3, +M2. Time: integer or float,
-# optional 's' or 'ms' suffix. We only care about the time field.
+# Time: integer or float, optional 's' or 'ms' suffix. We only care about
+# the time field.
 _CUTECHESS_TIME_RE = re.compile(
-    r"[+-]?(?:M\d+|\d+(?:\.\d+)?)/\d+\s+(\d+(?:\.\d+)?)\s*(ms|s)?\s*\}?\s*$"
+    rf"{_CUTECHESS_EVAL_TOKEN}/\d+\s+(\d+(?:\.\d+)?)\s*(ms|s)?\s*\}}?\s*$"
 )
 
 # Bare time-only token: "{<time>s}" with no eval/depth prefix. Emitted on
@@ -134,44 +140,28 @@ _CUTECHESS_TIME_ONLY_RE = re.compile(
     r"^\s*(\d+(?:\.\d+)?)\s*(ms|s)\s*$"
 )
 
-# Trailing "machine-signature" time token: cutechess/fastchess sometimes
-# emit a bare time at the tail of a comment that ALSO contains prose,
-# e.g. "{ Good move! 3.2s }". After python-chess strips the braces and
-# we strip the surrounding whitespace we're left with prose ending in a
-# time token -- the anchored regex above doesn't match because of the
-# leading prose, and _CUTECHESS_EVAL_RE doesn't match because there's
-# no eval/depth prefix. So we add this third pattern that strips just
-# the trailing token.
-#
-# The tricky part is distinguishing a machine time token from a casual
-# human time mention ("took 7s", "won in 30s"). The cutechess writer
-# always emits with decimal precision for seconds (e.g. "3.2s",
-# "0.5s") -- never bare integer seconds -- and uses "ms" for
-# milliseconds. Humans, by contrast, typically write whole-number
-# seconds without a decimal point ("7s", not "7.0s"). We exploit this:
-#
-#  - strip trailing "<decimal>s"     -- machine signature
-#  - strip trailing "<integer>ms"    -- machine signature
-#  - leave trailing "<integer>s"     -- could be human prose
-#
-# This catches cutechess/fastchess output and leaves casual human time
-# mentions intact. The cost is missing engine outputs that happen to
-# emit bare integer seconds (some configurations do this) -- but those
-# already fail to strip cleanly today, so we're not regressing.
-#
-# Why not also detect the PGN as "cutechess-shaped" first (e.g. via
-# eval/depth presence anywhere) and only then apply this strip? See
-# docs/pgn-comment-format.md -- such detection is fragile (cutechess
-# runs without eval output have no detection signal) and the proper
-# fix is to emit [%clk] / [%eval] bracket tags instead of these
-# positional tokens. This regex is the band-aid until that ships.
+# Machine time token after prose ("{ Good move! 3.2s }"): decimal seconds or
+# integer ms -- humans write "took 7s". The sanitizer strips it, the clock
+# reader reads it (value, unit groups). See docs/pgn-comment-format.md.
 _TRAILING_MACHINE_TIME_RE = re.compile(
-    r"\s+(?:\d+\.\d+\s*s|\d+\s*ms)\s*$"
+    r"\s+(\d+\.\d+(?=\s*s)|\d+(?=\s*ms))\s*(ms|s)\s*$"
 )
 
 # Cutechess / fastchess full eval+depth capture (eval and depth groups).
 _CUTECHESS_EVAL_RE = re.compile(
-    r"(?P<eval>[+-]?(?:M\d+|\d+(?:\.\d+)?))/(?P<depth>\d+)(?:\s+\d+(?:\.\d+)?\s*(?:ms|s)?)?\s*\}?\s*$"
+    rf"(?P<eval>{_CUTECHESS_EVAL_TOKEN})/(?P<depth>\d+)(?:\s+\d+(?:\.\d+)?\s*(?:ms|s)?)?\s*\}}?\s*$"
+)
+
+# Our writer's token for an eval with no depth (e.g. a Lichess import), at the
+# END and exactly as written: signed two-decimal pawns or [+-]M<n> after
+# whitespace/start, time with unit. Known cost: prose ending in "+0.50".
+_DEPTHLESS_EVAL_RE = re.compile(
+    r"(?<![^\s])(?P<eval>[+-]\d+\.\d{2}|[+-]M\d+)(?:\s+\d+(?:\.\d+)?\s*(?:ms|s))?\s*\}?\s*$"
+)
+
+# End-anchored machine tokens, most specific first; the sanitizer strips one.
+_TRAILING_MACHINE_RES = (
+    _CUTECHESS_EVAL_RE, _DEPTHLESS_EVAL_RE, _CUTECHESS_TIME_ONLY_RE, _TRAILING_MACHINE_TIME_RE,
 )
 
 # [%eval ...] bracket comment: ChessBase / GBSelect style is "<int_cp>,<depth>"
@@ -182,44 +172,40 @@ _BRACKET_EVAL_RE = re.compile(r"\[%eval\s+(?P<body>[^\]]+)\]")
 
 # Strip any [%key ...] bracket annotation (clk, emt, eval, cal, csl, ...).
 _BRACKET_TAG_RE = re.compile(r"\[%[^\]]*\]")
-# Strip parenthesized inline variations. Non-greedy; nested parens are rare
-# in PGN comments -- python-chess parses RAVs as sibling nodes, not text.
-_PAREN_VAR_RE = re.compile(r"\([^()]*\)")
+# Engine PV: cutechess-style "{(Ng5) 0.35/19 17}" leaves one parenthesized
+# group of moves once its machine tokens are gone. Human text in parens
+# ("{(forced)}", even beside a [%clk] tag) stays, as do parens in prose; the
+# "{(Book)}" marker goes. SAN_MOVE castles carry no check suffix: add it.
+_PV_MOVE = rf"(?:{SAN_MOVE_NUMBER}\s*)?{SAN_MOVE}[+#]?"
+_ENGINE_PV_ONLY_RE = re.compile(rf"^\s*\(\s*{_PV_MOVE}(?:\s+{_PV_MOVE})*\s*\)\s*$")
+_BOOK_MARKER_RE = re.compile(r"^\s*\(book\)\s*$", re.IGNORECASE)
 _WS_RE = re.compile(r"\s+")
 
 
 def _sanitize_comment(comment: str | None) -> str | None:
-    """Strip machine annotations from a PGN comment, leaving human prose.
-    Removes [%...] bracket tags, parenthesized variations, and the
-    cutechess "<eval>/<depth> <time>" trailing token. Returns None when
-    nothing readable remains."""
+    """Strip machine annotations from a PGN comment, leaving human prose
+    verbatim (modulo whitespace). Removes [%...] bracket tags, the cutechess
+    "<eval>/<depth> <time>" trailing token (and our depth-less form), a
+    remainder that is only an engine PV in parens, and the "(Book)" marker.
+    Returns None when nothing readable remains."""
     if not comment:
         return None
     s = _BRACKET_TAG_RE.sub(" ", comment)
-    s = _CUTECHESS_EVAL_RE.sub(" ", s)
-    s = _CUTECHESS_TIME_ONLY_RE.sub(" ", s)
-    s = _TRAILING_MACHINE_TIME_RE.sub("", s)
-    # Repeatedly strip innermost parens so adjacent variations all go.
-    while True:
-        new = _PAREN_VAR_RE.sub(" ", s)
-        if new == s:
+    # Exactly one trailing machine token: a second pass would eat prose
+    # that happens to end in a token shape ("I think +0.50 <token>").
+    for rx in _TRAILING_MACHINE_RES:
+        s, n = rx.subn(" ", s)
+        if n:
             break
-        s = new
+    machine_stripped = s != comment
+    if (machine_stripped and _ENGINE_PV_ONLY_RE.match(s)) or _BOOK_MARKER_RE.match(s):
+        return None
     # Preserve paragraph breaks (blank lines) for rendering, collapse other
     # whitespace runs within each paragraph.
     paragraphs = [_WS_RE.sub(" ", p).strip() for p in re.split(r"\n\s*\n", s)]
     paragraphs = [p for p in paragraphs if p]
     if not paragraphs:
         return None
-    # Stripping a leading [%clk]/[%eval]/etc often exposes a lowercase first
-    # word ("best move"); capitalize it. Only the first paragraph, and only
-    # when the first alpha char is currently lowercase.
-    first = paragraphs[0]
-    for i, ch in enumerate(first):
-        if ch.isalpha():
-            if ch.islower():
-                paragraphs[0] = first[:i] + ch.upper() + first[i + 1:]
-            break
     return _PARAGRAPH_SEP.join(paragraphs)
 
 
@@ -229,13 +215,15 @@ def _cutechess_time_seconds(comment: str | None) -> float | None:
 
     Accepts both the full form ``{<eval>/<depth> <time>s}`` and the
     time-only variant ``{<time>s}`` we emit on plies with no engine
-    search.
+    search, also after comment prose.
     """
     if not comment:
         return None
-    m = _CUTECHESS_TIME_RE.search(comment)
-    if m is None:
-        m = _CUTECHESS_TIME_ONLY_RE.search(comment)
+    m = (
+        _CUTECHESS_TIME_RE.search(comment)
+        or _CUTECHESS_TIME_ONLY_RE.search(comment)
+        or _TRAILING_MACHINE_TIME_RE.search(comment)
+    )
     if not m:
         return None
     try:
@@ -302,6 +290,8 @@ def _parse_pgn_eval(comment: str | None, mover_white: bool) -> dict | None:
        white POV.
     3. Cutechess/fastchess trailing ``<eval>/<depth>`` -- float pawns or
        ``M<n>``, STM POV.
+    4. Our depth-less trailing ``<eval>`` (same POV), written when the
+       eval came in without a depth.
     """
     if not comment:
         return None
@@ -328,6 +318,13 @@ def _parse_pgn_eval(comment: str | None, mover_white: bool) -> dict | None:
         score = _parse_eval_token(m.group("eval"))
         if score is not None:
             return _with_depth(score if mover_white else flip_score(score), m.group("depth"))
+
+    # 4: our depth-less trailing token
+    m = _DEPTHLESS_EVAL_RE.search(comment)
+    if m:
+        score = _parse_eval_token(m.group("eval"))
+        if score is not None:
+            return score if mover_white else flip_score(score)
 
     return None
 

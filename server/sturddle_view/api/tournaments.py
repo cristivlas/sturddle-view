@@ -770,11 +770,21 @@ async def ingest_proxy(payload: ProxyBatch, request: Request) -> Response:
     return JSONResponse({WANT_INFO_KEY: signal})
 
 
+def _with_parsed(payload: dict) -> dict:
+    if PARSED_KEY in payload:
+        return payload
+    parsed = parse_uci_line(payload.get(LINE_KEY, ""))
+    return payload if parsed is None else {**payload, PARSED_KEY: parsed}
+
+
 async def _stream_queue_to_websocket(websocket: WebSocket, queue) -> None:
     """Pump CoalescingQueue to WS until terminal, client disconnect, or
     cancel. Terminal beats recv on close so the banner always lands."""
     if queue.terminal is not None:
         try:
+            # Terminal at attach: send the replayed final board first.
+            while not queue.empty():
+                await websocket.send_json(_with_parsed(queue.get_nowait()))
             await websocket.send_json(queue.terminal)
         except Exception:
             log.warning(
@@ -820,11 +830,7 @@ async def _stream_queue_to_websocket(websocket: WebSocket, queue) -> None:
                 break
             payload = get_task.result()
             get_task = None
-            if PARSED_KEY not in payload:
-                parsed = parse_uci_line(payload.get(LINE_KEY, ""))
-                if parsed is not None:
-                    payload = {**payload, PARSED_KEY: parsed}
-            await websocket.send_json(payload)
+            await websocket.send_json(_with_parsed(payload))
     except WebSocketDisconnect:
         if term_task.done():
             try:

@@ -62,8 +62,8 @@ def server(tmp_path):
         yield base
 
 
-async def _new_page(make_page):
-    ctx, page = await make_page(viewport={"width": 1600, "height": 1000})
+async def _new_page(make_page, **ctx_kwargs):
+    ctx, page = await make_page(viewport={"width": 1600, "height": 1000}, **ctx_kwargs)
     errors: list[str] = []
     page.on("pageerror", lambda exc: errors.append(str(exc)))
     page.on("console", lambda msg: errors.append(f"console.{msg.type}: {msg.text}")
@@ -378,7 +378,8 @@ async def test_comment_nav_recovers_after_resize_hide_show(server, make_page):
     board_update (a move click). Recovery must happen with no navigation."""
     base = server
     _seed_view_mode(base)  # game A: comments at plies 1, 3
-    _ctx, page, errors = await _new_page(make_page)
+    # Touch: the short-height mobile gate only applies to coarse pointers.
+    _ctx, page, errors = await _new_page(make_page, has_touch=True)
     await _goto_play_in_view_mode(page, base)
     await page.wait_for_selector(COMMENTS_SLOT)
     # Move to a ply with a populated prev target so the buttons are live.

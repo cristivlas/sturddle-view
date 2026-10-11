@@ -118,9 +118,9 @@ Saved games carry no engine evaluations. Two layers:
   serialize per-ply scores even when they exist.
 - Play mode never accumulates per-ply evals. `_pump_engine_info()`
   streams scores to the WebSocket for UI only; nothing is retained.
-- The play->view transition (`view_start()` ->
-  `play_game_snapshot()` -> `enter_view_mode()`) uses a direct state
-  copy that mirrors the same gap: moves and clocks only.
+- The play->view transition (`view_start()` -> the live clone builder)
+  uses a direct state copy that mirrors the same gap: moves and clocks
+  only.
 
 View-mode imports already populate `_view_eval_history` (white POV)
 via `_parse_pgn_eval`, so the read side is solved; the write side
@@ -168,7 +168,7 @@ common case.
 
 ### Plumbing
 
-- `play_game_snapshot()` includes `eval_history`.
+- The live clone builder (`_enter_live_clone`) copies `eval_history`.
 - `ViewModeParams` / `_ViewSnapshot` carry `eval_history`.
 - `enter_view_mode()` stores into `_view_eval_history` unchanged.
 - `GameState` carries `eval_history`; `_persist` writes it,

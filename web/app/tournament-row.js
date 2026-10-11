@@ -5,6 +5,7 @@
 
 import { STATUS } from "./tournament-events.js";
 import { escapeHtml } from "./wb-utils.js";
+import { baseCompare, SORT_DIR } from "./col-sort.js";
 
 // Shared status-strip separator (the tournament progress label, the SPRT
 // line, the H2H banner). Exported so those strips read consistently.
@@ -35,6 +36,15 @@ export function markEngineRow(li, playing) {
     "beforeend",
     `<span class="wb-engine-state">${playing ? "playing" : "idle"}</span>`,
   );
+}
+
+// Engine rows as [proxyId, label], ordered by label per `dir` (NONE keeps
+// arrival order). Shared by Arena's Engine Instances window and Studio.
+export function engineRowEntries(proxies, dir) {
+  const entries = Array.from(proxies, ([pid, p]) => [pid, p.engineName || pid]);
+  if (dir === SORT_DIR.ASC) entries.sort(([, a], [, b]) => baseCompare(a, b));
+  else if (dir === SORT_DIR.DESC) entries.sort(([, a], [, b]) => baseCompare(b, a));
+  return entries;
 }
 
 // Total scheduled games for a tournament, or null when the template is

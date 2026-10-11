@@ -15,6 +15,8 @@ Skipped if Playwright is missing.
 """
 from __future__ import annotations
 
+import contextlib
+
 import httpx
 import pytest
 
@@ -35,17 +37,33 @@ ADVANCE_PGN = "1. e4 c6 2. d4 d5 3. e5"
 ADVANCE_PLIES = 5
 ADVANCE_NAME = "Caro-Kann Defense: Advance Variation"
 CARO_KANN_NAME = "Caro-Kann Defense"
+# Fake engine's canned search for the Advance position (Black to move): the
+# default e2e4 line is illegal there, and python-chess logs an error parsing it.
+ADVANCE_BESTMOVE = "c8f5"
+ADVANCE_PV = "c8f5 f1e2"
 
 
-@pytest.fixture
-def server(tmp_path):
+@contextlib.contextmanager
+def _serve(tmp_path, **engine_search):
     registry_path = tmp_path / REGISTRY_FILE
     seed = EngineRegistry(path=registry_path)
-    engine_path = make_searching_fake_uci(tmp_path, "FakeEngine")
+    engine_path = make_searching_fake_uci(tmp_path, "FakeEngine", **engine_search)
     e = seed.add(name="FakeEngine", path=engine_path)
     seed.select(e.id)
     env = e2e_env(tmp_path)
     with run_uvicorn_subprocess(env_overrides=env) as base:
+        yield base
+
+
+@pytest.fixture
+def server(tmp_path):
+    with _serve(tmp_path) as base:
+        yield base
+
+
+@pytest.fixture
+def advance_server(tmp_path):
+    with _serve(tmp_path, bestmove=ADVANCE_BESTMOVE, pv=ADVANCE_PV) as base:
         yield base
 
 
@@ -146,8 +164,8 @@ async def test_opening_surface_matching(server, make_page):
 
 
 @pytest.mark.asyncio
-async def test_opening_label_follows_played_line(server, make_page):
-    base = server
+async def test_opening_label_follows_played_line(advance_server, make_page):
+    base = advance_server
     # The game sits in the Advance Variation; the link replays the plain
     # Caro-Kann from the start, so the label must change and come back.
     r = httpx.post(f"{base}/game/import", json={

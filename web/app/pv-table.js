@@ -318,16 +318,21 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
   function clear() {
     if (playingRow) {
       // A table clear while a row plays is a conflict: pin it, drop the rest.
+      // The scroll stays put so the pinned row doesn't jump mid-show.
       for (const tr of Array.from(tbody.rows)) {
         if (tr !== playingRow) tbody.removeChild(tr);
       }
-      rowMap.clear();
-      maxDepth = 0;
-      return;
+    } else {
+      tbody.textContent = "";
+      // A new search's lines land before any layout could clamp the old
+      // offset, so reset it explicitly.
+      scrollEl.scrollLeft = 0;
+      scrollEl.scrollTop = 0;
     }
-    tbody.textContent = "";
     rowMap.clear();
     maxDepth = 0;
+    // Drop the width the removed lines grew the table to.
+    fitTableToPvContent();
   }
 
   // PV cell uses overflow:visible so long lines extend past the cell's

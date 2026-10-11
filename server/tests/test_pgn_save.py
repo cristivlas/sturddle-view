@@ -280,3 +280,22 @@ async def test_filename_stable_across_restore(hve, tmp_path):
     final = list(tmp_path.glob("*.pgn"))
     assert len(final) == 1
     assert final[0] == original  # same filename across the restart
+
+
+LEFT_GAME_NOTE = "kept when the game is left"
+
+
+async def test_left_game_autosave_carries_its_notes(hve):
+    h, _, tmp_path = hve
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    await h.submit_move("e2e4")
+    async with h._lock:
+        h._clock.append_snapshot()
+        h._board.push(chess.Move.from_uci("e7e5"))
+        h._eval_history.append(None)
+    await h.enter_live_clone(1)
+    fen = await h.enter_edit_mode()
+    await h.commit_edit(fen, apply_comment=True, comment_text=LEFT_GAME_NOTE)
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    texts = [p.read_text() for p in tmp_path.glob("*.pgn")]
+    assert any(LEFT_GAME_NOTE in t for t in texts)

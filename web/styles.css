@@ -76,7 +76,7 @@
   --bp-settings-top-tabs: 46rem; /* 736px; Settings side rail needs the full 690px dialog */
   --bp-mobile:        50rem;  /* 800px @ default font */
   --bp-mobile-h:      30rem;  /* 480px @ default font; height analog */
-  --bp-mobile-h-play: 42.5rem; /* 680px; play side-rail short-height gate */
+  --bp-mobile-h-play: 42.5rem; /* 680px; play side-rail short-height gate, touch only */
   --bp-wide:          93.75rem; /* 1500px @ default font */
 
   /* Import dialog: one panel height shared by all 3 tabs so switching never
@@ -606,16 +606,15 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
      .play-ai-tool-children) to the parent dot, not the children box. */
   position: relative;
 }
-/* Dot + label + arrow stay on one line and scroll horizontally rather than
-   wrapping the arrow under a long label. Full-width so details/children
-   (flex-basis 100%) still break onto their own lines beneath. */
+/* Dot + label + arrow stay on one line; a long label truncates with an
+   ellipsis. Full-width so details/children (flex-basis 100%) still break
+   onto their own lines beneath. */
 .play-ai-tool-head {
   flex: 1 1 100%;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  overflow-x: auto;
 }
 .play-ai-tool-dot {
   width: 8px;
@@ -711,18 +710,19 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
 }
 /* Verifier verdict on a delegate row: refuted badges a red cross, holds a
    green check, after the label. The dot keeps the delegate color so the row
-   still reads as a verification step. Direct child (> head > label) so the
-   badge lands on the delegate row's own label, not a nested one's. */
+   still reads as a verification step. Direct child (> head) so the badge
+   lands on the delegate row's own head, not a nested one's. A head flex item,
+   not label::after, so the label's ellipsis can't clip it. */
 .play-ai-tool-call-refuted > .play-ai-tool-head > .play-ai-tool-dot {
   background: var(--wa-color-danger-60, #d9534f);
 }
-.play-ai-tool-call-refuted > .play-ai-tool-head > .play-ai-tool-label::after {
-  content: " \2717";
+.play-ai-tool-call-refuted > .play-ai-tool-head::after {
+  content: "\2717";
   color: var(--wa-color-danger-60, #d9534f);
   font-weight: 600;
 }
-.play-ai-tool-call-holds > .play-ai-tool-head > .play-ai-tool-label::after {
-  content: " \2713";
+.play-ai-tool-call-holds > .play-ai-tool-head::after {
+  content: "\2713";
   color: var(--wa-color-success-60, #28a745);
   font-weight: 600;
 }
@@ -773,8 +773,10 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
   width: calc(100% + var(--tool-box-indent) + 16px);
 }
 .play-ai-tool-label {
-  /* Stay on one line; the head scrolls horizontally if needed. */
+  min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .play-ai-tool-toggle {
   font-size: 0.65em;
@@ -782,6 +784,7 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
   cursor: pointer;
   user-select: none;
   flex: 0 0 auto;
+  order: 1;  /* after the verdict badge (head::after), as before */
   /* A clip-path triangle in a fixed box, rotated about the box center
      (a text glyph's ink is off-center in its advance box, so it drifts). */
   display: inline-block;
@@ -934,12 +937,13 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   white-space: nowrap;
 }
 .status-badge.hidden { display: none; }
-.status-badge--paused {
+.status-badge--paused,
+.status-badge--editing {
   color: var(--accent);
   background: rgba(var(--accent-rgb), 0.12);
   border-color: rgba(var(--accent-rgb), 0.4);
-  cursor: pointer;
 }
+.status-badge--paused { cursor: pointer; }
 .status-badge--finished {
   color: var(--text, #ddd);
   background: rgba(255, 255, 255, 0.06);
@@ -1163,8 +1167,9 @@ main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden
   text-overflow: ellipsis;
 }
 /* 800px = --bp-mobile, 680px = --bp-mobile-h-play. Media queries can't read
-   custom props; keep these literals in sync with :root. */
-@media (max-width: 800px), (max-height: 680px) {
+   custom props; keep these literals in sync with :root. Height gate is
+   touch-only so short laptops keep the desktop layout. */
+@media (max-width: 800px), (max-height: 680px) and (pointer: coarse) {
   /* Non-play perspectives keep `main` as the scroller -- their inner lists
      are flex:1 + overflow-y:auto and need a bounded ancestor. */
   main { overflow-y: auto; }
@@ -1216,6 +1221,7 @@ main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden
   }
   .status-badge { margin-left: 0; }
   #paused-badge,
+  #editing-badge,
   #finished-badge,
   #about-btn,
   #settings-btn { flex: 0 0 auto; }
@@ -1382,6 +1388,8 @@ button.recent-del {
   flex-shrink: 0;
 }
 button.recent-del:hover { color: var(--status-err-fg, #d33); }
+/* Stands in for the trash on the viewed game's row; sized like it. */
+.recent-viewing { padding: 0 4px; font-size: 0.9em; flex-shrink: 0; }
 /* Explicit flex so the label shrinks + clips while the trash slot keeps its
    size, regardless of WA defaults. */
 wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
@@ -1765,6 +1773,8 @@ body .side-popover.popover-floating {
 .wb-dock-ctrl,
 .wb-ribbon-rotate-ctrl,
 .wb-log-copy-ctrl,
+.wb-sort-asc-ctrl,
+.wb-sort-desc-ctrl,
 .winbox.sturddle-wb-ribbon .wb-close {
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
   -webkit-mask-position: center; mask-position: center;
@@ -1842,8 +1852,9 @@ body .side-popover.popover-floating {
   filter: grayscale(0.4);
 }
 /* 800px = --bp-mobile, 680px = --bp-mobile-h-play. Media queries can't read
-   custom props; keep these literals in sync with :root. */
-@media (max-width: 800px), (max-height: 680px) {
+   custom props; keep these literals in sync with :root. Height gate is
+   touch-only so short laptops keep the desktop layout. */
+@media (max-width: 800px), (max-height: 680px) and (pointer: coarse) {
   /* !important guards against later, more specific .play-dock-left rules
      (e.g. JS-set modifier classes): mobile hides the dock unconditionally. */
   .play-dock-left { display: none !important; }
@@ -3838,6 +3849,15 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tabs wa-tab-panel { height: 100%; --padding: 0; }
 .studio-tabs wa-tab-panel::part(base) { height: 100%; box-sizing: border-box; }
 .studio-pane { height: 100%; overflow: auto; }
+/* Fold button: phone landscape only (short, any width); elsewhere the panel
+   never folds, whatever the saved state. No hover border: a tap leaves
+   :hover stuck on touch screens. */
+.studio-fold { display: none; }
+.studio-fold:hover { border-color: transparent; }
+@media (max-height: 480px) {
+  .studio-fold { display: inline-flex; margin-inline-start: auto; }
+  .studio-tabs.folded::part(body) { display: none; }
+}
 /* Chromium/WebKit only; Firefox has no thumb-length control. */
 @media (min-width: 801px) {
   .studio-tabs *::-webkit-scrollbar-thumb:vertical,
@@ -3975,7 +3995,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .tournament-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 
-@media (max-width: 800px), (max-height: 680px) {
+/* Same gate as mqMobileHPlay (breakpoints.js): height half is touch-only. */
+@media (max-width: 800px), (max-height: 680px) and (pointer: coarse) {
   .tournaments-panel { gap: 0; }
   .tournaments-body { display: flex; flex-direction: column; }
   /* Arena and Studio flip to the same horizontal top bar on mobile. They
@@ -4612,12 +4633,30 @@ wa-dialog.tournament-info-dialog::part(body) {
 .h2h-tbl .h2h-side { color: var(--muted); padding-left: 16px; }
 .h2h-tbl .h2h-wld { color: var(--muted); }
 .wb-sched-list, .wb-eventlog-list { list-style: none; padding: 0; margin: 0; }
-.wb-log-copy-ctrl {
-  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
-  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
+/* Arena window title-bar icons: Event Log copy, Engine Instances A-Z / Z-A. */
+.wb-log-copy-ctrl,
+.wb-sort-asc-ctrl,
+.wb-sort-desc-ctrl {
   -webkit-mask-size: 14px;
   mask-size: 14px;
   background-color: rgba(255,255,255,0.9) !important;
+}
+.wb-log-copy-ctrl {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
+}
+.wb-sort-asc-ctrl {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-down-a-z.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-down-a-z.svg);
+}
+.wb-sort-desc-ctrl {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-down-z-a.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-down-z-a.svg);
+}
+/* The lit sort button takes the brand color, like the Engines page's. */
+.wb-sort-asc-ctrl.is-active,
+.wb-sort-desc-ctrl.is-active {
+  background-color: var(--wa-color-brand-90) !important;
 }
 .wb-sched-list li { padding: 3px 0; font-size: 0.8125rem; border-bottom: 1px solid var(--border-subtle); }
 .wb-sched-icon { display: inline-block; width: 18px; color: var(--accent); }

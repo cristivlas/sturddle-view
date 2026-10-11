@@ -7,7 +7,11 @@ Three formats supported, all normalized to white POV on output:
 """
 from __future__ import annotations
 
-from sturddle_view.play.import_position import _parse_pgn_eval
+from sturddle_view.play.import_position import (
+    _cutechess_time_seconds,
+    _parse_pgn_eval,
+    _sanitize_comment,
+)
 
 
 # --- Cutechess / fastchess: STM POV, float pawns, eval/depth time ---
@@ -133,7 +137,6 @@ def test_mixed_pv_paren_and_bracket_eval():
 # "took 7s" / "spent 2.5s" suffix. Regression for false-matching prose. ---
 
 def test_cutechess_time_only_token_is_parsed_as_time():
-    from sturddle_view.play.import_position import _cutechess_time_seconds
     # python-chess strips the surrounding braces, so the bare comment we
     # see is just "1.4s".
     assert _cutechess_time_seconds("1.4s") == 1.4
@@ -141,8 +144,13 @@ def test_cutechess_time_only_token_is_parsed_as_time():
     assert _cutechess_time_seconds("250ms") == 0.25
 
 
+def test_machine_time_token_after_prose_is_parsed_as_time():
+    # The token the sanitizer strips as machine time is read as time.
+    assert _cutechess_time_seconds("Good move! 3.2s") == 3.2
+    assert _cutechess_time_seconds("Quick reply 250ms") == 0.25
+
+
 def test_prose_with_trailing_time_is_not_parsed_as_time():
-    from sturddle_view.play.import_position import _cutechess_time_seconds
     # Prose comments mentioning seconds must NOT be classified as elapsed-time
     # tokens; otherwise we silently corrupt imported PGNs with annotated prose.
     assert _cutechess_time_seconds("took 7s") is None
@@ -151,14 +159,16 @@ def test_prose_with_trailing_time_is_not_parsed_as_time():
 
 
 def test_prose_with_trailing_time_is_not_stripped_by_sanitize():
-    from sturddle_view.play.import_position import _sanitize_comment
     # Annotator prose ending in "...7s" must survive sanitize verbatim.
-    assert _sanitize_comment("took 7s") == "Took 7s"
-    assert _sanitize_comment("spent 2.5s thinking") == "Spent 2.5s thinking"
+    assert _sanitize_comment("took 7s") == "took 7s"
+    assert _sanitize_comment("spent 2.5s thinking") == "spent 2.5s thinking"
+
+
+def test_unsigned_integer_fraction_is_not_an_eval():
+    assert _parse_pgn_eval("Holds the draw, 1/2", mover_white=True) is None
 
 
 def test_bare_time_token_is_stripped_by_sanitize():
-    from sturddle_view.play.import_position import _sanitize_comment
     # The bare time-only token IS machine annotation and must be removed,
     # leaving no readable prose.
     assert _sanitize_comment("1.4s") is None
@@ -166,11 +176,54 @@ def test_bare_time_token_is_stripped_by_sanitize():
 
 
 def test_cutechess_time_only_regex_rejects_prose():
-    from sturddle_view.play.import_position import (
-        _sanitize_comment, _cutechess_time_seconds,
-    )
     # Prose comment with a trailing "took 7s" must survive sanitize verbatim
     # (no machine-annotation strip) and must not be misread as elapsed time.
     prose = "Brilliant move! Took 7s to find"
     assert _sanitize_comment(prose) == prose
     assert _cutechess_time_seconds(prose) is None
+
+
+# --- Depth-less cutechess token: our writer's "<eval> <time>s" with no
+# "/depth" (an eval that came in without one, e.g. a Lichess import). Exactly
+# the written shape: signed two-decimal pawns or [+-]M<n>, STM POV. ---
+
+def test_depthless_token_white_eval():
+    assert _parse_pgn_eval("+0.34", mover_white=True) == {"cp": 34}
+
+
+def test_depthless_token_black_eval_is_flipped():
+    assert _parse_pgn_eval("-0.20 1.0s", mover_white=False) == {"cp": 20}
+
+
+def test_depthless_token_mate():
+    assert _parse_pgn_eval("-M3", mover_white=False) == {"mate": 3}
+
+
+def test_depthless_token_after_prose():
+    assert _parse_pgn_eval("Good move! +0.34 1.0s", mover_white=True) == {"cp": 34}
+
+
+def test_depthless_token_time_is_parsed():
+    assert _cutechess_time_seconds("+0.34 1.0s") == 1.0
+    assert _cutechess_time_seconds("Good move! -M3 250ms") == 0.25
+
+
+def test_depthless_token_is_stripped_by_sanitize():
+    assert _sanitize_comment("Good move! +0.34 1.0s") == "Good move!"
+    assert _sanitize_comment("+0.34") is None
+
+
+def test_sanitize_strips_exactly_one_trailing_token():
+    # Prose ending in a token shape, then the one token our writer appended:
+    # only the appended token goes.
+    assert _sanitize_comment("I think +0.50 +0.34/18 1.2s") == "I think +0.50"
+    assert _sanitize_comment("took 3.2s +0.34/18 1.2s") == "took 3.2s"
+    assert _sanitize_comment("took 3.2s 1.2s") == "took 3.2s"
+    assert _parse_pgn_eval("I think +0.50 +0.34/18 1.2s", mover_white=True) == {"cp": 34, "depth": 18}
+
+
+def test_depthless_token_requires_written_shape():
+    # One decimal, unsigned, or parenthesized: not ours, left as prose.
+    for text in ("+0.3", "2.50", "Black is better (+0.50)"):
+        assert _parse_pgn_eval(text, mover_white=True) is None
+        assert _sanitize_comment(text) == text

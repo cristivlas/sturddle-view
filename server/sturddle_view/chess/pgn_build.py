@@ -142,7 +142,7 @@ def build_pgn(
             # White-POV in memory -> STM-POV on a black-to-move ply.
             display = score if movers_white[i] else flip_score(score)
             eval_str = _format_eval(display)
-            depth = score.get(SCORE_DEPTH) if isinstance(score, dict) else None
+            depth = score.get(SCORE_DEPTH)
             parts.append(f"{eval_str}/{depth}" if depth is not None else eval_str)
         if elapsed is not None:
             parts.append(f"{elapsed:.1f}s")

@@ -107,7 +107,10 @@ _SIDE_B_KEY = "side_b"
 
 _EVT_STATUS_CHANGE = "status_change"
 # Latest line per command, replayed to a new subscriber.
-_SNAPSHOT_COMMANDS = (UCI_POSITION, UCI_GO, UCI_INFO)
+# ``bestmove`` last: it is cleared on each ``position``, so when present it
+# follows the snapshotted board and the client applies it on top.
+_SNAPSHOT_COMMANDS = (UCI_POSITION, UCI_GO, UCI_INFO, UCI_BESTMOVE)
+_FINAL_BOARD_COMMANDS = (UCI_POSITION, UCI_BESTMOVE)
 _NULL_MOVE = "(none)"
 # Placeholder in debug logs for a missing engine name / pairing state.
 _UNKNOWN = "?"
@@ -305,12 +308,45 @@ def _proxy_end_sentinel(proxy_id: str) -> dict:
     return {_PROXY_ID_KEY: proxy_id, _ENDED_KEY: True}
 
 
-def _game_end_sentinel(proxy_id: str, result: str, termination: str | None) -> dict:
-    return {
+def _game_end_sentinel(
+    proxy_id: str, result: str, termination: str | None, game_n: int | None = None,
+) -> dict:
+    sentinel = {
         **_proxy_end_sentinel(proxy_id),
         _RESULT_KEY: result,
         _TERMINATION_KEY: termination,
     }
+    # Known once reconciled: lets a window that missed game_reconciled
+    # still offer Review.
+    if game_n is not None:
+        sentinel[_GAME_N_KEY] = game_n
+    return sentinel
+
+
+def _snapshot_payload(
+    proxy_id: str, line: str, *, with_parsed: bool, engine_name: str | None = None,
+) -> dict:
+    payload = {_PROXY_ID_KEY: proxy_id, LINE_KEY: line}
+    if with_parsed:
+        payload[PARSED_KEY] = parse_uci_line(line)
+    payload[_SNAPSHOT_KEY] = True
+    if engine_name:
+        payload[_ENGINE_NAME_KEY] = engine_name
+    return payload
+
+
+@dataclass
+class _DissolvedPair:
+    """What a subscriber reconnecting after the game ended needs: each
+    proxy's final ``position`` (+ ``bestmove``) as (proxy_id, line), then
+    the end sentinel. Result, termination and game number are upgraded on
+    reconcile."""
+    white_pid: str
+    result: str
+    termination: str | None
+    lines: list[tuple[str, str]]
+    engine_names: dict[str, str]
+    game_n: int | None = None
 
 
 @dataclass
@@ -338,8 +374,9 @@ class Orchestrator:
         # end and on tournament teardown.
         self._proxy_engine_names: dict[str, str] = {}
         # Per-proxy snapshot of the most-recent stateful UCI lines:
-        # ``position`` (current board), ``go`` (current clocks), and
-        # ``info`` (current eval/depth/PV). Replayed to a subscriber on
+        # ``position`` (current board), ``go`` (current clocks), ``info``
+        # (current eval/depth/PV), and ``bestmove`` (move played since the
+        # last ``position``). Replayed to a subscriber on
         # connect so a window opened mid-game gets an instant snapshot
         # of the engine's state instead of waiting for the next event
         # (which under long time controls can be >=10s away).
@@ -379,6 +416,10 @@ class Orchestrator:
         # WS subscribers keyed by pair_id. Same lifecycle as proxy subscribers
         # but scoped to the game: sentinel sent when the pair is dissolved.
         self._game_subscribers: dict[str, set[CoalescingQueue]] = {}
+        # Replayed to a game subscriber that (re)attaches after dissolution.
+        self._dissolved_pairs: dict[str, _DissolvedPair] = {}
+        # Exited proxies: a (re)attaching subscriber gets the end sentinel.
+        self._ended_proxies: set[str] = set()
         # Last ``want_info`` value signaled back to each proxy on its POST
         # response. Used to send the flag only when it flips, so steady-state
         # batch responses stay empty (204). None = never signaled.
@@ -423,6 +464,8 @@ class Orchestrator:
         self._pair_proxies.clear()
         self._pair_white.clear()
         self._game_subscribers.clear()
+        self._dissolved_pairs.clear()
+        self._ended_proxies.clear()
         self._proxy_want_info_signaled.clear()
         self._pair_moves.clear()
         self._reconcile_queue.clear()
@@ -787,6 +830,7 @@ class Orchestrator:
             if stripped.startswith(command_prefix(UCI_POSITION)):
                 snap[UCI_POSITION] = line
                 snap.pop(UCI_INFO, None)
+                snap.pop(UCI_BESTMOVE, None)
                 parsed = parse_uci_line(stripped)
                 if parsed is not None and FEN_KEY in parsed and SIDE_TO_MOVE_KEY in parsed:
                     if self._pairing_color.get(proxy_id) is None:
@@ -817,6 +861,7 @@ class Orchestrator:
             elif stripped.startswith(command_prefix(UCI_GO)):
                 snap[UCI_GO] = line
             elif stripped.startswith(command_prefix(UCI_BESTMOVE)):
+                snap[UCI_BESTMOVE] = line
                 parsed = parse_uci_line(stripped)
                 new_pairs, orphaned = self._pairing_apply_bestmove(proxy_id, parsed)
                 await self._emit_group_events(new_pairs, orphaned)
@@ -1092,6 +1137,11 @@ class Orchestrator:
         return (w is None or w == record.white) and (b is None or b == record.black)
 
     async def _emit_reconciled(self, m: ReconciledMatch) -> None:
+        dissolved = self._dissolved_pairs.get(m.pair_id)
+        if dissolved is not None:
+            dissolved.result = m.result
+            dissolved.termination = m.termination
+            dissolved.game_n = m.game_n
         log.info(
             "reconciled pair=%s game_n=%d result=%s termination=%s plies=%d",
             short_id(m.pair_id), m.game_n, m.result,
@@ -1177,6 +1227,20 @@ class Orchestrator:
             # so parked entries get a chance to match the freshly-read
             # PGN before _reset_pairing_state wipes the queue.
             reconciled = self._reconcile_queue.add_pending(entry)
+        final_lines: list[tuple[str, str]] = []
+        for pid in (white_pid, black_pid):
+            snap = self._proxy_snapshot.get(pid, {})
+            for command in _FINAL_BOARD_COMMANDS:
+                line = snap.get(command)
+                if line:
+                    final_lines.append((pid, line))
+        engine_names = {
+            pid: name for pid in (white_pid, black_pid)
+            if (name := self._proxy_engine_names.get(pid))
+        }
+        self._dissolved_pairs[pair_id] = _DissolvedPair(
+            white_pid, result, termination, final_lines, engine_names,
+        )
         game_subs = self._game_subscribers.pop(pair_id, None)
         if _DEBUG_PAIRING:
             log.debug(
@@ -1320,6 +1384,7 @@ class Orchestrator:
         new_pairs, orphaned = self._recompute_groups()
         self._pairing_color.pop(proxy_id, None)
         self._proxy_want_info_signaled.pop(proxy_id, None)
+        self._ended_proxies.add(proxy_id)
         subs = self._proxy_subscribers.pop(proxy_id, None)
         if subs:
             for q in subs:
@@ -1339,8 +1404,14 @@ class Orchestrator:
         Replays the proxy's current snapshot (latest ``position`` /
         ``go`` / ``info``) onto the queue so a window opened mid-game
         gets an instant render of the engine's state instead of having
-        to wait for the engine's next event (>=10s under long TC)."""
+        to wait for the engine's next event (>=10s under long TC).
+
+        An exited proxy, or no running tournament, gets the end sentinel
+        at once so a reconnecting window doesn't sit stale."""
         q = CoalescingQueue(maxsize=_SUBSCRIBER_QUEUE_MAX)
+        if self._active_id is None or proxy_id in self._ended_proxies:
+            q.put_sentinel(_proxy_end_sentinel(proxy_id))
+            return q
         self._proxy_subscribers.setdefault(proxy_id, set()).add(q)
         # Snapshot replay bypasses coalescing -- these are all the latest
         # values already, no benefit to slotting. ``snapshot`` tells the
@@ -1357,10 +1428,10 @@ class Orchestrator:
             line = snap.get(command)
             if not line:
                 continue
-            payload = {_PROXY_ID_KEY: proxy_id, LINE_KEY: line}
-            if with_parsed:
-                payload[PARSED_KEY] = parse_uci_line(line)
-            payload[_SNAPSHOT_KEY] = True
+            payload = _snapshot_payload(
+                proxy_id, line, with_parsed=with_parsed,
+                engine_name=self._proxy_engine_names.get(proxy_id),
+            )
             if command == UCI_INFO:
                 q.put_info(payload)
             else:
@@ -1384,10 +1455,21 @@ class Orchestrator:
         proxies = self._pair_proxies.get(pair_id)
         if not proxies:
             # Pair already dissolved before this subscriber attached
-            # (race: user clicks Watch as the game ends). Push the
-            # sentinel immediately so the WS handler closes cleanly
-            # instead of leaving a stuck window.
-            q.put_sentinel(_game_end_sentinel("", UNKNOWN_RESULT, UNKNOWN_TERMINATION))
+            # (Watch clicked as the game ends, or a dropped socket
+            # reconnecting): replay the final board, then the sentinel.
+            dissolved = self._dissolved_pairs.get(pair_id)
+            if dissolved is None:
+                q.put_sentinel(_game_end_sentinel("", UNKNOWN_RESULT, UNKNOWN_TERMINATION))
+                return q
+            for pid, line in dissolved.lines:
+                q.put_other(_snapshot_payload(
+                    pid, line, with_parsed=True,
+                    engine_name=dissolved.engine_names.get(pid),
+                ))
+            q.put_sentinel(_game_end_sentinel(
+                dissolved.white_pid, dissolved.result, dissolved.termination,
+                dissolved.game_n,
+            ))
             return q
         self._game_subscribers.setdefault(pair_id, set()).add(q)
         # Replay snapshot for both proxies so a late subscriber gets

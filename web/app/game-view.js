@@ -2,7 +2,7 @@
 // Used by Play (interactive, full-size) and Observe (read-only, in a WinBox).
 
 import { mountBoard } from "./board.js";
-import { toast } from "./dialogs.js";
+import { copyToClipboard } from "./dialogs.js";
 import {
   DOCK_DROP_ELIGIBLE_CLASS,
   DOCK_EMPTY_CLASS,
@@ -25,7 +25,6 @@ const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const MAX_CLOCK_NAME_DESKTOP = 48;
 const MAX_CLOCK_NAME_MOBILE = 24;
 
-const FEN_COPY_TOAST_MS = 1500;
 // 50-move-rule warning: highlight the halfmove clock at/after this many plies.
 const HALFMOVE_WARN_PLIES = 40;
 
@@ -165,29 +164,8 @@ function setFen(ctx, fen) {
   if (ctx.fenText) ctx.fenText.textContent = ctx.currentFen;
 }
 
-async function copyFen(ctx) {
-  if (!ctx.currentFen) return;
-  // Prefer the async Clipboard API (works on https + localhost). Fall
-  // back to the legacy execCommand path for plain-http hosts where the
-  // async API is blocked.
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(ctx.currentFen);
-    } else {
-      const ta = document.createElement("textarea");
-      ta.value = ctx.currentFen;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand("copy");
-      ta.remove();
-      if (!ok) throw new Error("execCommand failed");
-    }
-    toast("FEN copied", { variant: "success", duration: FEN_COPY_TOAST_MS });
-  } catch {
-    toast("Could not copy FEN", { variant: "danger" });
-  }
+function copyFen(ctx) {
+  if (ctx.currentFen) copyToClipboard(ctx.currentFen, "FEN");
 }
 
 // The game's own opening; a line show only borrows the label (see
@@ -330,6 +308,19 @@ function setEngineSectionEmpty(ctx, empty) {
   recomputeBoardSize(ctx);
 }
 
+function movesListEmpty(ctx) {
+  return !ctx.moveListEl?.firstElementChild;
+}
+
+// Same for the moves list: while it is empty (and the engine section hidden)
+// a docked rail band extends up to the top clock row, so a flip re-lays out.
+function syncMovesEmpty(ctx) {
+  const empty = movesListEmpty(ctx);
+  if (ctx.movesEmpty === empty) return;
+  ctx.movesEmpty = empty;
+  recomputeBoardSize(ctx);
+}
+
 function clearEngineInfoFields(ctx) {
   if (ctx.engineDepth) ctx.engineDepth.textContent = "";
   if (ctx.engineScore) ctx.engineScore.textContent = "";
@@ -430,11 +421,14 @@ function positionSideRail(ctx, geom) {
   // area. With no engine section (or it's empty/hidden) the moves list is
   // the rail's only content, so keep it flush with the board top instead.
   const clockTopRow = ctx.clockTopRow;
-  const topRef = clockTopRow && clockTopRow.offsetParent !== null
-    && !!ctx.engineSection && ctx.engineSection.offsetParent !== null
+  const engineShown = !!ctx.engineSection && ctx.engineSection.offsetParent !== null;
+  const topRef = clockTopRow && clockTopRow.offsetParent !== null && engineShown
     ? clockTopRow.getBoundingClientRect()
     : boardRect;
   const top = Math.ceil(topRef.top);
+  // Top clock row edge, rounded like the dock column on the other side.
+  const clockTopY = clockTopRow && clockTopRow.offsetParent !== null
+    ? Math.round(clockTopRow.getBoundingClientRect().top) : top;
   // Cap the rail at its natural width only on wide viewports with an
   // empty dock side (keeps the picture centered). A visible docker
   // lets the rail fill `avail` at any width.
@@ -457,8 +451,9 @@ function positionSideRail(ctx, geom) {
   ctx.railMaxLift = Math.max(0, height - rem(MIN_MOVES_REM));
   const boardBottom = Math.floor(boardRect.bottom);
   const clockRow = ctx.clockBottomRow;
+  // Rounded like the dock column on the other side, so both bottoms match.
   const barBottom = clockRow && clockRow.offsetParent !== null
-    ? Math.floor(clockRow.getBoundingClientRect().bottom)
+    ? Math.round(clockRow.getBoundingClientRect().bottom)
     : boardBottom;
   // Band starts one grip-thickness below the board, so the grip fills the
   // gap between the moves list and the docked panel exactly.
@@ -468,6 +463,10 @@ function positionSideRail(ctx, geom) {
   // preview) shows the band at its persisted, lifted size, not the bare one.
   const occupied = slotCount > 0
     || !!railDock?.classList.contains(DOCK_DROP_ELIGIBLE_CLASS);
+  // Occupied with nothing above (no engine section, no moves): the band spans
+  // from the top clock row, like the dock column on the other side. An empty
+  // band keeps its bare strip, so the drop zone doesn't swallow the column.
+  const fromClockTop = occupied && !engineShown && movesListEmpty(ctx);
   // Stacked windows each need room for a header and a few rows: the band
   // grows past the persisted lift to fit them, and the moves list yields.
   const stackedNeed = slotCount > 1 ? slotCount * rem(RAIL_SLOT_MIN_REM) : 0;
@@ -483,18 +482,17 @@ function positionSideRail(ctx, geom) {
   sideHost.style.width = `${width}px`;
   sideHost.style.height = `${height - lift}px`;
   sideHost.style.removeProperty("margin-top");
-  // The rail dock is purely additive: a fixed band under the moves box
-  // (same x as the rail) filling the gap from the board bottom down to the
-  // clock bottom. It never joins the rail's flex flow, so the moves list
-  // keeps its exact geometry.
+  // The rail dock is purely additive: a fixed band (same x as the rail) from
+  // the board bottom -- or the top clock row, see fromClockTop -- down to the
+  // clock bottom. Outside the rail's flex flow, so the moves list keeps its geometry.
   if (railDock) {
-    const barTop = bareTop - lift;
+    const barTop = fromClockTop ? clockTopY : bareTop - lift;
     railDock.style.left = `${left}px`;
     railDock.style.top = `${barTop}px`;
     railDock.style.width = `${width}px`;
     railDock.style.height = `${Math.max(0, barBottom - barTop)}px`;
     const grip = ensureRailGrip(ctx, railDock);
-    grip.style.display = occupied ? "" : "none";
+    grip.style.display = occupied && !fromClockTop ? "" : "none";
     grip.style.left = `${left}px`;
     grip.style.top = `${barTop - RAIL_GRIP_PX}px`;
     grip.style.width = `${width}px`;
@@ -728,11 +726,14 @@ function applyBoardUpdate(ctx, evt) {
       onForkClick: ctx.onForkClick,
       boardEl: ctx.boardEl,
     });
+    syncMovesEmpty(ctx);
   }
   setOpening(ctx, evt.payload.opening);
   setTablebase(ctx, evt.payload.tablebase);
   if (ctx.showEngineInfo && evt.payload.view) applyViewEval(ctx, evt);
-  if (ctx.interactive && !ctx.editing) board.enableInput(true);
+  // Every path applying a board update (the bus, a direct re-apply) agrees:
+  // a view is read-only, play takes moves.
+  if (ctx.interactive && !ctx.editing) board.enableInput(!ctx.viewing);
   announcePlayLineGate(ctx);
 }
 
@@ -1097,6 +1098,7 @@ function buildViewApi(ctx) {
       // then slide the board *backward* off that move ("withdrawing" it).
       ctx.board.setPosition(INITIAL_FEN, null, false);
       if (ctx.moveListEl) ctx.moveListEl.innerHTML = "";
+      syncMovesEmpty(ctx);
       clearEngineInfoFields(ctx);
       setEngineSectionEmpty(ctx, true);
       setOpening(ctx, null);

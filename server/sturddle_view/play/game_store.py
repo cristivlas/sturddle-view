@@ -59,6 +59,13 @@ class GameState:
     game_started_wall: float | None = None
     # Player name for PGN headers and clock badge. Survives reload/restart.
     player_name: str = DEFAULT_PLAYER_NAME
+    # Play-side annotations; per-ply list parallels moves_uci.
+    play_comments: list[str | None] | None = None
+    play_root_comment: str | None = None
+    # Fork link of a Play-from-here game, so its Recents save after a
+    # restart still points at the parent.
+    parent_game_id: str | None = None
+    fork_ply: int | None = None
     version: int = SCHEMA_VERSION
 
 
@@ -89,6 +96,8 @@ class GameStore:
             )
             return None
         try:
+            comments = data.get("play_comments")
+            fork_ply = data.get("fork_ply")
             return GameState(
                 game_id=data["game_id"],
                 human_white=bool(data["human_white"]),
@@ -103,6 +112,10 @@ class GameStore:
                 start_fen=data.get("start_fen"),
                 game_started_wall=data.get("game_started_wall"),
                 player_name=data.get("player_name", DEFAULT_PLAYER_NAME),
+                play_comments=None if comments is None else list(comments),
+                play_root_comment=data.get("play_root_comment"),
+                parent_game_id=data.get("parent_game_id"),
+                fork_ply=None if fork_ply is None else int(fork_ply),
             )
         except (KeyError, TypeError, ValueError):
             log.error("malformed saved game in %s; ignoring", self._path, exc_info=True)

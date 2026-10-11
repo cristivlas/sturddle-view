@@ -96,8 +96,16 @@ All under `/game/recent-imports`, behind the same auth token as other
   recall. A future "hover preview" feature must use the index, not
   this endpoint, to avoid bumping ts on hover.)
 
-- `DELETE /game/recent-imports/{hash}` *(optional, for future "Clear
-  history" UI)*. Removes the index row and the blob.
+- `DELETE /game/recent-imports/{hash}`. Removes the index row and the
+  blob. The dialog never offers it for the game open in view: that row
+  is disabled (no trash, a muted "viewing" tag), since re-importing it
+  is a no-op and deleting it would pull the board out from under the
+  viewer. The game in progress gets the same treatment: its exported
+  row is tagged "playing" while played, "viewing" on its live clone.
+  The server still has the path the old flow used -- a 409 `in_view`,
+  then `?force=1` closing the view (`close_view`, which on a live clone
+  returns to the live game) -- now unreachable from the bundled UI and
+  a candidate for cleanup.
 
 There is **no standalone `POST /game/recent-imports`** — saving is a
 side effect of two endpoints:
@@ -107,8 +115,8 @@ side effect of two endpoints:
   edit means the user deliberately built a position they may want
   later; cancel never writes. The pre-edit position is unrelated and
   may or may not already be in recents (it is iff the user reached
-  view mode via `/game/import`; the play -> view -> edit path uses
-  `/game/view/start`, which is a pure state flip with no save).
+  view mode via `/game/import`; edit from play works on a live clone,
+  which never writes a row).
 
 Migration (importing existing localStorage entries from older clients)
 goes through `/game/import` per entry; the server treats each as a

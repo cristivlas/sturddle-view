@@ -73,14 +73,6 @@ async def test_takeback_pops_eval_history(hve):
     assert hve._eval_history == []
 
 
-async def test_play_game_snapshot_includes_eval_history(hve):
-    await hve.new_game(human_white=True, tc=TimeControl(60.0, 0.0))
-    await hve.submit_move("e2e4")
-    await _engine_reply(hve, "e7e5", score={"cp": 20, "depth": 8})
-    start_fen, moves, clocks, w, b, evals = hve.play_game_snapshot()
-    assert evals == [None, {"cp": 20, "depth": 8}]
-
-
 async def test_enter_view_mode_populates_view_eval_history(hve):
     evals: list[dict | None] = [None, {"cp": 25, "depth": 10}]
     await hve.enter_view_mode(ViewModeParams(
@@ -92,21 +84,14 @@ async def test_enter_view_mode_populates_view_eval_history(hve):
     assert hve._view_eval_history == evals
 
 
-async def test_play_to_view_transition_carries_evals(hve):
-    """Simulates POST /game/view/start: snapshot -> ViewModeParams -> enter_view_mode."""
+async def test_live_clone_carries_evals(hve):
+    """Scrub back (POST /game/view/start): the live clone's view keeps the
+    play game's per-ply evals."""
     await hve.new_game(human_white=True, tc=TimeControl(60.0, 0.0))
     await hve.submit_move("e2e4")
     await _engine_reply(hve, "e7e5", score={"cp": 30, "depth": 11})
-    start_fen, moves, clocks, w, b, evals = hve.play_game_snapshot()
-    pre_transition = list(evals)
-    await hve.enter_view_mode(ViewModeParams(
-        start_fen=start_fen,
-        moves_uci=moves,
-        clock_history=clocks or None,
-        final_white_time=w,
-        final_black_time=b,
-        eval_history=evals,
-    ))
+    pre_transition = list(hve._eval_history)
+    await hve.enter_live_clone(1)
     assert hve._view_eval_history == pre_transition
 
 

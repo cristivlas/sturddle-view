@@ -6,8 +6,8 @@ slotted subtree out of sequential focus navigation -- which silently made
 every wa-tab in Studio's bottom panes unreachable by keyboard (arrow keys
 never got a chance, since focus could not enter the group in the first place).
 
-Guards both halves: the tabs are Tab-reachable, and Ctrl+A still scopes to the
-region rather than the whole page.
+Guards both halves: the tabs are Tab-reachable, and Ctrl+A in the Event Log
+selects the log's contents even when focus did not come from the tab group.
 
 Skipped if Playwright/Chromium isn't installed.
 """
@@ -40,7 +40,17 @@ MAX_TAB_STOPS = 60
 LEFT_TAB = "livegames"
 RIGHT_TAB = "tourneys"
 LOG_TAB = "log"
-LOG_PANE = ".studio-pane-log"
+LOG_LIST = ".studio-pane-log .wb-eventlog-list"
+STUDIO_TAB_RIGHT_KEY = "sturddle:studio:tabRight"
+
+# The seeded tourney's in-memory event history is empty, so stub the backfill.
+LOG_LINES = ("fastchess line one", "fastchess line two")
+EVENTS_ROUTE = "**/events"
+STUB_EVENTS = {"events": [
+    {"kind": "tournament_update",
+     "payload": {"kind": "runner_log", "stream": "out", "line": line, "_seq": i + 1}}
+    for i, line in enumerate(LOG_LINES)
+]}
 
 # Active-tab panel name per bottom group -- the one tab stop each group owns.
 ACTIVE_TABS = (LEFT_TAB, RIGHT_TAB)
@@ -54,15 +64,13 @@ FOCUSED_TAB_PANEL = """() => {
 GROUP_TABINDEX = """() => Array.from(document.querySelectorAll('wa-tab-group'))
   .map(g => g.getAttribute('tabindex'))"""
 
-# Where Ctrl+A put the selection: the enclosing selectable region, or the bare
-# tag name when the selection escaped every region.
-SELECTION_REGION = """() => {
-  const node = getSelection().anchorNode;
-  if (!node) return null;
-  const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-  const region = el && el.closest('[data-selectable]');
-  return region ? region.localName : 'ESCAPED:' + (el ? el.localName : '?');
-}"""
+# Selected text, and whether the selection stays inside the log list.
+LOG_SELECTION = f"""() => {{
+  const sel = getSelection();
+  if (!sel.rangeCount) return null;
+  const list = document.querySelector('{LOG_LIST}');
+  return {{ text: sel.toString(), inList: list.contains(sel.getRangeAt(0).commonAncestorContainer) }};
+}}"""
 
 
 def _server_env(tmp_path):
@@ -149,19 +157,25 @@ async def test_studio_tabs_are_tab_reachable(tmp_path, make_page):
 
 
 @pytest.mark.asyncio
-async def test_studio_ctrl_a_still_scoped_to_region(tmp_path, make_page):
-    """The marker tabindex existed so Ctrl+A could scope to a region; dropping
-    it on the tab group must not push the selection out to the page."""
+async def test_studio_event_log_ctrl_a_selects_log(tmp_path, make_page):
+    """Studio reopened on a persisted Event Log tab: no wa-tab ever took
+    focus, so clicking a log line then Ctrl+A must still select the log."""
     _seed(tmp_path)
     with run_uvicorn_subprocess(env_overrides=_server_env(tmp_path)) as base:
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
         errors = watch_page_errors(page)
+        await page.route(EVENTS_ROUTE, lambda route: route.fulfill(json=STUB_EVENTS))
+        await page.add_init_script(
+            f"localStorage.setItem('{STUDIO_TAB_RIGHT_KEY}', '{LOG_TAB}')"
+        )
         await _open_studio(page, base)
 
-        await page.click(f'.studio-bottom-right wa-tab[panel="{LOG_TAB}"]')
-        await page.wait_for_selector(LOG_PANE)
-        await page.click(LOG_PANE)
+        line = page.locator(f"{LOG_LIST} li", has_text=LOG_LINES[0])
+        await line.click()
         await page.keyboard.press("Control+a")
 
-        assert await page.evaluate(SELECTION_REGION) == "wa-tab-group"
+        sel = await page.evaluate(LOG_SELECTION)
+        assert sel and sel["inList"], sel
+        for text in LOG_LINES:
+            assert text in sel["text"], sel
         assert not errors, errors
