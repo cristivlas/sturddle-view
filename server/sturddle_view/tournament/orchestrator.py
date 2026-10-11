@@ -134,6 +134,10 @@ BroadcastCallback = Callable[[str, dict], Awaitable[None]]
 # evicted game_finished/game_reconciled rows in the event log.
 EVENT_HISTORY_MAX = env_int("SV_EVENT_HISTORY_MAX", 200)
 
+# Dissolved pairs kept for watcher reconnect replay. A reconnect only
+# needs the games that just ended, so the oldest are evicted past this.
+DISSOLVED_PAIRS_MAX = env_int("SV_DISSOLVED_PAIRS_MAX", 200, min_value=1)
+
 
 # Two engines of one game share a FEN at the rendezvous: the thinker
 # (registered via ``position``) and the waiter (registered via
@@ -1241,6 +1245,8 @@ class Orchestrator:
         self._dissolved_pairs[pair_id] = _DissolvedPair(
             white_pid, result, termination, final_lines, engine_names,
         )
+        while len(self._dissolved_pairs) > DISSOLVED_PAIRS_MAX:
+            self._dissolved_pairs.pop(next(iter(self._dissolved_pairs)))
         game_subs = self._game_subscribers.pop(pair_id, None)
         if _DEBUG_PAIRING:
             log.debug(

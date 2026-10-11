@@ -1912,58 +1912,6 @@ function _onServerEditingStop(state) {
   refreshButtons(state);
 }
 
-// The viewed game's recents row was force-deleted: the server tore the view
-// session down to no-game (close_view) with no board left to publish, so this
-// client flips itself to the idle board locally.
-function enterIdleAfterViewDelete(state) {
-  state.viewing = false;
-  state.viewingGameId = null;
-  state.view.setGameId(null);
-  // Full visual reset: startpos board, empty move list, no arrows --
-  // nothing of the deleted game may linger.
-  state.view.clearArrows();
-  state.view.reset();
-  clearUciLog();
-  state.movesPlayed = 0;
-  _viewingHash = null;
-  _viewingSummary = null;
-  state.lastViewComment = null;
-  state.commentNavPrev = null;
-  state.commentNavNext = null;
-  state.viewGameOverAlertShown = false;
-  state.dismissGameOverToast?.();
-  state.dismissGameOverToast = null;
-  setAnalyzing(state, false);
-  closeAi();
-  pushNavToUi(state);
-  syncCommentsVisibility(state);
-  restoreDebugWindows(state.ctx.events);
-  resetXgame(state);
-  refreshXgameToasts(state);
-  state.resignAvailable = false;
-  state.gameOver = false;
-  _playInProgress = false;
-  state.el.boardHost.classList.add("board-idle");
-  setDisabled(state.el.newGameBtn, false);
-  showFinishedBadge(state, "");
-  refreshButtons(state);
-  window.dispatchEvent(new CustomEvent(APP_EVT.VIEWING_CHANGED, {
-    detail: { viewing: false },
-  }));
-}
-
-// Force-deleting the live game's exported row while on its clone resumed the
-// live game (same game_id). Adopt that id and resync so the board shows the
-// live game.
-async function adoptResumedAfterViewDelete(state, gameId) {
-  state.view.setGameId(gameId);
-  try {
-    await state.ctx.api("POST", "/game/sync", {});
-  } catch (e) {
-    reportError(state.ctx, MSG.RESUME_FAILED, e);
-  }
-}
-
 // A finished game flips into view mode on its recents copy (the live game is
 // finalized before game_result fires; the server flushes recents first),
 // landing on the final position. Zero-move games never reach recents -- skip.
@@ -2556,17 +2504,7 @@ export const playPerspective = {
     // import dialog) mutated the recents store. Re-fetch x-game info
     // for the currently-viewed game so the fork glyph + banner reflect
     // the new state (B3: glyph stale after a child was deleted).
-    const onRecentsChanged = (ev) => {
-      if (ev.detail?.resumedGameId) {
-        adoptResumedAfterViewDelete(state, ev.detail.resumedGameId);
-        return;
-      }
-      // The currently-viewed game was force-deleted -> idle board.
-      if (ev.detail?.deletedGameId && state.viewing && !state.editing
-          && ev.detail.deletedGameId === state.viewingGameId) {
-        enterIdleAfterViewDelete(state);
-        return;
-      }
+    const onRecentsChanged = () => {
       if (state.viewing && _viewingHash) fetchXgameInfo(state, state.viewingGameId);
     };
     window.addEventListener(APP_EVT.RECENTS_CHANGED, onRecentsChanged);

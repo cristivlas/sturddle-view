@@ -17,7 +17,8 @@ return the windows are gone.
   (pair_id -> result, termination, each proxy's final `position` line),
   cleared in `_reset_pairing_state`. `subscribe_to_game` replays the
   recorded positions and then the real sentinel. Memory is a few hundred
-  bytes per game; bound with an LRU if needed.
+  bytes per game; the map keeps the newest `SV_DISSOLVED_PAIRS_MAX`
+  (default 200) pairs and evicts the oldest.
 - Engine streams (`/ws/tournament/proxy/{proxy_id}`): gap. Subscribing to
   an exited proxy registers a queue that never receives anything, so a
   reconnected window would sit stale.

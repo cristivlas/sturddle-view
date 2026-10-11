@@ -16,6 +16,7 @@ import chess
 from ..env_utils import env_int
 from ..llm import ToolSpec
 from ..llm.cancel import CancelToken
+from ..llm.tools import NO_LIVE_POSITION_ERROR, object_schema, string_prop, tool_error
 from ..openings import Opening, OpeningBook
 
 
@@ -30,6 +31,9 @@ OpeningsShown = Callable[[list[Opening]], None]
 
 
 RELATED_OPENINGS_TOOL_NAME = "related_openings"
+# Tool argument and result key: the family filter, echoed when applied.
+_FAMILY_KEY = "family"
+_NO_OPENING_BOOK_ERROR = "no_opening_book"
 
 # Cap on siblings returned per call. A broad family (the Sicilian has dozens
 # of variations) would otherwise flood the model's context.
@@ -57,20 +61,14 @@ RELATED_OPENINGS_TOOL_SPEC = ToolSpec(
         "first ':' selects it) to list a specific family instead. Capped at "
         f"{RELATED_OPENINGS_MAX_N} lines."
     ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "family": {
-                "type": "string",
-                "description": (
-                    "Restrict to this family, e.g. 'Sicilian Defense' or "
-                    "'Caro-Kann Defense: Advance Variation' (the part before "
-                    "':' selects the family). Omit to get the neighbors of "
-                    "the current line."
-                ),
-            },
-        },
-    },
+    input_schema=object_schema({
+        _FAMILY_KEY: string_prop(
+            "Restrict to this family, e.g. 'Sicilian Defense' or "
+            "'Caro-Kann Defense: Advance Variation' (the part before "
+            "':' selects the family). Omit to get the neighbors of "
+            "the current line."
+        ),
+    }),
     card=_RELATED_OPENINGS_CARD,
 )
 
@@ -90,8 +88,8 @@ def make_related_openings_tool(
     async def related_openings(input_: dict, *, cancel_token: CancelToken) -> dict:
         book = book_provider()
         if book is None or len(book) == 0:
-            return {"error": "no_opening_book"}
-        raw_family = input_.get("family")
+            return tool_error(_NO_OPENING_BOOK_ERROR)
+        raw_family = input_.get(_FAMILY_KEY)
         # family_of strips its argument, so no need to pre-strip here; the
         # guard's strip() only rejects whitespace-only input.
         family = (
@@ -101,14 +99,14 @@ def make_related_openings_tool(
         )
         board = board_provider()
         if board is None and family is None:
-            return {"error": "no_live_position"}
+            return tool_error(NO_LIVE_POSITION_ERROR)
         line = [m.uci() for m in board.move_stack] if board is not None else []
         rows = book.nearest(line, family=family, limit=RELATED_OPENINGS_MAX_N)
         if on_shown is not None:
             on_shown(rows)
         out: dict = {"count": len(rows), "openings": [o.as_dict() for o in rows]}
         if family is not None:
-            out["family"] = family
+            out[_FAMILY_KEY] = family
         return out
 
     return related_openings

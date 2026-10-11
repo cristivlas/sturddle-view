@@ -102,10 +102,9 @@ All under `/game/recent-imports`, behind the same auth token as other
   is a no-op and deleting it would pull the board out from under the
   viewer. The game in progress gets the same treatment: its exported
   row is tagged "playing" while played, "viewing" on its live clone.
-  The server still has the path the old flow used -- a 409 `in_view`,
-  then `?force=1` closing the view (`close_view`, which on a live clone
-  returns to the live game) -- now unreachable from the bundled UI and
-  a candidate for cleanup.
+  The server's only delete gate is the children pin: a row with live
+  forked children answers 409 `has_children` and stays; an unknown hash
+  is 404. The viewed game gets no server-side handling.
 
 There is **no standalone `POST /game/recent-imports`** — saving is a
 side effect of two endpoints:

@@ -14,6 +14,7 @@ import asyncio
 import pytest
 
 from sturddle_view.chess.results import UNKNOWN_RESULT, UNKNOWN_TERMINATION
+from sturddle_view.tournament import orchestrator as orchestrator_mod
 from sturddle_view.tournament.orchestrator import CoalescingQueue, Orchestrator
 from sturddle_view.tournament.pgn_reconcile import ReconciledMatch
 from sturddle_view.tournament.runner import RunSpec
@@ -341,6 +342,27 @@ async def test_subscribe_to_dissolved_pair_replays_final_board(orch):
     assert q.terminal["result"] == "1-0"
     assert q.terminal["termination"] == "adjudication"
     assert q.terminal["proxy_id"] == _PROXY_A
+
+
+_DISSOLVED_CAP = 2
+
+
+@pytest.mark.asyncio
+async def test_dissolved_pairs_evict_oldest_beyond_cap(orch, monkeypatch):
+    """Reconnect replay only needs the games that just ended: past the cap
+    the oldest dissolved pair goes, the newest stay."""
+    monkeypatch.setattr(orchestrator_mod, "DISSOLVED_PAIRS_MAX", _DISSOLVED_CAP)
+    pair_ids = []
+    for n in range(_DISSOLVED_CAP + 1):
+        white, black = f"proxy-w{n}", f"proxy-b{n}"
+        await orch.proxy_session_started(white, _ENGINE_A)
+        await orch.proxy_session_started(black, _ENGINE_B)
+        await _confirm_pair(orch, white, black)
+        pair_ids.append(next(iter(orch._pair_proxies)))
+        await orch.ingest_proxy_lines(white, ["ucinewgame"])
+        await orch.ingest_proxy_lines(black, ["ucinewgame"])
+
+    assert list(orch._dissolved_pairs) == pair_ids[1:]
 
 
 @pytest.mark.asyncio
