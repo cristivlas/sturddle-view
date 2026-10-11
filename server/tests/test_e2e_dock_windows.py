@@ -21,6 +21,11 @@ PV_BTN = "#pv-table-btn"
 UCI_BTN = "#uci-log-btn"
 UCI_WB = ".winbox.sturddle-wb-uci-log"
 PV_WB = ".winbox.sturddle-wb-pvtable"
+COARSE_POINTER_MQ = "(pointer: coarse)"
+DEFAULT_VIEWPORT = {"width": 1600, "height": 1000}
+# 1366x768 laptop: taskbar + browser chrome leave a ~620px-tall viewport,
+# under --bp-mobile-h-play but far wider than --bp-mobile.
+SHORT_VIEWPORT = {"width": 1366, "height": 620}
 
 
 @pytest.fixture
@@ -30,13 +35,19 @@ def server(tmp_path):
         yield base
 
 
-async def _new_page(make_page):
-    ctx, page = await make_page(viewport={"width": 1600, "height": 1000})
+async def _new_page(make_page, viewport=DEFAULT_VIEWPORT, **ctx_kwargs):
+    ctx, page = await make_page(viewport=viewport, **ctx_kwargs)
     errors: list[str] = []
     page.on("pageerror", lambda exc: errors.append(str(exc)))
     page.on("console", lambda msg: errors.append(f"console.{msg.type}: {msg.text}")
             if msg.type == "error" else None)
     return ctx, page, errors
+
+
+async def _dock_displayed(page):
+    return await page.evaluate(
+        f"() => getComputedStyle(document.querySelector('{DOCK_LEFT}')).display !== 'none'"
+    )
 
 
 async def _goto_play(page, base):
@@ -190,4 +201,27 @@ async def test_nav_away_and_back_restores(server, make_page):
     await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot")
     titles = await _slot_titles(page)
     assert titles == ["Search Lines", "UCI Log"], titles
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_short_laptop_keeps_desktop_layout(server, make_page):
+    """A short-but-wide mouse viewport is a laptop, not a phone: the
+    short-height gate must not stack Play into the mobile layout."""
+    _ctx, page, errors = await _new_page(make_page, SHORT_VIEWPORT)
+    await _goto_play(page, server)
+    assert not await page.evaluate(f"() => matchMedia('{COARSE_POINTER_MQ}').matches")
+    await page.click(PV_BTN)
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot")
+    assert await _dock_displayed(page)
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_short_touch_viewport_stacks_mobile(server, make_page):
+    """Same short viewport on a touch device (landscape phone) stays mobile."""
+    _ctx, page, errors = await _new_page(make_page, SHORT_VIEWPORT, has_touch=True)
+    await _goto_play(page, server)
+    assert await page.evaluate(f"() => matchMedia('{COARSE_POINTER_MQ}').matches")
+    assert not await _dock_displayed(page)
     assert_no_page_errors(errors)

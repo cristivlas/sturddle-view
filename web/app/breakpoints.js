@@ -9,20 +9,32 @@ function read(name, fallback) {
   return v || fallback;
 }
 
+const BP_VAR = {
+  narrowDialog:    "--bp-narrow-dialog",
+  settingsTopTabs: "--bp-settings-top-tabs",
+  mobile:          "--bp-mobile",
+  mobileH:         "--bp-mobile-h",
+  mobileHPlay:     "--bp-mobile-h-play",
+  wide:            "--bp-wide",
+};
+
 export const BP = {
-  narrowDialog: read("--bp-narrow-dialog", "30rem"),
-  settingsTopTabs: read("--bp-settings-top-tabs", "46rem"),
-  mobile:       read("--bp-mobile",        "50rem"),
-  mobileH:      read("--bp-mobile-h",      "30rem"),
-  mobileHPlay:  read("--bp-mobile-h-play", "42.5rem"),
-  wide:         read("--bp-wide",          "93.75rem"),
+  narrowDialog: read(BP_VAR.narrowDialog, "30rem"),
+  settingsTopTabs: read(BP_VAR.settingsTopTabs, "46rem"),
+  mobile:       read(BP_VAR.mobile,        "50rem"),
+  mobileH:      read(BP_VAR.mobileH,       "30rem"),
+  mobileHPlay:  read(BP_VAR.mobileHPlay,   "42.5rem"),
+  wide:         read(BP_VAR.wide,          "93.75rem"),
 };
 
 export const mqNarrowDialog = matchMedia(`(max-width: ${BP.narrowDialog})`);
 export const mqSettingsTopTabs = matchMedia(`(max-width: ${BP.settingsTopTabs})`);
 export const mqMobile       = matchMedia(`(max-width: ${BP.mobile})`);
 export const mqMobileH      = matchMedia(`(max-height: ${BP.mobileH})`);
-export const mqMobileHPlay  = matchMedia(`(max-height: ${BP.mobileHPlay})`);
+// Touch only: short-but-wide mouse viewports are laptops (1366x768), not phones.
+// Source of truth; styles.css height-gate @media rules repeat it (drift-checked).
+const HEIGHT_GATE_POINTER = "(pointer: coarse)";
+export const mqMobileHPlay  = matchMedia(`(max-height: ${BP.mobileHPlay}) and ${HEIGHT_GATE_POINTER}`);
 export const mqWide         = matchMedia(`(min-width: ${BP.wide})`);
 
 // Drift guard: styles.css @media rules hardcode these breakpoints in px (no
@@ -30,11 +42,11 @@ export const mqWide         = matchMedia(`(min-width: ${BP.wide})`);
 // is 16 -- @media resolves against the initial root px, not the html clamp.
 const MEDIA_QUERY_ROOT_PX = 16;
 const _MEDIA_LITERALS_PX = [
-  ["--bp-narrow-dialog", 480],
-  ["--bp-mobile", 800],
-  ["--bp-mobile-h", 480],
-  ["--bp-mobile-h-play", 680],
-  ["--bp-wide", 1500],
+  [BP_VAR.narrowDialog, 480],
+  [BP_VAR.mobile, 800],
+  [BP_VAR.mobileH, 480],
+  [BP_VAR.mobileHPlay, 680],
+  [BP_VAR.wide, 1500],
 ];
 
 function _checkBreakpointDrift() {
@@ -51,4 +63,27 @@ function _checkBreakpointDrift() {
   }
 }
 
+// Whitespace-free compare: engines differ in how they serialize conditionText.
+const _squash = (s) => s.replace(/\s+/g, "");
+
+// The styles.css height-gate @media rules must carry the same pointer clause.
+function _checkHeightGatePointerDrift() {
+  const [, gatePx] = _MEDIA_LITERALS_PX.find(([name]) => name === BP_VAR.mobileHPlay);
+  const heightClause = _squash(`max-height: ${gatePx}px`);
+  const pointerClause = _squash(HEIGHT_GATE_POINTER);
+  for (const sheet of document.styleSheets) {
+    let rules;
+    try { rules = sheet.cssRules; } catch { continue; }
+    for (const rule of rules) {
+      if (!(rule instanceof CSSMediaRule)) continue;
+      const cond = rule.conditionText;
+      const squashed = _squash(cond);
+      if (squashed.includes(heightClause) && !squashed.includes(pointerClause)) {
+        console.error(`breakpoint drift: @media ${cond} lacks ${HEIGHT_GATE_POINTER}. Resync with mqMobileHPlay.`);
+      }
+    }
+  }
+}
+
 _checkBreakpointDrift();
+_checkHeightGatePointerDrift();

@@ -76,7 +76,7 @@
   --bp-settings-top-tabs: 46rem; /* 736px; Settings side rail needs the full 690px dialog */
   --bp-mobile:        50rem;  /* 800px @ default font */
   --bp-mobile-h:      30rem;  /* 480px @ default font; height analog */
-  --bp-mobile-h-play: 42.5rem; /* 680px; play side-rail short-height gate */
+  --bp-mobile-h-play: 42.5rem; /* 680px; play side-rail short-height gate, touch only */
   --bp-wide:          93.75rem; /* 1500px @ default font */
 
   /* Import dialog: one panel height shared by all 3 tabs so switching never
@@ -1167,8 +1167,9 @@ main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden
   text-overflow: ellipsis;
 }
 /* 800px = --bp-mobile, 680px = --bp-mobile-h-play. Media queries can't read
-   custom props; keep these literals in sync with :root. */
-@media (max-width: 800px), (max-height: 680px) {
+   custom props; keep these literals in sync with :root. Height gate is
+   touch-only so short laptops keep the desktop layout. */
+@media (max-width: 800px), (max-height: 680px) and (pointer: coarse) {
   /* Non-play perspectives keep `main` as the scroller -- their inner lists
      are flex:1 + overflow-y:auto and need a bounded ancestor. */
   main { overflow-y: auto; }
@@ -1851,8 +1852,9 @@ body .side-popover.popover-floating {
   filter: grayscale(0.4);
 }
 /* 800px = --bp-mobile, 680px = --bp-mobile-h-play. Media queries can't read
-   custom props; keep these literals in sync with :root. */
-@media (max-width: 800px), (max-height: 680px) {
+   custom props; keep these literals in sync with :root. Height gate is
+   touch-only so short laptops keep the desktop layout. */
+@media (max-width: 800px), (max-height: 680px) and (pointer: coarse) {
   /* !important guards against later, more specific .play-dock-left rules
      (e.g. JS-set modifier classes): mobile hides the dock unconditionally. */
   .play-dock-left { display: none !important; }
@@ -3993,7 +3995,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .tournament-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 
-@media (max-width: 800px), (max-height: 680px) {
+/* Same gate as mqMobileHPlay (breakpoints.js): height half is touch-only. */
+@media (max-width: 800px), (max-height: 680px) and (pointer: coarse) {
   .tournaments-panel { gap: 0; }
   .tournaments-body { display: flex; flex-direction: column; }
   /* Arena and Studio flip to the same horizontal top bar on mobile. They
