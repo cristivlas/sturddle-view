@@ -921,7 +921,8 @@ function openSystemWindow(ctx, key, { flash = true } = {}) {
 }
 
 async function initWorkspace(ctx) {
-  await Promise.all([refresh(ctx), backfillEvents(ctx)]);
+  // Saved boards mount with the board style, so it must be in before restore.
+  await Promise.all([refresh(ctx), backfillEvents(ctx), ctx.boardStyleReady]);
   if (!ctx.restoreFromSaved) {
     if (ctx.detail?.status === STATUS.RUNNING) openSystemWindow(ctx, "schedule", { flash: false });
     if (ctx.eventLog.length > 0 || ctx.detail?.status === STATUS.RUNNING) openSystemWindow(ctx, "log", { flash: false });
@@ -1354,7 +1355,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     resolvedGames: live.resolvedGames,
     windows: { standings: null, schedule: null, engines: null, log: null },
     activeLayout: initialLayout,
-    boardStyleCached: null, detail: null,
+    boardStyleCached: null, boardStyleReady: null, detail: null,
     otherActiveId: null, otherActiveName: null,
     enginesSort: loadSortDir(STORAGE_KEY.TOURNAMENTS_ENGINES_SORT),
     _schedulePending: false, _enginesPending: false, _eventLogPending: false,
@@ -1382,7 +1383,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // watch click. Avoids a /settings round-trip on each click and keeps
   // all live windows in this session visually consistent even if the
   // user changes the global setting mid-tournament.
-  api("GET", "/settings")
+  ctx.boardStyleReady = api("GET", "/settings")
     .then(s => { ctx.boardStyleCached = s?.board_style || null; })
     .catch(() => {});
   // ---- Window construction ----------------------------------------------
