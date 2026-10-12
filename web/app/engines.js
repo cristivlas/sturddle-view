@@ -13,7 +13,8 @@ import { STORAGE_KEY } from "./storage-keys.js";
 import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs.js";
 import { guard, markSelectable, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
-import { attachEngineColResize, createWrapSizer } from "./engines-list-layout.js";
+import { attachEngineColResize } from "./engines-list-layout.js";
+import { createWrapSizer } from "./list-wrap-sizer.js";
 import { attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView, SORT_ASC_LABEL, SORT_DESC_LABEL } from "./col-sort.js";
 import { saveRaw } from "./storage.js";
 import { wireSplitScroll } from "./split-table.js";
@@ -30,6 +31,7 @@ const COL_PCTS_KEY = STORAGE_KEY.ENGINES_COL_PCTS;
 // bottom padding on the list while open so the last row stays visible
 // above the bar.
 const INLINE_SEARCH_RESERVED_PX = 48;
+const ENGINES_RIBBON_H_VAR = "--engines-ribbon-h";
 
 const ENGINES_LIST_HTML = `
     <div class="engines-list-host">
@@ -517,7 +519,13 @@ export function mountEngineList(container, api, opts = {}) {
   ctx.sort = initial ? { key: initial.key, dir: initial.dir } : null;
   nameBtnSort.sync();
 
-  const sizer = createWrapSizer(container);
+  const sizer = createWrapSizer({
+    wrapEl: container.querySelector(".engines-table-wrap"),
+    anchorEl: container.querySelector(".engines-body-main"),
+    ribbonEl: container.querySelector(".engines-ribbon"),
+    // The absolute search bar anchors above the ribbon.
+    onRibbonHeight: (h) => container.style.setProperty(ENGINES_RIBBON_H_VAR, h + "px"),
+  });
   sizer.sizeWrap();
   requestAnimationFrame(sizer.sizeWrap);
 

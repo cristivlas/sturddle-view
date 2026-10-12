@@ -761,6 +761,9 @@ async function fetchXgameInfo(state, gameId) {
     const r = await state.api(
       "GET", `/game/recent-imports/by-id/${encodeURIComponent(gameId)}`,
     );
+    // Unmounted mid-GET (nav away, remount): the board is destroyed and the
+    // next mount fetches its own.
+    if (state.unmounted) return;
     state.xgame.gameId = gameId;
     state.xgame.parentGameId = r.parent_game_id ?? null;
     state.xgame.parentSummary = r.parent_summary ?? null;
@@ -783,10 +786,12 @@ async function fetchXgameInfo(state, gameId) {
   } catch (_e) {
     // The current game may not be in recents (e.g. brand-new play
     // game with no moves yet). That's expected; just clear state.
+    if (state.unmounted) return;
     resetXgame(state);
     refreshXgameToasts(state);
   } finally {
-    window.dispatchEvent(new CustomEvent(APP_EVT.XGAME_INFO_APPLIED));
+    // A dead mount's lookup applied nothing; don't signal one.
+    if (!state.unmounted) window.dispatchEvent(new CustomEvent(APP_EVT.XGAME_INFO_APPLIED));
   }
 }
 function buildParentToast(state) {
@@ -2144,6 +2149,9 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       showFinishedBadge(state, formatResult(evt.payload, state.humanWhite));
       refreshButtons(state);
       _playInProgress = false;
+      // The server saved the game to recents before this event; tell an
+      // open Settings Recents tab to refetch.
+      window.dispatchEvent(new CustomEvent(APP_EVT.RECENTS_CHANGED));
       showAlert({
         message: formatGameOver(evt.payload, state.humanWhite),
         messageClass: "game-over-message",

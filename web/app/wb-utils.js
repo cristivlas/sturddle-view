@@ -134,7 +134,7 @@ export function fmtCount(n) {
 // Format a clock value (seconds) as m:ss, or as tenths below tenthsBelow
 // seconds so bullet/sub-second-increment games stay readable. Negatives
 // clamp to 0; a non-finite value yields `invalid`.
-export function fmtClock(seconds, { tenthsBelow = 10, invalid = "—" } = {}) {
+export function fmtClock(seconds, { tenthsBelow = 10, invalid = "\u2014" } = {}) {
   if (!Number.isFinite(seconds)) return invalid;
   const t = Math.max(0, seconds);
   if (t < tenthsBelow) return t.toFixed(1);
@@ -330,6 +330,25 @@ export function wireArrowKeyNav(el, {
 // click on a row that drives an action (select/open/commit) paints a word or
 // paragraph selection first. Attach to the list container to cancel the
 // multi-click text gesture; single-click, dblclick, and drag-select still work.
+// Small icon-only <button> (a wa-icon, its label as title + aria-label).
+// The click stays with the button: rows/options it sits in don't see it.
+export function makeIconButton({ className, icon, title, ariaLabel = title, onClick }) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = className;
+  btn.title = title;
+  btn.setAttribute("aria-label", ariaLabel);
+  const iconEl = document.createElement("wa-icon");
+  iconEl.setAttribute("name", icon);
+  btn.append(iconEl);
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    onClick();
+  });
+  return btn;
+}
+
 export function suppressMultiClickSelect(el) {
   el.addEventListener("mousedown", (ev) => { if (ev.detail > 1) ev.preventDefault(); });
 }

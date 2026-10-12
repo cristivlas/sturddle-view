@@ -106,7 +106,9 @@ v Carlsen - Nepo, 1-0          Oct 9   [open][del]
 - Tree built client-side from `parent_game_id` / `refs`. Roots and
   siblings sorted by `ts` desc. A row whose `parent_game_id` doesn't
   resolve to a listed row renders as a root.
-- Indentation shows nesting; arrows expand and collapse.
+- Indentation shows nesting; arrows expand and collapse. The tree starts
+  collapsed. A selection hidden under a collapsed parent is kept.
+- The tab sits right below Gameplay.
 - Fork rows show the move they branched at.
 - The viewed or in-play game's row shows a tag ("viewing" / "playing")
   instead of buttons, as in the dropdown.
@@ -131,7 +133,8 @@ v Carlsen - Nepo, 1-0          Oct 9   [open][del]
 
 - `openSettings` / `APP_EVT.OPEN_SETTINGS` gain a `select` field next to
   `focus`, carrying a recents hash.
-- On mount with `select`: expand the row's ancestors, select the row,
+- On mount with `select`: expand the row's ancestors and the row itself
+  (the gear exists to show its forks), select the row,
   scroll it into view. If the hash isn't in the fetched list, nothing
   is selected and no error is shown.
 
@@ -145,7 +148,10 @@ runs outside play.js:
 2. In progress: confirm leaving the game. Viewing a different game:
    `confirmReplaceViewedGame`. Same game already viewed: skip the import.
 3. Fetch the row's text, `POST /game/import`.
-4. Close Settings, dispatch `APP_EVT.ACTIVATE_PERSPECTIVE` for Play.
+4. Close Settings, dispatch `APP_EVT.ACTIVATE_PERSPECTIVE` for Play with
+   `remount`: a Play already on screen drops board updates for a game id
+   it didn't switch to itself, so after an import it remounts and resyncs
+   from the server. Review sends `remount` too.
 
 Factor the shared steps out of `replayTournamentGame` rather than
 copying them.
