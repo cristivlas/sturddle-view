@@ -77,6 +77,7 @@ class RemoveStatus(Enum):
     DELETED = "deleted"
     NOT_FOUND = "not_found"
     BLOCKED_BY_REFS = "blocked_by_refs"
+    BLOCKED_BY_ACTIVE = "blocked_by_active"
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,8 @@ class RemoveResult:
     - ``NOT_FOUND``: no such hash.
     - ``BLOCKED_BY_REFS``: row has live children. ``children`` lists
       them as ``{game_id, fork_ply, summary}`` for caller-side messaging.
+    - ``BLOCKED_BY_ACTIVE``: cascade refused; the subtree holds the
+      active session's game. Nothing deleted.
     """
     status: RemoveStatus
     children: list[dict] = field(default_factory=list)
@@ -564,8 +567,12 @@ class RecentImports:
             row[ROW_TS] = _now_ms()
             self._persist_locked()
 
-    async def remove(self, h: str) -> RemoveResult:
+    async def remove(self, h: str, cascade: bool = False) -> RemoveResult:
         """Delete ``h`` (index row + blob).
+
+        ``cascade=True`` also deletes every descendant reachable through
+        ``refs`` (dead refs skipped), refusing with ``BLOCKED_BY_ACTIVE``
+        if the subtree holds the active session's game.
 
         Returns:
         - ``RemoveResult(NOT_FOUND)`` if ``h`` is unknown.
@@ -583,6 +590,8 @@ class RecentImports:
             row = self._index.get(h)
             if row is None:
                 return RemoveResult(RemoveStatus.NOT_FOUND)
+            if cascade:
+                return self._remove_subtree_locked(h, row)
 
             refs = row.get(ROW_REFS) or []
             if refs:
@@ -702,6 +711,46 @@ class RecentImports:
         row[ROW_REFS] = [
             r for r in refs if r.get(REF_GAME_ID) != child_game_id
         ]
+
+    def _remove_subtree_locked(self, h: str, row: dict) -> RemoveResult:
+        """Cascade arm of ``remove``: drop ``h`` and its descendants
+        deepest first, one persist. Must hold the lock."""
+        subtree = self._subtree_locked(h, row)
+        getter = self._active_game_id
+        active_gid = getter() if getter is not None else None
+        active_hash = self._by_id.get(active_gid) if active_gid is not None else None
+        if active_hash is not None and any(sh == active_hash for sh, _ in subtree):
+            log.info(
+                "xgame.cascade_blocked hash=%s active=%s", h, active_gid,
+            )
+            return RemoveResult(RemoveStatus.BLOCKED_BY_ACTIVE)
+        # Breadth-first order puts every child after its parent; reversed,
+        # each row drops while its parent is still there to detach from.
+        for sh, srow in reversed(subtree):
+            self._drop_row_locked(sh, srow)
+        self._persist_locked()
+        log.info(
+            "xgame.cascade_deleted hash=%s game_id=%s rows=%d",
+            h, row.get(ROW_GAME_ID), len(subtree),
+        )
+        return RemoveResult(RemoveStatus.DELETED)
+
+    def _subtree_locked(self, h: str, row: dict) -> list[tuple[str, dict]]:
+        """``(hash, row)`` for ``h`` and every live descendant through
+        ``refs``, breadth-first. Dead refs are skipped."""
+        out = [(h, row)]
+        seen = {h}
+        i = 0
+        while i < len(out):
+            for ref in out[i][1].get(ROW_REFS) or []:
+                child_id = ref.get(REF_GAME_ID)
+                ch = self._by_id.get(child_id) if child_id is not None else None
+                if ch is None or ch in seen:
+                    continue
+                seen.add(ch)
+                out.append((ch, self._index[ch]))
+            i += 1
+        return out
 
     def _drop_row_locked(self, h: str, row: dict) -> None:
         """Delete row ``h`` (index, ids, blob) and its parent's ref to it.

@@ -105,6 +105,10 @@ All under `/game/recent-imports`, behind the same auth token as other
   The server's only delete gate is the children pin: a row with live
   forked children answers 409 `has_children` and stays; an unknown hash
   is 404. The viewed game gets no server-side handling.
+  `?cascade=1` deletes the row together with all its forks (dead refs
+  skipped), or answers 409 `active_in_subtree` and deletes nothing when
+  one of them is the active session's game. Used by the Settings
+  Recents tab (see recents-manager-spec.md).
 
 There is **no standalone `POST /game/recent-imports`** — saving is a
 side effect of two endpoints:

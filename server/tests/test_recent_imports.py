@@ -9,6 +9,8 @@ import pytest
 from sturddle_view import recent_imports
 from sturddle_view.play.canonical_hash import FMT_PGN
 from sturddle_view.recent_imports import (
+    REF_FORK_PLY,
+    REF_GAME_ID,
     ROW_REFS,
     RecentImports,
     RemoveStatus,
@@ -446,6 +448,8 @@ def test_replace_at_new_hash_collides_with_unrelated_game(store):
 
 _PARENT_GID = "gid-parent"
 _CHILD_GID = "gid-child"
+_GRANDCHILD_GID = "gid-grandchild"
+_DEAD_GID = "gid-dead"
 _OTHER_GID = "gid-other"
 _THIRD_GID = "gid-third"
 _SUMMARY = "s"
@@ -515,6 +519,65 @@ def test_remove_child_scrubs_parent_ref(store):
     assert result.status is RemoveStatus.DELETED
     parent_row = store.get(h_parent)[0]
     assert parent_row["refs"] == []
+
+
+def _save_tree(store):
+    """parent -> child -> grandchild. Returns their hashes."""
+    h_parent = _save_parent(store)
+    h_child = _save_child(store, _PARENT_GID, ply=_FORK_PLY)
+    h_grandchild = _save_child(
+        store, _CHILD_GID, ply=_FORK_PLY, gid=_GRANDCHILD_GID, text=_DISTINCT_PGNS[0],
+    )
+    return h_parent, h_child, h_grandchild
+
+
+def _add_dead_ref(store, h):
+    store._index[h][ROW_REFS].append({REF_GAME_ID: _DEAD_GID, REF_FORK_PLY: _FORK_PLY})
+
+
+def test_cascade_removes_whole_subtree(store):
+    h_parent, _, _ = _save_tree(store)
+    assert _run(store.remove(h_parent, cascade=True)).status is RemoveStatus.DELETED
+    assert store.list() == []
+
+
+def test_cascade_on_inner_row_detaches_it_from_its_parent(store):
+    h_parent, h_child, h_grandchild = _save_tree(store)
+    assert _run(store.remove(h_child, cascade=True)).status is RemoveStatus.DELETED
+    assert store.get(h_child) is None
+    assert store.get(h_grandchild) is None
+    assert store.get(h_parent)[0][ROW_REFS] == []
+
+
+def test_cascade_on_leaf_is_a_plain_delete(store):
+    _, h_child, h_grandchild = _save_tree(store)
+    assert _run(store.remove(h_grandchild, cascade=True)).status is RemoveStatus.DELETED
+    assert store.get(h_child)[0][ROW_REFS] == []
+
+
+def test_cascade_skips_dead_refs_in_subtree(store):
+    h_parent, h_child, _ = _save_tree(store)
+    _add_dead_ref(store, h_child)
+    assert _run(store.remove(h_parent, cascade=True)).status is RemoveStatus.DELETED
+    assert store.list() == []
+
+
+def test_cascade_on_row_with_only_dead_refs(store):
+    h_parent = _save_parent(store)
+    _add_dead_ref(store, h_parent)
+    assert _run(store.remove(h_parent, cascade=True)).status is RemoveStatus.DELETED
+    assert store.list() == []
+
+
+def test_cascade_refused_when_subtree_holds_active_game(tmp_path):
+    store = RecentImports.load(
+        root=tmp_path / "imports", active_game_id=lambda: _GRANDCHILD_GID,
+    )
+    h_parent, _, _ = _save_tree(store)
+    before = store.list()
+    result = _run(store.remove(h_parent, cascade=True))
+    assert result.status is RemoveStatus.BLOCKED_BY_ACTIVE
+    assert store.list() == before
 
 
 def test_children_of_returns_sorted_by_fork_ply(store):

@@ -85,6 +85,8 @@ _EVENTS_KEY = "events"
 _ERROR_KEY = ERROR_KEY
 _IN_PROGRESS_ERROR = "in_progress"
 _WOULD_LEAVE_ERROR = "would_leave"
+_HAS_CHILDREN_ERROR = "has_children"
+_ACTIVE_IN_SUBTREE_ERROR = "active_in_subtree"
 _LEAVE_KEY = "leave"
 # Import `format` values: FEN, PGN, or try FEN then PGN.
 _FMT_AUTO = "auto"
@@ -499,20 +501,23 @@ async def get_recent_import(h: str, request: Request) -> dict:
 
 
 @router.delete(_RECENT_IMPORT_PATH)
-async def delete_recent_import(h: str, request: Request) -> dict:
+async def delete_recent_import(h: str, request: Request, cascade: bool = False) -> dict:
     """Remove a single entry from the recent-imports store.
 
     Returns 409 with a ``children`` list if the row has live forked
     children (refs non-empty); the row is pinned in that case and not
-    deleted. The dialog never offers the viewed or in-progress game's
-    row, so no viewed-row handling lives here.
+    deleted. ``cascade`` deletes the row with all its forks instead, or
+    409s ``active_in_subtree`` if one of them is the active game. The UI
+    never offers the viewed or in-progress game's own row.
     """
     store = request.app.state.recent_imports
-    result = await store.remove(h)
+    result = await store.remove(h, cascade=cascade)
     if result.status is RemoveStatus.NOT_FOUND:
         raise not_found(_NOT_FOUND)
     if result.status is RemoveStatus.BLOCKED_BY_REFS:
-        raise conflict({_ERROR_KEY: "has_children", _CHILDREN_KEY: result.children})
+        raise conflict({_ERROR_KEY: _HAS_CHILDREN_ERROR, _CHILDREN_KEY: result.children})
+    if result.status is RemoveStatus.BLOCKED_BY_ACTIVE:
+        raise conflict({_ERROR_KEY: _ACTIVE_IN_SUBTREE_ERROR})
     return _OK
 
 

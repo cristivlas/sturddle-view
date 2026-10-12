@@ -42,8 +42,9 @@ variations." The user has no way to act on that:
   - `cascade=True`: collect the row and all descendants through `refs`
     (resolving ids via the reverse index; dead refs skipped), drop them
     deepest first via `_drop_row_locked`, single `_persist_locked`.
-- Guard: if any row in the subtree is the active play game
-  (`active_game_id` getter), refuse; nothing is deleted.
+- Guard: if any row in the subtree is the active session's game
+  (`active_game_id` getter: the in-play game, or the viewed one),
+  refuse; nothing is deleted.
 - Route: `DELETE /game/recent-imports/{hash}?cascade=1`. Refusal maps to
   409 with an error code distinct from `has_children`.
 - `docs/x-game-navigation.md` says "No cascading deletes in either
@@ -51,8 +52,8 @@ variations." The user has no way to act on that:
 
 ### Status: in-play game id
 
-- `GET /game/status` gains the in-progress game's `game_id` (null when
-  no game is in progress). `view_hash` already identifies the viewed
+- `GET /game/status` gains `play_game_id`: the in-progress game's
+  `game_id` (null when no game is in progress). `view_hash` already identifies the viewed
   game. The Settings tab reads both to mark the current rows.
 
 ## 2. Import dropdown
@@ -119,8 +120,8 @@ v Carlsen - Nepo, 1-0          Oct 9   [open][del]
 - **Delete** on a parent: confirm "Delete with N forks?", where N is
   the size of the whole subtree below the row (grandchildren count).
   A subtree containing the viewed or in-play game cannot be cascaded:
-  the button is disabled with a tooltip saying why (server enforces
-  the in-play case).
+  the button is disabled with a tooltip saying why. The server refuses
+  both cases too, as a backstop for a stale tree.
 - **Open**: see section 4.
 - After a delete, dispatch `APP_EVT.RECENTS_CHANGED` (as the dropdown
   does) so Play refreshes its x-game state. The tab does not remove rows

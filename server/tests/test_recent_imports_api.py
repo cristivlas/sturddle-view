@@ -16,6 +16,13 @@ from .conftest import REGISTRY_FILE
 SAMPLE_PGN_A = '[Event "?"]\n[White "A"]\n[Black "B"]\n[Result "*"]\n\n1. e4 e5 *'
 SAMPLE_PGN_B = '[Event "?"]\n[White "C"]\n[Black "D"]\n[Result "*"]\n\n1. d4 d5 *'
 SAMPLE_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+_TOKEN = "test-token"
+_AUTH_HEADER = "Authorization"
+_AUTH = f"Bearer {_TOKEN}"
+_PARENT_GID = "gid-parent"
+_CHILD_GID = "gid-child"
+_CASCADE = {"cascade": 1}
+_ERR_ACTIVE_IN_SUBTREE = "active_in_subtree"
 
 
 def _make_app(tmp_path):
@@ -23,7 +30,7 @@ def _make_app(tmp_path):
     HVE so /game/import (which requires _get_hve) doesn't fail with
     no_engine_configured. View-mode imports never actually launch the
     engine, so a stub path is fine."""
-    settings = Settings(token="test-token")
+    settings = Settings(token=_TOKEN)
     registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     e = registry.add(name="MyEngine", path=str(tmp_path / "fake-engine"))
     registry.select(e.id)
@@ -42,7 +49,7 @@ def _make_app(tmp_path):
 def client(tmp_path):
     app = _make_app(tmp_path)
     with TestClient(app) as c:
-        c.headers["Authorization"] = "Bearer test-token"
+        c.headers[_AUTH_HEADER] = _AUTH
         yield c
 
 
@@ -215,7 +222,7 @@ def test_import_supplied_game_id_mismatch_409(client):
 
 def test_edit_commit_changed_position_mints_new_game_id(tmp_path):
     """commit_edit on changed FEN -> new game_id, stored on the row."""
-    settings = Settings(token="test-token")
+    settings = Settings(token=_TOKEN)
     registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     e = registry.add(name="MyEngine", path=str(tmp_path / "fake-engine"))
     registry.select(e.id)
@@ -228,7 +235,7 @@ def test_edit_commit_changed_position_mints_new_game_id(tmp_path):
         settings=app.state.settings,
     )
     with TestClient(app) as c:
-        c.headers["Authorization"] = "Bearer test-token"
+        c.headers[_AUTH_HEADER] = _AUTH
         r1 = c.post("/game/import", json={"format": "pgn", "text": SAMPLE_PGN_A})
         gid_before = r1.json()["game_id"]
         c.post("/game/edit/start", json={}).raise_for_status()
@@ -246,7 +253,7 @@ def test_edit_commit_changed_position_mints_new_game_id(tmp_path):
 
 def test_edit_commit_unchanged_position_keeps_game_id(tmp_path):
     """commit_edit on unchanged FEN -> same game_id; no new row."""
-    settings = Settings(token="test-token")
+    settings = Settings(token=_TOKEN)
     registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     e = registry.add(name="MyEngine", path=str(tmp_path / "fake-engine"))
     registry.select(e.id)
@@ -259,7 +266,7 @@ def test_edit_commit_unchanged_position_keeps_game_id(tmp_path):
         settings=app.state.settings,
     )
     with TestClient(app) as c:
-        c.headers["Authorization"] = "Bearer test-token"
+        c.headers[_AUTH_HEADER] = _AUTH
         r1 = c.post("/game/import", json={"format": "fen", "text": SAMPLE_FEN})
         gid_before = r1.json()["game_id"]
         c.post("/game/edit/start", json={}).raise_for_status()
@@ -379,8 +386,8 @@ def test_endpoints_require_auth(tmp_path):
 # ---- x-game navigation endpoint contract ----
 
 
-def _seed_parent_with_child(tmp_path, app, parent_id="gid-parent",
-                            child_id="gid-child", fork_ply=4):
+def _seed_parent_with_child(tmp_path, app, parent_id=_PARENT_GID,
+                            child_id=_CHILD_GID, fork_ply=4):
     """Inject a parent + linked child directly into the recents store
     so we can exercise the GET endpoint shape without going through
     play-from-here machinery."""
@@ -405,7 +412,7 @@ def test_by_id_response_includes_parent_and_children(tmp_path):
     app = _make_app(tmp_path)
     _seed_parent_with_child(tmp_path, app)
     with TestClient(app) as c:
-        c.headers["Authorization"] = "Bearer test-token"
+        c.headers[_AUTH_HEADER] = _AUTH
         # Parent: children list non-empty, no parent_game_id.
         parent = c.get("/game/recent-imports/by-id/gid-parent").json()
         assert parent["parent_game_id"] is None
@@ -427,7 +434,7 @@ def test_delete_blocked_by_refs_returns_409(tmp_path):
     app = _make_app(tmp_path)
     _seed_parent_with_child(tmp_path, app)
     with TestClient(app) as c:
-        c.headers["Authorization"] = "Bearer test-token"
+        c.headers[_AUTH_HEADER] = _AUTH
         # Find parent's hash via the by-id endpoint.
         parent = c.get("/game/recent-imports/by-id/gid-parent").json()
         h_parent = parent["hash"]
@@ -444,7 +451,7 @@ def test_delete_child_unblocks_parent(tmp_path):
     app = _make_app(tmp_path)
     _seed_parent_with_child(tmp_path, app)
     with TestClient(app) as c:
-        c.headers["Authorization"] = "Bearer test-token"
+        c.headers[_AUTH_HEADER] = _AUTH
         parent = c.get("/game/recent-imports/by-id/gid-parent").json()
         child = c.get("/game/recent-imports/by-id/gid-child").json()
         h_parent = parent["hash"]
@@ -453,3 +460,32 @@ def test_delete_child_unblocks_parent(tmp_path):
         assert c.delete(f"/game/recent-imports/{h_child}").status_code == 200
         # Now parent is unpinned -> 200.
         assert c.delete(f"/game/recent-imports/{h_parent}").status_code == 200
+
+
+def _hash_of(c, gid):
+    return c.get(f"/game/recent-imports/by-id/{gid}").json()["hash"]
+
+
+def test_cascade_delete_removes_subtree(tmp_path):
+    app = _make_app(tmp_path)
+    _seed_parent_with_child(tmp_path, app)
+    with TestClient(app) as c:
+        c.headers[_AUTH_HEADER] = _AUTH
+        h_parent = _hash_of(c, _PARENT_GID)
+        r = c.delete(f"/game/recent-imports/{h_parent}", params=_CASCADE)
+        assert r.status_code == 200, r.text
+        for gid in (_PARENT_GID, _CHILD_GID):
+            assert c.get(f"/game/recent-imports/by-id/{gid}").status_code == 404
+
+
+def test_cascade_delete_refused_when_subtree_holds_active_game(tmp_path):
+    app = _make_app(tmp_path)
+    _seed_parent_with_child(tmp_path, app)
+    app.state.recent_imports.set_active_game_id_getter(lambda: _CHILD_GID)
+    with TestClient(app) as c:
+        c.headers[_AUTH_HEADER] = _AUTH
+        h_parent = _hash_of(c, _PARENT_GID)
+        r = c.delete(f"/game/recent-imports/{h_parent}", params=_CASCADE)
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"]["error"] == _ERR_ACTIVE_IN_SUBTREE
+        assert c.get(f"/game/recent-imports/{h_parent}").status_code == 200

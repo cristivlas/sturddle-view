@@ -153,8 +153,8 @@ ids:
 refs: [{ "game_id": "<child_uuid>", "fork_ply": <int> }, ...]
 ```
 
-- Non-empty `refs` pins the parent: blocks LRU eviction AND blocks
-  DELETE.
+- Non-empty `refs` pins the parent: blocks LRU eviction AND blocks a
+  plain DELETE (a cascade DELETE removes the forks with it).
 - DELETE against a pinned row returns a non-200 status (e.g. 409) with
   an informational body listing the live children. No deletion occurs.
 - The 50-entry cap becomes a soft limit; pinned rows can push the
@@ -174,7 +174,9 @@ either direction is cheap).
 - If it occurs (file corruption, manual edit): soft fail. Log a warning.
   Optionally scrub the dangling `parent_game_id` from the child on next
   touch.
-- No cascading deletes in either direction.
+- No implicit cascading deletes. The one cascade is explicit: DELETE
+  with `?cascade=1` removes a row and its whole fork subtree, after a
+  client-side confirm (see recents-manager-spec.md).
 - Circular refs are not structurally possible: a child has at most one
   parent, set at fork creation, immutable thereafter.
 
