@@ -260,7 +260,7 @@ This must be tested exhaustively. Minimum surface:
     the non-verbatim path (force `_view_original_text=None` to simulate
     post-annotation-edit state), expect comments preserved.
 
-## AI prose -> annotation shortcut (planned)
+## AI prose -> annotation shortcut
 
 Front-end feature (plus the server comment round-trip fix below, a
 standalone bug fix it depends on). Pencil while finished AI prose is
@@ -421,9 +421,8 @@ finished. Never a clone copy.
   live game's parent toast shows on the clone. On entry the clone takes
   the hash of its game's Recents row, if any (`/view/start` sets none
   today): the dialog matches "viewing" on hash, so without it the row
-  keeps its trash, the server's by-id viewed check fires, and the
-  leftover force-delete path (`close_view`) would resume the live game
-  with the row already gone. Clone commits never touch Recents and never
+  would keep its trash and deleting it would pull the row out from under
+  the clone. Clone commits never touch Recents and never
   rewrite `_view_hash` (today `_apply_view_annotation` does; on a clone
   it updates the comments only), so the hash stays the row's. Save PGN
   on a clone downloads the clone's PGN, notes included, and writes no

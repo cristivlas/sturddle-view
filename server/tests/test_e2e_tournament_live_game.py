@@ -17,6 +17,7 @@ import asyncio
 import json
 import sys
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 import pytest
 from httpx import AsyncClient
@@ -77,6 +78,11 @@ _STUDIO_SELECTED_ID_KEY = "sturddle:studio:selectedId"
 _STUDIO_BOARDS_PREFIX = "sturddle:studio:boards:"
 _WORKSPACE_PREFIX = "sturddle:workspace:"
 _PROXY_WS_PATTERN = "**/ws/tournament/proxy/**"
+_SETTINGS_PATH = "/settings"
+_GET = "GET"
+# Any style but the client default, so a board mounted before the
+# setting arrived is told apart from one that waited for it.
+_BOARD_STYLE = "green"
 
 
 @asynccontextmanager
@@ -402,7 +408,7 @@ async def _load_studio(page, base, t, board):
     await wait_perspective_ready(page)
 
 
-async def _load_arena(page, base, t, board):
+async def _load_arena(page, base, t, board, before_open=None):
     await pin_arena_tournament_ux(page)
     saved = {"live": [{
         **board, "x": "262px", "y": "108px", "width": "280px", "height": "396px", "z": 15,
@@ -416,6 +422,8 @@ async def _load_arena(page, base, t, board):
     await wait_perspective_ready(page)
     await page.click('button[data-perspective="engines"]')
     await page.click(".tournament-row")
+    if before_open is not None:
+        before_open()
     await page.click(".tournaments-ribbon .t-workspace")
 
 
@@ -502,3 +510,48 @@ async def test_reload_resolves_board_whose_reconcile_left_history(
             "gameN": 1, "result": _RECONCILED_RESULT, "termination": UNKNOWN_TERMINATION,
         }
         assert page_errors == [], page_errors
+
+
+@pytest.mark.asyncio
+async def test_arena_restore_waits_for_board_style(tmp_path, monkeypatch, make_page):
+    """Arena restores saved boards once the tournament detail and event
+    history are in. On a slow link the board-style fetch can land after
+    them: the restored board must still wear the saved style."""
+    async with _running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+        async with AsyncClient(base_url=base) as http:
+            r = await http.put(_SETTINGS_PATH, json={"board_style": _BOARD_STYLE})
+            assert r.is_success, r.text
+        pair_id = await _finished_game(app, base, secret)
+        page, page_errors = await _open_page(make_page)
+
+        # Hold the workspace's settings GET until the restore inputs land.
+        armed = False
+        release = asyncio.Event()
+        restore_inputs = {f"/api/tournaments/{t.id}", f"/api/tournaments/{t.id}/events"}
+        finished: set[str] = set()
+
+        async def hold_settings(route):
+            if armed and route.request.method == _GET:
+                await release.wait()
+            await route.continue_()
+
+        def on_finished(request):
+            path = urlparse(request.url).path
+            if armed and path in restore_inputs:
+                finished.add(path)
+                if finished == restore_inputs:
+                    release.set()
+
+        def arm():
+            nonlocal armed
+            armed = True
+
+        await page.route(lambda url: urlparse(url).path == _SETTINGS_PATH, hold_settings)
+        page.on("requestfinished", on_finished)
+        await _load_arena(page, base, t, _saved_game_board(pair_id), before_open=arm)
+
+        board = page.locator(f"{_GAME_WINDOW} svg.cm-chessboard")
+        await board.wait_for(state="attached")
+        classes = (await board.get_attribute("class")).split()
+        assert _BOARD_STYLE in classes, classes
+        assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)

@@ -439,7 +439,7 @@ class HumanVsEngine:
         # Live game suspended under a live clone, kept in memory for Return
         # to live (same game, no fork). Set only by _enter_live_clone;
         # cleared by its restore: navigation or an edit exit onto the last
-        # ply, close_view, and Leaving (new_game, enter_view_mode).
+        # ply, and Leaving (new_game, enter_view_mode).
         self._suspended_play: GameState | None = None
         # Pre-edit view bundle stashed by enter_edit_mode; restored wholesale
         # (self._game = it) by cancel_edit and the FEN-unchanged commit_edit.
@@ -548,17 +548,6 @@ class HumanVsEngine:
         if self.is_live_clone or (not self._viewing and self._has_game):
             return self._game_id
         return None
-
-    @property
-    def viewing_game_id(self) -> str | None:
-        """The view session's game_id, or None when not viewing.
-        EDITING is excluded: mid-edit the user is authoring a new
-        position, not viewing the row -- deleting it must not tear the
-        edit session down (commit re-saves fresh). Lock-free read,
-        same contract as ``game_id``."""
-        if self._editing:
-            return None
-        return self._game_id if self._viewing else None
 
     @property
     def is_paused(self) -> bool:
@@ -1769,30 +1758,6 @@ class HumanVsEngine:
             fork_link=fork_link,
         )
         return new_id
-
-    async def close_view(self) -> str | None:
-        """Close the view session when the viewed game's recents row is
-        force-deleted: the view has nothing to show anymore. No-op outside
-        view. Works from VIEWING or ANALYZING (analysis is cancelled).
-
-        A live clone carries its game's exported row; deleting that row
-        resumes the suspended live game (returns its game_id) rather than
-        dropping it. Otherwise tears down to the idle/no-game state (fresh
-        GameBundle) and returns None."""
-        async with self._lock:
-            if not self._viewing:
-                return None
-            if self._suspended_play is not None:
-                await self._restore_suspended_play()
-            else:
-                await self._cancel_analysis()
-                await self._cancel_think()
-                await self._cancel_tick()
-                self._game = GameBundle()
-                self._fork_link = None
-                return None
-        await self.republish_state()
-        return self._game_id
 
     async def _restore_suspended_play(self) -> None:
         """Swap the view session out for the suspended live game. Caller

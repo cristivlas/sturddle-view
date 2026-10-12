@@ -20,16 +20,44 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from ..error_detail import ERROR_KEY
 from .base import ToolWireSpec
 
 _TYPE_KEY = "type"
 _DESCRIPTION_KEY = "description"
+_REQUIRED_KEY = "required"
 _STRING_TYPE = "string"
 
+# Result keys shared by every tool and the dispatcher: the tool's name
+# on dispatcher errors, the human-readable detail beside an error code.
+TOOL_NAME_KEY = "name"
+DETAIL_KEY = "detail"
 
-def object_schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
-    """A tool's JSON Schema input: an object with these properties."""
-    return {_TYPE_KEY: "object", "properties": properties, "required": required}
+# Error codes several tools, or the dispatcher, return.
+NO_LIVE_POSITION_ERROR = "no_live_position"
+INVALID_INPUT_ERROR = "invalid_input"
+UNKNOWN_TOOL_ERROR = "unknown_tool"
+TOOL_FAILED_ERROR = "tool_failed"
+MALFORMED_TOOL_ARGUMENTS_ERROR = "malformed_tool_arguments"
+
+
+def object_schema(
+    properties: dict[str, Any], required: list[str] | None = None,
+) -> dict[str, Any]:
+    """A tool's JSON Schema input: an object with these properties.
+    ``required`` is left out of the schema when None."""
+    schema: dict[str, Any] = {_TYPE_KEY: "object", "properties": properties}
+    if required is not None:
+        schema[_REQUIRED_KEY] = required
+    return schema
+
+
+def tool_error(kind: str, detail: str | None = None) -> dict[str, Any]:
+    """A failed tool result: `{error: kind}`, plus `detail` when given."""
+    out: dict[str, Any] = {ERROR_KEY: kind}
+    if detail is not None:
+        out[DETAIL_KEY] = detail
+    return out
 
 
 def string_prop(description: str) -> dict[str, Any]:
@@ -96,7 +124,7 @@ class ToolRegistry:
     def schemas(self) -> list[ToolWireSpec]:
         return [
             {
-                "name": spec.name,
+                TOOL_NAME_KEY: spec.name,
                 _DESCRIPTION_KEY: spec.description,
                 "input_schema": spec.input_schema,
             }

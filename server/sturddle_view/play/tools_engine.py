@@ -30,12 +30,20 @@ from ..config import (
     _DEFAULT_AI_VERIFICATION_DEPTH,
 )
 from ..env_utils import env_int
-from ..error_detail import ERROR_KEY, REASON_KEY
+from ..error_detail import REASON_KEY
 from ..events import EVT_ENGINE_SEARCH_START, Event, EventBus
 from ..llm import ToolSpec
 from ..llm.cancel import CancelToken
 from ..llm.tool_progress import report_progress
-from ..llm.tools import integer_prop, object_schema, string_list_prop, string_prop
+from ..llm.tools import (
+    INVALID_INPUT_ERROR,
+    NO_LIVE_POSITION_ERROR,
+    integer_prop,
+    object_schema,
+    string_list_prop,
+    string_prop,
+    tool_error,
+)
 from .engine_analysis import (
     log_spawn_failure,
     resolve_eval_pov_white_or_stm,
@@ -193,9 +201,10 @@ _FEN_ARG_DESCRIPTION = "FEN string, or 'startpos' for the initial position."
 
 # Tool argument and result keys. depth / pv / nodes / score double as
 # python-chess InfoDict keys; the results mirror the engine's names.
-_FEN_KEY = "fen"
+# fen / move are public: `delegate` (ai_analysis) shares them.
+FEN_KEY = "fen"
 _FROM_FEN_KEY = "from_fen"
-_MOVE_KEY = "move"
+MOVE_KEY = "move"
 _MOVES_KEY = "moves"
 _SQUARE_KEY = "square"
 _DEPTH_KEY = "depth"
@@ -215,30 +224,21 @@ _PLY_KEY = "ply"
 _BY_KEY = "by"
 _SCORE_TEXT_KEY = "score_text"
 _ENGINE_BEST_SAN_KEY = "engine_best_san"
-_DETAIL_KEY = "detail"
 # top_moves ranks on this, then pops it before returning.
 _SORT_KEY = "_sort_key"
 # top_moves result keys; public so the verifier gate can read the ranking.
 CANDIDATES_KEY = "candidates"
 MOVE_UCI_KEY = "move_uci"
 
-# Error codes and details repeated across the tools.
-_NO_LIVE_POSITION = "no_live_position"
-_INVALID_INPUT = "invalid_input"
+# Error codes and details repeated across the tools. The move-parse codes
+# and the empty-move detail are public: `delegate` (ai_analysis) shares them.
 _INVALID_SQUARE = "invalid_square"
 _ILLEGAL_MOVE = "illegal_move"
+INVALID_MOVE_ERROR = "invalid_move"
 _RECOMMENDATION_REJECTED = "recommendation_rejected"
 _MOVE_NOT_STRING = "move must be a string"
-_MOVE_EMPTY = "move must be a non-empty string"
+MOVE_EMPTY_DETAIL = "move must be a non-empty string"
 _MOVES_EMPTY = "moves must be a non-empty list of strings"
-
-
-def _tool_error(kind: str, detail: str | None = None) -> dict:
-    """A failed tool result: `{error: kind}`, plus `detail` when given."""
-    out: dict = {ERROR_KEY: kind}
-    if detail is not None:
-        out[_DETAIL_KEY] = detail
-    return out
 
 
 # Wire-shape ToolSpec describing this tool to the model. Lives next to
@@ -293,7 +293,7 @@ PIECE_AT_TOOL_SPEC = ToolSpec(
                 "Algebraic square name, e.g. 'e4', 'a1', 'h8'. "
                 "Case-insensitive."
             ),
-            _FEN_KEY: string_prop(
+            FEN_KEY: string_prop(
                 "Position to read, or 'startpos'. Omit to use the live "
                 "position."
             ),
@@ -319,8 +319,8 @@ VALIDATE_MOVE_TOOL_SPEC = ToolSpec(
         "position."
     ),
     input_schema=object_schema(
-        {_MOVE_KEY: string_prop(_MOVE_ARG_DESCRIPTION)},
-        required=[_MOVE_KEY],
+        {MOVE_KEY: string_prop(_MOVE_ARG_DESCRIPTION)},
+        required=[MOVE_KEY],
     ),
     card=_VALIDATE_MOVE_CARD,
 )
@@ -335,20 +335,20 @@ ANALYZE_TOOL_SPEC = ToolSpec(
     ),
     input_schema=object_schema(
         {
-            _FEN_KEY: string_prop(_FEN_ARG_DESCRIPTION),
+            FEN_KEY: string_prop(_FEN_ARG_DESCRIPTION),
             _DEPTH_KEY: integer_prop(
                 "Search depth. Go deeper on sharp or close positions -- "
                 "a shallow search misjudges tactics."
             ),
         },
-        required=[_FEN_KEY],
+        required=[FEN_KEY],
     ),
 )
 
 
 # material and tactics take just a FEN.
 _FEN_ONLY_SCHEMA = object_schema(
-    {_FEN_KEY: string_prop(_FEN_ARG_DESCRIPTION)}, required=[_FEN_KEY],
+    {FEN_KEY: string_prop(_FEN_ARG_DESCRIPTION)}, required=[FEN_KEY],
 )
 
 
@@ -396,13 +396,13 @@ def _parse_fen_arg(input_: dict) -> tuple[chess.Board | None, dict | None]:
     """Read+parse the `fen` arg for FEN-taking tools (analyze, material).
     Returns (board, None) on success or (None, error_envelope). Strips
     surrounding whitespace first so '  startpos  ' parses like 'startpos'."""
-    fen = input_.get(_FEN_KEY)
+    fen = input_.get(FEN_KEY)
     if not isinstance(fen, str) or not fen.strip():
-        return None, _tool_error("missing_fen")
+        return None, tool_error("missing_fen")
     try:
         return _parse_fen(fen.strip()), None
     except ValueError as exc:
-        return None, _tool_error("invalid_fen", str(exc))
+        return None, tool_error("invalid_fen", str(exc))
 
 
 def _depth_limit(
@@ -663,7 +663,7 @@ def make_analyze_tool(
                 settings_provider=settings_provider,
             )
         except _SearchError as err:
-            return _tool_error(err.kind, err.detail)
+            return tool_error(err.kind, err.detail)
 
         out: dict = {_LIMITS_USED_KEY: limits_used}
         if cancelled:
@@ -704,7 +704,7 @@ def _parse_move_or_error(
     shared by top_moves / validate_move / recommend_move (each wraps the
     kind/detail in its own result shape)."""
     if not candidate:
-        return None, _INVALID_INPUT, "empty move string"
+        return None, INVALID_INPUT_ERROR, "empty move string"
     for parse in (board.parse_uci, board.parse_san):
         try:
             return parse(candidate), None, None
@@ -712,7 +712,7 @@ def _parse_move_or_error(
             return None, _ILLEGAL_MOVE, str(exc)
         except (chess.InvalidMoveError, chess.AmbiguousMoveError):
             continue
-    return None, "invalid_move", f"could not parse {candidate!r} as UCI or SAN"
+    return None, INVALID_MOVE_ERROR, f"could not parse {candidate!r} as UCI or SAN"
 
 
 # SAN leading-letter -> piece type, for naming the piece an illegal move
@@ -760,7 +760,7 @@ def _parse_candidate_move(board: chess.Board, raw: str) -> tuple[chess.Move | No
     move, kind, detail = _parse_move_or_error(board, _strip_move_prefix(raw))
     if move is not None:
         return move, None
-    return None, {_MOVE_INPUT_KEY: raw, **_tool_error(kind, detail)}
+    return None, {_MOVE_INPUT_KEY: raw, **tool_error(kind, detail)}
 
 
 def parse_move_canonical(board: chess.Board, raw: str) -> chess.Move | None:
@@ -799,12 +799,12 @@ def make_top_moves_tool(
     async def top_moves(input_: dict, *, cancel_token: CancelToken) -> dict:
         board = board_provider()
         if board is None:
-            return _tool_error(_NO_LIVE_POSITION)
+            return tool_error(NO_LIVE_POSITION_ERROR)
         board = board.copy(stack=False)
 
         raw_moves = input_.get(_MOVES_KEY)
         if not isinstance(raw_moves, list) or not raw_moves:
-            return _tool_error(_INVALID_INPUT, _MOVES_EMPTY)
+            return tool_error(INVALID_INPUT_ERROR, _MOVES_EMPTY)
         truncated = len(raw_moves) > TOP_MOVES_MAX_N
         raw_moves = raw_moves[:TOP_MOVES_MAX_N]
 
@@ -813,7 +813,7 @@ def make_top_moves_tool(
         for raw in raw_moves:
             if not isinstance(raw, str):
                 errors.append({
-                    _MOVE_INPUT_KEY: raw, **_tool_error(_INVALID_INPUT, _MOVE_NOT_STRING),
+                    _MOVE_INPUT_KEY: raw, **tool_error(INVALID_INPUT_ERROR, _MOVE_NOT_STRING),
                 })
                 continue
             move, err = _parse_candidate_move(board, raw)
@@ -843,7 +843,7 @@ def make_top_moves_tool(
                     settings_provider=settings_provider,
                 )
             except _SearchError as err:
-                return _tool_error(err.kind, err.detail)
+                return tool_error(err.kind, err.detail)
             entry: dict = {MOVE_UCI_KEY: move.uci(), "move_san": board.san(move)}
             score = last_info.get(_SCORE_KEY)
             entry.update(_score_to_cp(score))
@@ -890,7 +890,7 @@ def make_piece_at_tool(board_provider: BoardProvider) -> AnalyzeTool:
     live board (via board_provider) by default, or a supplied `fen` so the
     model can ground a square in any position it is reasoning about."""
     async def piece_at(input_: dict, *, cancel_token: CancelToken) -> dict:
-        fen = input_.get(_FEN_KEY)
+        fen = input_.get(FEN_KEY)
         if fen is not None:
             board, err = _parse_fen_arg(input_)
             if err is not None:
@@ -898,14 +898,14 @@ def make_piece_at_tool(board_provider: BoardProvider) -> AnalyzeTool:
         else:
             board = board_provider()
             if board is None:
-                return _tool_error(_NO_LIVE_POSITION)
+                return tool_error(NO_LIVE_POSITION_ERROR)
         raw = input_.get(_SQUARE_KEY)
         if not isinstance(raw, str) or not raw:
-            return _tool_error(_INVALID_SQUARE, "square must be a non-empty string")
+            return tool_error(_INVALID_SQUARE, "square must be a non-empty string")
         try:
             sq = chess.parse_square(raw.lower())
         except ValueError as exc:
-            return _tool_error(_INVALID_SQUARE, str(exc))
+            return tool_error(_INVALID_SQUARE, str(exc))
         piece = board.piece_at(sq)
         out: dict = {_SQUARE_KEY: chess.square_name(sq)}
         if piece is None:
@@ -977,13 +977,13 @@ def make_validate_move_tool(board_provider: BoardProvider) -> AnalyzeTool:
     async def validate_move(input_: dict, *, cancel_token: CancelToken) -> dict:
         board = board_provider()
         if board is None:
-            return _tool_error(_NO_LIVE_POSITION)
-        raw = input_.get(_MOVE_KEY)
+            return tool_error(NO_LIVE_POSITION_ERROR)
+        raw = input_.get(MOVE_KEY)
         if not isinstance(raw, str) or not raw.strip():
-            return _tool_error(_INVALID_INPUT, _MOVE_EMPTY)
+            return tool_error(INVALID_INPUT_ERROR, MOVE_EMPTY_DETAIL)
         move, kind, detail = _parse_move_or_error(board, _strip_move_prefix(raw))
         if move is None:
-            return _tool_error(kind, detail)
+            return tool_error(kind, detail)
         return {"legal": True, _UCI_KEY: move.uci(), _SAN_KEY: board.san(move)}
 
     return validate_move
@@ -1033,18 +1033,18 @@ def make_report_line_tool(board_provider: BoardProvider) -> AnalyzeTool:
     async def report_line(input_: dict, *, cancel_token: CancelToken) -> dict:
         from_fen = input_.get(_FROM_FEN_KEY)
         if from_fen is not None:
-            board, err = _parse_fen_arg({_FEN_KEY: from_fen})
+            board, err = _parse_fen_arg({FEN_KEY: from_fen})
             if err is not None:
                 return err
         else:
             board = board_provider()
             if board is None:
-                return _tool_error(_NO_LIVE_POSITION)
+                return tool_error(NO_LIVE_POSITION_ERROR)
         board = board.copy(stack=False)
 
         raw_moves = input_.get(_MOVES_KEY)
         if not isinstance(raw_moves, list) or not raw_moves:
-            return _tool_error(_INVALID_INPUT, _MOVES_EMPTY)
+            return tool_error(INVALID_INPUT_ERROR, _MOVES_EMPTY)
         truncated = len(raw_moves) > REPORT_LINE_MAX_PLIES
         raw_moves = raw_moves[:REPORT_LINE_MAX_PLIES]
 
@@ -1052,10 +1052,10 @@ def make_report_line_tool(board_provider: BoardProvider) -> AnalyzeTool:
         fens: list[str] = [board.fen()]
         for ply, raw in enumerate(raw_moves):
             if not isinstance(raw, str):
-                return {**_tool_error(_INVALID_INPUT, _MOVE_NOT_STRING), _PLY_KEY: ply}
+                return {**tool_error(INVALID_INPUT_ERROR, _MOVE_NOT_STRING), _PLY_KEY: ply}
             move, kind, detail = _parse_move_or_error(board, _strip_move_prefix(raw))
             if move is None:
-                return {**_tool_error(kind, detail), _PLY_KEY: ply, _MOVE_INPUT_KEY: raw}
+                return {**tool_error(kind, detail), _PLY_KEY: ply, _MOVE_INPUT_KEY: raw}
             san_line.append(board.san(move))
             board.push(move)
             fens.append(board.fen())
@@ -1097,14 +1097,14 @@ RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
     ),
     input_schema=object_schema(
         {
-            _MOVE_KEY: string_prop(_MOVE_ARG_DESCRIPTION),
+            MOVE_KEY: string_prop(_MOVE_ARG_DESCRIPTION),
             _DEPTH_KEY: integer_prop(
                 "Dominance-check depth. Go deeper when the position is "
                 "sharp or the move was close, so the check doesn't "
                 "confirm a shallow mistake."
             ),
         },
-        required=[_MOVE_KEY],
+        required=[MOVE_KEY],
     ),
     card=_RECOMMEND_MOVE_CARD,
 )
@@ -1178,7 +1178,7 @@ async def _dominance_searches(
     if _best_move(best_info) == move:
         return best_info, best_info
     finish = await report_progress(
-        PROGRESS_SEARCH_MOVE, {_MOVE_KEY: board.san(move), _DEPTH_KEY: limit.depth},
+        PROGRESS_SEARCH_MOVE, {MOVE_KEY: board.san(move), _DEPTH_KEY: limit.depth},
     )
     cand_info, _ = await cache.get_or_search(
         engine_launcher, board.copy(stack=False), limit,
@@ -1261,13 +1261,13 @@ def make_recommend_move_tool(
     async def recommend_move(input_: dict, *, cancel_token: CancelToken) -> dict:
         board = board_provider()
         if board is None:
-            return _tool_error(_NO_LIVE_POSITION)
-        raw = input_.get(_MOVE_KEY)
+            return tool_error(NO_LIVE_POSITION_ERROR)
+        raw = input_.get(MOVE_KEY)
         if not isinstance(raw, str) or not raw.strip():
-            return _tool_error(_INVALID_INPUT, _MOVE_EMPTY)
+            return tool_error(INVALID_INPUT_ERROR, MOVE_EMPTY_DETAIL)
         parsed, kind, detail = _parse_move_or_error(board, _strip_move_prefix(raw))
         if parsed is None:
-            err = _tool_error(kind, detail)
+            err = tool_error(kind, detail)
             # On an illegal move, hand back the legal moves for the piece the
             # model meant -- so it picks a real one instead of guessing again.
             if kind == _ILLEGAL_MOVE:
@@ -1293,7 +1293,7 @@ def make_recommend_move_tool(
             and san in situation.repeats
         ):
             return {
-                **_tool_error(_RECOMMENDATION_REJECTED),
+                **tool_error(_RECOMMENDATION_REJECTED),
                 REASON_KEY: _REPEAT_AHEAD_REASON.format(san=san),
                 _UCI_KEY: uci, _SAN_KEY: san,
             }
@@ -1320,7 +1320,7 @@ def make_recommend_move_tool(
                 settings_provider=settings_provider,
             )
         except _SearchError as err:
-            return _tool_error(err.kind, err.detail)
+            return tool_error(err.kind, err.detail)
         if searched is None:
             # Accept as-is; we couldn't finish verification.
             return {
@@ -1346,7 +1346,7 @@ def make_recommend_move_tool(
         if _is_dominated(parsed, best_info, cand_info, board.turn, margin_cp):
             best_san = result_common.get(_ENGINE_BEST_SAN_KEY) or "a stronger move"
             return {
-                **_tool_error(_RECOMMENDATION_REJECTED),
+                **tool_error(_RECOMMENDATION_REJECTED),
                 REASON_KEY: (
                     f"A stronger move is available: {best_san}. Submit "
                     f"{best_san} unless you can show it is worse."

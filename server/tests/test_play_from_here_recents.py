@@ -157,26 +157,6 @@ def test_repeat_fork_same_ply(client):
     )
 
 
-def test_delete_in_view_row_requires_force_then_closes_view(client):
-    c = client
-    r = c.post("/game/import", json={"format": "pgn", "text": PARENT_PGN})
-    game_id = r.json()["game_id"]
-    h = r.json()["hash"]
-
-    # Unforced delete of the viewed row -> 409 in_view, row survives.
-    r = c.delete(f"/game/recent-imports/{h}")
-    assert r.status_code == 409, r.text
-    assert r.json()["detail"]["error"] == "in_view"
-    assert c.get(f"/game/recent-imports/by-id/{game_id}").status_code == 200
-
-    # Forced delete -> row gone, view session closed (view ops now reject).
-    r = c.delete(f"/game/recent-imports/{h}?force=1")
-    assert r.status_code == 200, r.text
-    assert r.json()["resumed_game_id"] is None
-    assert c.get(f"/game/recent-imports/by-id/{game_id}").status_code == 404
-    assert c.post("/game/view/goto", json={"ply": 1}).status_code == 400
-
-
 CLONE_PLY = FORK_PLY - 2
 NOTE = "Annotated on the clone."
 
@@ -236,62 +216,9 @@ def test_clone_commit_keeps_fork_link(client):
     assert c.app.state.hve._fork_link == (parent_id, FORK_PLY)
 
 
-@pytest.mark.parametrize("analyzing", [False, True])
-def test_force_delete_of_exported_row_on_clone_resumes_live_game(client, analyzing):
-    """A clone of an exported live game carries its row's hash; force-deleting
-    that row while on the clone -- analysis running or not -- hands back the
-    live game with the clone's note, not an idle board."""
-    c = client
-    _parent_id, live_id = _forked_live_game(c)
-    assert c.get("/game/pgn").status_code == 200
-    h = _by_id(c, live_id)["hash"]
-    _note_on_clone(c)
-    if analyzing:
-        assert c.post("/game/analysis/start", json={}).status_code == 200
-
-    r = c.delete(f"/game/recent-imports/{h}?force=1")
-    assert r.status_code == 200, r.text
-    assert r.json()["resumed_game_id"] == live_id
-    hve = c.app.state.hve
-    assert hve.viewing_game_id is None
-    assert hve.game_id == live_id
-    assert hve._play_comments[CLONE_PLY - 1] == NOTE
-
-
-def test_delete_non_viewed_row_needs_no_force(client):
-    c = client
-    r = c.post("/game/import", json={"format": "pgn", "text": PARENT_PGN})
-    h = r.json()["hash"]
-    # View a different game, then delete the first row without force.
-    other = PARENT_PGN.replace("4. Qxf7# 1-0", "4. d3 Nd4 *").replace(
-        '[Result "1-0"]', '[Result "*"]'
-    )
-    c.post("/game/import", json={"format": "pgn", "text": other})
-    assert c.delete(f"/game/recent-imports/{h}").status_code == 200
-
-
-def test_force_delete_does_not_override_children_pin(client):
-    c = client
-    r = c.post("/game/import", json={"format": "pgn", "text": PARENT_PGN})
-    parent_id = r.json()["game_id"]
-    parent_hash = r.json()["hash"]
-    # Fork + finish so the parent gains a child ref.
-    assert c.post("/game/view/goto", json={"ply": FORK_PLY}).status_code == 200
-    c.post("/game/view/play-from-here", json={})
-    assert c.post("/game/resign", json={}).status_code == 200
-    # Auto-view the finished child (now the in-view game is the child,
-    # not the parent) -- parent delete must hit the children pin.
-    child = _by_id(c, _by_id(c, parent_id)["children"][0]["game_id"])
-    c.post("/game/import", json={"format": child["format"], "text": child["text"]})
-    r = c.delete(f"/game/recent-imports/{parent_hash}?force=1")
-    assert r.status_code == 409, r.text
-    assert r.json()["detail"]["error"] == "has_children"
-
-
-def test_children_pin_wins_over_in_view_confirm(client):
-    """A row that is both in-view and children-pinned must 409 with
-    has_children on an unforced delete -- never offer the in_view
-    confirm for a delete that would be refused anyway."""
+def test_children_pin_blocks_delete_of_viewed_parent(client):
+    """A children-pinned row 409s with has_children, the game in view or
+    not; the pin is the only server-side delete gate."""
     c = client
     r = c.post("/game/import", json={"format": "pgn", "text": PARENT_PGN})
     parent_id = r.json()["game_id"]
@@ -309,9 +236,8 @@ def test_children_pin_wins_over_in_view_confirm(client):
     assert c.get(f"/game/recent-imports/by-id/{parent_id}").status_code == 200
 
 
-def test_delete_edited_row_needs_no_force_and_keeps_edit_session(client):
-    """EDITING is not viewing: deleting the edited game's row succeeds
-    unforced and must not tear the edit session down."""
+def test_delete_edited_row_keeps_edit_session(client):
+    """Deleting the edited game's row must not tear the edit session down."""
     c = client
     r = c.post("/game/import", json={"format": "pgn", "text": PARENT_PGN})
     h = r.json()["hash"]

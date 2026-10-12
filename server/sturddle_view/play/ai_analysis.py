@@ -27,6 +27,7 @@ from ..config import (
     _DEFAULT_AI_VERIFIER_MAX_ROUNDS,
 )
 from ..env_utils import env_bool, env_int
+from ..error_detail import ERROR_KEY, REASON_KEY
 from ..events import (
     ENVELOPE_GAME_ID,
     ENVELOPE_KIND,
@@ -82,11 +83,26 @@ from ..llm.position_check import (
 )
 from ..llm.position_judge import POSITION_JUDGE_CALL_NAME, judge_other_position
 from ..llm.tool_progress import ProgressReporter, StepFinisher, reporting_progress
+from ..llm.tools import (
+    DETAIL_KEY,
+    INVALID_INPUT_ERROR,
+    MALFORMED_TOOL_ARGUMENTS_ERROR,
+    TOOL_FAILED_ERROR,
+    TOOL_NAME_KEY,
+    UNKNOWN_TOOL_ERROR,
+    object_schema,
+    string_prop,
+    tool_error,
+)
 from ..openings import Opening, find_opening_names
 from .tools_engine import (
     ANALYZE_TOOL_NAME,
     CANDIDATES_KEY,
+    FEN_KEY,
+    INVALID_MOVE_ERROR,
     MATERIAL_TOOL_NAME,
+    MOVE_EMPTY_DETAIL,
+    MOVE_KEY,
     MOVE_UCI_KEY,
     PIECE_AT_TOOL_NAME,
     RECOMMEND_MOVE_TOOL_NAME,
@@ -141,6 +157,9 @@ _USAGE_TOTAL_KEYS = tuple(f.name for f in fields(ProviderUsage))
 # bus payload small even when a provider returns a wall of HTML / a
 # verbose stack trace. Full detail is in the transcript anyway.
 ERROR_DETAIL_MAX_LEN = 500
+_ERROR_DETAIL_KEY = "error_detail"
+
+_QUESTION_ARG_KEY = "question"
 
 # Per-round prose check against the live board. On a hit the model gets a
 # gentle, fact-anchored correction. Move and claim errors get separate asks:
@@ -293,13 +312,10 @@ _NO_CONCLUSION_DETAIL = 'no conclusion. Try increasing "Max subagent rounds"'
 _UNUSABLE_REPLY_DETAIL = "discarded: the reply was not a usable verdict"
 _FALSE_FACT_DETAIL = "discarded: the verdict misstated the position"
 _UNCONFIRMED_REFUTATION_DETAIL = "discarded: the refutation does not hold up"
+_QUESTION_EMPTY_DETAIL = "question must be a non-empty string"
 # Set on a withheld refutation the engine overruled: the move survived the
 # adversarial check, so it satisfies the red-team hold like a verdict does.
 MOVE_SURVIVED_KEY = "move_survived"
-
-
-def _delegate_error(kind: str, detail: str) -> dict:
-    return {"error": kind, "detail": detail}
 
 
 def _verdict_kind(verdict: str) -> str | None:
@@ -335,25 +351,18 @@ DELEGATE_TOOL_SPEC = ToolSpec(
         "strongest reply, the tactic it allows -- and returns a verdict, "
         "holds or refuted with the reason."
     ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "move": {
-                "type": "string",
-                "description": (
-                    "The move to red-team, UCI or SAN (e.g. 'Nf3', 'g1f3')."
-                ),
-            },
-            "question": {
-                "type": "string",
-                "description": (
-                    "What to probe, e.g. "
-                    "'does it drop material to the d5 break?'."
-                ),
-            },
+    input_schema=object_schema(
+        {
+            MOVE_KEY: string_prop(
+                "The move to red-team, UCI or SAN (e.g. 'Nf3', 'g1f3')."
+            ),
+            _QUESTION_ARG_KEY: string_prop(
+                "What to probe, e.g. "
+                "'does it drop material to the d5 break?'."
+            ),
         },
-        "required": ["move", "question"],
-    },
+        required=[MOVE_KEY, _QUESTION_ARG_KEY],
+    ),
     card=_DELEGATE_TOOL_CARD,
 )
 
@@ -370,21 +379,21 @@ def make_delegate_tool(
     misstates the board, or a "refuted" the engine (`refute_check`) doesn't
     confirm, is withheld; None skips the engine check."""
     async def delegate(input_: dict, *, cancel_token: CancelToken) -> dict:
-        question = input_.get("question")
+        question = input_.get(_QUESTION_ARG_KEY)
         if not isinstance(question, str) or not question.strip():
-            return {"error": "invalid_input", "detail": "question must be a non-empty string"}
-        raw_move = input_.get("move")
+            return tool_error(INVALID_INPUT_ERROR, _QUESTION_EMPTY_DETAIL)
+        raw_move = input_.get(MOVE_KEY)
         if not isinstance(raw_move, str) or not raw_move.strip():
-            return {"error": "invalid_input", "detail": "move must be a non-empty string"}
+            return tool_error(INVALID_INPUT_ERROR, MOVE_EMPTY_DETAIL)
         board = board_provider()
         if board is None:
-            return {"error": "invalid_move", "detail": f"could not parse {raw_move!r}"}
+            return tool_error(INVALID_MOVE_ERROR, f"could not parse {raw_move!r}")
         # Surface the real kind (illegal_move vs invalid_move) and the FEN we
         # validated against, so the narrator sees e.g. a wrong-side-to-move
         # move for what it is instead of a flat "could not parse".
         move, kind, detail = parse_move_reporting(board, raw_move)
         if move is None:
-            return {"error": kind, "detail": detail, "fen": board.fen()}
+            return {**tool_error(kind, detail), FEN_KEY: board.fen()}
         result = await runner(
             f"{_MOVE_UNDER_TEST_PREFIX} {board.san(move)}. {question.strip()}",
             move,
@@ -392,8 +401,8 @@ def make_delegate_tool(
         verdict = result.verdict
         if not verdict:
             if result.round_cap:
-                return _delegate_error(_NO_VERDICT_ERROR, _NO_CONCLUSION_DETAIL)
-            return _delegate_error(_VERDICT_WITHHELD_ERROR, _UNUSABLE_REPLY_DETAIL)
+                return tool_error(_NO_VERDICT_ERROR, _NO_CONCLUSION_DETAIL)
+            return tool_error(_VERDICT_WITHHELD_ERROR, _UNUSABLE_REPLY_DETAIL)
         # Strict non-LLM validation of the verdict prose. The verdict restates
         # the move under test (legal pre-move) and reasons about its replies
         # (legal post-move), so it straddles the move boundary; validate against
@@ -405,7 +414,7 @@ def make_delegate_tool(
         after.push(move)
         if has_position_flags(verdict, board, after):
             log.info("delegate verdict misstates the board; withheld: %r", verdict)
-            return _delegate_error(_VERDICT_WITHHELD_ERROR, _FALSE_FACT_DETAIL)
+            return tool_error(_VERDICT_WITHHELD_ERROR, _FALSE_FACT_DETAIL)
         # A refutation must survive the engine: the same dominance test the
         # final recommend_move gate applies. Search failures pass it through.
         if (
@@ -415,7 +424,7 @@ def make_delegate_tool(
         ):
             log.info("delegate refutation of %s not confirmed; withheld", move.uci())
             return {
-                **_delegate_error(_VERDICT_WITHHELD_ERROR, _UNCONFIRMED_REFUTATION_DETAIL),
+                **tool_error(_VERDICT_WITHHELD_ERROR, _UNCONFIRMED_REFUTATION_DETAIL),
                 MOVE_SURVIVED_KEY: True,
             }
         return {MOVE_UCI_KEY: move.uci(), _VERDICT_KEY: verdict}
@@ -430,7 +439,7 @@ def make_delegate_tool(
 def _norm_move_arg(input_: dict, board: chess.Board | None) -> tuple | None:
     # depth is part of the key for recommend_move; harmless for
     # validate_move which doesn't accept it (always None).
-    raw = input_.get("move")
+    raw = input_.get(MOVE_KEY)
     if not isinstance(raw, str) or board is None:
         return None
     move = parse_move_canonical(board, raw)
@@ -448,7 +457,7 @@ def _norm_square_arg(input_: dict, board: chess.Board | None) -> tuple | None:
     # piece_at reads a supplied fen or the live board; key on the position
     # (EPD -- clocks ignored) so a query against one position can't reuse a
     # result from another. An explicit fen matching the live board dedups.
-    fen = input_.get("fen")
+    fen = input_.get(FEN_KEY)
     if isinstance(fen, str) and fen.strip():
         try:
             # 'startpos' isn't expanded here, so it won't dedup (matches
@@ -491,7 +500,7 @@ def _canonical_fen(input_: dict) -> str | None:
     # Canonical key for a position: normalized FEN minus the halfmove and
     # fullmove counters, so the same board with different clocks shares a
     # key. 'startpos' isn't expanded here, so it won't dedup.
-    fen = input_.get("fen")
+    fen = input_.get(FEN_KEY)
     if not isinstance(fen, str) or not fen.strip():
         return None
     try:
@@ -1021,11 +1030,11 @@ class _PositionCheck:
             return self
         return _PositionCheck(
             self.board,
-            [(s, l) for s, l in self.move_pairs if l not in cleared],
-            [(s, l, sq) for s, l, sq in self.claim_triples if l not in cleared],
-            [(s, l) for s, l in self.line_pairs if l not in cleared],
+            [(s, label) for s, label in self.move_pairs if label not in cleared],
+            [(s, label, sq) for s, label, sq in self.claim_triples if label not in cleared],
+            [(s, label) for s, label in self.line_pairs if label not in cleared],
             self.tool_mentions,
-            [(s, l, f) for s, l, f in self.fact_triples if l not in cleared],
+            [(s, label, f) for s, label, f in self.fact_triples if label not in cleared],
             self.tool_leaks,
         )
 
@@ -1305,8 +1314,8 @@ class AIAnalysisCoordinator:
                     # log.error (not exception): trace is noise for
                     # provider rejections; full detail is in transcript.
                     log.error("AI agent loop failed: %s: %s", type(exc).__name__, exc)
-                    done_payload["error"] = type(exc).__name__
-                    done_payload["error_detail"] = str(exc)[:ERROR_DETAIL_MAX_LEN]
+                    done_payload[ERROR_KEY] = type(exc).__name__
+                    done_payload[_ERROR_DETAIL_KEY] = str(exc)[:ERROR_DETAIL_MAX_LEN]
                     raise
                 finally:
                     if (
@@ -1353,7 +1362,7 @@ class AIAnalysisCoordinator:
                     # An errored turn tears its panel down client-side; the
                     # buffered done event would only re-fire its error toast
                     # on rehydrate. Drop it.
-                    if done_payload.get("error"):
+                    if done_payload.get(ERROR_KEY):
                         self.clear_replay()
                     self._task = None
                     self._cancel_token = None
@@ -1728,8 +1737,8 @@ class AIAnalysisCoordinator:
             tool_output = {
                 k: v for k, v in tool_output.items() if k != "ok"
             }
-            tool_output["error"] = _RED_TEAM_FIRST_ERROR
-            tool_output["reason"] = _RED_TEAM_FIRST_NUDGE
+            tool_output[ERROR_KEY] = _RED_TEAM_FIRST_ERROR
+            tool_output[REASON_KEY] = _RED_TEAM_FIRST_NUDGE
             log.info("red-team nudge (%s): holding unchecked accept", mode)
         if not cache_hit:
             await emit(
@@ -1752,7 +1761,7 @@ class AIAnalysisCoordinator:
             config.track_recommend
             and pending_tool.tool_name == TOP_MOVES_TOOL_NAME
             and isinstance(tool_output, dict)
-            and not tool_output.get("error")
+            and not tool_output.get(ERROR_KEY)
         ):
             st.consecutive_recommend_failures = 0
             st.recommend_failure_nudge_armed = True
@@ -1763,7 +1772,7 @@ class AIAnalysisCoordinator:
             config.track_recommend
             and pending_tool.tool_name == _DELEGATE_TOOL_NAME
             and isinstance(tool_output, dict)
-            and (not tool_output.get("error") or tool_output.get(MOVE_SURVIVED_KEY))
+            and (not tool_output.get(ERROR_KEY) or tool_output.get(MOVE_SURVIVED_KEY))
         ):
             st.red_teamed = True
         if _ranks_move(pending_tool, tool_output, config.move_under_test):
@@ -1785,7 +1794,7 @@ class AIAnalysisCoordinator:
                 # is handled at the natural-exit check.
                 if rnd.had_text:
                     st.prose_after_recommend = True
-            elif tool_output.get("error") != _RED_TEAM_FIRST_ERROR:
+            elif tool_output.get(ERROR_KEY) != _RED_TEAM_FIRST_ERROR:
                 st.consecutive_recommend_failures += 1
         await config.transcript.tool_result(
             round_index, pending_tool.tool_use_id, tool_output
@@ -1795,7 +1804,7 @@ class AIAnalysisCoordinator:
         # it from the complete event instead.
         if (
             isinstance(tool_output, dict)
-            and tool_output.get("error")
+            and tool_output.get(ERROR_KEY)
             and not tool_output.get(MOVE_SURVIVED_KEY)
         ):
             await emit(
@@ -1805,8 +1814,8 @@ class AIAnalysisCoordinator:
                     payload={
                         "round": round_index,
                         "tool_use_id": pending_tool.tool_use_id,
-                        "error": tool_output.get("error"),
-                        "detail": tool_output.get("detail"),
+                        ERROR_KEY: tool_output.get(ERROR_KEY),
+                        DETAIL_KEY: tool_output.get(DETAIL_KEY),
                     },
                 )
             )
@@ -2133,7 +2142,7 @@ class AIAnalysisCoordinator:
         # The position the pick belongs to. The client's arrow re-apply
         # guard keys on it -- its own board fen is unsynced mid-replay.
         if payload is not None and board is not None:
-            payload["fen"] = board.fen()
+            payload[FEN_KEY] = board.fen()
         return payload
 
     def delegate_runner(self) -> VerifierRunner:
@@ -2220,8 +2229,8 @@ class AIAnalysisCoordinator:
                     )
                 return VerifierResult(result.final_text, result.round_cap_hit)
             except Exception as exc:
-                done_payload["error"] = type(exc).__name__
-                done_payload["error_detail"] = str(exc)[:ERROR_DETAIL_MAX_LEN]
+                done_payload[ERROR_KEY] = type(exc).__name__
+                done_payload[_ERROR_DETAIL_KEY] = str(exc)[:ERROR_DETAIL_MAX_LEN]
                 raise
             finally:
                 await transcript.turn_end(done_payload)
@@ -2343,14 +2352,13 @@ class AIAnalysisCoordinator:
             # concatenated JSON objects). Don't invoke the tool with empty
             # input; hand the model the failure so it re-emits one clean call.
             return {
-                "error": "malformed_tool_arguments",
-                "name": call.tool_name,
-                "detail": call.tool_input_error,
+                **tool_error(MALFORMED_TOOL_ARGUMENTS_ERROR, call.tool_input_error),
+                TOOL_NAME_KEY: call.tool_name,
             }
         try:
             fn = registry.get(call.tool_name)
         except UnknownToolError:
-            return {"error": "unknown_tool", "name": call.tool_name}
+            return {**tool_error(UNKNOWN_TOOL_ERROR), TOOL_NAME_KEY: call.tool_name}
         try:
             return await fn(call.tool_input, cancel_token=self._cancel_token)
         except asyncio.CancelledError:
@@ -2362,7 +2370,7 @@ class AIAnalysisCoordinator:
             # (e.g. a provider 429 on a verifier sub-run), so the stack
             # trace is noise -- log the message only.
             log.error("tool %s raised: %s", call.tool_name, exc)
-            return {"error": "tool_failed", "name": call.tool_name, "detail": str(exc)}
+            return {**tool_error(TOOL_FAILED_ERROR, str(exc)), TOOL_NAME_KEY: call.tool_name}
 
     async def cancel(self) -> None:
         """Cancel the running turn (if any). Hard-stop per spec: drops the

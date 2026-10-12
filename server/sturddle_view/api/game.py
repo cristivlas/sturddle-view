@@ -45,13 +45,11 @@ from ..play.import_position import (
 )
 from ..play.opening_lines import BookRef, is_epd_book, select_epd_seed
 from ..recent_imports import (
-    ROW_ALIAS_IDS,
     ROW_FORK_PLY,
     ROW_FORMAT,
     ROW_GAME_ID,
     ROW_HASH,
     ROW_PARENT_GAME_ID,
-    ROW_REFS,
     ROW_SUMMARY,
     ROW_TS,
     RemoveStatus,
@@ -95,7 +93,6 @@ _VALID_FORMATS = (FMT_FEN, FMT_PGN, _FMT_AUTO)
 _PARSED_GAME_FIELD = "parsed_game"
 _NOT_FOUND = "not found"
 _OK = {"ok": True}
-_RESUMED_GAME_ID_KEY = "resumed_game_id"
 _PGN_MEDIA_TYPE = "application/x-chess-pgn; charset=utf-8"
 _RECENT_IMPORT_PATH = "/recent-imports/{h}"
 
@@ -502,45 +499,21 @@ async def get_recent_import(h: str, request: Request) -> dict:
 
 
 @router.delete(_RECENT_IMPORT_PATH)
-async def delete_recent_import(h: str, request: Request, force: bool = False) -> dict:
+async def delete_recent_import(h: str, request: Request) -> dict:
     """Remove a single entry from the recent-imports store.
 
     Returns 409 with a ``children`` list if the row has live forked
     children (refs non-empty); the row is pinned in that case and not
-    deleted. Returns 409 ``{"error": "in_view"}`` when the row is the
-    currently-viewed game and ``force`` is not set; with ``force=1`` the
-    row is deleted and the view session is closed: idle board, or -- on a
-    live clone of the game the row belongs to -- the live game resumed,
-    its id returned as ``resumed_game_id`` (else null). The children pin
-    is not overridable by force.
+    deleted. The dialog never offers the viewed or in-progress game's
+    row, so no viewed-row handling lives here.
     """
     store = request.app.state.recent_imports
-    hve = request.app.state.hve
-    in_view = False
-    blocked_by_refs = False
-    got = store.get(h)
-    if got is not None:
-        row, _ = got
-        blocked_by_refs = bool(row.get(ROW_REFS))
-        if hve is not None:
-            row_ids = {row.get(ROW_GAME_ID), *(row.get(ROW_ALIAS_IDS) or [])}
-            viewed = hve.viewing_game_id
-            in_view = viewed is not None and viewed in row_ids
-    # The children pin is not overridable, so it must win over the
-    # confirmable in_view gate -- no point confirming a delete that
-    # remove() will refuse anyway. remove() stays authoritative for it.
-    if in_view and not force and not blocked_by_refs:
-        raise conflict({_ERROR_KEY: "in_view"})
     result = await store.remove(h)
     if result.status is RemoveStatus.NOT_FOUND:
         raise not_found(_NOT_FOUND)
     if result.status is RemoveStatus.BLOCKED_BY_REFS:
         raise conflict({_ERROR_KEY: "has_children", _CHILDREN_KEY: result.children})
-    resumed_id = None
-    if in_view:
-        await _cancel_ai_analysis(request)
-        resumed_id = await hve.close_view()
-    return {**_OK, _RESUMED_GAME_ID_KEY: resumed_id}
+    return _OK
 
 
 @router.get("/pgn")

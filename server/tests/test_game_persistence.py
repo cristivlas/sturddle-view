@@ -645,15 +645,6 @@ async def test_clone_note_survives_return_and_restart(tmp_path):
     assert fresh._play_comments == [_NOTE, None]
 
 
-async def test_close_view_on_clone_keeps_note(tmp_path):
-    hve, _store = _make_hve(tmp_path)
-    await _live_game_two_plies(hve)
-    await _note_on_clone_at_first_ply(hve)
-    await hve.close_view()
-    assert hve._viewing is False
-    assert hve._play_comments == [_NOTE, None]
-
-
 async def test_leaving_clears_store(tmp_path):
     hve, store = _make_hve(tmp_path)
     await _live_game_two_plies(hve)
