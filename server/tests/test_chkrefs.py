@@ -1,16 +1,21 @@
-"""scripts/chkrefs.py: find and drop dead fork refs in the imports index."""
+"""scripts/chkrefs.py: find and fix bad fork links (dead refs, self links)
+in the imports index."""
 from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
 
 from sturddle_view.play.canonical_hash import FMT_PGN
 from sturddle_view.recent_imports import (
+    REF_FORK_PLY,
     REF_GAME_ID,
     ROW_FILE,
+    ROW_FORK_PLY,
+    ROW_PARENT_GAME_ID,
     ROW_REFS,
     RecentImports,
     RemoveStatus,
@@ -33,6 +38,7 @@ _LIVE_PLY = 3
 _DEAD_PLY = 5
 _FIX_FLAG = "--fix"
 _DIR_FLAG = "--dir"
+_ENCODING = "utf-8"
 
 
 def _run(coro):
@@ -82,23 +88,23 @@ def test_no_dead_refs_when_children_live(root):
     store = _load(root)
     _save(store, _PARENT_PGN, _PARENT_GID)
     _save(store, _LIVE_PGN, _LIVE_GID, ply=_LIVE_PLY)
-    assert chkrefs.find_dead_refs(_load(root)) == []
+    assert chkrefs.find_bad_links(_load(root)) == []
 
 
 def test_find_lists_only_the_dead_ref(root, parent_hash):
-    [(parent_id, ref)] = chkrefs.find_dead_refs(_load(root))
-    assert parent_id == _PARENT_GID
-    assert ref[REF_GAME_ID] == _DEAD_GID
+    assert chkrefs.find_bad_links(_load(root)) == [
+        (_PARENT_GID, _DEAD_GID, _DEAD_PLY, chkrefs.DEAD_REF),
+    ]
 
 
 def test_drop_keeps_live_refs(root, parent_hash):
-    assert chkrefs.drop_dead_refs(_load(root)) == 1
+    assert chkrefs.fix_bad_links(_load(root)) == 1
     assert _parent_ref_ids(root, parent_hash) == [_LIVE_GID]
-    assert chkrefs.find_dead_refs(_load(root)) == []
+    assert chkrefs.find_bad_links(_load(root)) == []
 
 
 def test_drop_unpins_parent_once_live_child_removed(root, parent_hash):
-    chkrefs.drop_dead_refs(_load(root))
+    chkrefs.fix_bad_links(_load(root))
     store = _load(root)
     _run(store.remove(store.hash_for_id(_LIVE_GID)))
     assert _run(store.remove(parent_hash)).status is RemoveStatus.DELETED
@@ -114,3 +120,33 @@ def test_main_without_fix_leaves_index_untouched(root, parent_hash):
 def test_main_with_fix_drops_dead_refs(root, parent_hash):
     assert chkrefs.main([_DIR_FLAG, str(root), _FIX_FLAG]) == 0
     assert _parent_ref_ids(root, parent_hash) == [_LIVE_GID]
+
+
+@pytest.fixture
+def self_linked_hash(root):
+    """A row listed as its own parent and child, as the old save() left a
+    fork that deduped onto its parent's row."""
+    store = _load(root)
+    h = _save(store, _PARENT_PGN, _PARENT_GID)
+    raw = json.loads(store.index_path.read_text(encoding=_ENCODING))
+    raw[h][ROW_PARENT_GAME_ID] = _PARENT_GID
+    raw[h][ROW_FORK_PLY] = _DEAD_PLY
+    raw[h][ROW_REFS] = [{REF_GAME_ID: _PARENT_GID, REF_FORK_PLY: _DEAD_PLY}]
+    store.index_path.write_text(json.dumps(raw), encoding=_ENCODING)
+    return h
+
+
+def test_find_reports_self_link(root, self_linked_hash):
+    assert chkrefs.find_bad_links(_load(root)) == [
+        (_PARENT_GID, _PARENT_GID, _DEAD_PLY, chkrefs.SELF_LINK),
+    ]
+
+
+def test_fix_breaks_self_link(root, self_linked_hash):
+    assert chkrefs.fix_bad_links(_load(root)) == 1
+    store = _load(root)
+    row = store.get(self_linked_hash)[0]
+    assert row[ROW_REFS] == []
+    assert ROW_PARENT_GAME_ID not in row
+    assert chkrefs.find_bad_links(store) == []
+    assert _run(store.remove(self_linked_hash)).status is RemoveStatus.DELETED

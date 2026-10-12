@@ -11,6 +11,7 @@ from sturddle_view.play.canonical_hash import FMT_PGN
 from sturddle_view.recent_imports import (
     REF_FORK_PLY,
     REF_GAME_ID,
+    ROW_PARENT_GAME_ID,
     ROW_REFS,
     RecentImports,
     RemoveStatus,
@@ -455,11 +456,12 @@ _THIRD_GID = "gid-third"
 _SUMMARY = "s"
 _FORK_PLY = 5
 _FORK_CAP = 2
+_PARENT_TEXT = "1. e4 e5 *"
 
 
 def _save_parent(store, gid=_PARENT_GID):
     return _run(store.save(
-        fmt="pgn", text="1. e4 e5 *", summary={"white": "P"}, game_id=gid,
+        fmt="pgn", text=_PARENT_TEXT, summary={"white": "P"}, game_id=gid,
     ))
 
 
@@ -578,6 +580,51 @@ def test_cascade_refused_when_subtree_holds_active_game(tmp_path):
     result = _run(store.remove(h_parent, cascade=True))
     assert result.status is RemoveStatus.BLOCKED_BY_ACTIVE
     assert store.list() == before
+
+
+def _assert_unlinked(row):
+    assert ROW_PARENT_GAME_ID not in row
+    assert row[ROW_REFS] == []
+
+
+def test_fork_identical_to_parent_does_not_link_row_to_itself(store):
+    """The fork dedups onto its parent's row (alias); linking it there
+    would make the row its own parent and child."""
+    h_parent = _save_parent(store)
+    h = _save_child(store, _PARENT_GID, ply=_FORK_PLY, text=_PARENT_TEXT)
+    assert h == h_parent
+    assert store.hash_for_id(_CHILD_GID) == h_parent
+    _assert_unlinked(store.get(h_parent)[0])
+
+
+def test_fork_resaved_identical_to_parent_does_not_link_row_to_itself(store):
+    """A fork first saved with its own content, then re-saved (replace_at)
+    with content identical to its parent's, merges into the parent's row
+    and drops the parent's ref to it."""
+    h_parent = _save_parent(store)
+    h_child = _save_child(store, _PARENT_GID, ply=_FORK_PLY)
+    h = _run(store.replace_at(
+        old_hash=h_child, fmt=FMT_PGN, text=_PARENT_TEXT, summary=_SUMMARY,
+        game_id=_CHILD_GID, parent_game_id=_PARENT_GID, fork_ply=_FORK_PLY,
+    ))
+    assert h == h_parent
+    assert store.hash_for_id(_CHILD_GID) == h_parent
+    _assert_unlinked(store.get(h_parent)[0])
+
+
+def test_fork_merged_into_parent_keeps_its_own_children(store):
+    """A fork merging into its parent's row (which has other forks) brings
+    its own children's refs along."""
+    h_parent = _save_parent(store)
+    _save_child(store, _PARENT_GID, ply=_FORK_PLY, gid=_OTHER_GID, text=_DISTINCT_PGNS[1])
+    h_child = _save_child(store, _PARENT_GID, ply=_FORK_PLY)
+    _save_child(store, _CHILD_GID, ply=_FORK_PLY, gid=_GRANDCHILD_GID, text=_DISTINCT_PGNS[0])
+    _run(store.replace_at(
+        old_hash=h_child, fmt=FMT_PGN, text=_PARENT_TEXT, summary=_SUMMARY,
+        game_id=_CHILD_GID, parent_game_id=_PARENT_GID, fork_ply=_FORK_PLY,
+    ))
+    refs = {r[REF_GAME_ID] for r in store.get(h_parent)[0][ROW_REFS]}
+    assert refs == {_OTHER_GID, _GRANDCHILD_GID}
 
 
 def test_children_of_returns_sorted_by_fork_ply(store):

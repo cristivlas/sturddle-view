@@ -177,8 +177,10 @@ either direction is cheap).
 - No implicit cascading deletes. The one cascade is explicit: DELETE
   with `?cascade=1` removes a row and its whole fork subtree, after a
   client-side confirm (see recents-manager-spec.md).
-- Circular refs are not structurally possible: a child has at most one
-  parent, set at fork creation, immutable thereafter.
+- Circular refs: a child has at most one parent, set at fork creation,
+  immutable thereafter. The one way to a loop was content dedup: a fork
+  identical to its parent lands on the parent's own row. The store skips
+  the link in that case; `scripts/chkrefs.py --fix` breaks older ones.
 
 ### Atomicity
 

@@ -322,8 +322,14 @@ class RecentImports:
                 if stored_id is None and game_id is not None:
                     self._bind_id_locked(game_id, h, existing)
                 # Deduped fork: adopt the link if the row has none; a row
-                # already carrying the same (parent, ply) needs no new ref.
-                if parent_game_id is not None and ROW_PARENT_GAME_ID not in existing:
+                # already carrying the same (parent, ply) needs no new ref. A
+                # fork identical to its parent landed on the parent's own row:
+                # no link, or the row would be its own parent and child.
+                if (
+                    parent_game_id is not None
+                    and ROW_PARENT_GAME_ID not in existing
+                    and not self._is_row_id_locked(parent_game_id, h)
+                ):
                     existing[ROW_PARENT_GAME_ID] = parent_game_id
                     existing[ROW_FORK_PLY] = fork_ply
                     self._append_parent_ref_locked(
@@ -462,6 +468,15 @@ class RecentImports:
                 for alias in migrated_aliases:
                     self._bind_alias_locked(alias, new_hash, existing)
                 _refresh_row(existing, summary)
+                # Converged onto the parent's own row (a fork identical to its
+                # parent): drop the link instead of self-linking the row.
+                if (
+                    preserved_parent_id is not None
+                    and self._is_row_id_locked(preserved_parent_id, new_hash)
+                ):
+                    self._detach_from_parent_locked(preserved_parent_id, game_id)
+                    preserved_parent_id = None
+                    parent_ref_to_append = None
                 # Preserve fork-link on the surviving row when it wasn't
                 # already set (old_hash == new_hash leaves it intact).
                 if (
@@ -470,8 +485,10 @@ class RecentImports:
                 ):
                     existing[ROW_PARENT_GAME_ID] = preserved_parent_id
                     existing[ROW_FORK_PLY] = preserved_fork_ply
-                if preserved_refs and not existing.get(ROW_REFS):
-                    existing[ROW_REFS] = preserved_refs
+                # The merged game's own forks join the surviving row's.
+                refs = existing.setdefault(ROW_REFS, [])
+                have = {r.get(REF_GAME_ID) for r in refs}
+                refs.extend(r for r in preserved_refs if r.get(REF_GAME_ID) not in have)
                 if parent_ref_to_append is not None:
                     self._append_parent_ref_locked(
                         parent_ref_to_append[0], game_id,
@@ -520,6 +537,10 @@ class RecentImports:
             row[ROW_FORK_PLY] = fork_ply
         self._index[h] = row
         return row
+
+    def _is_row_id_locked(self, game_id: str, h: str) -> bool:
+        """``game_id`` (primary or alias) is bound to row ``h``."""
+        return self._by_id.get(game_id) == h
 
     def _row_for_id(self, game_id: str) -> dict | None:
         h = self._by_id.get(game_id)
