@@ -109,7 +109,8 @@ v Carlsen - Nepo, 1-0          Oct 9   [open][del]
   siblings sorted by `ts` desc. A row whose `parent_game_id` doesn't
   resolve to a listed row renders as a root.
 - Indentation shows nesting; arrows expand and collapse. The tree starts
-  collapsed. A selection hidden under a collapsed parent is kept.
+  collapsed apart from the first-load reveal (see Deep link). A
+  selection hidden under a collapsed parent is kept.
 - The tab sits right below Gameplay.
 - Fork rows show the move they branched at.
 - The viewed or in-play game's row shows a tag ("viewing" / "playing")
@@ -139,6 +140,9 @@ v Carlsen - Nepo, 1-0          Oct 9   [open][del]
   (the gear exists to show its forks), select the row,
   scroll it into view. If the hash isn't in the fetched list, nothing
   is selected and no error is shown.
+- On mount without `select`: if the viewed or in-play game has a row,
+  expand its ancestors (not the row itself), select it, scroll it into
+  view. Otherwise the tree opens fully collapsed with nothing selected.
 
 ## 4. Open from the tab
 

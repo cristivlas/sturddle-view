@@ -61,6 +61,8 @@ STATUS_PATH = "/game/status"
 FORK_PLY = 2
 FORK_LABEL = "move 2."
 VIEWING_TAG = "viewing"
+PLAYING_TAG = "playing"
+EXPORT_PGN_PATH = "/game/pgn"
 OPEN_SETTINGS_LABEL = "Open Settings"
 DELETE_LABEL = "Delete"
 REPLACE_LABEL = "Replace"
@@ -198,7 +200,21 @@ async def test_gear_confirms_before_discarding_typed_text(server, make_page):
 
 
 @pytest.mark.asyncio
-async def test_tree_nests_forks_and_tags_the_viewed_one(server, make_page):
+async def test_tree_starts_collapsed_outside_the_current_game(server, make_page):
+    base = server
+    parent, child, _grandchild = _seed_chain(base)
+    viewed = _import(base, VIEWED_PGN)
+    page, errors = await _open_page(base, make_page)
+    await _open_recents_tab(page)
+
+    await page.locator(ROW.format(parent)).wait_for()
+    assert await page.locator(ROW.format(child)).count() == 0
+    assert await page.locator(SELECTED_ROW).get_attribute(HASH_ATTR) == viewed
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_tree_reveals_and_tags_the_viewed_fork(server, make_page):
     base = server
     parent, child, grandchild = _seed_chain(base)
     # Importing the child's text reuses its game_id: the fork is in view.
@@ -206,13 +222,12 @@ async def test_tree_nests_forks_and_tags_the_viewed_one(server, make_page):
     page, errors = await _open_page(base, make_page)
     await _open_recents_tab(page)
 
-    # Starts collapsed: only the root shows until expanded.
-    parent_row = page.locator(ROW.format(parent))
-    await parent_row.wait_for()
-    assert await page.locator(ROW.format(child)).count() == 0
-    await _expand(page, parent)
+    # Revealed and selected on open; the fork's own forks stay folded.
     child_row = page.locator(ROW.format(child))
     await child_row.wait_for()
+    assert await page.locator(SELECTED_ROW).get_attribute(HASH_ATTR) == child
+    assert await page.locator(ROW.format(grandchild)).count() == 0
+    parent_row = page.locator(ROW.format(parent))
 
     assert await child_row.get_attribute(LEVEL_ATTR) == CHILD_LEVEL
     assert await child_row.locator(ROW_FORK).text_content() == FORK_LABEL
@@ -298,4 +313,28 @@ async def test_game_end_refreshes_open_tab_keeping_selection(play_server, make_p
 
     await page.locator(ROW.format(_hash_of(base, live_id))).wait_for()
     assert await page.locator(SELECTED_ROW).get_attribute(HASH_ATTR) == kept
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_tab_selects_the_exported_game_in_play(play_server, make_page):
+    base = play_server
+    _seed_pair(base, 0)
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    obs = PageObserver(page)
+    await page.goto(base + "/")
+    await wait_perspective_ready(page)
+    httpx.post(f"{base}/game/new", json={"human_white": True}).raise_for_status()
+    httpx.post(f"{base}/game/move", json={"uci": "e2e4"}).raise_for_status()
+    await obs.wait_board_update(_live_with_plies)
+    # Saving the PGN exports the live game to Recents.
+    httpx.get(f"{base}{EXPORT_PGN_PATH}").raise_for_status()
+    live_id = httpx.get(f"{base}/_test/hve/state").json()["game_id"]
+
+    await _open_recents_tab(page)
+    selected = page.locator(SELECTED_ROW)
+    await selected.wait_for()
+    assert await selected.get_attribute(HASH_ATTR) == _hash_of(base, live_id)
+    assert await selected.locator(ROW_TAG).text_content() == PLAYING_TAG
     assert_no_page_errors(errors)

@@ -182,8 +182,10 @@ export function buildRecentsTab({ api, select, close, signal }) {
     loadSeq: 0,
     busy: false,
   };
-  // The deep-linked row: revealed (with its forks) and scrolled to once.
-  let pendingReveal = state.selected !== null;
+  // First load reveals and scrolls to one row: the deep-linked one (with its
+  // forks), else the game in view or play (ancestors only).
+  const deepLinked = state.selected !== null;
+  let pendingReveal = true;
 
   const tagOf = (row) => currentEntryTag(row, {
     viewingHash: state.status?.view_hash ?? null,
@@ -320,11 +322,18 @@ export function buildRecentsTab({ api, select, close, signal }) {
     state.byHash = new Map();
     const index = (nodes) => nodes.forEach((n) => { state.byHash.set(n.row.hash, n); index(n.children); });
     index(state.roots);
-    // Expand the deep-linked row's ancestors and the row itself: the gear
-    // that linked here exists to show its forks.
-    const target = pendingReveal ? state.byHash.get(state.selected) : null;
+    let target = null;
+    if (pendingReveal) {
+      target = deepLinked
+        ? state.byHash.get(state.selected)
+        : [...state.byHash.values()].find((n) => tagOf(n.row));
+      if (target) state.selected = target.row.hash;
+    }
     pendingReveal = false;
-    for (let n = target; n; n = n.parent) state.expanded.add(n.row.hash);
+    // The gear that deep-linked here exists to show the row's forks.
+    for (let n = deepLinked ? target : target?.parent; n; n = n.parent) {
+      state.expanded.add(n.row.hash);
+    }
     render();
     if (target) {
       tree.querySelector(`[data-hash="${target.row.hash}"]`)?.scrollIntoView({ block: "nearest" });
