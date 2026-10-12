@@ -177,6 +177,10 @@ class RecentImports:
     def root(self) -> Path:
         return self._root
 
+    @property
+    def index_path(self) -> Path:
+        return self._index_path
+
     def set_active_game_id_getter(self, getter: ActiveGameIdGetter | None) -> None:
         """Install/replace the active-session getter post-construction.
 
@@ -437,10 +441,8 @@ class RecentImports:
                         aliases.remove(game_id)
                         self._by_id.pop(game_id, None)
                     else:
-                        self._index.pop(old_hash, None)
-                        self._unbind_row_ids_locked(old_row)
                         migrated_aliases = list(old_row.get(ROW_ALIAS_IDS) or [])
-                        self._delete_blob(old_row.get(ROW_FILE))
+                        self._forget_row_locked(old_hash, old_row)
 
             existing = self._index.get(new_hash)
             if existing is not None:
@@ -594,20 +596,13 @@ class RecentImports:
                     children=children,
                 )
 
-            # Detach from parent (if any) before removing.
-            parent_id = row.get(ROW_PARENT_GAME_ID)
-            child_gid = row.get(ROW_GAME_ID)
-            if parent_id is not None:
-                self._detach_from_parent_locked(parent_id, child_gid)
-
-            self._index.pop(h, None)
-            self._unbind_row_ids_locked(row)
-            self._delete_blob(row.get(ROW_FILE))
+            self._drop_row_locked(h, row)
             self._persist_locked()
+            parent_id = row.get(ROW_PARENT_GAME_ID)
             if parent_id is not None:
                 log.info(
                     "xgame.child_deleted parent=%s child=%s ply=%s",
-                    parent_id, child_gid, row.get(ROW_FORK_PLY),
+                    parent_id, row.get(ROW_GAME_ID), row.get(ROW_FORK_PLY),
                 )
             return RemoveResult(RemoveStatus.DELETED)
 
@@ -631,7 +626,7 @@ class RecentImports:
         ``[{game_id, fork_ply, summary, ts}, ...]`` sorted by fork_ply
         asc. Dangling ref entries (child id not resolvable) are dropped
         from the result and warn-logged; the parent's ``refs`` list is
-        not mutated here (scrubbed lazily on subsequent writes)."""
+        not mutated here (scripts/chkrefs.py drops them)."""
         row = self._row_for_id(game_id)
         if row is None:
             return []
@@ -699,7 +694,7 @@ class RecentImports:
         row = self._row_for_id(parent_game_id)
         if row is None:
             log.warning(
-                "xgame.dangling_parent_on_remove child=%s parent=%s",
+                "xgame.dangling_parent_on_drop child=%s parent=%s",
                 child_game_id, parent_game_id,
             )
             return
@@ -707,6 +702,20 @@ class RecentImports:
         row[ROW_REFS] = [
             r for r in refs if r.get(REF_GAME_ID) != child_game_id
         ]
+
+    def _drop_row_locked(self, h: str, row: dict) -> None:
+        """Delete row ``h`` (index, ids, blob) and its parent's ref to it.
+        Shared by remove and eviction so neither strands a parent ref."""
+        parent_id = row.get(ROW_PARENT_GAME_ID)
+        if parent_id is not None:
+            self._detach_from_parent_locked(parent_id, row.get(ROW_GAME_ID))
+        self._forget_row_locked(h, row)
+
+    def _forget_row_locked(self, h: str, row: dict) -> None:
+        """Delete row ``h`` from the index, id map and disk; links untouched."""
+        self._index.pop(h, None)
+        self._unbind_row_ids_locked(row)
+        self._delete_blob(row.get(ROW_FILE))
 
     def _children_summary_locked(self, refs: list[dict]) -> list[dict]:
         """Resolve a parent's ``refs`` to child summaries. Dangling
@@ -761,19 +770,21 @@ class RecentImports:
             key=lambda kv: kv[1].get(ROW_TS, 0),
             reverse=True,
         )
-        candidates = list(reversed(ranked[self._cap:]))
-        drop_target = len(candidates)
-        dropped = 0
-        for h, row in candidates:
-            if row.get(ROW_REFS):
-                continue
-            if active_gid is not None and row.get(ROW_GAME_ID) == active_gid:
-                continue
-            self._index.pop(h, None)
-            self._unbind_row_ids_locked(row)
-            self._delete_blob(row.get(ROW_FILE))
-            dropped += 1
-        if dropped < drop_target:
+        pending = list(reversed(ranked[self._cap:]))
+        # Dropping a child can unpin an older parent already passed over:
+        # rescan until a pass drops nothing.
+        progress = True
+        while progress:
+            progress = False
+            for h, row in pending:
+                if row.get(ROW_REFS):
+                    continue
+                if active_gid is not None and row.get(ROW_GAME_ID) == active_gid:
+                    continue
+                self._drop_row_locked(h, row)
+                progress = True
+            pending = [(h, row) for h, row in pending if h in self._index]
+        if pending:
             log.warning(
                 "recent-imports cap (%d) exceeded: %d rows after "
                 "eviction; remaining rows are pinned (active session "

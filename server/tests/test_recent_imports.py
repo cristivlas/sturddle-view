@@ -1,15 +1,27 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
-import time
 
 import pytest
 
+from sturddle_view import recent_imports
+from sturddle_view.play.canonical_hash import FMT_PGN
 from sturddle_view.recent_imports import (
+    ROW_REFS,
     RecentImports,
     RemoveStatus,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clock(monkeypatch):
+    """Strictly increasing ts per write, so eviction order is exact."""
+    ticks = itertools.count()
+    monkeypatch.setattr(
+        recent_imports, recent_imports._now_ms.__name__, lambda: next(ticks),
+    )
 
 
 @pytest.fixture
@@ -71,8 +83,6 @@ def test_save_evicts_oldest_past_cap(store):
     # cap=5 (from fixture). Save 6 -> first one drops.
     hashes = []
     for pgn in _DISTINCT_PGNS[:6]:
-        # Pause so ts differs measurably between writes (eviction sorts on ts).
-        time.sleep(0.002)
         hashes.append(_run(store.save(fmt="pgn", text=pgn, summary="s")))
     rows = store.list()
     assert len(rows) == 5
@@ -83,7 +93,6 @@ def test_save_evicts_oldest_past_cap(store):
 
 def test_evicted_blob_is_deleted(store, tmp_path):
     for pgn in _DISTINCT_PGNS[:6]:
-        time.sleep(0.002)
         _run(store.save(fmt="pgn", text=pgn, summary="s"))
     # After the 6th save, the oldest blob should be gone.
     remaining = list((tmp_path / "imports" / "by-hash").iterdir())
@@ -106,7 +115,6 @@ def test_get_returns_none_for_unknown_hash(store):
 
 def test_touch_bumps_ts(store):
     h_old = _run(store.save(fmt="pgn", text="1. c4 *", summary="english"))
-    time.sleep(0.005)
     h_new = _run(store.save(fmt="pgn", text="1. e4 *", summary="ke"))
     # h_old is older; touch it and it should rise to top.
     rows = store.list()
@@ -212,7 +220,6 @@ def test_get_by_id_none_for_unknown(store):
 
 def test_eviction_removes_reverse_index_entry(store):
     for i, pgn in enumerate(_DISTINCT_PGNS[:6]):
-        time.sleep(0.002)
         _run(store.save(fmt="pgn", text=pgn, summary="s", game_id=f"gid-{i}"))
     # Cap=5; gid-0 was the oldest -> evicted -> reverse-index entry gone.
     assert store.hash_for_id("gid-0") is None
@@ -231,7 +238,6 @@ def test_eviction_skips_active_session_pinned_row(tmp_path):
     # after the 6th save.
     _run(store.save(fmt="pgn", text=_DISTINCT_PGNS[0], summary="s", game_id=active_id))
     for i, pgn in enumerate(_DISTINCT_PGNS[1:6], start=1):
-        time.sleep(0.002)
         _run(store.save(fmt="pgn", text=pgn, summary="s", game_id=f"gid-{i}"))
     rows = store.list()
     ids = {r["game_id"] for r in rows}
@@ -249,10 +255,8 @@ def test_eviction_skips_pinned_and_drops_next_candidate(tmp_path):
     )
     # Two oldest entries: active (pinned), then gid-other.
     _run(store.save(fmt="pgn", text=_DISTINCT_PGNS[0], summary="s", game_id=active_id))
-    time.sleep(0.002)
     _run(store.save(fmt="pgn", text=_DISTINCT_PGNS[1], summary="s", game_id="gid-other"))
     for i, pgn in enumerate(_DISTINCT_PGNS[2:7], start=2):
-        time.sleep(0.002)
         _run(store.save(fmt="pgn", text=pgn, summary="s", game_id=f"gid-{i}"))
     rows = store.list()
     ids = {r["game_id"] for r in rows}
@@ -268,7 +272,6 @@ def test_eviction_skips_row_with_nonempty_refs(tmp_path):
     pinned_hash = store.list()[0]["hash"]
     store._index[pinned_hash]["refs"] = ["referrer-gid"]
     for i, pgn in enumerate(_DISTINCT_PGNS[1:6], start=1):
-        time.sleep(0.002)
         _run(store.save(fmt="pgn", text=pgn, summary="s", game_id=f"gid-{i}"))
     rows = store.list()
     ids = {r["game_id"] for r in rows}
@@ -282,7 +285,6 @@ def test_eviction_soft_floor_when_all_pinned(tmp_path, caplog):
     # past cap and WARNs.
     store = RecentImports.load(root=tmp_path / "imports", cap=3)
     for i, pgn in enumerate(_DISTINCT_PGNS[:3]):
-        time.sleep(0.002)
         _run(store.save(fmt="pgn", text=pgn, summary="s", game_id=f"gid-{i}"))
     # Pin everything in-place, then push over cap.
     for h in list(store._index):
@@ -324,9 +326,7 @@ def test_get_by_id_returns_none_after_eviction(tmp_path):
         root=tmp_path / "imports", cap=2, active_game_id=lambda: None,
     )
     _run(store.save(fmt="pgn", text=_DISTINCT_PGNS[0], summary="s", game_id="gid-0"))
-    time.sleep(0.002)
     _run(store.save(fmt="pgn", text=_DISTINCT_PGNS[1], summary="s", game_id="gid-1"))
-    time.sleep(0.002)
     _run(store.save(fmt="pgn", text=_DISTINCT_PGNS[2], summary="s", game_id="gid-2"))
     # gid-0 was oldest -> evicted.
     assert store.get_by_id("gid-0") is None
@@ -444,13 +444,22 @@ def test_replace_at_new_hash_collides_with_unrelated_game(store):
 # ---- x-game navigation: fork-link tests ----
 
 
-def _save_parent(store, gid="gid-parent"):
+_PARENT_GID = "gid-parent"
+_CHILD_GID = "gid-child"
+_OTHER_GID = "gid-other"
+_THIRD_GID = "gid-third"
+_SUMMARY = "s"
+_FORK_PLY = 5
+_FORK_CAP = 2
+
+
+def _save_parent(store, gid=_PARENT_GID):
     return _run(store.save(
         fmt="pgn", text="1. e4 e5 *", summary={"white": "P"}, game_id=gid,
     ))
 
 
-def _save_child(store, parent_gid, ply, gid="gid-child", text="1. d4 d5 *"):
+def _save_child(store, parent_gid, ply, gid=_CHILD_GID, text="1. d4 d5 *"):
     return _run(store.save(
         fmt="pgn", text=text, summary={"white": "C"}, game_id=gid,
         parent_game_id=parent_gid, fork_ply=ply,
@@ -540,19 +549,48 @@ def test_parent_summary_of_orphan_root_returns_none(store):
 
 def test_evict_skips_rows_with_nonempty_refs(tmp_path):
     """Eviction must honor the dict-shaped refs (not just legacy lists)."""
+    # Child is the live game, so its ref keeps pinning the parent.
+    store = RecentImports.load(
+        root=tmp_path / "imports", cap=2, active_game_id=lambda: _CHILD_GID,
+    )
+    h_parent = _save_parent(store)
+    _save_child(store, "gid-parent", ply=5)
+    # Two more inserts push past cap=2; parent should be pinned via refs.
+    _run(store.save(fmt="pgn", text="1. Nf3 *", summary="s", game_id="g3"))
+    _run(store.save(fmt="pgn", text="1. c4 *", summary="s", game_id="g4"))
+    # Parent still present.
+    assert store.get(h_parent) is not None
+
+
+def test_parent_evicted_with_its_child_in_one_pass(tmp_path):
+    """An older parent unpinned by its child's eviction drops in the same
+    eviction, not on the next write."""
+    store = RecentImports.load(
+        root=tmp_path / "imports", cap=_FORK_CAP, active_game_id=lambda: None,
+    )
+    h_parent = _save_parent(store)
+    _save_child(store, _PARENT_GID, ply=_FORK_PLY)
+    for gid, pgn in zip((_OTHER_GID, _THIRD_GID), _DISTINCT_PGNS):
+        _run(store.save(fmt=FMT_PGN, text=pgn, summary=_SUMMARY, game_id=gid))
+    assert store.get(h_parent) is None
+    assert len(store.list()) == _FORK_CAP
+
+
+def test_evicted_child_unpins_parent(tmp_path):
+    """Evicting a child must scrub the parent's ref, like remove does."""
     store = RecentImports.load(
         root=tmp_path / "imports", cap=2, active_game_id=lambda: None,
     )
     h_parent = _save_parent(store)
-    time.sleep(0.002)
-    _save_child(store, "gid-parent", ply=5)
-    time.sleep(0.002)
-    # Two more inserts push past cap=2; parent should be pinned via refs.
-    _run(store.save(fmt="pgn", text="1. Nf3 *", summary="s", game_id="g3"))
-    time.sleep(0.002)
-    _run(store.save(fmt="pgn", text="1. c4 *", summary="s", game_id="g4"))
-    # Parent still present.
-    assert store.get(h_parent) is not None
+    h_child = _save_child(store, _PARENT_GID, ply=_FORK_PLY)
+    # Revisiting the parent leaves the child the sole eviction candidate.
+    _run(store.touch(h_parent))
+    _run(store.save(
+        fmt=FMT_PGN, text=_DISTINCT_PGNS[0], summary=_SUMMARY, game_id=_OTHER_GID,
+    ))
+    assert store.get(h_child) is None
+    assert store.get(h_parent)[0][ROW_REFS] == []
+    assert _run(store.remove(h_parent)).status is RemoveStatus.DELETED
 
 
 def test_dangling_parent_scrubbed(tmp_path, caplog):
