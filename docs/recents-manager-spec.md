@@ -22,7 +22,7 @@ variations." The user has no way to act on that:
   (shared `_drop_row_locked` with `remove`), and rescans so a parent
   unpinned by its child's eviction drops in the same pass.
 - `scripts/chkrefs.py` lists dead refs left by the old eviction bug;
-  `--apply` removes them (server stopped). Run by hand; no auto-clean
+  `--fix` removes them (server stopped). Run by hand; no auto-clean
   at load, so future ref bugs stay visible.
 
 ## Overview

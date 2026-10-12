@@ -31,7 +31,7 @@ _DEAD_PGN = "1. c4 c5 *"
 _SUMMARY = "s"
 _LIVE_PLY = 3
 _DEAD_PLY = 5
-_APPLY_FLAG = "--apply"
+_FIX_FLAG = "--fix"
 _DIR_FLAG = "--dir"
 
 
@@ -104,13 +104,13 @@ def test_drop_unpins_parent_once_live_child_removed(root, parent_hash):
     assert _run(store.remove(parent_hash)).status is RemoveStatus.DELETED
 
 
-def test_main_without_apply_leaves_index_untouched(root, parent_hash):
+def test_main_without_fix_leaves_index_untouched(root, parent_hash):
     index_path = _load(root).index_path
     before = index_path.read_bytes()
     assert chkrefs.main([_DIR_FLAG, str(root)]) == 0
     assert index_path.read_bytes() == before
 
 
-def test_main_with_apply_drops_dead_refs(root, parent_hash):
-    assert chkrefs.main([_DIR_FLAG, str(root), _APPLY_FLAG]) == 0
+def test_main_with_fix_drops_dead_refs(root, parent_hash):
+    assert chkrefs.main([_DIR_FLAG, str(root), _FIX_FLAG]) == 0
     assert _parent_ref_ids(root, parent_hash) == [_LIVE_GID]

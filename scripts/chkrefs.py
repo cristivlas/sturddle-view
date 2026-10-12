@@ -2,11 +2,11 @@
 """List (and optionally drop) dead fork refs in the recent-imports index.
 
 A dead ref names a child game that no longer resolves; it pins its parent
-against delete and eviction forever. Read-only unless ``--apply``. With
-``--apply``, stop the server first: it rewrites the index from memory.
+against delete and eviction forever. Read-only unless ``--fix``. With
+``--fix``, stop the server first: it rewrites the index from memory.
 
 Usage:
-  python scripts/chkrefs.py [--dir IMPORTS_DIR] [--apply]
+  python scripts/chkrefs.py [--dir IMPORTS_DIR] [--fix]
 """
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ from sturddle_view.recent_imports import (  # noqa: E402
 _ENCODING = "utf-8"
 _DEAD_REF_LINE = "dead ref: parent={parent} child={child} ply={ply}"
 _SUMMARY_LINE = "{n} dead ref(s){suffix}"
-_APPLIED_SUFFIX = ", removed"
-_DRY_RUN_SUFFIX = "; rerun with --apply to remove"
+_FIXED_SUFFIX = ", removed"
+_DRY_RUN_SUFFIX = "; rerun with --fix to remove"
 _NO_SUFFIX = ""
 
 
@@ -75,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dir", type=Path, default=None,
                     help="imports dir (default: the app's)")
-    ap.add_argument("--apply", action="store_true",
+    ap.add_argument("--fix", action="store_true",
                     help="remove dead refs (stop the server first)")
     args = ap.parse_args(argv)
     store = RecentImports.load(root=args.dir or default_imports_dir())
@@ -84,9 +84,9 @@ def main(argv: list[str] | None = None) -> int:
         print(_DEAD_REF_LINE.format(
             parent=parent_id, child=ref.get(REF_GAME_ID), ply=ref.get(REF_FORK_PLY),
         ))
-    if args.apply and dead:
+    if args.fix and dead:
         drop_dead_refs(store)
-    suffix = _APPLIED_SUFFIX if args.apply else _DRY_RUN_SUFFIX
+    suffix = _FIXED_SUFFIX if args.fix else _DRY_RUN_SUFFIX
     print(_SUMMARY_LINE.format(n=len(dead), suffix=suffix if dead else _NO_SUFFIX))
     return 0
 
