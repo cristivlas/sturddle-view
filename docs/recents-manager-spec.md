@@ -68,7 +68,7 @@ File: `web/app/import-position-dialog.js`.
   corrected the same way.
 - A row with forks shows a gear (the `gear` icon already used by the
   Settings deep-link toast actions) instead of the trash button.
-  Tooltip: "Has N forks; manage in Settings".
+  Tooltip: "Manage N forks in Settings".
 - Gear click:
   1. If the user typed or pasted text in the dialog, confirm before
      discarding it. No text: no prompt.

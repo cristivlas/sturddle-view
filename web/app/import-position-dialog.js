@@ -607,7 +607,7 @@ function makeOptionButton(opts) {
 }
 
 function forksTitle(n) {
-  return `Has ${n} ${n === 1 ? "fork" : "forks"}; manage in Settings`;
+  return `Manage ${n} ${n === 1 ? "fork" : "forks"} in Settings`;
 }
 
 // Recents dropdown: the <wa-select> in the dialog label + its options,
