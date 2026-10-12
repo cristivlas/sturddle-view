@@ -3394,16 +3394,19 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 
 /* Settings Recents tab: fork tree in a JS-sized scroll wrap
    (list-wrap-sizer.js), so the dialog body never scrolls. Rows are flat;
-   --recents-depth indents forks. */
+   --recents-depth indents forks. Deep or long rows scroll sideways under a
+   sticky right edge (date + actions). */
 wa-dialog .settings-tabs wa-tab-panel.settings-recents-panel > * { max-width: none; }
 /* Width comes from the panel, never from the nowrap labels: without this the
-   longest label widens the panel past the dialog and nothing ellipsizes. */
+   longest label widens the panel past the dialog. */
 .recents-host { contain: inline-size; }
-.recents-scroll { overflow-y: auto; overflow-x: hidden; }
-.recents-tree { list-style: none; margin: 0; padding: 0; }
+.recents-scroll { overflow: auto; }
+/* As wide as the widest row (never narrower than the wrap), so every row
+   spans the full scroll width and the sticky edge lines up. */
+.recents-tree { list-style: none; margin: 0; padding: 0; width: max-content; min-width: 100%; }
 .recents-row {
   display: flex; align-items: center; gap: 6px;
-  padding: 2px 4px 2px calc(var(--recents-depth, 0) * 1.25em + 4px);
+  padding: 2px 0 2px calc(var(--recents-depth, 0) * 1.25em + 4px);
 }
 .recents-row:hover { background: var(--row-bg-hover); }
 /* Same selection idiom as the Engines/Openings lists: the accent line keeps
@@ -3413,13 +3416,26 @@ wa-dialog .settings-tabs wa-tab-panel.settings-recents-panel > * { max-width: no
   box-shadow: inset 3px 0 0 var(--accent-line);
 }
 .recents-twisty { width: 1.4em; flex-shrink: 0; display: inline-flex; }
-.recents-label {
-  flex: 1 1 auto; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
+.recents-label { flex: 1 0 auto; white-space: nowrap; }
 .recents-fork, .recents-date { flex-shrink: 0; font-size: 0.85em; white-space: nowrap; }
+/* Opaque, matching its row's state, so labels scroll under it unseen. */
+.recents-end {
+  position: sticky; right: 0;
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 4px 0 6px;
+  background: var(--dialog-bg);
+}
+.recents-row:hover .recents-end { background: var(--row-bg-hover); }
+.recents-row.selected .recents-end { background: var(--row-bg-selected); }
 .recents-actions { flex-shrink: 0; display: inline-flex; align-items: center; }
-.recents-tag { padding: 0 4px; font-size: 0.9em; }
+/* Stands in for Open/Delete, as tall as Web Awesome's native <button> (the
+   em-based height resolves at the same font size as the buttons'), so a
+   tagged row matches the others. */
+.recents-tag {
+  padding: 0 4px; font-size: 0.9em;
+  display: inline-flex; align-items: center;
+  min-height: var(--wa-form-control-height);
+}
 button.recents-btn {
   appearance: none; background: transparent; border: 0; padding: 0 4px;
   color: var(--muted); cursor: pointer; display: inline-flex;

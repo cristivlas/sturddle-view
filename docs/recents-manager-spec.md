@@ -84,6 +84,8 @@ New builder `web/app/settings-recents-tab.js`, wired into
 
 ### Layout
 
+- Deep or long rows scroll sideways; each row's date and actions stay
+  pinned at the right edge. No depth limit.
 - The dialog never scrolls; the tree area scrolls inside the tab (same
   model as the Engines tab).
 - Mounts on first show (like Engines), fetching `GET /recent-imports`

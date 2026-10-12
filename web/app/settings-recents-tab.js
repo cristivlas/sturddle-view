@@ -274,7 +274,13 @@ export function buildRecentsTab({ api, select, close, signal }) {
     date.className = `recents-date ${MUTED_CLASS}`;
     date.textContent = row.ts ? new Date(row.ts).toLocaleDateString(undefined, DATE_FORMAT) : "";
 
-    li.append(makeTwisty(node), label, fork, date, makeActions(node, tagOf(row)));
+    // Date + actions stay pinned at the right edge while deep or long rows
+    // scroll sideways under them.
+    const end = document.createElement("span");
+    end.className = "recents-end";
+    end.append(date, makeActions(node, tagOf(row)));
+
+    li.append(makeTwisty(node), label, fork, end);
     li.addEventListener("click", () => setSelected(row.hash));
     return li;
   }

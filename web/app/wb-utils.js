@@ -326,10 +326,6 @@ export function wireArrowKeyNav(el, {
   });
 }
 
-// A markSelectable region's rows are `user-select: text`, so a double/triple
-// click on a row that drives an action (select/open/commit) paints a word or
-// paragraph selection first. Attach to the list container to cancel the
-// multi-click text gesture; single-click, dblclick, and drag-select still work.
 // Small icon-only <button> (a wa-icon, its label as title + aria-label).
 // The click stays with the button: rows/options it sits in don't see it.
 export function makeIconButton({ className, icon, title, ariaLabel = title, onClick }) {
@@ -349,6 +345,10 @@ export function makeIconButton({ className, icon, title, ariaLabel = title, onCl
   return btn;
 }
 
+// A markSelectable region's rows are `user-select: text`, so a double/triple
+// click on a row that drives an action (select/open/commit) paints a word or
+// paragraph selection first. Attach to the list container to cancel the
+// multi-click text gesture; single-click, dblclick, and drag-select still work.
 export function suppressMultiClickSelect(el) {
   el.addEventListener("mousedown", (ev) => { if (ev.detail > 1) ev.preventDefault(); });
 }
