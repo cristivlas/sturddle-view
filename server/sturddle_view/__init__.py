@@ -11,6 +11,23 @@ __author__ = "Cristian Vlasceanu"
 __copyright__ = "2026 Cristian Vlasceanu"
 APP_NAME = "sturddle-view"
 INSTANCE_ENV = "SV_INSTANCE"
+INSTANCE_FLAG = "--instance"
+_INSTANCE_METAVAR = "TAG"
+_INSTANCE_HELP = (
+    "Instance tag (e.g. 2, beta) -- isolates config/data dirs so multiple "
+    "instances can run side-by-side"
+)
+
+
+def add_instance_arg(parser) -> None:
+    """Add the shared --instance flag to an argparse parser or group."""
+    parser.add_argument(INSTANCE_FLAG, default=None, metavar=_INSTANCE_METAVAR, help=_INSTANCE_HELP)
+
+
+def apply_instance(tag: str | None) -> None:
+    """Select instance ``tag``'s config/data dirs. Call before resolving any."""
+    if tag:
+        _os.environ[INSTANCE_ENV] = tag.strip()
 
 
 def app_dir_name() -> str:

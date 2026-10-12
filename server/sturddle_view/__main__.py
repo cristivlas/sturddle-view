@@ -13,7 +13,7 @@ import uvicorn
 from uvicorn import Config
 from uvicorn.supervisors import ChangeReload
 
-from . import APP_NAME, INSTANCE_ENV, app_config_dir, is_windows
+from . import APP_NAME, add_instance_arg, app_config_dir, apply_instance, is_windows
 from ._instance_lock import acquire as _acquire_lock
 from ._reload_worker import APP_FACTORY, windows_reload_worker
 from ._runtime import DESKTOP_FLAG, PROXY_SUBCOMMAND, is_frozen
@@ -93,12 +93,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(_CERT_FLAG, default=None, help=f"TLS cert (PEM). Requires {_KEY_FLAG}.")
     parser.add_argument(_KEY_FLAG, default=None, help=f"TLS key (PEM). Requires {_CERT_FLAG}.")
-    parser.add_argument(
-        "--instance",
-        default=None,
-        metavar="TAG",
-        help="Instance tag (e.g. 2, beta) -- isolates config/data dirs so multiple instances can run side-by-side",
-    )
+    add_instance_arg(parser)
     parser.add_argument("--debug", action=_STORE_TRUE,
                         help="Verbose (DEBUG) logging for the app (sturddle_view)")
     parser.add_argument("--server-debug", action=_STORE_TRUE,
@@ -135,8 +130,7 @@ def main() -> None:
             if not Path(p).is_file():
                 _usage_error(f"{label} file not found: {p}")
 
-    if args.instance:
-        os.environ[INSTANCE_ENV] = args.instance.strip()
+    apply_instance(args.instance)
 
     log_file = configure_logging(
         level=logging.DEBUG if args.debug else logging.INFO,

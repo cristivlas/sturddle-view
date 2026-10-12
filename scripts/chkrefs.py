@@ -10,7 +10,7 @@ Read-only unless ``--fix``. With ``--fix``, stop the server first: it
 rewrites the index from memory.
 
 Usage:
-  python scripts/chkrefs.py [--dir IMPORTS_DIR] [--fix]
+  python scripts/chkrefs.py [--dir IMPORTS_DIR | --instance TAG] [--fix]
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "server"))
 
+from sturddle_view import add_instance_arg, apply_instance  # noqa: E402
 from sturddle_view._atomic import atomic_write_json  # noqa: E402
 from sturddle_view.recent_imports import (  # noqa: E402
     REF_FORK_PLY,
@@ -44,6 +45,8 @@ _SUMMARY_LINE = "{n} bad link(s){suffix}"
 _FIXED_SUFFIX = ", fixed"
 _DRY_RUN_SUFFIX = "; rerun with --fix"
 _NO_SUFFIX = ""
+_NO_INDEX_LINE = "no imports index at {path}"
+EXIT_NO_INDEX = 2
 
 
 def _is_dead(ref: dict, store: RecentImports) -> bool:
@@ -105,12 +108,19 @@ def fix_bad_links(store: RecentImports) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--dir", type=Path, default=None,
-                    help="imports dir (default: the app's)")
+    where = ap.add_mutually_exclusive_group()
+    where.add_argument("--dir", type=Path, default=None,
+                       help="imports dir (default: the app's, or the instance's)")
+    add_instance_arg(where)
     ap.add_argument("--fix", action="store_true",
                     help="fix bad links (stop the server first)")
     args = ap.parse_args(argv)
+    apply_instance(args.instance)
     store = RecentImports.load(root=args.dir or default_imports_dir())
+    # A missing index loads as an empty store; say so, not "0 bad links".
+    if not store.index_path.is_file():
+        print(_NO_INDEX_LINE.format(path=store.index_path), file=sys.stderr)
+        return EXIT_NO_INDEX
     bad = find_bad_links(store)
     for parent_id, child_id, ply, kind in bad:
         print(_PROBLEM_LINE.format(kind=kind, parent=parent_id, child=child_id, ply=ply))

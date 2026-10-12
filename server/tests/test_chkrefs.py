@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+import sturddle_view
+from sturddle_view import APP_NAME, INSTANCE_ENV, INSTANCE_FLAG
 from sturddle_view.play.canonical_hash import FMT_PGN
 from sturddle_view.recent_imports import (
     REF_FORK_PLY,
@@ -38,6 +40,9 @@ _LIVE_PLY = 3
 _DEAD_PLY = 5
 _FIX_FLAG = "--fix"
 _DIR_FLAG = "--dir"
+_INSTANCE = "chk"
+_MISSING_DIRNAME = "no-such-instance"
+_IMPORTS_DIR_ENV = "SV_IMPORTS_DIR"
 _ENCODING = "utf-8"
 
 
@@ -64,6 +69,10 @@ def root(tmp_path):
 
 @pytest.fixture
 def parent_hash(root):
+    return _seed_dead_ref(root)
+
+
+def _seed_dead_ref(root):
     """Parent with a live child and a child whose blob is gone, as an
     eviction that skipped the parent detach left it."""
     store = _load(root)
@@ -120,6 +129,30 @@ def test_main_without_fix_leaves_index_untouched(root, parent_hash):
 def test_main_with_fix_drops_dead_refs(root, parent_hash):
     assert chkrefs.main([_DIR_FLAG, str(root), _FIX_FLAG]) == 0
     assert _parent_ref_ids(root, parent_hash) == [_LIVE_GID]
+
+
+def test_main_instance_reads_that_instances_imports(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv(INSTANCE_ENV, "")  # main sets it; restored after
+    monkeypatch.delenv(_IMPORTS_DIR_ENV, raising=False)
+    monkeypatch.setattr(
+        sturddle_view, "_user_data_dir", lambda name, appauthor: str(tmp_path / name),
+    )
+    _seed_dead_ref(tmp_path / f"{APP_NAME}-{_INSTANCE}" / _IMPORTS_DIRNAME)
+    assert chkrefs.main([INSTANCE_FLAG, _INSTANCE]) == 0
+    assert chkrefs._PROBLEM_LINE.format(
+        kind=chkrefs.DEAD_REF, parent=_PARENT_GID, child=_DEAD_GID, ply=_DEAD_PLY,
+    ) in capsys.readouterr().out
+
+
+def test_main_reports_missing_index(tmp_path, capsys):
+    missing = tmp_path / _MISSING_DIRNAME
+    assert chkrefs.main([_DIR_FLAG, str(missing)]) == chkrefs.EXIT_NO_INDEX
+    assert str(missing) in capsys.readouterr().err
+
+
+def test_main_rejects_dir_with_instance(root):
+    with pytest.raises(SystemExit):
+        chkrefs.main([_DIR_FLAG, str(root), INSTANCE_FLAG, _INSTANCE])
 
 
 @pytest.fixture
