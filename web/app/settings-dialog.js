@@ -15,6 +15,7 @@ import { buildCommonTab } from "./settings-common-tab.js";
 import { makePathRow } from "./settings-path-row.js";
 import { buildPlayTab } from "./settings-play-tab.js";
 import { buildDisplayTab } from "./settings-display-tab.js";
+import { buildRecentsTab } from "./settings-recents-tab.js";
 import { debounce } from "./wb-utils.js";
 
 const SETTINGS_ENGINES_COL_PCTS_KEY = STORAGE_KEY.ENGINES_SETTINGS_COL_PCTS;
@@ -130,7 +131,7 @@ function makeDurationRow({ label, seconds, minSeconds, onChange }) {
 }
 
 export async function openSettingsDialog({
-  api, initialTab, focusClass, reloadPerspective,
+  api, initialTab, focusClass, select, reloadPerspective,
 }) {
   let initial;
   let tournamentInitial;
@@ -269,12 +270,25 @@ export async function openSettingsDialog({
         analysisMounted = true;
         mountAnalysis();
       });
+      // --- Recents tab ---
+      // `select` (a recents hash) comes from the import dropdown's gear.
+      const { tab: recentsTab, panel: recentsPanel, mount: mountRecents } = buildRecentsTab({
+        api, select, close: () => resolve(), signal: dialogClosed.signal,
+      });
+      let recentsMounted = false;
+      tabs.addEventListener("wa-tab-show", (ev) => {
+        if (ev.detail?.name !== recentsPanel.name || recentsMounted) return;
+        recentsMounted = true;
+        mountRecents();
+      });
+
       // Insertion order IS the visual tab order. Pairing each tab with its
       // panel keeps tabs.append() from forgetting one of them.
       const TABS = new Map([
         { tab: generalTab,    panel: generalPanel },
         { tab: enginesTab,    panel: enginesPanel },
         { tab: playTab,       panel: playPanel },
+        { tab: recentsTab,    panel: recentsPanel },
         { tab: displayTab,    panel: displayPanel },
         { tab: analysisTab,   panel: analysisPanel },
         { tab: tournamentTab, panel: tournamentPanel },
@@ -310,6 +324,10 @@ export async function openSettingsDialog({
       if (startTab === enginesTab) {
         enginesMounted = true;
         onDialogShown(mountEngines);
+      } else if (startTab === recentsTab) {
+        // Same as Engines: the list sizer measures the shown dialog.
+        recentsMounted = true;
+        onDialogShown(mountRecents);
       } else if (startTab === analysisTab) {
         analysisMounted = true;
         mountAnalysis();

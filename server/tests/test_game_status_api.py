@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from sturddle_view.play.mode import Mode
 
-from .conftest import install_active_game
+from .conftest import ACTIVE_GAME_ID, install_active_game
 
 IDLE_STATUS = {
     "in_progress": False,
@@ -14,7 +14,9 @@ IDLE_STATUS = {
     "view_hash": None,
     "view_summary": None,
     "analyzing": False,
+    "play_game_id": None,
 }
+IN_PLAY = {"in_progress": True, "play_game_id": ACTIVE_GAME_ID}
 VIEW_HASH = "hash-of-viewed-game"
 VIEW_SUMMARY = {"white": "Human", "black": "MyEngine", "result": None}
 MOVES = ["e2e4", "e7e5"]
@@ -43,14 +45,14 @@ def test_status_live_game_with_moves_is_in_progress(game_api_client):
     hve = install_active_game(app, engine_path=engine_path, moves_uci=MOVES)
     # Stale view leftovers must not leak into a play-mode status.
     hve._view_hash = VIEW_HASH
-    assert _status(c) == {**IDLE_STATUS, "in_progress": True}
+    assert _status(c) == {**IDLE_STATUS, **IN_PLAY}
 
 
 def test_status_paused_game_stays_in_progress(game_api_client):
     c, app, engine_path = game_api_client
     install_active_game(app, engine_path=engine_path, moves_uci=MOVES)
     assert c.post("/game/pause", json={}).status_code == 200
-    assert _status(c) == {**IDLE_STATUS, "in_progress": True}
+    assert _status(c) == {**IDLE_STATUS, **IN_PLAY}
 
 
 def test_status_viewing_surfaces_hash_and_summary(game_api_client):
@@ -65,6 +67,7 @@ def test_status_viewing_surfaces_hash_and_summary(game_api_client):
         "view_hash": VIEW_HASH,
         "view_summary": VIEW_SUMMARY,
         "analyzing": False,
+        "play_game_id": None,
     }
 
 
@@ -73,7 +76,7 @@ def test_status_analyzing_from_play_is_in_progress(game_api_client):
     hve = install_active_game(app, engine_path=engine_path, moves_uci=MOVES)
     hve._mode = Mode.ANALYZING
     hve._pre_analysis_mode = Mode.PLAY
-    assert _status(c) == {**IDLE_STATUS, "in_progress": True, "analyzing": True}
+    assert _status(c) == {**IDLE_STATUS, **IN_PLAY, "analyzing": True}
 
 
 def test_status_analyzing_from_view_is_viewing(game_api_client):
@@ -106,6 +109,7 @@ def test_status_live_clone_with_moves_is_in_progress(game_api_client):
     s = _status(c)
     assert s["viewing"] is True
     assert s["in_progress"] is True
+    assert s["play_game_id"] == ACTIVE_GAME_ID
 
 
 def test_status_zero_move_live_clone_is_not_in_progress(game_api_client):

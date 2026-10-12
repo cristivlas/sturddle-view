@@ -826,6 +826,9 @@ def assert_no_page_errors(errors: list[str]) -> None:
     assert real == [], "JS errors:\n" + "\n".join(real)
 
 
+ACTIVE_GAME_ID = "test-game"
+
+
 def install_active_game(
     app, *, engine_path: str, human_white: bool = True,
     moves_uci: list[str] | None = None,
@@ -845,7 +848,7 @@ def install_active_game(
     hve._clock = ChessClock(TimeControl(60.0, 0.0))
     hve._clock.white_time = 60.0
     hve._clock.black_time = 60.0
-    hve._game_id = "test-game"
+    hve._game_id = ACTIVE_GAME_ID
     hve._clock.start_turn()
     app.state.hve = hve
     return hve

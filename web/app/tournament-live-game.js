@@ -4,8 +4,8 @@
 // this engine's `info`, clocks from `go wtime/btime`, last bestmove highlight.
 
 import { mountBoard } from "./board.js";
-import { confirm, reportError, toast } from "./dialogs.js";
-import { confirmReplaceViewedGame } from "./import-position-dialog.js";
+import { reportError, toast } from "./dialogs.js";
+import { activatePlay, confirmOpenInView, GAME_STATUS_PATH, importForView, OPEN_VERDICT } from "./open-in-view.js";
 import { APP_EVT } from "./app-events.js";
 import { SIDE, FEN_STM } from "./chess-consts.js";
 import { createEvalGraph } from "./eval-graph.js";
@@ -48,6 +48,10 @@ function fenPly(fen) {
   return (fullmove - 1) * 2 + (parts[1] === FEN_STM.BLACK ? 1 : 0);
 }
 
+const REVIEW_LEAVE_MSG = "Review this tournament game and leave the current one? It will be saved to Recents.";
+const REVIEW_OK_LABEL = "Review";
+const REVIEW_FORMAT = "pgn";
+
 export async function replayTournamentGame({ tournamentId, gameN, token, pairId = null }) {
   const headers = { "Content-Type": "application/json" };
   let pgn, pgnHash, pgnSummary, status;
@@ -56,7 +60,7 @@ export async function replayTournamentGame({ tournamentId, gameN, token, pairId 
     // are unseeded on a fresh page load and would skip the confirmations.
     const [res, statusRes] = await Promise.all([
       fetch(`/api/tournaments/${encodeURIComponent(tournamentId)}/games/${gameN}/pgn`, { headers }),
-      fetch("/game/status", { headers }),
+      fetch(GAME_STATUS_PATH, { headers }),
     ]);
     if (!res.ok) throw new Error(`fetch pgn -> ${res.status}`);
     if (!statusRes.ok) throw new Error(`fetch status -> ${statusRes.status}`);
@@ -69,46 +73,25 @@ export async function replayTournamentGame({ tournamentId, gameN, token, pairId 
     reportError(null, "Review: fetch failed", e);
     return;
   }
-  if (status.in_progress) {
-    const ok = await confirm({
-      message: "Review this tournament game and leave the current one? It will be saved to Recents.",
-      okLabel: "Review",
-      cancelLabel: "Cancel",
-    });
-    if (!ok) return;
-  } else if (status.viewing) {
-    if (pgnHash && pgnHash === status.view_hash) {
-      // Same game already viewed: switch perspective and surface a
-      // toast carrying the pair id. The toast doubles as a live
-      // invariant check for the game_id-unification refactor -- if
-      // the value looks wrong, the unification is broken.
-      window.dispatchEvent(new CustomEvent(APP_EVT.ACTIVATE_PERSPECTIVE, {
-        detail: { id: "play" },
-      }));
-      if (pairId) toast(`Viewing ${pairId}`);
-      return;
-    }
-    const ok = await confirmReplaceViewedGame({
-      currentHash: status.view_hash,
-      currentSummary: status.view_summary,
-      incomingHash: pgnHash,
-      incomingSummary: pgnSummary,
-      analysisRunning: status.analyzing,
-    });
-    if (!ok) return;
+  const verdict = await confirmOpenInView(status, {
+    hash: pgnHash,
+    summary: pgnSummary,
+    leaveMessage: REVIEW_LEAVE_MSG,
+    okLabel: REVIEW_OK_LABEL,
+  });
+  if (verdict === OPEN_VERDICT.CANCEL) return;
+  if (verdict === OPEN_VERDICT.ALREADY_VIEWING) {
+    // Same game already viewed: switch perspective and surface a
+    // toast carrying the pair id. The toast doubles as a live
+    // invariant check for the game_id-unification refactor -- if
+    // the value looks wrong, the unification is broken.
+    activatePlay();
+    if (pairId) toast(`Viewing ${pairId}`);
+    return;
   }
   let importedGameId = null;
   try {
-    const body = { text: pgn, format: "pgn" };
-    if (pairId) body.game_id = pairId;
-    const res = await fetch("/game/import", {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(`import -> ${res.status}`);
-    const data = await res.json();
-    importedGameId = data?.game_id ?? null;
+    importedGameId = await importForView({ text: pgn, format: REVIEW_FORMAT, gameId: pairId });
   } catch (e) {
     reportError(null, "Review: import failed", e);
     return;
@@ -124,7 +107,7 @@ export async function replayTournamentGame({ tournamentId, gameN, token, pairId 
     );
     return;
   }
-  window.dispatchEvent(new CustomEvent(APP_EVT.ACTIVATE_PERSPECTIVE, { detail: { id: "play" } }));
+  activatePlay({ remount: true });
   if (importedGameId) toast(`Viewing ${importedGameId}`);
 }
 

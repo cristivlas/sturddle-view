@@ -6,7 +6,9 @@
 // localStorage cache is metadata-only and used to render the dropdown
 // before the server responds. Cache is updated optimistically on validate.
 
-import { apiErrorDetail, apiErrorObject, showDialog, toast } from "./dialogs.js";
+import {
+  apiErrorDetail, apiErrorObject, confirm, openSettings, SETTINGS_TAB_RECENTS, showDialog, toast,
+} from "./dialogs.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
@@ -14,7 +16,7 @@ import { wireSplitScroll } from "./split-table.js";
 import { SORT_DIR, attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView, SORT_ASC_LABEL, SORT_DESC_LABEL } from "./col-sort.js";
 import { loadJson, saveJson } from "./storage.js";
 import { mqNarrowDialog } from "./breakpoints.js";
-import { markSelectable, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
+import { makeIconButton, markSelectable, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
 
 // Format a summary dict {white, black, result, side_to_move, fen} into a
 // display string. `short: true` returns a compact form for tight UI (e.g.
@@ -41,6 +43,16 @@ const CONFIRM_TRUNC_MAX = 46;
 const RECENT_TRUNC_MAX = 40;
 const ELLIPSIS = "...";
 const DIALOG_TITLE = "Import";
+const MANAGE_DISCARD_MSG = "Discard the text you entered and open Settings?";
+const MANAGE_OK_LABEL = "Open Settings";
+// Recents row end-slot buttons: trash, or a gear on a row with forks.
+const DEL_BTN_CLASS = "recent-del";
+const DEL_ICON = "trash";
+const DEL_TITLE = "Remove from history";
+const DEL_ARIA = "Remove";
+const MANAGE_BTN_CLASS = "recent-manage";
+const MANAGE_ICON = "gear";
+const MANAGE_ARIA = "Manage in Settings";
 // Base content width (PGN/FEN panels). On desktop the dialog is widened by
 // the tab rail so this content width is preserved; narrow viewports keep the
 // base width and put the tabs on top.
@@ -182,8 +194,8 @@ const IS_ACTIVE_CLASS = "is-active";
 const OPEN_CLASS = "open";
 const DRAG_OVER_CLASS = "drag-over";
 
-const RECENT_IMPORTS_PATH = "/game/recent-imports";
-const HASH_PREVIEW_LEN = 12;
+export const RECENT_IMPORTS_PATH = "/game/recent-imports";
+export const HASH_PREVIEW_LEN = 12;
 
 const TEXTAREA_ROWS = 8;
 
@@ -543,17 +555,22 @@ function loadRecentsCache() {
   return Array.isArray(v) ? v.filter((e) => e && e.hash).slice(0, RECENTS_DISPLAY_CAP) : [];
 }
 
-function saveRecentsCache(entries) {
-  // Metadata only -- never stash the full text here.
-  const lean = entries.slice(0, RECENTS_DISPLAY_CAP).map((e) => ({
+// Metadata only -- never the full text. Server rows carry `refs`; only
+// their count is kept (as `forks`), so cache and server rows share a shape.
+function leanEntry(e) {
+  return {
     hash: e.hash,
     format: e.format,
     summary: e.summary,
     ts: e.ts,
     // The "playing" tag matches the game in progress by id.
     game_id: e.game_id ?? null,
-  }));
-  saveJson(RECENTS_CACHE_KEY, lean);
+    forks: Array.isArray(e.refs) ? e.refs.length : (e.forks ?? 0),
+  };
+}
+
+function saveRecentsCache(entries) {
+  saveJson(RECENTS_CACHE_KEY, entries.slice(0, RECENTS_DISPLAY_CAP).map(leanEntry));
 }
 
 const EXT_PGN = ".pgn";
@@ -569,20 +586,37 @@ function detectFormatFromName(name) {
 // The current game's row: the one in view, by content hash like play.js's
 // same-game-in-view check (aliases share it), or the game in progress, by
 // id. Re-importing it is a no-op or refused, and deleting it would pull the
-// board out from under the user. Returns its tag, or null.
-function currentEntryTag(entry, ctx) {
+// board out from under the user. Returns its tag, or null. Shared with the
+// Settings Recents tab.
+export function currentEntryTag(entry, ctx) {
   if (ctx.viewingHash && entry.hash === ctx.viewingHash) return VIEWING_TAG;
   if (ctx.playingGameId && entry.game_id === ctx.playingGameId) return PLAYING_TAG;
   return null;
 }
 
+// Icon button in a recents <wa-option>'s end slot. wa-select listens for
+// `mouseup` on the listbox container and routes it through
+// handleOptionClick -> hide(); stopping both phases keeps the listbox open.
+function makeOptionButton(opts) {
+  const btn = makeIconButton(opts);
+  btn.slot = "end";
+  const stop = (ev) => ev.stopPropagation();
+  btn.addEventListener("mousedown", stop);
+  btn.addEventListener("mouseup", stop);
+  return btn;
+}
+
+function forksTitle(n) {
+  return `Manage ${n} ${n === 1 ? "fork" : "forks"} in Settings`;
+}
+
 // Recents dropdown: the <wa-select> in the dialog label + its options,
-// delete buttons, and the local-cache/server-refresh logic. Reads/writes
-// `ctx.recentsCache` and reads `ctx.format`; controller hooks
-// (onPick/selectTab/setStatus/applyText) are injected. Returns the select
-// element + a render() the controller can re-invoke. The optimistic
+// delete/manage buttons, and the local-cache/server-refresh logic.
+// Reads/writes `ctx.recentsCache` and reads `ctx.format`; controller hooks
+// (onPick/selectTab/setStatus/applyText/onManage) are injected. Returns the
+// select element + a render() the controller can re-invoke. The optimistic
 // delete + 409 (has_children) handling stays here -- it's recents-local.
-function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPickSubmit }) {
+function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPickSubmit, onManage }) {
   const recentSel = document.createElement("wa-select");
   recentSel.size = "small";
   recentSel.placeholder = "Recent...";
@@ -610,26 +644,17 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
       opt.append(tag);
       return opt;
     }
-    const delBtn = document.createElement("button");
-    delBtn.slot = "end";
-    delBtn.className = "recent-del";
-    delBtn.title = "Remove from history";
-    delBtn.setAttribute("aria-label", "Remove");
-    const delIcon = document.createElement("wa-icon");
-    delIcon.setAttribute("name", "trash");
-    delBtn.append(delIcon);
-    // wa-select listens for `mouseup` on the listbox container and
-    // routes it through handleOptionClick -> hide(). Stop both phases
-    // so the listbox stays open.
-    const stop = (ev) => ev.stopPropagation();
-    delBtn.addEventListener("mousedown", stop);
-    delBtn.addEventListener("mouseup", stop);
-    delBtn.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      ev.preventDefault();
-      deleteRecent(entry);
-    });
-    opt.append(delBtn);
+    // A row with forks can't be deleted here: the gear hands it to the
+    // Settings Recents tab, which shows the forks.
+    opt.append(entry.forks > 0
+      ? makeOptionButton({
+        className: MANAGE_BTN_CLASS, icon: MANAGE_ICON, title: forksTitle(entry.forks),
+        ariaLabel: MANAGE_ARIA, onClick: () => onManage(entry),
+      })
+      : makeOptionButton({
+        className: DEL_BTN_CLASS, icon: DEL_ICON, title: DEL_TITLE,
+        ariaLabel: DEL_ARIA, onClick: () => deleteRecent(entry),
+      }));
     return opt;
   }
   function deleteRecent(removed) {
@@ -651,7 +676,7 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
           const known = new Set(ctx.recentsCache.map((c) => c.hash));
           const fresh = (r.entries || []).filter(
             (e) => e.hash !== removed.hash && !known.has(e.hash)
-          );
+          ).map(leanEntry);
           if (!fresh.length) return;
           ctx.recentsCache = [...ctx.recentsCache, ...fresh].slice(0, RECENTS_DISPLAY_CAP);
           saveRecentsCache(ctx.recentsCache);
@@ -709,7 +734,7 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
   (async () => {
     try {
       const r = await api("GET", RECENT_IMPORTS_PATH);
-      ctx.recentsCache = (r.entries || []).slice(0, RECENTS_DISPLAY_CAP);
+      ctx.recentsCache = (r.entries || []).slice(0, RECENTS_DISPLAY_CAP).map(leanEntry);
       saveRecentsCache(ctx.recentsCache);
       render();
     } catch {
@@ -823,6 +848,7 @@ export function showImportPositionDialog({ api, viewingHash = null, playingGameI
       const { recentSel } = buildRecentsDropdown(ctx, {
         api, selectTab, applyText, setStatus,
         onPickSubmit: (override) => submit(override),
+        onManage: (entry) => manageInSettings(entry),
       });
       const dialogLabel = document.createElement("div");
       dialogLabel.slot = "label";
@@ -925,6 +951,17 @@ export function showImportPositionDialog({ api, viewingHash = null, playingGameI
           setStatus(apiErrorDetail(e), STATUS.ERR);
           syncSubmitEnabled();
         }
+      }
+
+      // Gear on a forked row: close this dialog and open the Settings
+      // Recents tab on that row. Typed or loaded text would be lost: ask.
+      async function manageInSettings(entry) {
+        const hasText = [TAB.PGN, TAB.FEN].some((n) => textareas[n].value.trim());
+        if (hasText && !await confirm({
+          message: MANAGE_DISCARD_MSG, okLabel: MANAGE_OK_LABEL,
+        })) return;
+        resolve(null);
+        openSettings(SETTINGS_TAB_RECENTS, null, entry.hash);
       }
 
       // Reading a file just stuffs its text into the matching tab. No

@@ -77,6 +77,7 @@ class RemoveStatus(Enum):
     DELETED = "deleted"
     NOT_FOUND = "not_found"
     BLOCKED_BY_REFS = "blocked_by_refs"
+    BLOCKED_BY_ACTIVE = "blocked_by_active"
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,8 @@ class RemoveResult:
     - ``NOT_FOUND``: no such hash.
     - ``BLOCKED_BY_REFS``: row has live children. ``children`` lists
       them as ``{game_id, fork_ply, summary}`` for caller-side messaging.
+    - ``BLOCKED_BY_ACTIVE``: cascade refused; the subtree holds the
+      active session's game. Nothing deleted.
     """
     status: RemoveStatus
     children: list[dict] = field(default_factory=list)
@@ -176,6 +179,10 @@ class RecentImports:
     @property
     def root(self) -> Path:
         return self._root
+
+    @property
+    def index_path(self) -> Path:
+        return self._index_path
 
     def set_active_game_id_getter(self, getter: ActiveGameIdGetter | None) -> None:
         """Install/replace the active-session getter post-construction.
@@ -315,8 +322,14 @@ class RecentImports:
                 if stored_id is None and game_id is not None:
                     self._bind_id_locked(game_id, h, existing)
                 # Deduped fork: adopt the link if the row has none; a row
-                # already carrying the same (parent, ply) needs no new ref.
-                if parent_game_id is not None and ROW_PARENT_GAME_ID not in existing:
+                # already carrying the same (parent, ply) needs no new ref. A
+                # fork identical to its parent landed on the parent's own row:
+                # no link, or the row would be its own parent and child.
+                if (
+                    parent_game_id is not None
+                    and ROW_PARENT_GAME_ID not in existing
+                    and not self._is_row_id_locked(parent_game_id, h)
+                ):
                     existing[ROW_PARENT_GAME_ID] = parent_game_id
                     existing[ROW_FORK_PLY] = fork_ply
                     self._append_parent_ref_locked(
@@ -437,10 +450,8 @@ class RecentImports:
                         aliases.remove(game_id)
                         self._by_id.pop(game_id, None)
                     else:
-                        self._index.pop(old_hash, None)
-                        self._unbind_row_ids_locked(old_row)
                         migrated_aliases = list(old_row.get(ROW_ALIAS_IDS) or [])
-                        self._delete_blob(old_row.get(ROW_FILE))
+                        self._forget_row_locked(old_hash, old_row)
 
             existing = self._index.get(new_hash)
             if existing is not None:
@@ -457,6 +468,15 @@ class RecentImports:
                 for alias in migrated_aliases:
                     self._bind_alias_locked(alias, new_hash, existing)
                 _refresh_row(existing, summary)
+                # Converged onto the parent's own row (a fork identical to its
+                # parent): drop the link instead of self-linking the row.
+                if (
+                    preserved_parent_id is not None
+                    and self._is_row_id_locked(preserved_parent_id, new_hash)
+                ):
+                    self._detach_from_parent_locked(preserved_parent_id, game_id)
+                    preserved_parent_id = None
+                    parent_ref_to_append = None
                 # Preserve fork-link on the surviving row when it wasn't
                 # already set (old_hash == new_hash leaves it intact).
                 if (
@@ -465,8 +485,10 @@ class RecentImports:
                 ):
                     existing[ROW_PARENT_GAME_ID] = preserved_parent_id
                     existing[ROW_FORK_PLY] = preserved_fork_ply
-                if preserved_refs and not existing.get(ROW_REFS):
-                    existing[ROW_REFS] = preserved_refs
+                # The merged game's own forks join the surviving row's.
+                refs = existing.setdefault(ROW_REFS, [])
+                have = {r.get(REF_GAME_ID) for r in refs}
+                refs.extend(r for r in preserved_refs if r.get(REF_GAME_ID) not in have)
                 if parent_ref_to_append is not None:
                     self._append_parent_ref_locked(
                         parent_ref_to_append[0], game_id,
@@ -516,6 +538,10 @@ class RecentImports:
         self._index[h] = row
         return row
 
+    def _is_row_id_locked(self, game_id: str, h: str) -> bool:
+        """``game_id`` (primary or alias) is bound to row ``h``."""
+        return self._by_id.get(game_id) == h
+
     def _row_for_id(self, game_id: str) -> dict | None:
         h = self._by_id.get(game_id)
         return self._index.get(h) if h is not None else None
@@ -562,8 +588,12 @@ class RecentImports:
             row[ROW_TS] = _now_ms()
             self._persist_locked()
 
-    async def remove(self, h: str) -> RemoveResult:
+    async def remove(self, h: str, cascade: bool = False) -> RemoveResult:
         """Delete ``h`` (index row + blob).
+
+        ``cascade=True`` also deletes every descendant reachable through
+        ``refs`` (dead refs skipped), refusing with ``BLOCKED_BY_ACTIVE``
+        if the subtree holds the active session's game.
 
         Returns:
         - ``RemoveResult(NOT_FOUND)`` if ``h`` is unknown.
@@ -581,6 +611,8 @@ class RecentImports:
             row = self._index.get(h)
             if row is None:
                 return RemoveResult(RemoveStatus.NOT_FOUND)
+            if cascade:
+                return self._remove_subtree_locked(h, row)
 
             refs = row.get(ROW_REFS) or []
             if refs:
@@ -594,20 +626,13 @@ class RecentImports:
                     children=children,
                 )
 
-            # Detach from parent (if any) before removing.
-            parent_id = row.get(ROW_PARENT_GAME_ID)
-            child_gid = row.get(ROW_GAME_ID)
-            if parent_id is not None:
-                self._detach_from_parent_locked(parent_id, child_gid)
-
-            self._index.pop(h, None)
-            self._unbind_row_ids_locked(row)
-            self._delete_blob(row.get(ROW_FILE))
+            self._drop_row_locked(h, row)
             self._persist_locked()
+            parent_id = row.get(ROW_PARENT_GAME_ID)
             if parent_id is not None:
                 log.info(
                     "xgame.child_deleted parent=%s child=%s ply=%s",
-                    parent_id, child_gid, row.get(ROW_FORK_PLY),
+                    parent_id, row.get(ROW_GAME_ID), row.get(ROW_FORK_PLY),
                 )
             return RemoveResult(RemoveStatus.DELETED)
 
@@ -631,7 +656,7 @@ class RecentImports:
         ``[{game_id, fork_ply, summary, ts}, ...]`` sorted by fork_ply
         asc. Dangling ref entries (child id not resolvable) are dropped
         from the result and warn-logged; the parent's ``refs`` list is
-        not mutated here (scrubbed lazily on subsequent writes)."""
+        not mutated here (scripts/chkrefs.py drops them)."""
         row = self._row_for_id(game_id)
         if row is None:
             return []
@@ -699,7 +724,7 @@ class RecentImports:
         row = self._row_for_id(parent_game_id)
         if row is None:
             log.warning(
-                "xgame.dangling_parent_on_remove child=%s parent=%s",
+                "xgame.dangling_parent_on_drop child=%s parent=%s",
                 child_game_id, parent_game_id,
             )
             return
@@ -707,6 +732,60 @@ class RecentImports:
         row[ROW_REFS] = [
             r for r in refs if r.get(REF_GAME_ID) != child_game_id
         ]
+
+    def _remove_subtree_locked(self, h: str, row: dict) -> RemoveResult:
+        """Cascade arm of ``remove``: drop ``h`` and its descendants
+        deepest first, one persist. Must hold the lock."""
+        subtree = self._subtree_locked(h, row)
+        getter = self._active_game_id
+        active_gid = getter() if getter is not None else None
+        active_hash = self._by_id.get(active_gid) if active_gid is not None else None
+        if active_hash is not None and any(sh == active_hash for sh, _ in subtree):
+            log.info(
+                "xgame.cascade_blocked hash=%s active=%s", h, active_gid,
+            )
+            return RemoveResult(RemoveStatus.BLOCKED_BY_ACTIVE)
+        # Breadth-first order puts every child after its parent; reversed,
+        # each row drops while its parent is still there to detach from.
+        for sh, srow in reversed(subtree):
+            self._drop_row_locked(sh, srow)
+        self._persist_locked()
+        log.info(
+            "xgame.cascade_deleted hash=%s game_id=%s rows=%d",
+            h, row.get(ROW_GAME_ID), len(subtree),
+        )
+        return RemoveResult(RemoveStatus.DELETED)
+
+    def _subtree_locked(self, h: str, row: dict) -> list[tuple[str, dict]]:
+        """``(hash, row)`` for ``h`` and every live descendant through
+        ``refs``, breadth-first. Dead refs are skipped."""
+        out = [(h, row)]
+        seen = {h}
+        i = 0
+        while i < len(out):
+            for ref in out[i][1].get(ROW_REFS) or []:
+                child_id = ref.get(REF_GAME_ID)
+                ch = self._by_id.get(child_id) if child_id is not None else None
+                if ch is None or ch in seen:
+                    continue
+                seen.add(ch)
+                out.append((ch, self._index[ch]))
+            i += 1
+        return out
+
+    def _drop_row_locked(self, h: str, row: dict) -> None:
+        """Delete row ``h`` (index, ids, blob) and its parent's ref to it.
+        Shared by remove and eviction so neither strands a parent ref."""
+        parent_id = row.get(ROW_PARENT_GAME_ID)
+        if parent_id is not None:
+            self._detach_from_parent_locked(parent_id, row.get(ROW_GAME_ID))
+        self._forget_row_locked(h, row)
+
+    def _forget_row_locked(self, h: str, row: dict) -> None:
+        """Delete row ``h`` from the index, id map and disk; links untouched."""
+        self._index.pop(h, None)
+        self._unbind_row_ids_locked(row)
+        self._delete_blob(row.get(ROW_FILE))
 
     def _children_summary_locked(self, refs: list[dict]) -> list[dict]:
         """Resolve a parent's ``refs`` to child summaries. Dangling
@@ -761,19 +840,21 @@ class RecentImports:
             key=lambda kv: kv[1].get(ROW_TS, 0),
             reverse=True,
         )
-        candidates = list(reversed(ranked[self._cap:]))
-        drop_target = len(candidates)
-        dropped = 0
-        for h, row in candidates:
-            if row.get(ROW_REFS):
-                continue
-            if active_gid is not None and row.get(ROW_GAME_ID) == active_gid:
-                continue
-            self._index.pop(h, None)
-            self._unbind_row_ids_locked(row)
-            self._delete_blob(row.get(ROW_FILE))
-            dropped += 1
-        if dropped < drop_target:
+        pending = list(reversed(ranked[self._cap:]))
+        # Dropping a child can unpin an older parent already passed over:
+        # rescan until a pass drops nothing.
+        progress = True
+        while progress:
+            progress = False
+            for h, row in pending:
+                if row.get(ROW_REFS):
+                    continue
+                if active_gid is not None and row.get(ROW_GAME_ID) == active_gid:
+                    continue
+                self._drop_row_locked(h, row)
+                progress = True
+            pending = [(h, row) for h, row in pending if h in self._index]
+        if pending:
             log.warning(
                 "recent-imports cap (%d) exceeded: %d rows after "
                 "eviction; remaining rows are pinned (active session "

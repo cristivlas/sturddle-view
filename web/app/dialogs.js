@@ -685,6 +685,7 @@ export function apiErrorObject(error) {
 
 export const SETTINGS_TAB_ENGINES = "engines";
 export const SETTINGS_TAB_ANALYSIS = "analysis";
+export const SETTINGS_TAB_RECENTS = "recents";
 
 // Deep-link focus target: class on the extended-thinking control, shared
 // with the tab that builds it so the selector has one source of truth.
@@ -693,10 +694,12 @@ export const AI_THINKING_MODE_CLASS = "ai-thinking-mode";
 /** Dispatch the deep-link event that opens the Settings dialog at
  *  `tab` (e.g. "engines"). `focusClass` optionally names a control within
  *  that tab to focus once the dialog is showing, so a link that exists to
- *  fix one setting lands on it. Main wires up the actual open in main.js. */
-export function openSettings(tab, focusClass) {
+ *  fix one setting lands on it. `select` optionally names an item for the
+ *  tab to select (a recents hash for the Recents tab). Main wires up the
+ *  actual open in main.js. */
+export function openSettings(tab, focusClass, select) {
   window.dispatchEvent(new CustomEvent(APP_EVT.OPEN_SETTINGS, {
-    detail: { tab, focus: focusClass },
+    detail: { tab, focus: focusClass, select },
   }));
 }
 

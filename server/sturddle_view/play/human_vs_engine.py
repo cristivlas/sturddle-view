@@ -133,6 +133,7 @@ _ANALYZING_KEY = "analyzing"
 _VIEW_HASH_KEY = "view_hash"
 _VIEW_SUMMARY_KEY = "view_summary"
 _IN_PROGRESS_KEY = "in_progress"
+_PLAY_GAME_ID_KEY = "play_game_id"
 _ERR_ENGINE_TERMINATED = "engine_terminated"
 
 _PGN_SITE = "Sturddle View"
@@ -349,7 +350,7 @@ def _safe_name(name: str) -> str:
 
 def _status_payload(
     *, in_progress: bool, viewing: bool, view_hash: str | None,
-    view_summary: dict | None, analyzing: bool,
+    view_summary: dict | None, analyzing: bool, play_game_id: str | None,
 ) -> dict:
     return {
         _IN_PROGRESS_KEY: in_progress,
@@ -357,6 +358,7 @@ def _status_payload(
         _VIEW_HASH_KEY: view_hash,
         _VIEW_SUMMARY_KEY: view_summary,
         _ANALYZING_KEY: analyzing,
+        _PLAY_GAME_ID_KEY: play_game_id,
     }
 
 
@@ -364,6 +366,7 @@ def idle_status() -> dict:
     """GET /game/status before any game exists: nothing to guard."""
     return _status_payload(
         in_progress=False, viewing=False, view_hash=None, view_summary=None, analyzing=False,
+        play_game_id=None,
     )
 
 
@@ -987,12 +990,15 @@ class HumanVsEngine:
         discard/replace confirmations (GET /game/status)."""
         async with self._lock:
             viewing = self._viewing
+            in_progress = self._in_progress
             return _status_payload(
-                in_progress=self._in_progress,
+                in_progress=in_progress,
                 viewing=viewing,
                 view_hash=self._view_hash if viewing else None,
                 view_summary=self._view_summary if viewing else None,
                 analyzing=self._analysis_mode,
+                # A live clone keeps the live game's id, so this is it.
+                play_game_id=self._game_id if in_progress else None,
             )
 
     async def _republish_last_analysis_info(self) -> None:

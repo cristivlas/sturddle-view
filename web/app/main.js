@@ -268,13 +268,15 @@ document.getElementById("settings-btn").addEventListener("click", () => {
 // Allow any module to deep-link into the Settings dialog without
 // threading the `api` reference through call chains. detail.tab opens
 // the named tab (e.g. "engines"); detail.focus names a control within it
-// to land on. Used by the Play empty-state CTA and error-toast gears.
+// to land on; detail.select an item for the tab to select. Used by the
+// Play empty-state CTA, error-toast gears and the import recents gear.
 window.addEventListener(APP_EVT.OPEN_SETTINGS, (e) => {
   const tab = e.detail?.tab;
   openSettingsDialog({
     api,
     initialTab: tab,
     focusClass: e.detail?.focus,
+    select: e.detail?.select,
     reloadPerspective,
   });
 });
@@ -299,11 +301,14 @@ window.addEventListener(APP_EVT.CONNECTION, async (e) => {
   }
 });
 
+// detail.remount: also remount when `id` is already active, so it resyncs
+// state changed from outside it (e.g. a game imported from Settings).
 window.addEventListener(APP_EVT.ACTIVATE_PERSPECTIVE, async (e) => {
   const id = e.detail?.id;
   if (!id) return;
   try {
     if (router.activeId() !== id) await pickPerspective(id);
+    else if (e.detail.remount) await reloadPerspective();
   } catch (err) {
     console.error(`activate-perspective(${id}) failed`, err);
   }
