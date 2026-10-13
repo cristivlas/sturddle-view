@@ -11,27 +11,22 @@ from __future__ import annotations
 
 import math
 import re
-import sys
 
 import pytest
 
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 from sturddle_view.tournament.pgn_stats import (  # noqa: E402
     elo_from_score,
     elo_margin_from_wld,
 )
 
 from .conftest import (  # noqa: E402
-    REGISTRY_FILE,
-    TOURNAMENT_UX_KEY,
-    TOURNAMENT_UX_STUDIO,
-    e2e_env,
+    open_studio_tab,
     run_uvicorn_subprocess,
-    wait_perspective_ready,
+    seed_studio_tournament,
+    studio_server_env,
     watch_page_errors,
 )
 
@@ -43,46 +38,7 @@ ELO_TOL = 0.1
 LOS_TOL = 0.2
 
 
-def _server_env(tmp_path):
-    """Engine registry + SV_* env for an out-of-process server (fastchess is
-    never spawned -- we seed the PGN directly)."""
-    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
-    for name in ("engine-A", "engine-B", "engine-C"):
-        registry.add(name=name, path=sys.executable)
-    return {
-        **e2e_env(tmp_path),
-        "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,
-    }
-
-
-def _pgn(games):
-    """Render (round, white, black, result) tuples as a minimal PGN. The
-    header-only scanner only reads the four tags; the movetext is filler."""
-    out = []
-    for rnd, white, black, result in games:
-        out += [
-            '[Event "test"]',
-            f'[Round "{rnd}"]',
-            f'[White "{white}"]',
-            f'[Black "{black}"]',
-            f'[Result "{result}"]',
-            "",
-            f"1. e4 e5 {result}",
-            "",
-        ]
-    return "\n".join(out) + "\n"
-
-
-def _seed(tmp_path, name, engines, games):
-    """Create a tournament and write its games.pgn. Returns the Tournament."""
-    store = TournamentStore(tmp_path / "tournaments")
-    t = store.create(
-        name=name,
-        template={"tc": "5+0.05"},
-        engines=[{"name": e, "cmd": f"/bin/{e}"} for e in engines],
-    )
-    store.pgn_path(t.id).write_text(_pgn(games), encoding="utf-8")
-    return t
+ENGINES = ("engine-A", "engine-B", "engine-C")
 
 
 def _split(games, name):
@@ -146,19 +102,6 @@ _READ_ROWS = """() => {
 }"""
 
 
-async def _open_h2h(page, base):
-    """Mount Studio, switch to the engines perspective, open the H2H tab."""
-    await page.add_init_script(
-        f"localStorage.setItem('{TOURNAMENT_UX_KEY}', '{TOURNAMENT_UX_STUDIO}')"
-    )
-    await page.goto(base + "/")
-    await page.wait_for_selector("#play-perspective")
-    await wait_perspective_ready(page)
-    await page.click('button[data-perspective="engines"]')
-    await page.wait_for_selector(".studio-panel")
-    await page.click('.studio-bottom-right wa-tab[panel="h2h"]')
-
-
 @pytest.mark.asyncio
 async def test_h2h_two_engine_values_and_banner(tmp_path, make_page):
     """A 2-engine match shows the vs banner and per-color rows whose Elo /
@@ -177,12 +120,12 @@ async def test_h2h_two_engine_values_and_banner(tmp_path, make_page):
         ("5", "engine-B", "engine-A", WHITE_WIN),
         ("6", "engine-B", "engine-A", WHITE_WIN),
     ]
-    _seed(tmp_path, "h2h-pair", ["engine-A", "engine-B"], games)
+    seed_studio_tournament(tmp_path, "h2h-pair", ["engine-A", "engine-B"], games)
 
-    with run_uvicorn_subprocess(env_overrides=_server_env(tmp_path)) as base:
+    with run_uvicorn_subprocess(env_overrides=studio_server_env(tmp_path, ENGINES)) as base:
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
         errors = watch_page_errors(page)
-        await _open_h2h(page, base)
+        await open_studio_tab(page, base, "h2h")
         await page.wait_for_selector(".h2h-banner")
         await page.wait_for_function(
             "() => document.querySelectorAll('.h2h-tbl tbody tr.h2h-group').length === 2",
@@ -221,12 +164,12 @@ async def test_h2h_three_engine_no_banner(tmp_path, make_page):
         ("3", "engine-B", "engine-C", DRAW),
         ("3", "engine-C", "engine-B", BLACK_WIN),
     ]
-    _seed(tmp_path, "h2h-rr3", ["engine-A", "engine-B", "engine-C"], games)
+    seed_studio_tournament(tmp_path, "h2h-rr3", list(ENGINES), games)
 
-    with run_uvicorn_subprocess(env_overrides=_server_env(tmp_path)) as base:
+    with run_uvicorn_subprocess(env_overrides=studio_server_env(tmp_path, ENGINES)) as base:
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
         errors = watch_page_errors(page)
-        await _open_h2h(page, base)
+        await open_studio_tab(page, base, "h2h")
         await page.wait_for_function(
             "() => document.querySelectorAll('.h2h-tbl tbody tr.h2h-group').length === 3",
         )

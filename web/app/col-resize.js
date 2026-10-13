@@ -17,7 +17,7 @@ export function attachColumnResize({
   table,
   grips,
   overlayHost,
-  storageKey,
+  storageKey,      // optional; omit when the caller persists via onSave
   sizes,           // caller-owned array; helper mutates in place
   unit,            // "pct" | "px" -- only used to position drag-lines
   applySizes,
@@ -26,7 +26,7 @@ export function attachColumnResize({
 }) {
   const persistArity = sizes.length;
 
-  const saved = loadJson(storageKey);
+  const saved = storageKey ? loadJson(storageKey) : null;
   if (Array.isArray(saved) && saved.length === persistArity) {
     for (let i = 0; i < persistArity; i++) sizes[i] = saved[i];
   }
@@ -106,7 +106,7 @@ export function attachColumnResize({
         grip.classList.remove("dragging");
         rightLine.remove();
         leftLine.remove();
-        saveJson(storageKey, sizes.slice(0, persistArity));
+        if (storageKey) saveJson(storageKey, sizes.slice(0, persistArity));
         if (onSave) onSave(sizes.slice(0, persistArity));
       }
       grip.addEventListener("pointermove", onMove);

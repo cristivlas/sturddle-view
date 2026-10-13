@@ -21,6 +21,14 @@ export const ARROW_CLASS = "th-sort-arrow";
 export const ARROW_DESC = "caret-down";
 export const ARROW_ASC = "caret-up";
 
+// Keys that activate a focused sortable header (button semantics).
+const SORT_KEYS = ["Enter", " "];
+
+// Optional label element inside a th: when present it is the keyboard tab
+// stop instead of the th, so controls placed before it in the th (a menu
+// button) come first in tab order.
+export const TH_LABEL_CLASS = "th-label";
+
 // Locale string compare shared by every table's name/text tiebreak and
 // text-column primaries (case-insensitive, natural numeric order).
 export function baseCompare(a, b) {
@@ -129,11 +137,15 @@ export function attachColumnSort({
   columns,        // [{ key, firstDir?, sortable? }]; mapped to <thead> th by position (index), not by any attribute
   storageKey,     // optional; persists { key, dir }
   onSort,         // (state|null) => void; state = { key, dir, column }
+  keyboard = false, // sortable ths become tab stops; Enter/Space = click
+  initialState,   // optional { key, dir } | null; overrides the persisted state
 }) {
   const ths = Array.from(table.querySelectorAll("thead th"));
   let active = null; // { key, dir }
 
-  const saved = storageKey ? loadJson(storageKey) : null;
+  const saved = initialState !== undefined
+    ? initialState
+    : storageKey ? loadJson(storageKey) : null;
   if (saved && saved.key && (saved.dir === SORT_DIR.ASC || saved.dir === SORT_DIR.DESC)) {
     const col = columns.find((c) => c.key === saved.key && c.sortable !== false);
     if (col) active = { key: saved.key, dir: saved.dir };
@@ -176,6 +188,18 @@ export function attachColumnSort({
       active = dir === SORT_DIR.NONE ? null : { key: col.key, dir };
       syncIndicators();
       emit();
+    });
+    if (!keyboard) return;
+    const label = th.querySelector(`.${TH_LABEL_CLASS}`);
+    const focusEl = label || th;
+    focusEl.tabIndex = 0;
+    // A th keeps its columnheader role; a label span acts as the button.
+    if (label) label.setAttribute("role", "button");
+    focusEl.addEventListener("keydown", (ev) => {
+      // Own keys only: Enter on a control inside the th (menu button) is its own.
+      if (ev.target !== focusEl || !SORT_KEYS.includes(ev.key)) return;
+      ev.preventDefault();
+      th.click();
     });
   });
 

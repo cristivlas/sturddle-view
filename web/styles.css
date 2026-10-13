@@ -3222,6 +3222,10 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 /* Size header sits over right-aligned values. */
 .fs-picker-head-table th:last-child { text-align: right; }
 .th-sortable { cursor: pointer; }
+/* A focused .th-label (the tab stop when present) rings its whole th. */
+.th-sortable:focus-visible,
+.th-sortable:has(> .th-label:focus-visible) { outline: 1px solid var(--accent); outline-offset: -1px; }
+.th-sortable .th-label:focus-visible { outline: none; }
 .th-sort-arrow {
   font-size: 0.7rem;
   margin-left: 4px;
@@ -3305,6 +3309,31 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   border-top: 1px solid var(--wa-color-border-loud, #333);
   margin: 4px 0;
 }
+
+/* data-table.js: columns menu (top-layer popover, reusing the .tmb-dropdown
+   look) and its header button. Must follow .tmb-dropdown: same specificity,
+   fixed placement (JS sets top/left) overrides its absolute one. */
+.dt-menu {
+  position: fixed; inset: auto; color: var(--fg);
+  /* JS max-height (viewport room) includes padding/border; tall menus scroll. */
+  box-sizing: border-box; overflow-y: auto;
+}
+.dt-menu:popover-open { display: block; }
+.dt-menu-col { display: flex; align-items: center; padding-right: 6px; }
+.dt-menu-col .dt-menu-toggle { flex: 1 1 auto; width: auto; }
+.dt-menu .tmb-dd-item:disabled { opacity: 0.5; cursor: default; }
+.dt-menu .tmb-dd-item:disabled:hover { background: none; box-shadow: none; }
+.dt-menu-move {
+  background: none; border: none; border-radius: 0; color: inherit;
+  padding: 4px 6px; cursor: pointer;
+}
+.dt-menu-move:hover:not(:disabled) { background: var(--nav-btn-bg-hover); }
+.dt-menu-move:disabled { opacity: 0.3; cursor: default; }
+.dt-menu-btn {
+  background: none; border: none; padding: 0; margin-right: 12px;
+  color: inherit; font-size: 0.875rem; cursor: pointer; vertical-align: middle;
+}
+.dt-menu-btn:hover { color: var(--fg); }
 
 /* Settings dialog: Tournament tab */
 .settings-tournament-path-row {
