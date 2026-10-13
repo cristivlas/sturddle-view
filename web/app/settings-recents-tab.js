@@ -12,7 +12,7 @@ import { createWrapSizer } from "./list-wrap-sizer.js";
 import {
   activatePlay, confirmOpenInView, GAME_STATUS_PATH, importForView, OPEN_VERDICT,
 } from "./open-in-view.js";
-import { fmtMoveNo, makeIconButton } from "./wb-utils.js";
+import { fmtMoveNo, makeIconButton, rafCoalesce } from "./wb-utils.js";
 
 const TAB_NAME = "recents";
 const TAB_LABEL = "Recents";
@@ -43,6 +43,8 @@ const ERR_ACTIVE_IN_SUBTREE = "active_in_subtree";
 const ACTIVE_IN_SUBTREE_MSG = "Can't delete: its forks include the game in view or in play.";
 const DATE_FORMAT = { month: "short", day: "numeric" };
 const ARIA_LEVEL_BASE = 1;
+const SIDEWAYS_CLASS = "sideways";
+const NATURAL_MIN_WIDTH = "0";
 
 function deleteConfirmMsg(n) {
   return `Delete with ${n} ${n === 1 ? "fork" : "forks"}?`;
@@ -340,12 +342,30 @@ export function buildRecentsTab({ api, select, close, signal }) {
     }
   }
 
+  // Natural width = the widest row: drop the tree's full-width floor briefly.
+  function syncSideways() {
+    tree.style.minWidth = NATURAL_MIN_WIDTH;
+    const natural = tree.getBoundingClientRect().width;
+    tree.style.minWidth = "";
+    scroll.classList.toggle(SIDEWAYS_CLASS, natural > scroll.clientWidth);
+  }
+
   // Sizer measures the dialog body, so mount only once the dialog shows.
   function mount() {
     const sizer = createWrapSizer({ wrapEl: scroll, anchorEl: host });
     sizer.sizeWrap();
     requestAnimationFrame(sizer.sizeWrap);
     signal.addEventListener("abort", sizer.teardown);
+    // The tree spans the list, so it resizes on new rows and on list width
+    // changes alike. Decided next frame: the bar it toggles can resize the
+    // tree, which inside the callback would be a ResizeObserver loop.
+    const scheduleSideways = rafCoalesce(syncSideways);
+    const sideways = new ResizeObserver(scheduleSideways);
+    sideways.observe(tree);
+    signal.addEventListener("abort", () => {
+      sideways.disconnect();
+      scheduleSideways.cancel();
+    });
     window.addEventListener(APP_EVT.RECENTS_CHANGED, load, { signal });
     load();
   }
