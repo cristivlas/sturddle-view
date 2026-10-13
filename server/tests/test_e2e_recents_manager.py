@@ -77,6 +77,22 @@ PAIRS = [
     ("1. c4 c5 *", "1. c4 c5 2. Nc3 *"),
 ]
 GRANDCHILD_TEXT = "1. e4 e5 2. Nf3 Nc6 *"
+FILLER_PGN = '[White "F{i}"]\n[Black "G{i}"]\n\n1. b3 b6 *\n'
+# Enough rows that the list scrolls vertically.
+FILLER_ROWS = 30
+REOPENS = 3
+ESCAPE = "Escape"
+# Whether the list can scroll sideways at all: auto overflow-x showed a bar
+# for subpixel slop, so it is enabled only for a truly wider row.
+OVERFLOW_X_JS = """() => getComputedStyle(
+  document.querySelector('wa-dialog[open] .recents-scroll')).overflowX"""
+OVERFLOW_HIDDEN = "hidden"
+# Two frames: the layout's ResizeObserver schedules the sideways decision
+# into the next frame. Frame ordering, not a timer.
+NEXT_FRAME_JS = """() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))"""
+OVERFLOW_AUTO = "auto"
+LONG_NAME = "Long" * 60
+LONG_PGN = '[White "' + LONG_NAME + '"]\n[Black "B"]\n\n1. a3 a6 *\n'
 VIEWED_PGN = '[White "V"]\n[Black "W"]\n\n1. g3 g6 *\n'
 
 
@@ -236,6 +252,40 @@ async def test_tree_reveals_and_tags_the_viewed_fork(server, make_page):
     assert await parent_row.locator(ROW_DELETE).is_disabled()
     await _expand(page, child)
     await page.locator(ROW.format(grandchild)).wait_for()
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_reopened_tab_has_no_stray_sideways_scroll(server, make_page):
+    """Short rows fit the list: on every open it can't scroll sideways, so
+    no stray horizontal scrollbar."""
+    base = server
+    for i in range(FILLER_ROWS):
+        _import(base, FILLER_PGN.format(i=i))
+    _parent, child, _grandchild = _seed_chain(base)
+    _import(base, PAIRS[0][1])
+    page, errors = await _open_page(base, make_page)
+    for _ in range(REOPENS):
+        await _open_recents_tab(page)
+        await page.locator(ROW.format(child)).wait_for()
+        await page.evaluate(NEXT_FRAME_JS)
+        assert await page.evaluate(OVERFLOW_X_JS) == OVERFLOW_HIDDEN
+        await page.keyboard.press(ESCAPE)
+        await page.wait_for_selector(OPEN_DIALOG, state="detached")
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_long_row_scrolls_sideways(server, make_page):
+    base = server
+    # Enough rows that the list's height is capped, as with a real history.
+    for i in range(FILLER_ROWS):
+        _import(base, FILLER_PGN.format(i=i))
+    _import(base, LONG_PGN)
+    page, errors = await _open_page(base, make_page)
+    await _open_recents_tab(page)
+    await page.locator(f"{OPEN_DIALOG} .recents-row").first.wait_for()
+    await page.wait_for_function(f"() => ({OVERFLOW_X_JS})() === '{OVERFLOW_AUTO}'")
     assert_no_page_errors(errors)
 
 

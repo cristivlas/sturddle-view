@@ -3400,7 +3400,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-recents-panel > * { max-width: no
 /* Width comes from the panel, never from the nowrap labels: without this the
    longest label widens the panel past the dialog. */
 .recents-host { contain: inline-size; }
-.recents-scroll { overflow: auto; }
+/* Sideways scroll only when a row is truly wider than the list (JS sets
+   .sideways): auto overflow-x shows a bar for subpixel slop. */
+.recents-scroll { overflow-y: auto; overflow-x: hidden; }
+.recents-scroll.sideways { overflow-x: auto; }
 /* As wide as the widest row (never narrower than the wrap), so every row
    spans the full scroll width and the sticky edge lines up. */
 .recents-tree { list-style: none; margin: 0; padding: 0; width: max-content; min-width: 100%; }
