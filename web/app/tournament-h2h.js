@@ -5,8 +5,8 @@
 // Split like the standings table: makeH2HBody builds the DOM once (a
 // data-table.js table); renderH2H fills the banner + rows from a tournament
 // `detail` payload (standings engines + the per-game {white, black, result}
-// list, both already in hand). The split keeps resize
-// listeners from leaking on each live repaint.
+// list, both already in hand). The split keeps resize listeners from leaking
+// on each live repaint.
 
 import { RESULT } from "./chess-consts.js";
 import { MIDDOT, NO_GAMES_MSG } from "./tournament-row.js";
@@ -163,9 +163,8 @@ function bannerHtml(engines) {
 }
 
 // Build the H2H body once: a banner slot, an empty-state line, and a
-// resize-only table (no sort, no columns menu; arrow-key row cursor) the
-// fill step populates.
-// Mirrors makeStandingsBody.
+// resize-only table (no sort, no columns menu; arrow-key row cursor) the fill
+// step populates. Mirrors makeStandingsBody.
 export function makeH2HBody() {
   const el = document.createElement("div");
   el.className = "wb-h2h";

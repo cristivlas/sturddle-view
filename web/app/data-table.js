@@ -22,6 +22,7 @@ const UP_ICON = "chevron-up";
 const DOWN_ICON = "chevron-down";
 const ACTIVE_CLASS = "tmb-active";
 const MOVE = Object.freeze({ UP: -1, DOWN: 1 });
+const MOVE_LABEL = Object.freeze({ [MOVE.UP]: "Move up:", [MOVE.DOWN]: "Move down:" });
 const MENU_ACTION = Object.freeze({ TOGGLE: "toggle", FIT: "fit", RESET: "reset" });
 const ENABLED_BTN = "button:not(:disabled)";
 // Shared head-table class for factory-wide header CSS (styles.css).
@@ -36,6 +37,7 @@ const KBD_CLASS = "dt-kbd";
 const NAV_ROW_SEL = "tr[data-id]";
 const CURRENT_ATTR = "aria-selected";
 const CURRENT_ROW_SEL = `tr[${CURRENT_ATTR}="true"]`;
+const GRID_ROLE = "grid";
 const MENU_GAP_PX = 4;
 const MENU_EDGE_PX = 8;
 const FULL_PCT = 100;
@@ -124,7 +126,8 @@ function toggleColumn(layout, key, visibleCount) {
 
 function tdHtml(col, row) {
   const cls = col.tdClass ? ` class="${col.tdClass}"` : "";
-  const title = col.tdTitle ? ` title="${escapeHtml(col.tdTitle(row))}"` : "";
+  const titleText = col.tdTitle?.(row);
+  const title = titleText ? ` title="${escapeHtml(titleText)}"` : "";
   return `<td${cls}${title}>${col.cell(row)}</td>`;
 }
 
@@ -145,8 +148,11 @@ function menuHtml(layout, byKey, traits, visibleCount) {
     const col = byKey.get(key);
     const shown = !layout.hidden.has(key);
     const lockToggle = !traits.hide || col.alwaysOn || (shown && visibleCount === 1);
-    const move = (dir, icon) => menuBtnHtml(`${key}:${dir}`, "dt-menu-move", `<wa-icon name="${icon}"></wa-icon>`,
-      { disabled: moveTarget(layout, i, dir) < 0, attrs: ` data-dir="${dir}"` });
+    const move = (dir, icon) => {
+      const label = escapeHtml(`${MOVE_LABEL[dir]} ${col.label || key}`);
+      return menuBtnHtml(`${key}:${dir}`, "dt-menu-move", `<wa-icon name="${icon}"></wa-icon>`,
+        { disabled: moveTarget(layout, i, dir) < 0, attrs: ` data-dir="${dir}" aria-label="${label}" title="${label}"` });
+    };
     const moves = traits.reorder ? move(MOVE.UP, UP_ICON) + move(MOVE.DOWN, DOWN_ICON) : "";
     const toggle = menuBtnHtml(`${key}:${MENU_ACTION.TOGGLE}`,
       `tmb-dd-item dt-menu-toggle${shown ? ` ${ACTIVE_CLASS}` : ""}`, escapeHtml(col.label),
@@ -184,6 +190,8 @@ function positionMenu(menu, btn) {
 // also moves (so Enter after a click acts on the clicked row).
 function attachRowNav(bodyTable, nav, cursor) {
   bodyTable.tabIndex = 0;
+  // aria-selected marks the current row; rows support it inside a grid.
+  bodyTable.setAttribute("role", GRID_ROLE);
   bodyTable.classList.add(ROWNAV_CLASS);
   if (!nav.isSelected) bodyTable.classList.add(ROWNAV_CURSOR_CLASS);
   const moveCursor = (row) => {
@@ -359,7 +367,7 @@ export function createTable({
   function fitColumns() {
     const cols = visibleCols();
     const probe = document.createElement("table");
-    probe.className = `${tableClass} ${cls}-head-tbl ${cls}-body-tbl`;
+    probe.className = `${tableClass} ${cls}-head-tbl ${HEAD_TBL_CLASS} ${cls}-body-tbl`;
     Object.assign(probe.style, {
       position: "absolute", visibility: "hidden", left: "0", top: "0",
       tableLayout: "auto", width: "max-content",
@@ -462,8 +470,6 @@ export function createTable({
     headTable,
     bodyTable,
     tbody,
-    // Active sort { key, dir } (top of the stack) or null; setSort(state|null)
-    // routes through the header's arrow + persist + re-render path.
     // rowNav's current row element, or null.
     currentRow: () => tbody.querySelector(CURRENT_ROW_SEL),
     // Re-apply each rendered row's class and current mark in place, without
@@ -479,6 +485,8 @@ export function createTable({
         else tr.removeAttribute(CURRENT_ATTR);
       });
     },
+    // Active sort { key, dir } (top of the stack) or null; setSort(state|null)
+    // routes through the header's arrow + persist + re-render path.
     getSort: () => sortCtrl?.stack()[0] ?? null,
     setSort: (state) => sortCtrl?.set(state),
     render(nextRows) {
