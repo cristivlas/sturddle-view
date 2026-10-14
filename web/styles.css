@@ -3355,6 +3355,14 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 .dt-menu-move:focus { background: var(--panel-item-hover); }
 .dt-menu-move:disabled { opacity: 0.3; cursor: default; }
+/* Pointer devices: a row's move arrows show only while it holds focus. The
+   mouse moves focus to the item under it (menu-nav.js), so focus alone
+   tracks mouse and keyboard; :hover would light a second row after a key
+   press or a move-click. Hidden by color, not opacity/visibility, so they
+   stay focusable and keep the disabled dimming. */
+@media (hover: hover) {
+  .dt-menu-col:not(:focus-within) .dt-menu-move { color: transparent; }
+}
 /* Baseline, not middle: the taller menu button in the first cell would
    otherwise push that cell's label below the other labels. */
 .dt-head-tbl th { vertical-align: baseline; }

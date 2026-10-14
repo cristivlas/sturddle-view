@@ -19,13 +19,17 @@ const MENU_ICON = "sliders";
 const MENU_BTN_LABEL = "Columns";
 const FIT_LABEL = "Fit columns";
 const RESET_LABEL = "Reset columns";
-const UP_ICON = "chevron-up";
-const DOWN_ICON = "chevron-down";
+const UP_ICON = "arrow-up-long";
+const DOWN_ICON = "arrow-down-long";
 const ACTIVE_CLASS = "tmb-active";
 const MOVE = Object.freeze({ UP: -1, DOWN: 1 });
 const MOVE_LABEL = Object.freeze({ [MOVE.UP]: "Move up:", [MOVE.DOWN]: "Move down:" });
 const MENU_ACTION = Object.freeze({ TOGGLE: "toggle", FIT: "fit", RESET: "reset" });
 const ENABLED_BTN = "button:not(:disabled)";
+// Columns menu: a column's row, and the stable focus id on each control.
+const MENU_COL_CLASS = "dt-menu-col";
+const FID_ATTR = "data-fid";
+const MENU_CONTROL_SEL = `button[${FID_ATTR}]`;
 // Shared head-table class for factory-wide header CSS (styles.css).
 const HEAD_TBL_CLASS = "dt-head-tbl";
 // rowNav body markers (styles.css): the tab-stop body, plus cursor mode.
@@ -168,7 +172,7 @@ function trOpen(row, i, rowAttrs) {
 
 // One button: `fid` identifies it across rebuilds so focus can be restored.
 function menuBtnHtml(fid, cls, inner, { disabled = false, attrs = "" } = {}) {
-  return `<button class="${cls}" data-fid="${escapeHtml(fid)}"${attrs}${disabled ? " disabled" : ""}>${inner}</button>`;
+  return `<button class="${cls}" ${FID_ATTR}="${escapeHtml(fid)}"${attrs}${disabled ? " disabled" : ""}>${inner}</button>`;
 }
 
 function menuHtml(layout, byKey, traits, visibleCount) {
@@ -185,7 +189,7 @@ function menuHtml(layout, byKey, traits, visibleCount) {
     const toggle = menuBtnHtml(`${key}:${MENU_ACTION.TOGGLE}`,
       `tmb-dd-item dt-menu-toggle${shown ? ` ${ACTIVE_CLASS}` : ""}`, escapeHtml(col.label),
       { disabled: lockToggle, attrs: ` data-action="${MENU_ACTION.TOGGLE}"` });
-    return `<li class="dt-menu-col" data-key="${escapeHtml(key)}">${toggle}${moves}</li>`;
+    return `<li class="${MENU_COL_CLASS}" data-key="${escapeHtml(key)}">${toggle}${moves}</li>`;
   }).join("");
   const action = (name, label) =>
     `<li>${menuBtnHtml(name, "tmb-dd-item", label, { attrs: ` data-action="${name}"` })}</li>`;
@@ -552,12 +556,14 @@ export function createTable({
     storeVisiblePcts(layout, cols, fitPcts(natural, bodyTable.getBoundingClientRect().width, minPct));
   }
 
-  // Rebuilt in place on every change; focus returns to the same control, or
-  // (now disabled, e.g. an arrow at the end) its row's next enabled one.
-  function renderMenu(focusFid = null) {
+  // Rebuilt in place on every change; the caller restores focus.
+  function renderMenu() {
     menu.innerHTML = menuHtml(layout, byKey, traits, visibleCols().length);
-    if (!focusFid) return;
-    const el = menu.querySelector(`[data-fid="${CSS.escape(focusFid)}"]`);
+  }
+
+  // Focus `el`, or (disabled, e.g. an arrow at the end) its row's next
+  // enabled control.
+  function focusMenuControl(el) {
     const target = el && !el.disabled ? el : el?.closest("li").querySelector(ENABLED_BTN);
     if (target) target.focus();
     else focusFirstItem(menu);
@@ -595,9 +601,9 @@ export function createTable({
   }
 
   function onMenuClick(ev) {
-    const btn = ev.target.closest("button[data-fid]");
+    const btn = ev.target.closest(MENU_CONTROL_SEL);
     if (!btn || btn.disabled) return;
-    const key = btn.closest(".dt-menu-col")?.dataset.key;
+    const key = btn.closest(`.${MENU_COL_CLASS}`)?.dataset.key;
     const action = btn.dataset.action;
     if (btn.dataset.dir) moveColumn(layout, key, Number(btn.dataset.dir));
     else if (action === MENU_ACTION.TOGGLE) toggleColumn(layout, key, visibleCols().length);
@@ -607,8 +613,18 @@ export function createTable({
     saveLayout();
     relayout();
     // Fit and Reset are one-shot table commands: close so the result shows.
-    if (action === MENU_ACTION.FIT || action === MENU_ACTION.RESET) closeMenu();
-    else renderMenu(btn.dataset.fid);
+    if (action === MENU_ACTION.FIT || action === MENU_ACTION.RESET) {
+      closeMenu();
+      return;
+    }
+    renderMenu();
+    // A key press refocuses the same control, so repeats keep moving the
+    // column; a mouse click (detail > 0), what the rows moved under the still
+    // pointer, as hovering would. Focus picks the row showing arrows (CSS).
+    const under = ev.detail > 0
+      && document.elementFromPoint(ev.clientX, ev.clientY)?.closest(MENU_CONTROL_SEL);
+    focusMenuControl(under && menu.contains(under)
+      ? under : menu.querySelector(`[${FID_ATTR}="${CSS.escape(btn.dataset.fid)}"]`));
   }
 
   if (hasMenu) {
