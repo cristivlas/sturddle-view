@@ -44,7 +44,8 @@ VIEWPORT = {"width": 1400, "height": 900}
 
 HEAD = ".wb-standings-head-tbl"
 MENU_BTN = f"{HEAD} .dt-menu-btn"
-MENU = ".dt-menu"
+# Scoped: Studio has several factory tables, each with its own menu.
+MENU = ".wb-standings-table-wrap .dt-menu"
 
 _LABELS = f"() => [...document.querySelectorAll('{HEAD} th .th-label')].map(e => e.textContent)"
 _ROW_NAMES = (
@@ -210,6 +211,27 @@ async def test_hidden_sort_column_drops_out_of_order(server, make_page):
     await page.click(_menu_item("wins", "dt-menu-toggle"))
     assert await page.evaluate(_ROW_NAMES) == [ENGINE_B, ENGINE_A]
     assert await page.evaluate(_SORTED_HEADERS) == {"W": "ascending"}
+    assert_no_page_errors(errors)
+
+
+# Bottom edge of every header label's text box, in header order.
+_LABEL_BOTTOMS = (
+    f"() => [...document.querySelectorAll('{HEAD} th .th-label')]"
+    ".map(e => e.getBoundingClientRect().bottom)"
+)
+LABEL_ALIGN_TOL_PX = 1
+
+
+@pytest.mark.asyncio
+async def test_header_labels_align_with_menu_button(server, make_page):
+    """The columns button in the first header cell doesn't push that cell's
+    label off the line the other labels sit on."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_standings(page, server)
+
+    bottoms = await page.evaluate(_LABEL_BOTTOMS)
+    assert max(bottoms) - min(bottoms) <= LABEL_ALIGN_TOL_PX, bottoms
     assert_no_page_errors(errors)
 
 

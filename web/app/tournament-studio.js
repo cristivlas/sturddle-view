@@ -16,6 +16,8 @@ import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, loadSortDir, nextDir, scr
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { wireSplitScroll } from "./split-table.js";
+import { createTable, RENDER_REASON } from "./data-table.js";
+import { formatStamp } from "./tournament-format.js";
 import { reportError, toast } from "./dialogs.js";
 import { debounce, escapeHtml, flashWindow, markSelectable, roveTabStop, suppressModifierClickSelect, syncRovingTabStop, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
 import { createMultiSelect, selectionTargets } from "./multi-select.js";
@@ -84,8 +86,7 @@ const BOARD_RESIZE_DEBOUNCE_MS = 120;
 const STUDIO_TAB_DEFAULT_LEFT = "livegames";
 const STUDIO_TAB_DEFAULT_RIGHT = "tourneys";
 const STUDIO_TAB_STANDINGS = "standings";
-// Tourney table default column widths (Status, Created, Name, Completed) + resize floor.
-const STUDIO_TOURNEY_DEFAULT_PCTS = [12, 22, 16, 50];
+// Tourney table resize floor (default widths live on TOURNEY_COLUMNS).
 const STUDIO_TOURNEY_MIN_PCT = 10;
 // History table default column widths (#, White, Black, Result, Opening) + resize floor.
 const STUDIO_HISTORY_DEFAULT_PCTS = [5, 20, 20, 15, 40];
@@ -269,57 +270,74 @@ function showStandingsTab(ctx) {
   ctx.bottomRightEl?.querySelector(".studio-tabs")?.setAttribute("active", STUDIO_TAB_STANDINGS);
 }
 
-const TOURNEY_SORT_COLS = [
-  { key: "status", firstDir: SORT_DIR.ASC, rank: STATUS_RANK },
-  { key: "created", firstDir: SORT_DIR.DESC, field: "created_at", tiebreak: true },
-  { key: "name", firstDir: SORT_DIR.ASC },
-  { key: "games", sortable: false },
-];
-
-// Sort the list by the MRU sort stack; an empty stack keeps the server order.
-function sortedStudioTourneys(ctx) {
-  const arr = ctx.tournaments.slice();
-  sortByStack(arr, ctx.tourneyStack(), TOURNEY_SORT_COLS);
-  return arr;
+// Games cell: while running, Arena's progress bar (label then bar); otherwise
+// "played / total".
+function gamesCell(t) {
+  const total = totalGames(t);
+  const played = t.standings?.games ?? 0;
+  if (t.status === STATUS.RUNNING && total) {
+    return `<div class="studio-progress">${progressLabelHtml(played, total)}${progressBarHtml(played, total)}</div>`;
+  }
+  return total ? `${played} / ${total}` : (played ? String(played) : "");
 }
 
-// Build the tourney table once: a sortable header + a tbody the row
-// renderer fills. Layered MRU sort + arrows/persistence come from
-// attachLayeredSort. Split header/body table pattern -- see split-table.js.
+// Rows are the tournament objects themselves; the created column is the
+// deterministic tiebreak.
+const TOURNEY_COLUMNS = [
+  { key: "status", label: "Status", width: 12, firstDir: SORT_DIR.ASC, rank: STATUS_RANK,
+    tdClass: "studio-tourney-status", cell: (t) => statusBadgeHtml(t.status) + sprtBadgeHtml(t) },
+  { key: "created", label: "Created", width: 22, firstDir: SORT_DIR.DESC, field: "created_at", tiebreak: true,
+    tdClass: "studio-tourney-created", cell: (t) => escapeHtml(formatStamp(t.created_at)) },
+  { key: "started", label: "Started", width: 22, firstDir: SORT_DIR.DESC, field: "started_at",
+    tdClass: "studio-tourney-started", cell: (t) => escapeHtml(formatStamp(t.started_at)) },
+  { key: "name", label: "Name", width: 16, alwaysOn: true, firstDir: SORT_DIR.ASC,
+    tdClass: "studio-tourney-name", tdTitle: (t) => t.name, cell: (t) => escapeHtml(t.name) },
+  { key: "games", label: "Completed", width: 50, sortable: false,
+    tdClass: "studio-tourney-games", cell: gamesCell },
+];
+
+// Build the tourney table once (data-table.js); renderTourneys fills it.
+// Row clicks are delegated: rows are rebuilt on every render.
 function buildTourneyTable(ctx) {
   const pane = ctx.tourneysPaneEl;
   if (!pane) return;
-  const wrap = document.createElement("div");
-  wrap.className = "studio-tourney-wrap";
-  wrap.innerHTML = `
-    <div class="studio-tourney-head-scroll">
-      <table class="wb-table studio-tourney-tbl studio-tourney-head-tbl">
-        <colgroup><col><col><col><col></colgroup>
-        <thead><tr>
-          <th>Status<span class="th-grip"></span></th>
-          <th>Created<span class="th-grip"></span></th>
-          <th>Name<span class="th-grip"></span></th>
-          <th class="studio-tourney-games-col">Completed</th>
-        </tr></thead>
-      </table>
-    </div>
-    <div class="studio-tourney-body-scroll">
-      <table class="wb-table studio-tourney-tbl studio-tourney-body-tbl">
-        <colgroup><col><col><col><col></colgroup>
-        <tbody></tbody>
-      </table>
-    </div>
-  `;
-  pane.replaceChildren(wrap);
-  const headTable = wrap.querySelector(".studio-tourney-head-tbl");
-  const table = wrap.querySelector(".studio-tourney-body-tbl");
-  const headScroll = wrap.querySelector(".studio-tourney-head-scroll");
-  const bodyScroll = wrap.querySelector(".studio-tourney-body-scroll");
-  wireSplitScroll(headScroll, bodyScroll);
+  const tt = createTable({
+    cls: "studio-tourney",
+    tableClass: "wb-table studio-tourney-tbl",
+    columns: TOURNEY_COLUMNS,
+    layoutKey: STORAGE_KEY.STUDIO_TOURNEY_LAYOUT,
+    minPct: STUDIO_TOURNEY_MIN_PCT,
+    traits: {
+      sort: {
+        sortKey: STORAGE_KEY.STUDIO_TOURNEY_SORT,
+        stackKey: STORAGE_KEY.STUDIO_TOURNEY_STACK,
+      },
+      resize: true, reorder: true, hide: true, fit: true,
+    },
+    rowClass: (t) => TOURNEY_ROW_CLASS + (t.id === ctx.selectedId ? " selected" : ""),
+    rowId: (t) => t.id,
+    // Every rebuild drops the multi-select marks: prune repaints them.
+    onRender: (reason) => {
+      ctx.ms.prune();
+      if (reason === RENDER_REASON.SORT) scrollSortedRowIntoView(tt.tbody, "tr.selected");
+    },
+  });
+  pane.replaceChildren(tt.wrap);
+  const table = tt.bodyTable;
   // One Tab stop for the whole list; arrows move the selection within it.
   // Clicking a row focuses the table so the arrows continue from there.
   table.tabIndex = 0;
-  table.addEventListener("click", () => table.focus({ preventScroll: true }));
+  table.addEventListener("click", (ev) => {
+    const id = ev.target.closest(TOURNEY_ROW_SEL)?.dataset.id;
+    if (id) ctx.ms.handleClick(ev, id);
+    table.focus({ preventScroll: true });
+  });
+  table.addEventListener("dblclick", (ev) => {
+    const t = ctx.tournaments.find((x) => x.id === ev.target.closest(TOURNEY_ROW_SEL)?.dataset.id);
+    if (!t) return;
+    studioSelectRow(ctx, t.id);
+    ctx.actions?.info(t);
+  });
   suppressModifierClickSelect(table);
   wireArrowKeyNav(table, {
     rows: TOURNEY_ROW_SEL,
@@ -328,74 +346,15 @@ function buildTourneyTable(ctx) {
     select: (row) => studioSelectRow(ctx, row.dataset.id),
     extend: (row) => ctx.ms.extendTo(row.dataset.id),
   });
-  ctx.tourneyTbody = table.querySelector("tbody");
-  ctx.tourneyStack = attachLayeredSort({
-    table: headTable, columns: TOURNEY_SORT_COLS,
-    sortKey: STORAGE_KEY.STUDIO_TOURNEY_SORT, stackKey: STORAGE_KEY.STUDIO_TOURNEY_STACK,
-    onChange: () => {
-      renderTourneys(ctx);
-      scrollSortedRowIntoView(ctx.tourneyTbody, "tr.selected");
-    },
-  }).get;
-  const headColEls = Array.from(headTable.querySelectorAll("col"));
-  const bodyColEls = Array.from(table.querySelectorAll("col"));
-  attachColumnResize({
-    table: headTable,
-    grips: Array.from(headTable.querySelectorAll(".th-grip")),
-    overlayHost: wrap,
-    storageKey: STORAGE_KEY.STUDIO_TOURNEY_COL_PCTS,
-    sizes: STUDIO_TOURNEY_DEFAULT_PCTS.slice(),
-    unit: "pct",
-    applySizes: makePctApplySizes([headColEls, bodyColEls], STUDIO_TOURNEY_MIN_PCT),
-  });
-}
-
-// Compact local date+time for the Created column; falls back to the raw
-// string if it isn't a parseable timestamp.
-function formatCreated(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? iso : d.toLocaleString();
-}
-
-// Games cell: while running, Arena's progress bar (label then bar); otherwise
-// "played / total".
-function gamesCell(t, played, total) {
-  if (t.status === STATUS.RUNNING && total) {
-    return `<div class="studio-progress">${progressLabelHtml(played, total)}${progressBarHtml(played, total)}</div>`;
-  }
-  return total ? `${played} / ${total}` : (played ? String(played) : "");
-}
-
-function studioTourneyRow(ctx, t) {
-  const tr = document.createElement("tr");
-  tr.className = TOURNEY_ROW_CLASS + (t.id === ctx.selectedId ? " selected" : "");
-  tr.dataset.id = t.id;
-  const total = totalGames(t);
-  const played = t.standings?.games ?? 0;
-  tr.innerHTML =
-    `<td class="studio-tourney-status">${statusBadgeHtml(t.status)}${sprtBadgeHtml(t)}</td>` +
-    `<td class="studio-tourney-created">${escapeHtml(formatCreated(t.created_at))}</td>` +
-    `<td class="studio-tourney-name" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}</td>` +
-    `<td class="studio-tourney-games">${gamesCell(t, played, total)}</td>`;
-  tr.addEventListener("click", (ev) => ctx.ms.handleClick(ev, t.id));
-  tr.addEventListener("dblclick", () => { studioSelectRow(ctx, t.id); ctx.actions?.info(t); });
-  return tr;
+  ctx.tourneyTable = tt;
 }
 
 function renderTourneys(ctx) {
-  if (!ctx.tourneyTbody) return;
+  if (!ctx.tourneyTable) return;
   ensureSelection(ctx);
-  if (ctx.tournaments.length === 0) {
-    // Empty state lives on the Boards wall (paintWall), not in this table.
-    ctx.tourneyTbody.replaceChildren();
-    ctx.ms.prune();
-    syncRibbon(ctx);
-    paintWall(ctx);
-    return;
-  }
-  ctx.tourneyTbody.replaceChildren(...sortedStudioTourneys(ctx).map((t) => studioTourneyRow(ctx, t)));
-  ctx.ms.prune();
+  // An empty list's empty state lives on the Boards wall (paintWall). The
+  // table's onRender prunes the multi-selection before the ribbon syncs.
+  ctx.tourneyTable.render(ctx.tournaments);
   syncRibbon(ctx);
   paintWall(ctx);
 }
@@ -1395,8 +1354,9 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     tournaments: [], activeId: null, listGen: 0,
     selectedId: loadRaw(STORAGE_KEY.STUDIO_SELECTED_ID),
     enginesSort: loadSortDir(STORAGE_KEY.STUDIO_ENGINES_SORT),
-    // Sort stacks are getter fns assigned by build{Tourney,History}Table.
-    tourneyTbody: null, tourneyStack: null,
+    // Set by buildTourneyTable (data-table.js instance).
+    tourneyTable: null,
+    // Sort stack getter fn assigned by buildHistoryTable.
     historyTbody: null, historyStack: null,
     // Live runner store for the running tourney (null unless it's selected).
     live: null, liveTid: null, liveUnsub: null, liveGen: 0, _panesPending: false,
@@ -1428,7 +1388,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   // click on a log line leaves Ctrl+A with no enclosing focused region.
   markSelectable(ctx.logListEl, { rows: "li" });
   ctx.ms = createMultiSelect({
-    getRows: () => (ctx.tourneyTbody ? ctx.tourneyTbody.querySelectorAll(TOURNEY_ROW_SEL) : []),
+    getRows: () => (ctx.tourneyTable ? ctx.tourneyTable.tbody.querySelectorAll(TOURNEY_ROW_SEL) : []),
     getAnchorId: () => ctx.selectedId,
     selectOne: (id) => studioSelectRow(ctx, id),
     onChange: () => syncRibbon(ctx),
@@ -1520,7 +1480,7 @@ function unmountStudio(ctx) {
   ctx.panel.remove();
   ctx.panel = ctx.ribbonEl = null;
   ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
-  ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = ctx.tourneyTbody = null;
+  ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = ctx.tourneyTable = null;
   ctx.enginesPaneEl = ctx.gamesPaneEl = null;
   ctx.standingsPaneEl = ctx.standingsBodyEl = ctx.h2hPaneEl = ctx.h2hBodyEl = ctx.historyPaneEl = ctx.historyTbody = ctx.logPaneEl = ctx.logListEl = null;
   ctx.ribbonBtns = ctx.actions = null;

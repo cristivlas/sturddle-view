@@ -7,7 +7,7 @@
 import { progressBarHtml, progressLabelHtml, totalGames } from "./tournament-row.js";
 import { STATUS, sprtVerdict } from "./tournament-events.js";
 import { basename, escapeHtml } from "./wb-utils.js";
-import { formatType, shortResign, shortDraw } from "./tournament-format.js";
+import { formatStamp, formatType, shortResign, shortDraw } from "./tournament-format.js";
 
 // Max engine chips on the wall before collapsing the rest into "+K more".
 const ROSTER_CAP = 8;
@@ -54,12 +54,6 @@ function adjudicationHtml(tpl) {
     `</span>`
   ).join("");
   return `<span class="iw-adj-stamps">${chips}</span>`;
-}
-
-function formatCreated(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
 // One ledger row of the tale-of-the-tape: label on the left, leader dots
@@ -194,7 +188,7 @@ function footerHtml(t) {
     const tally = total ? `${played} / ${total} games` : (played ? `${played} games` : "");
     lead = `<div class="iw-tally">${escapeHtml(tally)}</div>`;
   }
-  const created = formatCreated(t.created_at);
+  const created = formatStamp(t.created_at);
   const stamp = created ? `<div class="iw-created">created ${escapeHtml(created)}</div>` : "";
   return `<div class="iw-footer">${lead}${stamp}</div>`;
 }

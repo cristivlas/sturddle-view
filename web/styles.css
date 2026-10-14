@@ -3340,6 +3340,9 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 .dt-menu-move:focus { background: var(--panel-item-hover); }
 .dt-menu-move:disabled { opacity: 0.3; cursor: default; }
+/* Baseline, not middle: the taller menu button in the first cell would
+   otherwise push that cell's label below the other labels. */
+.dt-head-tbl th { vertical-align: baseline; }
 .dt-menu-btn {
   background: none; border: none; padding: 0; margin-right: 12px;
   color: inherit; font-size: 0.875rem; cursor: pointer; vertical-align: middle;
@@ -3973,7 +3976,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 }
 .studio-pane-standings > *, .studio-pane-tourneys > *,
 .studio-pane-history > *, .studio-pane-h2h > * { min-height: 0; }
-.studio-tourney-wrap, .studio-history-wrap { height: 100%; }
+.studio-tourney-table-wrap, .studio-history-wrap { height: 100%; }
 /* Selection-change loading state for the selDetail-fed panes (Standings,
    Head-to-Head, Games): dim the outgoing tourney's rows and spin, so stale
    numbers never read as current.
@@ -4018,7 +4021,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
    Settings engines look). The wrap hosts the resize overlay, mirroring the
    file picker's tableWrap. Split header/body table (see Openings above,
    tournament-studio.js). */
-.studio-tourney-wrap, .studio-history-wrap { position: relative; display: flex; flex-direction: column; min-height: 0; }
+.studio-tourney-table-wrap, .studio-history-wrap { position: relative; display: flex; flex-direction: column; min-height: 0; }
 .studio-tourney-head-scroll, .studio-history-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; }
 .studio-tourney-body-scroll, .studio-history-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
 .studio-tourney-tbl, .studio-history-tbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
@@ -4063,7 +4066,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .studio-tourney-row.marked td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
 .studio-history-num, .studio-history-result { color: var(--muted); }
 .studio-history-result { font-family: var(--wa-font-family-code); }
-.studio-tourney-created { color: var(--muted); }
+.studio-tourney-created, .studio-tourney-started { color: var(--muted); }
 /* Status + optional SPRT pill: clip (no ellipsis) rather than widen. */
 .studio-tourney-tbl tbody td.studio-tourney-status { text-overflow: clip; }
 /* Running tourney's Games cell: Arena's progress bar + inline label. */
@@ -4143,7 +4146,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
     display: block; height: auto; overflow: visible;
   }
   .wb-standings, .wb-h2h { height: auto; }
-  .studio-tourney-wrap, .studio-history-wrap { height: auto; }
+  .studio-tourney-table-wrap, .studio-history-wrap { height: auto; }
   .wb-standings-table-wrap, .h2h-table-wrap { display: block; }
   .wb-standings-body-scroll, .h2h-body-scroll,
   .studio-tourney-body-scroll, .studio-history-body-scroll { overflow: visible; }

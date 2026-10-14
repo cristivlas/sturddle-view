@@ -24,9 +24,14 @@ const ACTIVE_CLASS = "tmb-active";
 const MOVE = Object.freeze({ UP: -1, DOWN: 1 });
 const MENU_ACTION = Object.freeze({ TOGGLE: "toggle", FIT: "fit", RESET: "reset" });
 const ENABLED_BTN = "button:not(:disabled)";
+// Shared head-table class for factory-wide header CSS (styles.css).
+const HEAD_TBL_CLASS = "dt-head-tbl";
 const MENU_GAP_PX = 4;
 const MENU_EDGE_PX = 8;
 const FULL_PCT = 100;
+
+// Why the body was rebuilt (createTable's onRender argument).
+export const RENDER_REASON = Object.freeze({ DATA: "data", SORT: "sort", LAYOUT: "layout" });
 
 // Saved { order, hidden, widths } reconciled with the current column list:
 // unknown keys drop, new columns append, alwaysOn columns never hide. An
@@ -105,6 +110,13 @@ function tdHtml(col, row) {
   return `<td${cls}${title}>${col.cell(row)}</td>`;
 }
 
+// <tr> open tag from the caller's optional row hooks (class, data-id).
+function trOpen(row, rowClass, rowId) {
+  const cls = rowClass ? rowClass(row) : "";
+  const id = rowId ? rowId(row) : null;
+  return `<tr${cls ? ` class="${cls}"` : ""}${id != null ? ` data-id="${escapeHtml(id)}"` : ""}>`;
+}
+
 // One button: `fid` identifies it across rebuilds so focus can be restored.
 function menuBtnHtml(fid, cls, inner, { disabled = false, attrs = "" } = {}) {
   return `<button class="${cls}" data-fid="${escapeHtml(fid)}"${attrs}${disabled ? " disabled" : ""}>${inner}</button>`;
@@ -148,8 +160,10 @@ function positionMenu(menu, btn) {
 
 // traits: { sort?: { sortKey, stackKey, defaultState }, resize?, reorder?,
 // hide?, fit? }. `cls` prefixes the wrap/scroller/table classes; the caller
-// appends `wrap` and fills it via render(rows).
-export function createTable({ cls, tableClass, columns, layoutKey, minPct, traits = {} }) {
+// appends `wrap` and fills it via render(rows). rowClass/rowId (row =>
+// string) set each <tr>'s class and data-id. onRender(reason) runs after
+// every body rebuild (RENDER_REASON), so callers can repaint row state.
+export function createTable({ cls, tableClass, columns, layoutKey, minPct, traits = {}, rowClass, rowId, onRender }) {
   const byKey = new Map(columns.map((c) => [c.key, c]));
   const layout = reconcileLayout(columns, loadJson(layoutKey) || {});
   const hasMenu = traits.reorder || traits.hide || traits.fit;
@@ -158,7 +172,7 @@ export function createTable({ cls, tableClass, columns, layoutKey, minPct, trait
   wrap.className = `${cls}-table-wrap`;
   wrap.innerHTML = `
     <div class="${cls}-head-scroll">
-      <table class="${tableClass} ${cls}-head-tbl"><colgroup></colgroup><thead></thead></table>
+      <table class="${tableClass} ${cls}-head-tbl ${HEAD_TBL_CLASS}"><colgroup></colgroup><thead></thead></table>
     </div>
     <div class="${cls}-body-scroll">
       <table class="${tableClass} ${cls}-body-tbl"><colgroup></colgroup><tbody></tbody></table>
@@ -184,12 +198,15 @@ export function createTable({ cls, tableClass, columns, layoutKey, minPct, trait
 
   // Hidden columns drop out of the sort (the arrow follows the next shown
   // entry); they stay in the persisted stack, so showing one restores it.
-  function renderBody() {
+  function renderBody(reason) {
     if (!rows) return;
     const cols = visibleCols();
     const sorted = rows.slice();
     if (sortStack) sortByStack(sorted, sortStack().filter((s) => !layout.hidden.has(s.key)), columns);
-    tbody.innerHTML = sorted.map((r) => `<tr>${cols.map((c) => tdHtml(c, r)).join("")}</tr>`).join("");
+    tbody.innerHTML = sorted
+      .map((r) => `${trOpen(r, rowClass, rowId)}${cols.map((c) => tdHtml(c, r)).join("")}</tr>`)
+      .join("");
+    onRender?.(reason);
   }
 
   function thHtml(col, i, cols) {
@@ -232,10 +249,11 @@ export function createTable({ cls, tableClass, columns, layoutKey, minPct, trait
     }
     if (traits.sort) {
       sortStack = attachLayeredSort({
-        table: headTable, columns: cols, ...traits.sort, onChange: renderBody, keyboard: true,
+        table: headTable, columns: cols, ...traits.sort, keyboard: true,
+        onChange: () => renderBody(RENDER_REASON.SORT),
       }).get;
     }
-    renderBody();
+    renderBody(RENDER_REASON.LAYOUT);
   }
 
   // Measure each visible column's max-content width (header + rows) on an
@@ -336,9 +354,10 @@ export function createTable({ cls, tableClass, columns, layoutKey, minPct, trait
     wrap,
     headTable,
     bodyTable,
+    tbody,
     render(nextRows) {
       rows = nextRows;
-      renderBody();
+      renderBody(RENDER_REASON.DATA);
     },
   };
 }

@@ -27,7 +27,7 @@ import {
 import { BOOK_KEYS, mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { makePathRow } from "./settings-path-row.js";
 import { mountSprtButton } from "./tournament-sprt-button.js";
-import { formatType, formatResign, formatDraw } from "./tournament-format.js";
+import { formatDraw, formatResign, formatStamp, formatType } from "./tournament-format.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
 import { applyListClick, createMultiSelect, selectionTargets } from "./multi-select.js";
@@ -191,13 +191,6 @@ function fitMiddleEllipsis(el, full) {
   const head = Math.ceil(lo / 2);
   const tail = lo - head;
   el.textContent = full.slice(0, head) + ID_ELLIPSIS + full.slice(full.length - tail);
-}
-
-function formatTime(iso) {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  return d.toLocaleString();
 }
 
 function formatGames(t) {
@@ -777,9 +770,9 @@ function buildInfoContent(ctx, t, onStatusClick) {
       row("Book order", ed.book_order);
     }
   }
-  row("Created", formatTime(t.created_at));
-  if (t.status === STATUS.RUNNING || t.status === STATUS.FAILED || t.status === STATUS.STOPPED) row("Started", formatTime(t.started_at));
-  if (t.status === STATUS.STOPPED) row("Stopped", formatTime(t.stopped_at));
+  row("Created", formatStamp(t.created_at));
+  if (t.status === STATUS.RUNNING || t.status === STATUS.FAILED || t.status === STATUS.STOPPED) row("Started", formatStamp(t.started_at));
+  if (t.status === STATUS.STOPPED) row("Stopped", formatStamp(t.stopped_at));
 
   const enginesList = document.createElement("ul");
   enginesList.className = "tournament-info-engines";
