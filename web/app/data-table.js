@@ -443,7 +443,9 @@ export function createTable({
     else return;
     saveLayout();
     relayout();
-    renderMenu(btn.dataset.fid);
+    // Fit and Reset are one-shot table commands: close so the result shows.
+    if (action === MENU_ACTION.FIT || action === MENU_ACTION.RESET) closeMenu();
+    else renderMenu(btn.dataset.fid);
   }
 
   if (hasMenu) {

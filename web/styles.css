@@ -3363,8 +3363,11 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .dt-rownav:focus, .dt-rownav:focus-visible { outline: none; }
 .dt-rownav:focus-visible tr[aria-selected="true"] { outline: 1px solid var(--accent); outline-offset: -1px; }
 .dt-rownav-cursor:focus-visible tr[aria-selected="true"] { background: var(--row-bg-selected); }
+/* height/line-height: undo Web Awesome's native button sizing (form-control
+   height); the vertical padding sets the header row's height instead. */
 .dt-menu-btn {
-  background: none; border: none; padding: 0; margin-right: 12px;
+  background: none; border: none; padding: 8px 0; margin-right: 12px;
+  height: auto; line-height: 1;
   color: inherit; font-size: 0.875rem; cursor: pointer; vertical-align: middle;
 }
 .dt-menu-btn:hover { color: var(--fg); }
@@ -4035,8 +4038,6 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
    the panel, outside the scroll pane, so it stays put as content tails. */
 .studio-tabs wa-tab-panel[name="log"]::part(base),
 .studio-tabs wa-tab-panel[name="engines"]::part(base),
-.studio-tabs wa-tab-panel[name="h2h"]::part(base),
-.studio-tabs wa-tab-panel[name="standings"]::part(base),
 .studio-tabs wa-tab-panel[name="livegames"]::part(base) { padding-top: 8px; }
 /* Keep the watch buttons off the pane's right edge / scrollbar. */
 .studio-pane .wb-sched-attach-btn { margin-right: 8px; }
@@ -4737,12 +4738,13 @@ wa-dialog.tournament-info-dialog::part(body) {
 }
 .wb-sprt--h1 { box-shadow: inset 3px 0 0 #2d6a3f; }
 .wb-sprt--h0 { box-shadow: inset 3px 0 0 #7a2222; }
-.wb-sprt--studio { background: var(--row-bg-selected); margin: 0 8px 10px; }
+/* Top margin: headroom under the Studio tabs (the table header sits flush). */
+.wb-sprt--studio { background: var(--row-bg-selected); margin: 8px 8px 10px; }
 /* Studio Head-to-Head: a fixed 2-engine banner + an internally scrolled
    table (split-table pattern above, tournament-h2h.js); the head th is
    positioned so it anchors the .th-grip handles. */
 .wb-h2h { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-.h2h-banner { margin: 0 8px 10px; background: var(--row-bg-selected); }
+.h2h-banner { margin: 8px 8px 10px; background: var(--row-bg-selected); }
 .h2h-table-wrap { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .h2h-tbl { table-layout: fixed; }
 .h2h-head-tbl th { position: relative; background: var(--bg); }
