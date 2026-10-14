@@ -13,6 +13,10 @@
   --panel-bg: #363a42;
   /* Hovered/focused menu item: a blue-gray accent over the gray panel. */
   --panel-item-hover: #364b66;
+  /* Secondary button fill on the panel (path Browse/Clear, confirm-popup
+     cancel, engine Refresh/Reset): a step lighter than --panel-bg. */
+  --panel-btn-bg: #464b55;
+  --panel-btn-bg-hover: #525864;
   /* Button ribbon background: docked rails and the floating window; the
      mobile horizontal bars blend into the page instead. */
   --ribbon-bg: var(--panel);
@@ -2881,7 +2885,7 @@ wa-dialog[no-header] {
 }
 wa-dialog[no-header]::part(dialog) {
   min-width: 16rem;
-  background-color: var(--dialog-bg-raised);
+  background-color: var(--dialog-bg);
 }
 /* The tight --spacing above crowds the X into the corner; WA's header
    inset formula at one step up (--wa-space-m) gives it room. */
@@ -2889,21 +2893,24 @@ wa-dialog[no-header]::part(header) {
   padding-block-start: calc(var(--wa-space-m) - var(--wa-form-control-padding-block));
   padding-inline-end: calc(var(--wa-space-m) - var(--wa-form-control-padding-block));
 }
-/* Darken the default (cancel-style) button fill in confirm/alert popups
-   only, leaving settings' Browse/Clear buttons on the shared default.
+/* Secondary buttons on the panel (--panel-btn-bg): confirm/alert popups'
+   cancel-style button, path rows' Browse/Clear, engine Refresh/Reset.
    ::part() from the light DOM beats the shadow tree's own :hover/:active
    rules, so those states must be restated here or hovering goes dead. */
 wa-dialog[no-header] wa-button[variant="neutral"]::part(base),
-.eo-footer-btn-sunken::part(base) {
-  background-color: var(--dialog-bg-sunken);
+.settings-tournament-path-inner wa-button::part(base),
+.panel-btn::part(base) {
+  background-color: var(--panel-btn-bg);
 }
 wa-dialog[no-header] wa-button[variant="neutral"]:not([disabled]):hover::part(base),
-.eo-footer-btn-sunken:not([disabled]):hover::part(base) {
-  background-color: color-mix(in oklab, var(--dialog-bg-sunken), var(--wa-color-mix-hover));
+.settings-tournament-path-inner wa-button:not([disabled]):hover::part(base),
+.panel-btn:not([disabled]):hover::part(base) {
+  background-color: var(--panel-btn-bg-hover);
 }
 wa-dialog[no-header] wa-button[variant="neutral"]:not([disabled]):active::part(base),
-.eo-footer-btn-sunken:not([disabled]):active::part(base) {
-  background-color: color-mix(in oklab, var(--dialog-bg-sunken), var(--wa-color-mix-active));
+.settings-tournament-path-inner wa-button:not([disabled]):active::part(base),
+.panel-btn:not([disabled]):active::part(base) {
+  background-color: color-mix(in oklab, var(--panel-btn-bg-hover), var(--wa-color-mix-active));
 }
 .confirm-message.game-over-message {
   margin: 0;
@@ -2922,11 +2929,6 @@ wa-dialog::part(body) { overflow: visible !important; }
 wa-dialog::part(body):focus-visible { outline: none; }
 wa-dialog {
   --dialog-bg: var(--panel-bg);
-  /* Lighter tint of --dialog-bg, same hue: confirm/alert popup background. */
-  --dialog-bg-raised: #2f4258;
-  /* Darker tint of --dialog-bg, same hue: cancel-style button fill in
-     confirm/alert popups. */
-  --dialog-bg-sunken: #1c2733;
   /* Shared accent for anything that needs to read against --dialog-bg:
      borders/dividers via --border-subtle, and non-border fills (e.g. the
      slider track) that read --dialog-accent directly. */
@@ -3380,10 +3382,6 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   display: flex; align-items: center; gap: 8px; min-width: 0;
 }
 .settings-tournament-path-inner .path-field { flex: 1; min-width: 0; }
-/* Path rows' Browse/Clear buttons: a fill a step lighter than the dialog so
-   they read as buttons beside the field. */
-.settings-tournament-path-inner wa-button::part(base) { background: #464b55; }
-.settings-tournament-path-inner wa-button:not([disabled])::part(base):hover { background: #525864; }
 wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
 .sprt-settings-grid,
 .sprt-params-form {
