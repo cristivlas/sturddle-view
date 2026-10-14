@@ -7,6 +7,12 @@
   --scrollbar-thumb-min-h: 50px;
   --wb-outline: rgba(136, 136, 136, 0.4);
   --wb-radius: 8px;
+  /* Dialog panel background (wa-dialog's --dialog-bg); dropdown menus share
+     it. A separate name: --dialog-bg must stay undefined outside dialogs,
+     where tables reading it fall back to transparent. */
+  --panel-bg: #253347;
+  /* Lighter same-hue tint of --panel-bg: hovered/focused menu item. */
+  --panel-item-hover: #364b66;
   /* Minimized-WinBox dock strip; tournament-workspace.js reads it as
      MINIMIZE_FOOTER_H. */
   --wb-min-footer-h: 36px;
@@ -2903,7 +2909,7 @@ wa-dialog::part(body) { overflow: visible !important; }
    amber on open, since showModal focuses before any user gesture. */
 wa-dialog::part(body):focus-visible { outline: none; }
 wa-dialog {
-  --dialog-bg: #253347;
+  --dialog-bg: var(--panel-bg);
   /* Lighter tint of --dialog-bg, same hue: confirm/alert popup background. */
   --dialog-bg-raised: #2f4258;
   /* Darker tint of --dialog-bg, same hue: cancel-style button fill in
@@ -3279,7 +3285,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .tmb-dropdown {
   display: none; position: absolute; top: 100%; left: 0; z-index: 9000;
   list-style: none; margin: 0; padding: 6px 0; min-width: 160px;
-  background: var(--wa-color-surface-raised, #2a2a2a);
+  background: var(--panel-bg);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.25);
@@ -3301,9 +3307,11 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   font-size: 0.8125rem; line-height: 1.5; cursor: pointer;
   position: relative;
 }
-/* Keyboard focus highlights like hover (menu convention). */
-.tmb-dd-item:hover, .tmb-dd-item:focus-visible {
-  background: var(--nav-btn-bg-hover);
+/* Focus alone drives the highlight: mouse hover moves focus (menu-nav.js),
+   so a resting mouse never leaves a second highlight beside the keyboard's.
+   An open submenu keeps its trigger lit as the path. */
+.tmb-dd-item:focus, .tmb-dd-submenu.open > .tmb-dd-item {
+  background: var(--panel-item-hover);
   box-shadow: inset 3px 0 0 var(--accent-line);
 }
 .tmb-dd-item.tmb-active::before { content: "\2713"; position: absolute; left: 8px; }
@@ -3326,12 +3334,11 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .dt-menu-col { display: flex; align-items: center; padding-right: 6px; }
 .dt-menu-col .dt-menu-toggle { flex: 1 1 auto; width: auto; }
 .dt-menu .tmb-dd-item:disabled { opacity: 0.5; cursor: default; }
-.dt-menu .tmb-dd-item:disabled:hover { background: none; box-shadow: none; }
 .dt-menu-move {
   background: none; border: none; border-radius: 0; color: inherit;
   padding: 4px 6px; cursor: pointer;
 }
-.dt-menu-move:hover:not(:disabled), .dt-menu-move:focus-visible { background: var(--nav-btn-bg-hover); }
+.dt-menu-move:focus { background: var(--panel-item-hover); }
 .dt-menu-move:disabled { opacity: 0.3; cursor: default; }
 .dt-menu-btn {
   background: none; border: none; padding: 0; margin-right: 12px;

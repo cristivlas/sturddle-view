@@ -95,8 +95,31 @@ function handleMenuKey(ev, menu, close) {
   return HANDLED.YES;
 }
 
-// Wire the menu's own keys. `menu` is the top-level list element.
+// Hovered `btn` pins open the submenus on its path (its own, if it is a
+// trigger, and the ones it sits in) and closes the rest, so focus never
+// rests inside a submenu that hid when the mouse left it.
+function syncSubmenusToHover(menu, btn) {
+  const keep = new Set();
+  for (let li = btn.closest("li"); li && menu.contains(li); li = li.parentElement.closest("li")) {
+    if (submenuOf(li)) keep.add(li);
+  }
+  for (const li of menu.querySelectorAll(`li.${MENU_OPEN_CLASS}`)) {
+    if (!keep.has(li)) li.classList.remove(MENU_OPEN_CLASS);
+  }
+  keep.forEach((li) => li.classList.add(MENU_OPEN_CLASS));
+}
+
+// Wire the menu's own keys. `menu` is the top-level list element. Mouse
+// movement over an item focuses it (menu convention), so keyboard focus and
+// hover never highlight two different items.
 export function attachMenuNav(menu, { close }) {
+  menu.addEventListener("pointermove", (ev) => {
+    if (ev.pointerType !== "mouse") return;
+    const btn = ev.target.closest("button");
+    if (!btn || !isEnabled(btn)) return;
+    syncSubmenusToHover(menu, btn);
+    if (btn !== document.activeElement) btn.focus({ preventScroll: true });
+  });
   menu.addEventListener("keydown", (ev) => {
     const handled = handleMenuKey(ev, menu, close);
     if (handled === HANDLED.NO) return;
