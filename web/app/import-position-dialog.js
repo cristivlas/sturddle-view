@@ -11,12 +11,11 @@ import {
 } from "./dialogs.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
-import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
-import { wireSplitScroll } from "./split-table.js";
-import { SORT_DIR, attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView, SORT_ASC_LABEL, SORT_DESC_LABEL } from "./col-sort.js";
+import { createTable, RENDER_REASON } from "./data-table.js";
+import { SORT_DIR, attachButtonSort, scrollSortedRowIntoView, SORT_ASC_LABEL, SORT_DESC_LABEL } from "./col-sort.js";
 import { loadJson, saveJson } from "./storage.js";
 import { mqNarrowDialog } from "./breakpoints.js";
-import { makeIconButton, markSelectable, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
+import { escapeHtml, makeIconButton, markSelectable, suppressMultiClickSelect } from "./wb-utils.js";
 
 // Format a summary dict {white, black, result, side_to_move, fen} into a
 // display string. `short: true` returns a compact form for tight UI (e.g.
@@ -199,13 +198,14 @@ export const HASH_PREVIEW_LEN = 12;
 
 const TEXTAREA_ROWS = 8;
 
-const OPENINGS_DEFAULT_PCTS = [12, 50, 38];
 const OPENINGS_COL_MIN_PCT = 8;
 
 const OPENINGS_COL_ECO = "eco";
 const OPENINGS_COL_NAME = "name";
 const OPENINGS_COL_MOVES = "moves";
-const OPENINGS_COLS = [OPENINGS_COL_ECO, OPENINGS_COL_NAME, OPENINGS_COL_MOVES];
+const NO_MATCH_MSG = "No openings match.";
+const LOADING_MSG = "Loading...";
+const EMPTY_CELL_CLASS = `openings-list-empty ${MUTED_CLASS}`;
 const SELECTED_CLASS = "selected";
 const SELECTED_ROW_SEL = `tr.${SELECTED_CLASS}`;
 const OPENING_ROW_CLASS = "openings-list-item";
@@ -233,7 +233,10 @@ function loadOpeningsOnce(api) {
         const rows = r.results || [];
         // Precompute a diacritic-folded name per row so the per-keystroke
         // filter doesn't re-normalize the whole list.
-        for (const row of rows) row._fold = foldDiacritics(row.name);
+        rows.forEach((row, i) => {
+          row._fold = foldDiacritics(row.name);
+          row._id = i;
+        });
         return rows;
       })
       .catch((e) => { _openingsPromise = null; throw e; });  // allow retry
@@ -305,58 +308,31 @@ function wireOpeningsSearch(el, { setFilter, renderList, clearSelection, scrollS
 }
 
 // Name is the fixed final tiebreaker so order is deterministic regardless of
-// which column is active (Model A).
-function openingCompare(key, dir) {
-  const byName = (a, b) => baseCompare(a.name, b.name);
-  const primary =
-    key === OPENINGS_COL_ECO ? (a, b) => baseCompare(a.eco, b.eco)
-      : key === OPENINGS_COL_MOVES ? (a, b) => baseCompare(a.pgn, b.pgn)
-        : byName;
-  return modelACompare({ dir, primary, tiebreak: byName });
-}
+// which column is active. Rows are the shared opening records (load() gives
+// each a stable `_id`).
+const OPENINGS_COLUMNS = [
+  { key: OPENINGS_COL_ECO, label: "ECO", width: 12, firstDir: SORT_DIR.ASC,
+    tdClass: "openings-list-eco", cell: (r) => escapeHtml(r.eco) },
+  { key: OPENINGS_COL_NAME, label: "Name", width: 50, firstDir: SORT_DIR.ASC, tiebreak: true,
+    tdClass: "openings-list-name", tdTitle: (r) => r.name, cell: (r) => escapeHtml(r.name) },
+  { key: OPENINGS_COL_MOVES, label: "Moves", width: 38, firstDir: SORT_DIR.ASC, field: "pgn",
+    tdClass: "openings-list-moves", tdTitle: (r) => r.pgn, cell: (r) => escapeHtml(r.pgn) },
+];
 
-// Build the Openings tab: a resizable-column table (ECO / Name / Moves)
-// loaded once, filtered locally, with a toggle-overlay search bar that
-// mirrors the Engines list. Selecting a row exposes its PGN via
-// selectedPgn(); the host feeds it into the same import flow as the PGN tab.
+// Build the Openings tab: a resizable-column table (ECO / Name / Moves;
+// data-table.js, single-column sort) loaded once, filtered locally, with a
+// toggle-overlay search bar that mirrors the Engines list. Selecting a row
+// exposes its PGN via selectedPgn(); the host feeds it into the same import
+// flow as the PGN tab.
 function createOpeningsPanel({ api, onChange, onCommit }) {
-  let selectedPgn = "";
   let selectedRow = null;
-  let rows = [];
+  let rows = null;
   let filterText = "";
-  let sort = null;  // { key, dir } | null (null = backend order: ECO, name)
+  let nameBtnSort = null;
 
   const el = document.createElement("div");
   el.className = "openings-panel";
   el.innerHTML = `
-    <div class="openings-table-wrap">
-      <div class="openings-head-scroll">
-        <table class="openings-table openings-head-table">
-          <colgroup>
-            <col class="openings-col-eco">
-            <col class="openings-col-name">
-            <col class="openings-col-moves">
-          </colgroup>
-          <thead>
-            <tr>
-              <th>ECO<span class="th-grip"></span></th>
-              <th>Name<span class="th-grip"></span></th>
-              <th>Moves</th>
-            </tr>
-          </thead>
-        </table>
-      </div>
-      <div class="openings-body-scroll">
-        <table class="openings-table openings-body-table">
-          <colgroup>
-            <col class="openings-col-eco">
-            <col class="openings-col-name">
-            <col class="openings-col-moves">
-          </colgroup>
-          <tbody class="openings-list" role="listbox" tabindex="0"></tbody>
-        </table>
-      </div>
-    </div>
     <div class="openings-ribbon" role="toolbar" aria-label="Opening actions">
       <button class="ribbon-btn openings-search-btn" type="button" aria-label="Search openings" title="Search openings">
         <wa-icon name="magnifying-glass"></wa-icon>
@@ -373,92 +349,81 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
     </div>
   `;
 
-  const list = el.querySelector(".openings-list");
-  const openingsHeadTable = el.querySelector(".openings-head-table");
-  const openingsBodyTable = el.querySelector(".openings-body-table");
-  const openingsHeadScroll = el.querySelector(".openings-head-scroll");
-  const openingsBodyScroll = el.querySelector(".openings-body-scroll");
-  markSelectable(openingsHeadTable);
-  markSelectable(openingsBodyTable);
-  suppressMultiClickSelect(openingsBodyTable);
-  wireSplitScroll(openingsHeadScroll, openingsBodyScroll);
+  const table = createTable({
+    cls: "openings",
+    tableClass: "openings-table",
+    columns: OPENINGS_COLUMNS,
+    layoutKey: STORAGE_KEY.OPENINGS_LAYOUT,
+    minPct: OPENINGS_COL_MIN_PCT,
+    traits: {
+      sort: { single: true, sortKey: STORAGE_KEY.OPENINGS_SORT },
+      resize: true,
+      rowNav: { isSelected: (r) => r === selectedRow, onSelect: (tr) => pick(tr) },
+    },
+    rowAttrs: (r) => (r.emptyText != null ? {} : {
+      class: OPENING_ROW_CLASS + (r === selectedRow ? ` ${SELECTED_CLASS}` : ""),
+      "data-id": r._id,
+    }),
+    fullRow: (r) => (r.emptyText != null ? { html: escapeHtml(r.emptyText), tdClass: EMPTY_CELL_CLASS } : null),
+    // Sorting only reorders rows, so the pick stays valid: keep it in view.
+    onRender: (reason) => {
+      if (reason !== RENDER_REASON.SORT) return;
+      nameBtnSort?.sync();
+      scrollSelectedIntoView();
+    },
+  });
+  el.prepend(table.wrap);
+  markSelectable(table.headTable);
+  markSelectable(table.bodyTable);
+  suppressMultiClickSelect(table.bodyTable);
 
   function filtered() {
     const needle = foldDiacritics(filterText.trim());
-    let out = needle
+    return needle
       ? rows.filter((r) => r._fold.includes(needle) || r.eco.toLowerCase().includes(needle))
-      : rows.slice();
-    if (sort) out.sort(openingCompare(sort.key, sort.dir));
-    return out;
+      : rows;
   }
 
-  function clearSelection() {
-    selectedPgn = "";
-    selectedRow = null;
-    for (const r of list.querySelectorAll(SELECTED_ROW_SEL)) r.classList.remove(SELECTED_CLASS);
+  // Select (or with null, clear) the pick: repaint row classes in place
+  // (cheap on the ~3.7k-row list) and tell the host.
+  function setSelected(row) {
+    selectedRow = row;
+    table.refreshRows();
     onChange?.();
   }
 
+  function pick(tr) {
+    const id = Number(tr.dataset.id);
+    setSelected(rows.find((r) => r._id === id) || null);
+  }
+
+  function clearSelection() {
+    setSelected(null);
+  }
+
   function scrollSelectedIntoView() {
-    scrollSortedRowIntoView(list, SELECTED_ROW_SEL);
+    scrollSortedRowIntoView(table.tbody, SELECTED_ROW_SEL);
   }
 
   function renderList() {
-    list.replaceChildren();
-    const visible = filtered();
-    if (!visible.length) {
-      const tr = document.createElement("tr");
-      const td = document.createElement("td");
-      td.colSpan = OPENINGS_COLS.length;
-      td.className = `openings-list-empty ${MUTED_CLASS}`;
-      td.textContent = rows.length ? "No openings match." : "Loading...";
-      tr.appendChild(td);
-      list.appendChild(tr);
-      return;
-    }
-    for (const row of visible) {
-      const tr = document.createElement("tr");
-      tr.className = OPENING_ROW_CLASS;
-
-      const ecoTd = document.createElement("td");
-      ecoTd.className = "openings-list-eco";
-      ecoTd.textContent = row.eco;
-
-      const nameTd = document.createElement("td");
-      nameTd.className = "openings-list-name";
-      nameTd.textContent = row.name;
-      nameTd.title = row.name;
-
-      const movesTd = document.createElement("td");
-      movesTd.className = "openings-list-moves";
-      movesTd.textContent = row.pgn;
-      movesTd.title = row.pgn;
-
-      tr.append(ecoTd, nameTd, movesTd);
-      // Re-apply the highlight to the still-selected row after a re-render
-      // so the pick stays visible (e.g. when the search filter is cleared).
-      if (selectedRow && row === selectedRow) tr.classList.add(SELECTED_CLASS);
-      const pick = () => {
-        for (const r of list.querySelectorAll(SELECTED_ROW_SEL)) r.classList.remove(SELECTED_CLASS);
-        tr.classList.add(SELECTED_CLASS);
-        selectedPgn = row.pgn;
-        selectedRow = row;
-        onChange?.();
-      };
-      tr.addEventListener("click", pick);
-      tr.addEventListener("dblclick", () => { pick(); onCommit?.(); });
-      list.appendChild(tr);
-    }
+    const visible = rows ? filtered() : [];
+    table.render(visible.length
+      ? visible
+      : [{ emptyText: rows?.length ? NO_MATCH_MSG : LOADING_MSG }]);
   }
 
-  wireArrowKeyNav(list, {
-    rows: OPENING_ROW_SEL,
-    selected: SELECTED_ROW_SEL,
-    select: (row) => row.click(),
+  table.bodyTable.addEventListener("click", (ev) => {
+    const tr = ev.target.closest(OPENING_ROW_SEL);
+    if (tr) pick(tr);
   });
-
-  list.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter" && selectedPgn) { ev.preventDefault(); onCommit?.(); }
+  table.bodyTable.addEventListener("dblclick", (ev) => {
+    const tr = ev.target.closest(OPENING_ROW_SEL);
+    if (!tr) return;
+    pick(tr);
+    onCommit?.();
+  });
+  table.bodyTable.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && selectedRow) { ev.preventDefault(); onCommit?.(); }
   });
 
   wireOpeningsSearch(el, {
@@ -466,54 +431,16 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
     renderList, clearSelection, scrollSelectedIntoView,
   });
 
-  // One sort state, two UIs: the header arrows (attachColumnSort) and the
-  // ribbon Name asc/desc buttons (attachButtonSort). Both drive/read the same
-  // { key, dir } through sortCtrl, so either stays in sync with the other
+  // One sort state, two UIs: the header arrows and the ribbon Name asc/desc
+  // buttons (attachButtonSort) both drive/read the table's single sort
   // (mirrors the Engines list).
-  {
-    let nameBtnSort;
-    const sortCtrl = attachColumnSort({
-      table: openingsHeadTable,
-      columns: OPENINGS_COLS.map((key) => ({ key, firstDir: SORT_DIR.ASC })),
-      storageKey: STORAGE_KEY.OPENINGS_SORT,
-      onSort: (state) => {
-        sort = state ? { key: state.key, dir: state.dir } : null;
-        nameBtnSort.sync();
-        // Sorting only reorders rows, so the pick stays valid; re-render and
-        // keep it visible rather than dropping it.
-        renderList();
-        scrollSelectedIntoView();
-      },
-    });
-    nameBtnSort = attachButtonSort({
-      ascBtn: el.querySelector(".openings-sort-asc"),
-      descBtn: el.querySelector(".openings-sort-desc"),
-      key: OPENINGS_COL_NAME,
-      get: () => sort,
-      set: (state) => sortCtrl.set(state),
-    });
-    const initial = sortCtrl.current();
-    sort = initial ? { key: initial.key, dir: initial.dir } : null;
-    nameBtnSort.sync();
-  }
-
-  // Column resize over the three cols.
-  {
-    const headColEls = Array.from(openingsHeadTable.querySelectorAll("col"));
-    const bodyColEls = Array.from(openingsBodyTable.querySelectorAll("col"));
-    const wrapEl = el.querySelector(".openings-table-wrap");
-    const grips = Array.from(openingsHeadTable.querySelectorAll(".th-grip"));
-    const colPcts = OPENINGS_DEFAULT_PCTS.slice();
-    attachColumnResize({
-      table: openingsHeadTable,
-      grips,
-      overlayHost: wrapEl,
-      storageKey: STORAGE_KEY.OPENINGS_COL_PCTS,
-      sizes: colPcts,
-      unit: "pct",
-      applySizes: makePctApplySizes([headColEls, bodyColEls], OPENINGS_COL_MIN_PCT),
-    });
-  }
+  nameBtnSort = attachButtonSort({
+    ascBtn: el.querySelector(".openings-sort-asc"),
+    descBtn: el.querySelector(".openings-sort-desc"),
+    key: OPENINGS_COL_NAME,
+    get: table.getSort,
+    set: table.setSort,
+  });
 
   async function load() {
     try {
@@ -538,7 +465,7 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
     el,
     load,
     measureRibbon,
-    selectedPgn: () => selectedPgn,
+    selectedPgn: () => selectedRow?.pgn ?? "",
     selectedOpening: () => (selectedRow ? { eco: selectedRow.eco, name: selectedRow.name } : null),
     focus: () => requestAnimationFrame(() => el.querySelector(".openings-search-btn")?.focus?.()),
   };

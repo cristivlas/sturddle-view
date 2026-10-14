@@ -91,6 +91,18 @@ async def test_engines_selection_row_ring(tmp_path, make_page):
         assert await page.evaluate(
             f"() => document.querySelector('{body} {CURRENT}').classList.contains('focused')"
         )
+
+        # Hover a non-current row, then arrow: its hover tint goes (one
+        # highlight at a time) and comes back once the mouse moves.
+        await page.keyboard.press("Home")
+        last = page.locator(f"{body} tr.engines-list-item").last
+        box = await last.bounding_box()
+        await page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        tinted = await last.evaluate("(el) => getComputedStyle(el).backgroundColor")
+        await page.keyboard.press("ArrowDown")
+        assert await last.evaluate("(el) => getComputedStyle(el).backgroundColor") != tinted
+        await page.mouse.move(box["x"] + box["width"] / 2 + 1, box["y"] + box["height"] / 2)
+        assert await last.evaluate("(el) => getComputedStyle(el).backgroundColor") == tinted
         assert_no_page_errors(errors)
 
 

@@ -12,7 +12,7 @@ import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnSort, TH_LABEL_CLASS } from "./col-sort.js";
 import { attachMenuNav, focusFirstItem } from "./menu-nav.js";
 import { wireSplitScroll } from "./split-table.js";
-import { escapeHtml, wireArrowKeyNav } from "./wb-utils.js";
+import { escapeHtml, LIST_NAV_KEYS, wireArrowKeyNav } from "./wb-utils.js";
 
 const MENU_ICON = "sliders";
 const MENU_BTN_LABEL = "Columns";
@@ -29,6 +29,8 @@ const HEAD_TBL_CLASS = "dt-head-tbl";
 // rowNav body markers (styles.css): the tab-stop body, plus cursor mode.
 const ROWNAV_CLASS = "dt-rownav";
 const ROWNAV_CURSOR_CLASS = "dt-rownav-cursor";
+// Set while the arrows drive the body; styles.css gates row hover tints on it.
+const KBD_CLASS = "dt-kbd";
 // Navigable rows carry a data-id (group/empty rows don't); the current one
 // is marked aria-selected.
 const NAV_ROW_SEL = "tr[data-id]";
@@ -188,6 +190,12 @@ function attachRowNav(bodyTable, nav, cursor) {
     select: nav.isSelected ? nav.onSelect : moveCursor,
     extend: nav.onExtend,
   });
+  // Arrow use hides row hover tints until the mouse moves again, so a
+  // resting pointer never leaves a second highlight beside the current row.
+  bodyTable.addEventListener("keydown", (ev) => {
+    if (LIST_NAV_KEYS.has(ev.key)) bodyTable.classList.add(KBD_CLASS);
+  });
+  bodyTable.addEventListener("pointermove", () => bodyTable.classList.remove(KBD_CLASS));
   if (!nav.isSelected) {
     bodyTable.addEventListener("click", (ev) => {
       const row = ev.target.closest(NAV_ROW_SEL);
@@ -240,6 +248,8 @@ export function createTable({
   wireSplitScroll(wrap.querySelector(`.${cls}-head-scroll`), wrap.querySelector(`.${cls}-body-scroll`));
 
   let rows = null;
+  // Rows in rendered order (tbody.rows[i] <-> renderedRows[i]).
+  let renderedRows = [];
   let sortCtrl = null;
   // Cursor-mode rowNav's current row, by data-id (survives re-renders).
   const cursor = { id: null };
@@ -260,6 +270,7 @@ export function createTable({
     const cols = visibleCols();
     const sorted = rows.slice();
     if (sortCtrl) sortByStack(sorted, sortCtrl.stack().filter((s) => !layout.hidden.has(s.key)), columns);
+    renderedRows = sorted;
     tbody.innerHTML = sorted
       .map((r, i) => {
         const full = fullRow?.(r);
@@ -434,6 +445,19 @@ export function createTable({
     // routes through the header's arrow + persist + re-render path.
     // rowNav's current row element, or null.
     currentRow: () => tbody.querySelector(CURRENT_ROW_SEL),
+    // Re-apply each rendered row's class and current mark in place, without
+    // rebuilding cells: a cheap selection repaint for long lists. Replaces the
+    // whole className, so classes added outside rowAttrs (e.g. multi-select
+    // marks) are dropped -- tables with those must re-render instead.
+    refreshRows() {
+      renderedRows.forEach((r, i) => {
+        const a = attrsFor ? attrsFor(r, i) : {};
+        const tr = tbody.rows[i];
+        tr.className = a.class ?? "";
+        if (a[CURRENT_ATTR]) tr.setAttribute(CURRENT_ATTR, "true");
+        else tr.removeAttribute(CURRENT_ATTR);
+      });
+    },
     getSort: () => sortCtrl?.stack()[0] ?? null,
     setSort: (state) => sortCtrl?.set(state),
     render(nextRows) {

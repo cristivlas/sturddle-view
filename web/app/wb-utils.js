@@ -269,7 +269,7 @@ export function addTitleControl(wb, cls, label, click) {
 // move is blocked at an edge, for callers that need to signal the bump.
 // `scroll(row)` defaults to the sticky-header-aware row scroller; callers that
 // scroll their own way (e.g. WinBox boards) pass their own or a no-op.
-const LIST_NAV_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
+export const LIST_NAV_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
 const GRID_NAV_KEYS = new Set([...LIST_NAV_KEYS, "ArrowLeft", "ArrowRight"]);
 
 // Index the key moves to, or `cur` to stay put. A row jump landing outside the

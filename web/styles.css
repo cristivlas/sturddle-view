@@ -1310,9 +1310,8 @@ wa-dialog:has(.import-pos-form)::part(body) {
 }
 .openings-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; border-bottom: 2px solid var(--accent-line); }
 .openings-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
-.openings-list:focus { outline: none; }
 .openings-table { table-layout: fixed; width: 100%; border-collapse: separate; border-spacing: 0; }
-.openings-head-table th {
+.openings-head-tbl th {
   background: var(--dialog-bg);
   padding: 6px 10px;
   text-align: left;
@@ -1326,8 +1325,8 @@ wa-dialog:has(.import-pos-form)::part(body) {
   text-overflow: ellipsis;
   user-select: none;
 }
-.openings-head-table th { position: relative; }
-.openings-head-table th:hover {
+.openings-head-tbl th { position: relative; }
+.openings-head-tbl th:hover {
   background: #252830;
 }
 .openings-list-item {
@@ -1342,7 +1341,9 @@ wa-dialog:has(.import-pos-form)::part(body) {
   background: transparent;
   border-bottom: 1px solid var(--border-faint);
 }
-.openings-list-item:hover { background: var(--row-bg-hover); }
+/* :where() gate (see .dt-kbd in data-table.js) keeps the hover rule's own
+   specificity, so .selected still wins on a hovered selected row. */
+:where(:not(.dt-kbd) > tbody) > .openings-list-item:hover { background: var(--row-bg-hover); }
 .openings-list-item.selected { background: var(--row-bg-selected); }
 /* .openings-list-item.selected td:first-child { box-shadow: inset 3px 0 0 #5a6070; } */
 .openings-list-item.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
@@ -2734,7 +2735,7 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
 .engines-list-item td:last-child {
   border-right: none;
 }
-.engines-list-item:hover { background: var(--row-bg-hover); }
+:where(:not(.dt-kbd) > tbody) > .engines-list-item:hover { background: var(--row-bg-hover); }
 .engines-list-item.focused { background: var(--row-bg-selected); }
 .engines-list-item.focused td:first-child {
   /* box-shadow: inset 3px 0 0 #5a6070; */
@@ -4058,7 +4059,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   cursor: pointer;
   user-select: none; -webkit-user-select: none;
 }
-.studio-tourney-row:hover, .studio-history-row:hover { background: var(--row-bg-hover); }
+:where(:not(.dt-kbd) > tbody) > :is(.studio-tourney-row, .studio-history-row):hover { background: var(--row-bg-hover); }
 /* .marked: the extra rows of a multi-selection, styled like the selected one. */
 .studio-tourney-row.selected, .studio-tourney-row.marked { background: var(--row-bg-selected); }
 .studio-tourney-row.selected td:first-child,

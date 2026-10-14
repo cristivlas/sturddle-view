@@ -42,7 +42,7 @@ PICKER_ROW = ".fs-entry"
 TOURNEY_TABLE = ".studio-tourney-tbl"
 TOURNEY_ROW = ".studio-tourney-row"
 HISTORY_ROW = ".studio-history-row"
-OPENINGS_LIST = ".openings-list"
+OPENINGS_LIST = ".openings-body-tbl"
 OPENINGS_ROW = "tr.openings-list-item"
 
 SEEDED_TOURNEYS = 3
