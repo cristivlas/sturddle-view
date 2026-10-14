@@ -216,6 +216,11 @@ wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
    the near-identical orange "on" track: ring it in the text color instead.
    Overrides the composed token (its color var resolves at :root). */
 wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-width) var(--fg); }
+/* WinBox gives a maximized title bar the default cursor, yet it is a drag
+   handle (dragging un-maximizes under the pointer, winbox-factory.js): keep
+   WinBox's move cursor there in every view. Fixed (no-move) windows can't be
+   dragged, so they keep theirs. */
+.winbox.max:not(.no-move) .wb-drag { cursor: move; }
 
 /* Toggling `disabled` runs WA's 150ms color transition, briefly painting a
    brighter "enabled" border -- reads as a focus flash on the AI rows when the

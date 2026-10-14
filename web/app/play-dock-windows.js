@@ -48,6 +48,7 @@ import {
   ribbonWidthPx,
   scrollToBottom,
 } from "./wb-utils.js";
+import { createWinBox } from "./winbox-factory.js";
 
 const PLAY_GRID_SEL = ".play-grid";
 const DOCK_SLOT_CLASS = "dock-slot";
@@ -824,14 +825,16 @@ export function createDockableWindow(config) {
   // Dropping a floating window's title bar on the dock column docks it.
   // WinBox's own drag keeps moving the window; we only watch the pointer.
   // Its drag-end handler is safe to run after dock() closed the window
-  // (it only clears the wb-lock class and its own listeners).
+  // (it only clears the wb-lock class and its own listeners). A maximized
+  // window qualifies too: dragging it un-maximizes it under the pointer
+  // (winbox-factory.js), so it docks like any other.
   function attachFloatDragDock() {
     const dragEl = wb.g.querySelector(".wb-drag");
     if (!dragEl) return;
     dragEl.addEventListener("pointerdown", (eDown) => {
       if (eDown.button !== 0) return;
       const targets = dropTargets();
-      if (!targets.length || isMobileLayout() || wb.min || wb.max) return;
+      if (!targets.length || isMobileLayout() || wb.min) return;
       watchDockDrop(targets, eDown, {
         onEnd(overDock) { if (overDock && wb && !wb.max) dock(overDock, { persistDest: true }); },
         ghostInst: inst,
@@ -898,7 +901,7 @@ export function createDockableWindow(config) {
     const x = geo?.x ?? "right";
     const y = geo?.y ?? defaultY(h);
     saved = null;
-    wb = new WinBox({
+    wb = createWinBox({
       // no-close: WinBox's native hide-the-X modifier; a non-closable
       // window would otherwise be unrevivable once its float is closed.
       ...winboxBase(currentTitle, closable ? className : `${className} no-close`, w, h, x, y),

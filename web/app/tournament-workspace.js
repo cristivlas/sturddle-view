@@ -45,6 +45,7 @@ import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { eventLogText, renderEventLogList } from "./tournament-eventlog.js";
 import { engineRowEntries, ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow } from "./tournament-row.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
+import { createWinBox } from "./winbox-factory.js";
 
 const STORAGE_KEY_PREFIX = STORAGE_KEY.WORKSPACE_PREFIX;
 
@@ -525,7 +526,7 @@ function makeBox(ctx, key, title, body, { min = false, max = false } = {}) {
   const extraClass = ctx.windowSpecs?.[key]?.extraClass;
   const extra = extraClass ? ` ${extraClass}` : "";
   const sizes = getMinSizes()[key];
-  const wb = new WinBox({
+  const wb = createWinBox({
     title, mount: body, top: ctx.top, left: ctx.left, right: ctx.getRightInset(), min, max,
     ...(cfg ? { x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height } : {}),
     class: `sturddle-wb ${ARENA_WINDOW_CLASS} no-full${extra}`,

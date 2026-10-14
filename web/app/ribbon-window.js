@@ -8,6 +8,7 @@ import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
 import { addTitleControl, DOCK_LABEL, headerBottomPx, wireSpanButton } from "./wb-utils.js";
+import { createWinBox } from "./winbox-factory.js";
 
 // LocalStorage keys: side selection ("left"|"right"|"float"), the
 // WinBox geometry, and orientation ("h"|"v") for the floating mode.
@@ -145,7 +146,7 @@ export function openRibbonWindow(el) {
   const rawW = isVertical ? WB_VERT_W : WB_HORIZ_W;
   const rawH = isVertical ? WB_VERT_H : WB_HORIZ_H;
   const { x, y } = clampGeo(geo?.x ?? DEFAULT_GEO_X, geo?.y ?? headerBottomPx(), rawW, rawH);
-  wb = new WinBox({
+  wb = createWinBox({
     title: "Controls",
     class: "sturddle-wb sturddle-wb-ribbon no-full no-resize no-min no-max",
     width: rawW,

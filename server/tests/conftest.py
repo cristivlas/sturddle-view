@@ -886,6 +886,16 @@ async def pin_arena_tournament_ux(page) -> None:
     )
 
 
+async def wait_winbox_settled(page, sel: str, tol_px: float = 2) -> None:
+    """WinBox animates maximize/restore: wait until the window's rendered
+    width reaches its target (the inline style width)."""
+    await page.wait_for_function(
+        "([sel, tol]) => { const el = document.querySelector(sel);"
+        " return Math.abs(el.getBoundingClientRect().width - parseFloat(el.style.width)) <= tol; }",
+        arg=[sel, tol_px],
+    )
+
+
 async def goto_arena_tournaments(page, base: str) -> None:
     """Mount the Arena UX on the engines perspective, tournament list shown."""
     await pin_arena_tournament_ux(page)

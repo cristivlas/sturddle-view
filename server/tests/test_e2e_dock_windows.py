@@ -12,7 +12,7 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from .conftest import assert_no_page_errors, e2e_env, run_uvicorn_subprocess  # noqa: E402
+from .conftest import assert_no_page_errors, e2e_env, run_uvicorn_subprocess, wait_winbox_settled  # noqa: E402
 
 
 PLAY_PERSP = "#play-perspective"
@@ -224,4 +224,43 @@ async def test_short_touch_viewport_stacks_mobile(server, make_page):
     await _goto_play(page, server)
     assert await page.evaluate(f"() => matchMedia('{COARSE_POINTER_MQ}').matches")
     assert not await _dock_displayed(page)
+    assert_no_page_errors(errors)
+
+
+# Pointer moves for the drag to the dock (enough past the dock threshold).
+DOCK_DRAG_STEPS = 12
+
+
+async def _center(page, sel):
+    return await page.locator(sel).evaluate(
+        "(el) => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }"
+    )
+
+
+@pytest.mark.asyncio
+async def test_drag_maximized_float_onto_dock_docks(server, make_page):
+    """A maximized floating window dragged by its title bar un-maximizes under
+    the pointer and stays dockable: the drop ghost shows over the dock and
+    releasing there docks it."""
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play(page, server)
+    await page.click(PV_BTN)
+    await page.click(UCI_BTN)
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot")
+    await _click_slot_undock(page, "UCI Log")
+    await page.wait_for_selector(UCI_WB)
+    await page.click(f"{UCI_WB} .wb-max")
+    await page.wait_for_selector(f"{UCI_WB}.max")
+    await wait_winbox_settled(page, UCI_WB)
+
+    x0, y0 = await _center(page, f"{UCI_WB} .wb-title")
+    x1, y1 = await _center(page, DOCK_LEFT)
+    await page.mouse.move(x0, y0)
+    await page.mouse.down()
+    await page.mouse.move(x1, y1, steps=DOCK_DRAG_STEPS)
+    assert await page.locator(f"{DOCK_LEFT} .dock-ghost").count() == 1, "no drop ghost over the dock"
+    await page.mouse.up()
+
+    await page.wait_for_function("() => !document.querySelector('.winbox.sturddle-wb-uci-log')")
+    assert "UCI Log" in await _slot_titles(page)
     assert_no_page_errors(errors)
