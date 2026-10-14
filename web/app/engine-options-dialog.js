@@ -12,6 +12,8 @@ import { mqNarrowDialog } from "./breakpoints.js";
 const PATH_NAME_RE = /(Path|File|Dir)$/i;
 const REFRESH_BTN_LABEL = "Refresh";
 const RESET_BTN_LABEL = "Reset";
+// Secondary-button fill (styles.css .panel-btn).
+const PANEL_BTN_CLASS = "panel-btn";
 const SAVE_BTN_LABEL = "Apply";
 const REFRESH_BTN_TIP = "Re-query engine options";
 const RESET_BTN_TIP = "Restore engine defaults";
@@ -482,7 +484,7 @@ export function showEngineOptionsDialog({
       const refresh = document.createElement("wa-button");
       refresh.slot = "footer";
       refresh.size = "small";
-      refresh.className = "eo-footer-btn-sunken";
+      refresh.className = PANEL_BTN_CLASS;
       refresh.textContent = REFRESH_BTN_LABEL;
       refresh.title = REFRESH_BTN_TIP;
       refresh.addEventListener("click", guard(async () => {
@@ -528,7 +530,7 @@ export function showEngineOptionsDialog({
       const defaultsBtn = document.createElement("wa-button");
       defaultsBtn.slot = "footer";
       defaultsBtn.size = "small";
-      defaultsBtn.className = "eo-footer-btn-sunken";
+      defaultsBtn.className = PANEL_BTN_CLASS;
       defaultsBtn.textContent = RESET_BTN_LABEL;
       defaultsBtn.title = RESET_BTN_TIP;
       defaultsBtn.addEventListener("click", () => {
