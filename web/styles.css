@@ -3183,7 +3183,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-picker-pathbar wa-input { flex: 1; }
 .fs-exe-only-btn[aria-pressed="true"] { color: var(--accent); }
 /* Overlay host for the resize drag-lines, and the scroll container. Split
-   header/body table (see Openings above, dialogs.js). */
+   header/body table (data-table.js; see Openings above, dialogs.js). */
 .fs-picker-table-wrap {
   position: relative;
   display: flex;
@@ -3205,7 +3205,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   border-collapse: separate;
   border-spacing: 0;
 }
-.fs-picker-head-table th {
+.fs-picker-head-tbl th {
   position: relative;
   background: #1b1e24;
   padding: 6px 8px;
@@ -3221,11 +3221,11 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   text-overflow: ellipsis;
   user-select: none;
 }
-.fs-picker-head-table th:hover {
+.fs-picker-head-tbl th:hover {
   background: #252830;
 }
 /* Size header sits over right-aligned values. */
-.fs-picker-head-table th:last-child { text-align: right; }
+.fs-picker-head-tbl th:last-child { text-align: right; }
 .th-sortable { cursor: pointer; }
 /* A focused .th-label (the tab stop when present) rings its whole th. */
 .th-sortable:focus-visible,
@@ -3245,7 +3245,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   white-space: nowrap;
   border-bottom: 1px solid var(--border-faint);
 }
-.fs-entry:hover > td { background: var(--nav-btn-bg); }
+:where(:not(.dt-kbd) > tbody) > .fs-entry:hover > td { background: var(--nav-btn-bg); }
 .fs-entry.dim { color: var(--muted); }
 .fs-entry.selected > td { background: var(--row-bg-selected); color: var(--text); }
 .fs-entry.selected > td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }

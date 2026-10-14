@@ -19,7 +19,7 @@ export const STORAGE_KEY = {
   IMPORT_RECENTS: "sturddle:import:recent",
   OPENINGS_LAYOUT: "sturddle:openings:layout",
   OPENINGS_SORT: "sturddle:openings:sort",
-  FS_PICKER_COL_PCTS: "sturddle:fs-picker:colPcts3",
+  FS_PICKER_LAYOUT: "sturddle:fs-picker:layout",
   FS_PICKER_SORT: "sturddle:fs-picker:sort",
 
   // Active perspective + per-view flip.

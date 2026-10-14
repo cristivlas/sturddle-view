@@ -80,8 +80,10 @@ export function attachLayeredSort({ table, columns, sortKey, stackKey, onChange,
 // Stable in-place sort: walk the MRU stack, first differing column wins; the
 // column flagged `tiebreak` resolves rows equal on every stacked column. Empty
 // stack leaves the rows untouched (natural order). The column->cmp plan is
-// resolved up front so the comparator hot path carries no lookup.
-export function sortByStack(rows, stack, columns) {
+// resolved up front so the comparator hot path carries no lookup. `group`,
+// if given, orders before everything and is not dir-flipped (fixed
+// partitions such as folders-before-files).
+export function sortByStack(rows, stack, columns, group = null) {
   if (!stack.length) return;
   const plan = [];
   for (const s of stack) {
@@ -93,6 +95,7 @@ export function sortByStack(rows, stack, columns) {
   const tieCol = columns.find((c) => c.tiebreak);
   const tie = tieCol ? columnCmp(tieCol) : () => 0;
   rows.sort((a, b) => {
+    if (group) { const g = group(a, b); if (g) return g; }
     for (const p of plan) { const c = p.dir * p.cmp(a, b); if (c) return c; }
     return tie(a, b);
   });

@@ -101,3 +101,35 @@ async def test_file_picker_opens_at_parent_with_value_preselected(tmp_path, make
         assert await page.text_content(SELECTED_NAME) == exe.name
         assert await _picker_path(page) == str(exe.parent.resolve())
         assert not errors, errors
+
+
+@pytest.mark.asyncio
+async def test_sort_keeps_folders_first(tmp_path, make_page):
+    """Sorting by Size (either direction) reorders files but never moves a
+    folder below a file: folders-first is a fixed partition."""
+    listing = tmp_path / "listing"
+    listing.mkdir()
+    for d in ("adir", "zdir"):
+        (listing / d).mkdir()
+    (listing / "big.bin").write_bytes(b"x" * 4096)
+    (listing / "small.bin").write_bytes(b"x")
+    target = listing / "fake-fastchess"
+    target.write_bytes(b"x" * 64)
+    env = {**e2e_env(tmp_path), "SV_TOURNAMENT_FASTCHESS_PATH": str(target)}
+    with run_uvicorn_subprocess(env_overrides=env) as base:
+        page, errors = await _open_settings(make_page, base)
+        await page.click(TOURNAMENT_TAB)
+        await page.click(FASTCHESS_BROWSE)
+        # Executable pickers default to executables-only; show every file.
+        await page.wait_for_selector(".fs-exe-only-btn")
+        await page.click(".fs-exe-only-btn")
+        await page.wait_for_function("() => document.querySelectorAll('.fs-entry').length === 5")
+
+        size_label = ".fs-picker-head-tbl th:last-child .th-label"
+        for _direction in ("desc", "asc"):
+            await page.click(size_label)
+            names = await page.evaluate(LISTED_NAMES_JS)
+            assert names[:2] == ["adir", "zdir"], names
+        files = [n for n in names if n not in ("adir", "zdir")]
+        assert files == ["small.bin", "fake-fastchess", "big.bin"], files
+        assert not errors, errors

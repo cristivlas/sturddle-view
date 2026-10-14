@@ -167,7 +167,7 @@ async def test_fs_picker_header_click_selects_nothing(tmp_path, make_page):
             f"() => document.querySelectorAll('{PICKER_ROW}').length > 1"
         )
 
-        await page.click(".fs-picker-head-table thead th:first-child")
+        await page.click(".fs-picker-head-tbl thead th:first-child")
         assert await page.evaluate(_row_text(PICKER_ROW, ".fs-name")) is None
         assert not errors, errors
 
