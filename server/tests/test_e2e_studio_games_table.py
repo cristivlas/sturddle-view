@@ -1,9 +1,9 @@
 """E2E: Studio Games table on data-table.js (Playwright/Chromium).
 
 Headers are keyboard-reachable (Tab from the columns button lands on "#",
-Enter sorts), and Enter on a focused row replays that game (delegated row
-keys). Roving row focus and click-to-replay are covered elsewhere
-(test_e2e_list_keyboard_nav.py, test_e2e_studio_replay_guard.py).
+Enter sorts). Row keyboard nav + Enter-to-replay and click-to-replay are
+covered elsewhere (test_e2e_table_row_nav.py, test_e2e_list_keyboard_nav.py,
+test_e2e_studio_replay_guard.py).
 
 Skipped if Playwright/Chromium isn't installed.
 """
@@ -70,15 +70,3 @@ async def test_header_tab_and_enter_sort(server, make_page):
     assert await page.evaluate(_ROW_NUMS) == ["3", "2", "1"]
     assert_no_page_errors(errors)
 
-
-@pytest.mark.asyncio
-async def test_enter_on_row_replays_that_game(server, make_page):
-    """Enter on a focused row requests that game's PGN (game 2 here)."""
-    _ctx, page = await make_page(viewport=VIEWPORT)
-    errors = watch_page_errors(page)
-    await _open_games(page, server)
-
-    await page.focus(f'{ROW}[data-id="2"]')
-    async with page.expect_request(lambda r: r.url.endswith("/games/2/pgn")):
-        await page.keyboard.press("Enter")
-    assert_no_page_errors(errors)

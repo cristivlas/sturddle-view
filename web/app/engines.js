@@ -11,7 +11,7 @@
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs.js";
-import { escapeHtml, guard, markSelectable, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
+import { escapeHtml, guard, markSelectable, suppressMultiClickSelect } from "./wb-utils.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 import { createWrapSizer } from "./list-wrap-sizer.js";
 import { attachButtonSort, scrollSortedRowIntoView, SORT_ASC_LABEL, SORT_DESC_LABEL, SORT_DIR } from "./col-sort.js";
@@ -173,7 +173,12 @@ function buildEngineTable(container, layoutKey, onRender) {
     columns: ENGINE_COLUMNS,
     layoutKey,
     minPct: MIN_COL_PCT,
-    traits: { sort: { single: true, sortKey: STORAGE_KEY.ENGINES_HEADER_SORT }, resize: true },
+    traits: {
+      sort: { single: true, sortKey: STORAGE_KEY.ENGINES_HEADER_SORT },
+      resize: true,
+      // Arrows move the selection; a row click selects (delegated in mount).
+      rowNav: { isSelected: (r) => r.selected, onSelect: (row) => row.click() },
+    },
     rowAttrs: (r) => (r.emptyText != null ? {} : {
       class: [ENGINE_ROW_CLASS, r.selected && SELECTED_CLASS, r.active && ACTIVE_CLASS].filter(Boolean).join(" "),
       "data-id": r.id,
@@ -183,8 +188,6 @@ function buildEngineTable(container, layoutKey, onRender) {
   });
   markSelectable(table.headTable);
   markSelectable(table.bodyTable);
-  Object.assign(table.tbody, { className: "engines-list", tabIndex: 0 });
-  table.tbody.setAttribute("role", "listbox");
   table.wrap.prepend(container.querySelector(".engines-empty"));
   container.querySelector(".engines-body-content").append(table.wrap);
   return table;
@@ -436,12 +439,8 @@ export function mountEngineList(container, api, opts = {}) {
     if (selectEngineRow(ctx, ev)) ctx.openOptionsGuarded();
   });
   suppressMultiClickSelect(ctx.list);
-  wireArrowKeyNav(ctx.list, {
-    rows: ENGINE_ROW_SEL,
-    selected: SELECTED_ROW_SEL,
-    select: (row) => row.click(),
-  });
-  ctx.list.addEventListener("keydown", (ev) => {
+  // Space on the focused list (its body table, the Tab stop) activates.
+  table.bodyTable.addEventListener("keydown", (ev) => {
     if (ev.key !== " ") return;
     ev.preventDefault();
     ctx.activateGuarded();

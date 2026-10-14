@@ -93,9 +93,6 @@ const TOURNEY_ROW_CLASS = "studio-tourney-row";
 const TOURNEY_ROW_SEL = `tr.${TOURNEY_ROW_CLASS}`;
 const HISTORY_ROW_CLASS = "studio-history-row";
 const HISTORY_ROW_SEL = `tr.${HISTORY_ROW_CLASS}`;
-// The history list roves its tab stop instead of painting a selected class,
-// so the "current" row is simply the one Tab would land on.
-const HISTORY_CURRENT_SEL = `${HISTORY_ROW_SEL}[tabindex="0"]`;
 
 export const TOURNAMENT_UX = Object.freeze({ ARENA: "arena", STUDIO: "studio" });
 
@@ -234,9 +231,9 @@ function setSelected(ctx, id) {
 function studioSelect(ctx, id) {
   if (ctx.selectedId === id) return;
   setSelected(ctx, id);
-  for (const tr of ctx.tourneysPaneEl.querySelectorAll(TOURNEY_ROW_SEL)) {
-    tr.classList.toggle("selected", tr.dataset.id === id);
-  }
+  // Re-render (not a class toggle) so rowNav's current-row mark follows too;
+  // rebuilding the tbody keeps the scroll position.
+  ctx.tourneyTable?.render(ctx.tournaments);
   syncLive(ctx);
   syncRibbon(ctx);
   paintWall(ctx);
@@ -310,6 +307,14 @@ function buildTourneyTable(ctx) {
         stackKey: STORAGE_KEY.STUDIO_TOURNEY_STACK,
       },
       resize: true, reorder: true, hide: true, fit: true,
+      // Arrows move the selection; Shift extends the multi-selection from its
+      // lead row.
+      rowNav: {
+        isSelected: (t) => t.id === ctx.selectedId,
+        onSelect: (row) => studioSelectRow(ctx, row.dataset.id),
+        onExtend: (row) => ctx.ms.extendTo(row.dataset.id),
+        lead: () => tt.tbody.querySelector(`${TOURNEY_ROW_SEL}[data-id="${ctx.ms.lead()}"]`),
+      },
     },
     rowAttrs: (t) => ({
       class: TOURNEY_ROW_CLASS + (t.id === ctx.selectedId ? " selected" : ""),
@@ -323,9 +328,7 @@ function buildTourneyTable(ctx) {
   });
   pane.replaceChildren(tt.wrap);
   const table = tt.bodyTable;
-  // One Tab stop for the whole list; arrows move the selection within it.
   // Clicking a row focuses the table so the arrows continue from there.
-  table.tabIndex = 0;
   table.addEventListener("click", (ev) => {
     const id = ev.target.closest(TOURNEY_ROW_SEL)?.dataset.id;
     if (id) ctx.ms.handleClick(ev, id);
@@ -338,13 +341,6 @@ function buildTourneyTable(ctx) {
     ctx.actions?.info(t);
   });
   suppressModifierClickSelect(table);
-  wireArrowKeyNav(table, {
-    rows: TOURNEY_ROW_SEL,
-    selected: `${TOURNEY_ROW_SEL}.selected`,
-    lead: () => table.querySelector(`${TOURNEY_ROW_SEL}[data-id="${ctx.ms.lead()}"]`),
-    select: (row) => studioSelectRow(ctx, row.dataset.id),
-    extend: (row) => ctx.ms.extendTo(row.dataset.id),
-  });
   ctx.tourneyTable = tt;
 }
 
@@ -639,9 +635,8 @@ function openHistoryRow(ctx, row) {
 }
 
 // Build the History table once (data-table.js); renderHistory fills it.
-// Roving tabindex: only the current row is a Tab stop, so Tab enters the list
-// once and the arrows walk it. Focus doubles as the selection -- the row's
-// :focus-visible ring is the highlight; click or Enter opens the row.
+// The body is one Tab stop and the arrows walk a row cursor (rowNav, no
+// selection); click opens a row, Enter/Space the cursor row.
 function buildHistoryTable(ctx) {
   const pane = ctx.historyPaneEl;
   if (!pane) return;
@@ -653,38 +648,25 @@ function buildHistoryTable(ctx) {
     minPct: STUDIO_HISTORY_MIN_PCT,
     traits: {
       sort: { sortKey: STORAGE_KEY.STUDIO_HISTORY_SORT, stackKey: STORAGE_KEY.STUDIO_HISTORY_STACK },
-      resize: true, reorder: true, hide: true, fit: true,
+      resize: true, reorder: true, hide: true, fit: true, rowNav: {},
     },
-    rowAttrs: (r, i) => ({
+    rowAttrs: (r) => ({
       class: HISTORY_ROW_CLASS,
       "data-id": r[HK.NUM],
-      tabindex: i === 0 ? 0 : -1,
-      role: "button",
       title: `Review game ${r[HK.NUM]}`,
     }),
   });
   pane.replaceChildren(ht.wrap);
   const table = ht.bodyTable;
-  // Keep the roving stop on whatever the user actually focused (click or
-  // arrow), so the next arrow press continues from there rather than row 0.
-  table.addEventListener("focusin", (ev) => {
-    const row = ev.target.closest?.(HISTORY_ROW_SEL);
-    if (row) roveTabStop(table, HISTORY_ROW_SEL, row);
-  });
   table.addEventListener("click", (ev) => {
     const row = ev.target.closest(HISTORY_ROW_SEL);
     if (row) openHistoryRow(ctx, row);
   });
   table.addEventListener("keydown", (ev) => {
-    const row = ev.target.closest(HISTORY_ROW_SEL);
+    const row = ht.currentRow();
     if (!row || !ACTIVATE_KEYS.has(ev.key)) return;
     ev.preventDefault();
     openHistoryRow(ctx, row);
-  });
-  wireArrowKeyNav(table, {
-    rows: HISTORY_ROW_SEL,
-    selected: HISTORY_CURRENT_SEL,
-    select: (row) => row.focus(),
   });
   ctx.historyTable = ht;
 }

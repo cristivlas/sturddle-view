@@ -3,9 +3,9 @@
 // shared Standings table stays untouched; this is the "more detail" surface.
 //
 // Split like the standings table: makeH2HBody builds the DOM once (a
-// resize-only data-table.js table); renderH2H fills the banner + rows from a
-// tournament `detail` payload (standings engines + the per-game {white,
-// black, result} list, both already in hand). The split keeps resize
+// data-table.js table); renderH2H fills the banner + rows from a tournament
+// `detail` payload (standings engines + the per-game {white, black, result}
+// list, both already in hand). The split keeps resize
 // listeners from leaking on each live repaint.
 
 import { RESULT } from "./chess-consts.js";
@@ -144,9 +144,9 @@ function engineRows(e, games) {
   };
   return [
     { group: e.name },
-    { side: "Overall", ...overall, withElo: false },
-    { side: "White", wins: white.wins, losses: white.losses, draws: white.draws, withElo: true },
-    { side: "Black", wins: black.wins, losses: black.losses, draws: black.draws, withElo: true },
+    { engine: e.name, side: "Overall", ...overall, withElo: false },
+    { engine: e.name, side: "White", wins: white.wins, losses: white.losses, draws: white.draws, withElo: true },
+    { engine: e.name, side: "Black", wins: black.wins, losses: black.losses, draws: black.draws, withElo: true },
   ];
 }
 
@@ -163,7 +163,8 @@ function bannerHtml(engines) {
 }
 
 // Build the H2H body once: a banner slot, an empty-state line, and a
-// resize-only table (no sort, no columns menu) the fill step populates.
+// resize-only table (no sort, no columns menu; arrow-key row cursor) the
+// fill step populates.
 // Mirrors makeStandingsBody.
 export function makeH2HBody() {
   const el = document.createElement("div");
@@ -177,8 +178,9 @@ export function makeH2HBody() {
     columns: H2H_COLUMNS,
     layoutKey: STORAGE_KEY.STUDIO_H2H_LAYOUT,
     minPct: H2H_MIN_PCT,
-    traits: { resize: true },
-    rowAttrs: (r) => ({ class: r.group != null ? GROUP_ROW_CLASS : null }),
+    traits: { resize: true, rowNav: {} },
+    // Group rows carry no data-id, so the row cursor skips them.
+    rowAttrs: (r) => (r.group != null ? { class: GROUP_ROW_CLASS } : { "data-id": `${r.engine}:${r.side}` }),
     fullRow: (r) => (r.group != null ? { html: escapeHtml(r.group) } : null),
   });
   table.wrap.hidden = true;
