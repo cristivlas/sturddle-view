@@ -7,9 +7,9 @@
   --scrollbar-thumb-min-h: 50px;
   --wb-outline: rgba(136, 136, 136, 0.4);
   --wb-radius: 8px;
-  /* Dialog panel background (wa-dialog's --dialog-bg); dropdown menus share
-     it. A separate name: --dialog-bg must stay undefined outside dialogs,
-     where tables reading it fall back to transparent. */
+  /* Command-and-control surface: dialogs (wa-dialog's --dialog-bg), menus,
+     the ribbon. A separate name: --dialog-bg must stay undefined outside
+     dialogs, where tables reading it fall back to transparent. */
   --panel-bg: #363a42;
   /* Hovered/focused menu item: a blue-gray accent over the gray panel. */
   --panel-item-hover: #364b66;
@@ -17,9 +17,10 @@
      cancel, engine Refresh/Reset): a step lighter than --panel-bg. */
   --panel-btn-bg: #464b55;
   --panel-btn-bg-hover: #525864;
-  /* Button ribbon background: docked rails and the floating window; the
-     mobile horizontal bars blend into the page instead. */
-  --ribbon-bg: var(--panel);
+  /* Button ribbon background (a command surface, see --panel-bg): docked
+     rails and the floating window; the mobile horizontal bars blend into the
+     page instead. */
+  --ribbon-bg: var(--panel-bg);
   --ribbon-bar-bg: transparent;
   /* Minimized-WinBox dock strip; tournament-workspace.js reads it as
      MINIMIZE_FOOTER_H. */
