@@ -3976,7 +3976,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 }
 .studio-pane-standings > *, .studio-pane-tourneys > *,
 .studio-pane-history > *, .studio-pane-h2h > * { min-height: 0; }
-.studio-tourney-table-wrap, .studio-history-wrap { height: 100%; }
+.studio-tourney-table-wrap, .studio-history-table-wrap { height: 100%; }
 /* Selection-change loading state for the selDetail-fed panes (Standings,
    Head-to-Head, Games): dim the outgoing tourney's rows and spin, so stale
    numbers never read as current.
@@ -4021,7 +4021,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
    Settings engines look). The wrap hosts the resize overlay, mirroring the
    file picker's tableWrap. Split header/body table (see Openings above,
    tournament-studio.js). */
-.studio-tourney-table-wrap, .studio-history-wrap { position: relative; display: flex; flex-direction: column; min-height: 0; }
+.studio-tourney-table-wrap, .studio-history-table-wrap { position: relative; display: flex; flex-direction: column; min-height: 0; }
 .studio-tourney-head-scroll, .studio-history-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; }
 .studio-tourney-body-scroll, .studio-history-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
 .studio-tourney-tbl, .studio-history-tbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
@@ -4146,7 +4146,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
     display: block; height: auto; overflow: visible;
   }
   .wb-standings, .wb-h2h { height: auto; }
-  .studio-tourney-table-wrap, .studio-history-wrap { height: auto; }
+  .studio-tourney-table-wrap, .studio-history-table-wrap { height: auto; }
   .wb-standings-table-wrap, .h2h-table-wrap { display: block; }
   .wb-standings-body-scroll, .h2h-body-scroll,
   .studio-tourney-body-scroll, .studio-history-body-scroll { overflow: visible; }

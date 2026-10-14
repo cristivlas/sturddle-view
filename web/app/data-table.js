@@ -110,11 +110,11 @@ function tdHtml(col, row) {
   return `<td${cls}${title}>${col.cell(row)}</td>`;
 }
 
-// <tr> open tag from the caller's optional row hooks (class, data-id).
-function trOpen(row, rowClass, rowId) {
-  const cls = rowClass ? rowClass(row) : "";
-  const id = rowId ? rowId(row) : null;
-  return `<tr${cls ? ` class="${cls}"` : ""}${id != null ? ` data-id="${escapeHtml(id)}"` : ""}>`;
+// <tr> open tag from the caller's rowAttrs(row, i) => { name: value } (class,
+// data-id, tabindex, ...; i = display position). Null values are skipped.
+function trOpen(row, i, rowAttrs) {
+  const attrs = rowAttrs ? Object.entries(rowAttrs(row, i)).filter(([, v]) => v != null) : [];
+  return `<tr${attrs.map(([k, v]) => ` ${k}="${escapeHtml(String(v))}"`).join("")}>`;
 }
 
 // One button: `fid` identifies it across rebuilds so focus can be restored.
@@ -160,10 +160,10 @@ function positionMenu(menu, btn) {
 
 // traits: { sort?: { sortKey, stackKey, defaultState }, resize?, reorder?,
 // hide?, fit? }. `cls` prefixes the wrap/scroller/table classes; the caller
-// appends `wrap` and fills it via render(rows). rowClass/rowId (row =>
-// string) set each <tr>'s class and data-id. onRender(reason) runs after
-// every body rebuild (RENDER_REASON), so callers can repaint row state.
-export function createTable({ cls, tableClass, columns, layoutKey, minPct, traits = {}, rowClass, rowId, onRender }) {
+// appends `wrap` and fills it via render(rows). rowAttrs sets each <tr>'s
+// attributes (see trOpen). onRender(reason) runs after every body rebuild
+// (RENDER_REASON), so callers can repaint row state.
+export function createTable({ cls, tableClass, columns, layoutKey, minPct, traits = {}, rowAttrs, onRender }) {
   const byKey = new Map(columns.map((c) => [c.key, c]));
   const layout = reconcileLayout(columns, loadJson(layoutKey) || {});
   const hasMenu = traits.reorder || traits.hide || traits.fit;
@@ -203,9 +203,17 @@ export function createTable({ cls, tableClass, columns, layoutKey, minPct, trait
     const cols = visibleCols();
     const sorted = rows.slice();
     if (sortStack) sortByStack(sorted, sortStack().filter((s) => !layout.hidden.has(s.key)), columns);
+    // Rebuilding replaces every <tr>: focus on a row (or a control in it)
+    // moves to the new row with the same data-id (e.g. across a live poll)
+    // instead of dropping to <body>.
+    const active = document.activeElement;
+    const focusedId = tbody.contains(active) ? active.closest("tr")?.dataset.id : undefined;
     tbody.innerHTML = sorted
-      .map((r) => `${trOpen(r, rowClass, rowId)}${cols.map((c) => tdHtml(c, r)).join("")}</tr>`)
+      .map((r, i) => `${trOpen(r, i, rowAttrs)}${cols.map((c) => tdHtml(c, r)).join("")}</tr>`)
       .join("");
+    if (focusedId != null) {
+      tbody.querySelector(`tr[data-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
+    }
     onRender?.(reason);
   }
 

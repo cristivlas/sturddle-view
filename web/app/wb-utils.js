@@ -1,5 +1,6 @@
 import { scrollRowIntoView } from "./col-sort.js";
 import { mqMobile } from "./breakpoints.js";
+import { ACTIVATE_KEYS } from "./keys.js";
 
 // Split at the last / or \ (trailing ones ignored) into { dir, name };
 // dir is "" when there is none. Roots keep their separator ("/", "C:\").
@@ -237,7 +238,7 @@ export function wireSpanButton(el, label) {
   el.setAttribute("aria-label", label);
   el.tabIndex = -1;
   el.addEventListener("keydown", (ev) => {
-    if (ev.key !== "Enter" && ev.key !== " ") return;
+    if (!ACTIVATE_KEYS.has(ev.key)) return;
     ev.preventDefault();
     el.click();
   });

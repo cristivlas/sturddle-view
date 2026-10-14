@@ -9,12 +9,12 @@
 // Callers focusFirstItem() on open, so keys land here from the start.
 
 import { nextNavIndex } from "./wb-utils.js";
+import { ACTIVATE_KEYS } from "./keys.js";
 
 // Marks an open (sub)menu's <li>; callers' CSS shows its nested list.
 export const MENU_OPEN_CLASS = "open";
 
 const ROW_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
-const ACTIVATE_KEYS = new Set(["Enter", " "]);
 const DIR = Object.freeze({ ArrowRight: 1, ArrowLeft: -1 });
 
 const rowButtons = (li) => Array.from(li.querySelectorAll(":scope > button"));

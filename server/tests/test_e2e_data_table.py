@@ -306,3 +306,33 @@ async def test_columns_menu_arrow_keys(server, make_page):
         " && document.activeElement.textContent"
     ) == "Engine"
     assert_no_page_errors(errors)
+
+
+# Builds a bare factory table with focusable rows (data-id = n), focuses row
+# `focusN`, re-renders fresh row objects (as a live poll does), and returns
+# the focused element's data-id afterwards (null = focus was lost).
+_RERENDER_KEEPS_FOCUS = """async (focusN) => {
+  const { createTable } = await import('/ui/app/data-table.js');
+  const t = createTable({
+    cls: 'probe', tableClass: 'wb-table', layoutKey: 'probe:layout', minPct: 5,
+    columns: [{ key: 'n', label: 'N', width: 100, cell: (r) => r.n }],
+    rowAttrs: (r) => ({ 'data-id': r.n, tabindex: -1 }),
+  });
+  document.body.append(t.wrap);
+  const rows = () => [1, 2, 3].map((n) => ({ n }));
+  t.render(rows());
+  t.tbody.querySelector(`tr[data-id="${focusN}"]`).focus();
+  t.render(rows());
+  return document.activeElement.dataset?.id ?? null;
+}"""
+
+
+@pytest.mark.asyncio
+async def test_rerender_keeps_focused_row(server, make_page):
+    """A data re-render replaces every <tr>; keyboard focus on a row moves to
+    the new row with the same data-id instead of dropping to <body>."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_standings(page, server)
+    assert await page.evaluate(_RERENDER_KEEPS_FOCUS, 2) == "2"
+    assert_no_page_errors(errors)

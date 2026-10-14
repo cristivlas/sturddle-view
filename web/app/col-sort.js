@@ -12,6 +12,7 @@
 // handle) are ignored, so dragging a divider never triggers a sort.
 
 import { loadJson, loadRaw, saveJson } from "./storage.js";
+import { ACTIVATE_KEYS } from "./keys.js";
 
 // Sort direction vocabulary, shared with sort-stack.js and table callers
 // (column firstDir). NONE is the cleared/no-sort sentinel.
@@ -20,9 +21,6 @@ export const SORT_DIR = Object.freeze({ ASC: "asc", DESC: "desc", NONE: "none" }
 export const ARROW_CLASS = "th-sort-arrow";
 export const ARROW_DESC = "caret-down";
 export const ARROW_ASC = "caret-up";
-
-// Keys that activate a focused sortable header (button semantics).
-const SORT_KEYS = ["Enter", " "];
 
 // Optional label element inside a th: when present it is the keyboard tab
 // stop instead of the th, so controls placed before it in the th (a menu
@@ -198,7 +196,7 @@ export function attachColumnSort({
     if (label) label.setAttribute("role", "button");
     focusEl.addEventListener("keydown", (ev) => {
       // Own keys only: Enter on a control inside the th (menu button) is its own.
-      if (ev.target !== focusEl || !SORT_KEYS.includes(ev.key)) return;
+      if (ev.target !== focusEl || !ACTIVATE_KEYS.has(ev.key)) return;
       ev.preventDefault();
       th.click();
     });

@@ -20,6 +20,7 @@ import {
   scrollToBottom,
 } from "./wb-utils.js";
 import { STORAGE_KEY } from "./storage-keys.js";
+import { ACTIVATE_KEYS } from "./keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import {
   openSettings,
@@ -1235,7 +1236,7 @@ function _roundCapNote(message) {
   const open = () => openSettings(SETTINGS_TAB_ANALYSIS);
   gear.addEventListener("click", open);
   gear.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+    if (ACTIVATE_KEYS.has(e.key)) { e.preventDefault(); open(); }
   });
   note.append(text, gear);
   return note;
