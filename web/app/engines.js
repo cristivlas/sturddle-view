@@ -5,28 +5,30 @@
 //
 // The controller closes over a single `ctx` object (engines, selectedDetailId,
 // activeId, filterText, sort, dom refs, api) so render/CRUD/search/sort
-// can live as module-level functions instead of one giant closure. Pure-DOM
-// layout (column resize, wrap sizing) lives in engines-list-layout.js.
+// can live as module-level functions instead of one giant closure. The table
+// itself (resize, header sort) is a data-table.js instance.
 
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs.js";
-import { guard, markSelectable, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
+import { escapeHtml, guard, markSelectable, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
-import { attachEngineColResize } from "./engines-list-layout.js";
 import { createWrapSizer } from "./list-wrap-sizer.js";
-import { attachButtonSort, attachColumnSort, baseCompare, modelACompare, scrollSortedRowIntoView, SORT_ASC_LABEL, SORT_DESC_LABEL } from "./col-sort.js";
+import { attachButtonSort, scrollSortedRowIntoView, SORT_ASC_LABEL, SORT_DESC_LABEL, SORT_DIR } from "./col-sort.js";
 import { saveRaw } from "./storage.js";
-import { wireSplitScroll } from "./split-table.js";
+import { createTable, RENDER_REASON } from "./data-table.js";
 
 const COL_NAME = "name";
 const COL_ACTIVE = "active";
 const COL_PATH = "path";
 const ENGINE_ROW_CLASS = "engines-list-item";
 const ENGINE_ROW_SEL = `tr.${ENGINE_ROW_CLASS}`;
-const SELECTED_ROW_SEL = "tr.focused";
-
-const COL_PCTS_KEY = STORAGE_KEY.ENGINES_COL_PCTS;
+const SELECTED_CLASS = "focused";
+const SELECTED_ROW_SEL = `tr.${SELECTED_CLASS}`;
+const ACTIVE_CLASS = "active";
+const EMPTY_CELL_CLASS = "engines-list-empty muted";
+const NO_MATCH_MSG = "No engines match.";
+const MIN_COL_PCT = 8;
 // Height of the overlaid search bar; matches the CSS rule. Added as
 // bottom padding on the list while open so the last row stays visible
 // above the bar.
@@ -37,36 +39,8 @@ const ENGINES_LIST_HTML = `
     <div class="engines-list-host">
       <div class="engines-body-main">
         <div class="engines-body-content">
-          <div class="engines-table-wrap">
-            <div class="engines-empty hidden">
-              <p class="empty-message"></p>
-            </div>
-            <div class="engines-head-scroll">
-              <table class="engines-table engines-head-table">
-                <colgroup>
-                  <col class="engines-col-name">
-                  <col class="engines-col-active">
-                  <col class="engines-col-path">
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th>Name<span class="th-grip"></span></th>
-                    <th class="engines-col-active-hdr">Active<span class="th-grip"></span></th>
-                    <th>Path</th>
-                  </tr>
-                </thead>
-              </table>
-            </div>
-            <div class="engines-body-scroll">
-              <table class="engines-table engines-body-table">
-                <colgroup>
-                  <col class="engines-col-name">
-                  <col class="engines-col-active">
-                  <col class="engines-col-path">
-                </colgroup>
-                <tbody class="engines-list" role="listbox" tabindex="0"></tbody>
-              </table>
-            </div>
+          <div class="engines-empty hidden">
+            <p class="empty-message"></p>
           </div>
         </div>
       </div>
@@ -138,37 +112,24 @@ function renderAll(ctx) {
   syncDetailButtons(ctx);
 }
 
-// Active column orders by the active engine first/last; name is the fixed
-// final tiebreaker so order is deterministic (Model A).
-function engineCompare(ctx, key, dir) {
-  const byName = (a, b) => baseCompare(a.name, b.name);
-  const primary =
-    key === COL_ACTIVE ? (a, b) => (a.id === ctx.activeId ? 1 : 0) - (b.id === ctx.activeId ? 1 : 0)
-      : key === COL_PATH ? (a, b) => baseCompare(a.path || "", b.path || "")
-        : byName;
-  return modelACompare({ dir, primary, tiebreak: byName });
-}
+// Rows: { id, name, path, active } (active: 1 for the active engine, so the
+// numeric Active column orders it first/last). Name is the fixed final
+// tiebreaker so order is deterministic.
+const ENGINE_COLUMNS = [
+  { key: COL_NAME, label: "Name", width: 20, firstDir: SORT_DIR.ASC, tiebreak: true,
+    tdClass: "engines-list-name", tdTitle: (r) => r.name,
+    cell: (r) => `<span class="engines-list-name-text">${escapeHtml(r.name)}</span>` },
+  { key: COL_ACTIVE, label: "Active", width: 14, numeric: true, firstDir: SORT_DIR.DESC,
+    tdClass: "engines-list-active-cell",
+    cell: (r) => (r.active ? `<wa-icon name="check" class="engines-list-active-badge"></wa-icon>` : "") },
+  { key: COL_PATH, label: "Path", width: 66, firstDir: SORT_DIR.ASC,
+    tdClass: "engines-list-path", tdTitle: (r) => r.path, cell: (r) => escapeHtml(r.path) },
+];
 
 function renderList(ctx) {
-  const { list, emptyEl, emptyMsg, addBtn } = ctx;
-  list.innerHTML = "";
-  const needle = ctx.filterText.trim().toLowerCase();
-  let visible = needle
-    ? ctx.engines.filter((e) => e.name.toLowerCase().includes(needle))
-    : ctx.engines.slice();
-  if (ctx.sort) visible.sort(engineCompare(ctx, ctx.sort.key, ctx.sort.dir));
-
-  function emptyRow(text) {
-    const tr = document.createElement("tr");
-    const td = document.createElement("td");
-    td.colSpan = 2;
-    td.className = "engines-list-empty muted";
-    td.textContent = text;
-    tr.appendChild(td);
-    list.appendChild(tr);
-  }
-
+  const { emptyEl, emptyMsg, addBtn } = ctx;
   if (ctx.engines.length === 0) {
+    ctx.table.render([]);
     emptyEl.classList.remove("hidden");
     emptyMsg.replaceChildren();
     const addLink = document.createElement("button");
@@ -184,51 +145,49 @@ function renderList(ctx) {
     return;
   }
   emptyEl.classList.add("hidden");
-  if (visible.length === 0) { emptyRow("No engines match."); return; }
+  const needle = ctx.filterText.trim().toLowerCase();
+  const visible = needle ? ctx.engines.filter((e) => e.name.toLowerCase().includes(needle)) : ctx.engines;
+  ctx.table.render(visible.length
+    ? visible.map((e) => ({
+      id: e.id, name: e.name, path: e.path || "",
+      active: e.id === ctx.activeId ? 1 : 0, selected: e.id === ctx.selectedDetailId,
+    }))
+    : [{ emptyText: NO_MATCH_MSG }]);
+}
 
-  for (const e of visible) {
-    const tr = document.createElement("tr");
-    tr.className = ENGINE_ROW_CLASS;
-    tr.dataset.engineId = e.id;
-    if (e.id === ctx.selectedDetailId) tr.classList.add("focused");
-    if (e.id === ctx.activeId) tr.classList.add("active");
+// Click on an engine row: select it. Returns whether a row was hit.
+function selectEngineRow(ctx, ev) {
+  const id = ev.target.closest(ENGINE_ROW_SEL)?.dataset.id;
+  if (!id) return false;
+  ctx.selectedDetailId = id;
+  renderAll(ctx);
+  return true;
+}
 
-    const nameTd = document.createElement("td");
-    nameTd.className = "engines-list-name";
-    const nameText = document.createElement("span");
-    nameText.className = "engines-list-name-text";
-    nameText.textContent = e.name;
-    nameTd.title = e.name;
-    nameTd.appendChild(nameText);
-
-    const activeTd = document.createElement("td");
-    activeTd.className = "engines-list-active-cell";
-    if (e.id === ctx.activeId) {
-      const badge = document.createElement("wa-icon");
-      badge.name = "check";
-      badge.className = "engines-list-active-badge";
-      activeTd.appendChild(badge);
-    }
-
-    const pathTd = document.createElement("td");
-    pathTd.className = "engines-list-path";
-    pathTd.textContent = e.path || "";
-    if (e.path) pathTd.title = e.path;
-
-    tr.appendChild(nameTd);
-    tr.appendChild(activeTd);
-    tr.appendChild(pathTd);
-    tr.addEventListener("click", () => {
-      ctx.selectedDetailId = e.id;
-      renderAll(ctx);
-    });
-    tr.addEventListener("dblclick", () => {
-      ctx.selectedDetailId = e.id;
-      renderAll(ctx);
-      ctx.openOptionsGuarded();
-    });
-    list.appendChild(tr);
-  }
+// Build the list's table (data-table.js: resize + single-column sort, no
+// columns menu) into the body content, with the empty note inside its wrap.
+function buildEngineTable(container, layoutKey, onRender) {
+  const table = createTable({
+    cls: "engines",
+    tableClass: "engines-table",
+    columns: ENGINE_COLUMNS,
+    layoutKey,
+    minPct: MIN_COL_PCT,
+    traits: { sort: { single: true, sortKey: STORAGE_KEY.ENGINES_HEADER_SORT }, resize: true },
+    rowAttrs: (r) => (r.emptyText != null ? {} : {
+      class: [ENGINE_ROW_CLASS, r.selected && SELECTED_CLASS, r.active && ACTIVE_CLASS].filter(Boolean).join(" "),
+      "data-id": r.id,
+    }),
+    fullRow: (r) => (r.emptyText != null ? { html: escapeHtml(r.emptyText), tdClass: EMPTY_CELL_CLASS } : null),
+    onRender,
+  });
+  markSelectable(table.headTable);
+  markSelectable(table.bodyTable);
+  Object.assign(table.tbody, { className: "engines-list", tabIndex: 0 });
+  table.tbody.setAttribute("role", "listbox");
+  table.wrap.prepend(container.querySelector(".engines-empty"));
+  container.querySelector(".engines-body-content").append(table.wrap);
+  return table;
 }
 
 function syncDetailButtons(ctx) {
@@ -429,14 +388,12 @@ function setupEngineSearch(ctx) {
 }
 
 export function mountEngineList(container, api, opts = {}) {
-  const { colPctsKey = COL_PCTS_KEY } = opts;
+  const { layoutKey = STORAGE_KEY.ENGINES_LAYOUT } = opts;
   container.innerHTML = ENGINES_LIST_HTML;
-  markSelectable(container.querySelector(".engines-head-table"));
-  markSelectable(container.querySelector(".engines-body-table"));
-  const headScroll = container.querySelector(".engines-head-scroll");
-  const bodyScrollEl = container.querySelector(".engines-body-scroll");
-  wireSplitScroll(headScroll, bodyScrollEl);
   saveRaw(STORAGE_KEY.ENGINES_SORT_ORDER_LEGACY, null);  // clear orphaned pre-header-sort key
+  const table = buildEngineTable(container, layoutKey, (reason) => {
+    if (reason === RENDER_REASON.SORT) onSorted();
+  });
 
   const ctx = {
     container,
@@ -448,7 +405,6 @@ export function mountEngineList(container, api, opts = {}) {
     selectedDetailId: null,
     activeId: null,
     filterText: "",
-    sort: null,
     // Last (count, activeId) pair broadcast on sturddle:engines-changed.
     // Tracks across refreshes so the initial mount doesn't fire spuriously
     // if state matches what listeners (e.g. Play) already fetched.
@@ -457,7 +413,8 @@ export function mountEngineList(container, api, opts = {}) {
     detailRemoveBtn: container.querySelector(".engines-detail-remove"),
     detailOptionsBtn: container.querySelector(".engines-detail-options"),
     addBtn: container.querySelector(".engines-add"),
-    list: container.querySelector(".engines-list"),
+    table,
+    list: table.tbody,
     emptyEl: container.querySelector(".engines-empty"),
     emptyMsg: container.querySelector(".engines-empty .empty-message"),
     sortAscBtn: container.querySelector(".engines-sort-asc"),
@@ -473,6 +430,11 @@ export function mountEngineList(container, api, opts = {}) {
   const teardownSearch = setupEngineSearch(ctx);
 
   ctx.detailUseBtn.addEventListener("click", ctx.activateGuarded);
+  // Rows are rebuilt on every render: delegate their clicks.
+  ctx.list.addEventListener("click", (ev) => selectEngineRow(ctx, ev));
+  ctx.list.addEventListener("dblclick", (ev) => {
+    if (selectEngineRow(ctx, ev)) ctx.openOptionsGuarded();
+  });
   suppressMultiClickSelect(ctx.list);
   wireArrowKeyNav(ctx.list, {
     rows: ENGINE_ROW_SEL,
@@ -488,36 +450,21 @@ export function mountEngineList(container, api, opts = {}) {
   ctx.detailOptionsBtn.addEventListener("click", ctx.openOptionsGuarded);
   ctx.addBtn.addEventListener("click", ctx.addGuarded);
 
-  attachEngineColResize(container, colPctsKey);
-
-  // One sort state, two UIs: the header arrows (attachColumnSort) and the
-  // ribbon Name asc/desc buttons (attachButtonSort). Both drive/read the same
-  // { key, dir } through sortCtrl, so either stays in sync with the other.
-  const sortCtrl = attachColumnSort({
-    table: container.querySelector(".engines-head-table"),
-    columns: [
-      { key: COL_NAME, firstDir: "asc" },
-      { key: COL_ACTIVE, firstDir: "desc" },
-      { key: COL_PATH, firstDir: "asc" },
-    ],
-    storageKey: STORAGE_KEY.ENGINES_HEADER_SORT,
-    onSort: (state) => {
-      ctx.sort = state ? { key: state.key, dir: state.dir } : null;
-      nameBtnSort.sync();
-      renderList(ctx);
-      scrollSortedRowIntoView(ctx.list, SELECTED_ROW_SEL);
-    },
-  });
+  // One sort state, two UIs: the header arrows and the ribbon Name asc/desc
+  // buttons (attachButtonSort) both drive/read the table's single sort.
   const nameBtnSort = attachButtonSort({
     ascBtn: ctx.sortAscBtn,
     descBtn: ctx.sortDescBtn,
     key: COL_NAME,
-    get: () => ctx.sort,
-    set: (state) => sortCtrl.set(state),
+    get: table.getSort,
+    set: table.setSort,
   });
-  const initial = sortCtrl.current();
-  ctx.sort = initial ? { key: initial.key, dir: initial.dir } : null;
   nameBtnSort.sync();
+  // Sorting only reorders rows: keep the picked one in view.
+  function onSorted() {
+    nameBtnSort.sync();
+    scrollSortedRowIntoView(ctx.list, SELECTED_ROW_SEL);
+  }
 
   const sizer = createWrapSizer({
     wrapEl: container.querySelector(".engines-table-wrap"),

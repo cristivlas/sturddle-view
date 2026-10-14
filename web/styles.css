@@ -2683,7 +2683,7 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
 }
 .engine-launch-section-add { flex: 0 0 auto; }
 
-/* Split header/body table (see Openings above, engines-list-layout.js). */
+/* Split header/body table (data-table.js; see Openings above). */
 .engines-table-wrap {
   position: relative;
   display: flex;
@@ -2702,7 +2702,7 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   border-collapse: separate;
   border-spacing: 0;
 }
-.engines-head-table th {
+.engines-head-tbl th {
   position: relative;
   background: var(--dialog-bg);
   padding: 6px 10px;
@@ -2717,7 +2717,7 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   text-overflow: ellipsis;
   user-select: none;
 }
-.engines-head-table th:hover {
+.engines-head-tbl th:hover {
   background: #252830;
 }
 .engines-list-item {
@@ -2747,7 +2747,6 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.engines-col-active-hdr { text-align: left; }
 .engines-list-active-cell { text-align: left; }
 .engines-list-active-badge {
   color: var(--accent);

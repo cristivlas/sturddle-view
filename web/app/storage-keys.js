@@ -8,12 +8,12 @@ export const STORAGE_KEY = {
   FS_PICKER_EXE_ONLY_PREFIX: "sturddle:fs-picker:exeOnly:",
 
   // Engines list view state.
-  ENGINES_COL_PCTS: "sturddle:engines:colPcts3",
+  ENGINES_LAYOUT: "sturddle:engines:layout",
   ENGINES_HEADER_SORT: "sturddle:engines:headerSort",
   // Legacy scalar name-sort, superseded by ENGINES_HEADER_SORT. Kept only so
   // the stale entry can be cleared on mount; safe to drop once users migrate.
   ENGINES_SORT_ORDER_LEGACY: "sturddle:engines:sortOrder",
-  ENGINES_SETTINGS_COL_PCTS: "sturddle:engines:settings:colPcts3",
+  ENGINES_SETTINGS_LAYOUT: "sturddle:engines:settings:layout",
 
   // Import dialog recents cache.
   IMPORT_RECENTS: "sturddle:import:recent",

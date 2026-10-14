@@ -74,7 +74,7 @@ export function attachLayeredSort({ table, columns, sortKey, stackKey, onChange,
       sortCtrl.set(defaultState);
     }
   }
-  return { get: () => stack };
+  return { get: () => stack, set: (state) => sortCtrl.set(state) };
 }
 
 // Stable in-place sort: walk the MRU stack, first differing column wins; the

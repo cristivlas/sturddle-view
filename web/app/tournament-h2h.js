@@ -179,7 +179,7 @@ export function makeH2HBody() {
     minPct: H2H_MIN_PCT,
     traits: { resize: true },
     rowAttrs: (r) => ({ class: r.group != null ? GROUP_ROW_CLASS : null }),
-    fullRow: (r) => (r.group != null ? escapeHtml(r.group) : null),
+    fullRow: (r) => (r.group != null ? { html: escapeHtml(r.group) } : null),
   });
   table.wrap.hidden = true;
   markSelectable(table.headTable);

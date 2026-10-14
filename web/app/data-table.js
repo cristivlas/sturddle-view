@@ -9,7 +9,7 @@
 import { loadJson, saveJson } from "./storage.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
-import { TH_LABEL_CLASS } from "./col-sort.js";
+import { attachColumnSort, TH_LABEL_CLASS } from "./col-sort.js";
 import { attachMenuNav, focusFirstItem } from "./menu-nav.js";
 import { wireSplitScroll } from "./split-table.js";
 import { escapeHtml } from "./wb-utils.js";
@@ -158,11 +158,12 @@ function positionMenu(menu, btn) {
   menu.style.left = Math.max(MENU_EDGE_PX, Math.min(r.left, maxLeft)) + "px";
 }
 
-// traits: { sort?: { sortKey, stackKey, defaultState }, resize?, reorder?,
-// hide?, fit? }. `cls` prefixes the wrap/scroller/table classes; the caller
+// traits: { sort?: { sortKey, stackKey?, defaultState?, single? }, resize?,
+// reorder?, hide?, fit? }; sort.single keeps one active column (no layered
+// stack). `cls` prefixes the wrap/scroller/table classes; the caller
 // appends `wrap` and fills it via render(rows). rowAttrs sets each <tr>'s
-// attributes (see trOpen). fullRow(row) => html|null renders a row as one
-// cell spanning every column (group headings) instead of per-column cells.
+// attributes (see trOpen). fullRow(row) => { html, tdClass? } | null renders
+// a row as one cell spanning every column (group headings, empty notes).
 // onRender(reason) runs after every body rebuild (RENDER_REASON), so callers
 // can repaint row state.
 export function createTable({
@@ -191,7 +192,7 @@ export function createTable({
   wireSplitScroll(wrap.querySelector(`.${cls}-head-scroll`), wrap.querySelector(`.${cls}-body-scroll`));
 
   let rows = null;
-  let sortStack = null;
+  let sortCtrl = null;
   let resizeCtrl = null;
   let menu = null;
 
@@ -206,7 +207,7 @@ export function createTable({
     if (!rows) return;
     const cols = visibleCols();
     const sorted = rows.slice();
-    if (sortStack) sortByStack(sorted, sortStack().filter((s) => !layout.hidden.has(s.key)), columns);
+    if (sortCtrl) sortByStack(sorted, sortCtrl.stack().filter((s) => !layout.hidden.has(s.key)), columns);
     // Rebuilding replaces every <tr>: focus on a row (or a control in it)
     // moves to the new row with the same data-id (e.g. across a live poll)
     // instead of dropping to <body>.
@@ -215,8 +216,8 @@ export function createTable({
     tbody.innerHTML = sorted
       .map((r, i) => {
         const full = fullRow?.(r);
-        const cells = full != null
-          ? `<td colspan="${cols.length}">${full}</td>`
+        const cells = full
+          ? `<td colspan="${cols.length}"${full.tdClass ? ` class="${full.tdClass}"` : ""}>${full.html}</td>`
           : cols.map((c) => tdHtml(c, r)).join("");
         return `${trOpen(r, i, rowAttrs)}${cells}</tr>`;
       })
@@ -265,13 +266,25 @@ export function createTable({
     } else {
       applySizes(sizes);
     }
-    if (traits.sort) {
-      sortStack = attachLayeredSort({
-        table: headTable, columns: cols, ...traits.sort, keyboard: true,
-        onChange: () => renderBody(RENDER_REASON.SORT),
-      }).get;
-    }
+    if (traits.sort) sortCtrl = attachSort(cols);
     renderBody(RENDER_REASON.LAYOUT);
+  }
+
+  // Header sort: layered (MRU stack, sort-stack.js) unless sort.single (one
+  // active column, col-sort.js). Either way the body sorts by a stack, and
+  // getSort/setSort let the caller read and drive it (e.g. ribbon buttons).
+  function attachSort(cols) {
+    const { single, ...opts } = traits.sort;
+    const onChange = () => renderBody(RENDER_REASON.SORT);
+    if (single) {
+      const ctrl = attachColumnSort({
+        table: headTable, columns: cols, storageKey: opts.sortKey, keyboard: true, onSort: onChange,
+      });
+      const stack = () => { const c = ctrl.current(); return c ? [{ key: c.key, dir: c.dir }] : []; };
+      return { stack, set: ctrl.set };
+    }
+    const ctrl = attachLayeredSort({ table: headTable, columns: cols, ...opts, keyboard: true, onChange });
+    return { stack: ctrl.get, set: ctrl.set };
   }
 
   // Measure each visible column's max-content width (header + rows) on an
@@ -373,6 +386,10 @@ export function createTable({
     headTable,
     bodyTable,
     tbody,
+    // Active sort { key, dir } (top of the stack) or null; setSort(state|null)
+    // routes through the header's arrow + persist + re-render path.
+    getSort: () => sortCtrl?.stack()[0] ?? null,
+    setSort: (state) => sortCtrl?.set(state),
     render(nextRows) {
       rows = nextRows;
       renderBody(RENDER_REASON.DATA);
