@@ -65,6 +65,8 @@ const TILE_MARGIN = 0;
 const TIDY_GAP = 0;
 // Bare `sturddle-wb` is shared with Play's dock windows; this one is Arena-only.
 const ARENA_WINDOW_CLASS = "sturddle-wb-arena";
+// The Live Games / Engines row list.
+const SCHED_LIST_CLASS = "wb-sched-list";
 
 // ---- Window body builders (pure DOM; no workspace state) ----------------
 
@@ -989,6 +991,21 @@ async function initWorkspace(ctx) {
 
 // ---- Rendering ----------------------------------------------------------
 
+// Follow the tail only once the list is showing: a freshly mounted body
+// (placeholder only) reads as "at the bottom" and would open the list there.
+function listPinnedToBottom(body, scroller) {
+  return !!scroller && !!body.querySelector(`.${SCHED_LIST_CLASS}`)
+    && isPinnedToBottom(scroller, AUTOSCROLL_SLACK_ROW_PX);
+}
+
+// Replace the body's content with an empty row list; returns the list.
+function resetSchedList(body) {
+  const list = document.createElement("ul");
+  list.className = SCHED_LIST_CLASS;
+  body.replaceChildren(list);
+  return list;
+}
+
 function renderSchedule(ctx) {
   if (ctx.livePairings.size === 0) {
     // Pair confirmation can lag game start by seconds at fast tc;
@@ -1003,9 +1020,8 @@ function renderSchedule(ctx) {
     return;
   }
   const scroller = ctx.scheduleBody.parentElement;
-  const atBottom = !scroller || isPinnedToBottom(scroller, AUTOSCROLL_SLACK_ROW_PX);
-  ctx.scheduleBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
-  const list = ctx.scheduleBody.querySelector(".wb-sched-list");
+  const atBottom = listPinnedToBottom(ctx.scheduleBody, scroller);
+  const list = resetSchedList(ctx.scheduleBody);
 
   // Dedupe: both proxies map to the same info object,
   // so skip if we already rendered this pair.
@@ -1047,9 +1063,8 @@ function renderEngines(ctx) {
     return;
   }
   const scroller = ctx.enginesBody.parentElement;
-  const atBottom = !scroller || isPinnedToBottom(scroller, AUTOSCROLL_SLACK_ROW_PX);
-  ctx.enginesBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
-  const list = ctx.enginesBody.querySelector(".wb-sched-list");
+  const atBottom = listPinnedToBottom(ctx.enginesBody, scroller);
+  const list = resetSchedList(ctx.enginesBody);
   markSelectable(list, { rows: "li" });
   for (const [pid, engineLabel] of engineRowEntries(ctx.activeProxies, ctx.enginesSort)) {
     const li = document.createElement("li");

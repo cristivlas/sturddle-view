@@ -15,8 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
-from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
 import pytest
@@ -25,38 +23,23 @@ from httpx import AsyncClient
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.app import create_app  # noqa: E402
 from sturddle_view.chess.results import UNKNOWN_TERMINATION  # noqa: E402
-from sturddle_view.config import Settings  # noqa: E402
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-from sturddle_view.tournament import fastchess as fc_mod  # noqa: E402
-from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
 from sturddle_view.tournament.pgn_reconcile import ReconciledMatch  # noqa: E402
 
 from .conftest import (  # noqa: E402
-    REGISTRY_FILE,
-    free_port,
+    LIVE_ENGINE_A,
+    LIVE_ENGINE_B,
+    LIVE_PROXY_ID,
     TOURNAMENT_UX_KEY,
     TOURNAMENT_UX_STUDIO,
+    open_arena_engines_window,
     pin_arena_tournament_ux,
-    run_uvicorn,
+    post_proxy,
+    running_tournament,
     wait_perspective_ready,
 )
 
 
-# Minimal fake fastchess: stays alive so the tournament stays "running".
-_FAKE_FASTCHESS = r"""
-import sys, time
-i = 1
-while i < len(sys.argv):
-    if sys.argv[i] == "--sleep":
-        time.sleep(float(sys.argv[i + 1])); i += 2
-    else:
-        i += 1
-"""
-
-
-_PROXY_ID = "proxy-white"
 _PROXY_ID_BLACK = "proxy-black"
 _GAME_WINDOW = ".winbox.sturddle-wb-live-game"
 _FROZEN_WINDOW = ".winbox.sturddle-wb-live-frozen"
@@ -66,8 +49,8 @@ _RECONCILED_RESULT = "1-0"
 _RECONCILED_PGN = "\n".join([
     '[Event "live-e2e"]',
     '[Round "1"]',
-    '[White "Engine A"]',
-    '[Black "Engine B"]',
+    f'[White "{LIVE_ENGINE_A}"]',
+    f'[Black "{LIVE_ENGINE_B}"]',
     f'[Result "{_RECONCILED_RESULT}"]',
     "",
     f"1. d4 d5 {_RECONCILED_RESULT}",
@@ -85,72 +68,6 @@ _GET = "GET"
 _BOARD_STYLE = "green"
 
 
-@asynccontextmanager
-async def _running_tournament(tmp_path, monkeypatch):
-    """Serve the app with a running tournament and one registered proxy.
-    Yields (app, base, tournament, proxy secret)."""
-    monkeypatch.setattr(
-        FastchessRunner, "detect_binary",
-        staticmethod(lambda configured: configured),
-    )
-    monkeypatch.setattr(
-        fc_mod, "build_command",
-        lambda spec: [sys.executable, "-c", _FAKE_FASTCHESS, "--sleep", "60"],
-    )
-
-    port = free_port()
-    s = Settings(token="test", auth_disabled=True, port=port)
-    s.tournament_root = str(tmp_path / "tournaments")
-    s.tournament_fastchess_path = sys.executable
-    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
-    registry.add(name="Engine A", path=sys.executable)
-    registry.add(name="Engine B", path=sys.executable)
-    app = create_app(settings=s, engine_registry=registry)
-
-    with run_uvicorn(app, port=port) as (base, _s):
-        # Create and start a tournament.
-        store = app.state.tournament_store
-        t = store.create(
-            name="live-e2e",
-            template={"tc": "5+0.1", "rounds": 1, "games_in_parallel": 1},
-            engines=[
-                {"name": "Engine A", "cmd": sys.executable},
-                {"name": "Engine B", "cmd": sys.executable},
-            ],
-        )
-        await app.state.tournament_orch.start(t.id)
-        try:
-            # Inject a proxy session announcement so the workspace's
-            # Schedule has a row to click. Running through HTTP ensures the
-            # call happens in uvicorn's event loop (not the test's), so the
-            # WS subscriber queue is correctly populated for later lines.
-            orch = app.state.tournament_orch
-            # ``await orch.start(t.id)`` (above) has already assigned the
-            # secret synchronously before returning, so no poll is needed.
-            secret = orch.proxy_secret()
-            assert secret, "orchestrator must have a secret while running"
-
-            await _post_proxy(base, secret, [], engine_name="Engine A")
-            # The success above means proxy_session_started ran in the uvicorn
-            # loop; the proxy is registered before we touch the browser.
-            assert orch.engine_name_for(_PROXY_ID) == "Engine A"
-            yield app, base, t, secret
-        finally:
-            try:
-                await app.state.tournament_orch.stop(t.id)
-            except Exception:
-                pass
-
-
-async def _post_proxy(base, secret, lines, *, proxy_id=_PROXY_ID, **extra):
-    async with AsyncClient(base_url=base) as http:
-        r = await http.post("/internal/proxy", json={
-            "proxy_id": proxy_id, "secret": secret, "lines": lines, **extra,
-        })
-    # 200 (want-info gate signaled) or 204 (steady-state); both succeed.
-    assert r.is_success, f"proxy post failed: {r.status_code} {r.text}"
-
-
 async def _open_page(make_page):
     _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
     page_errors: list[str] = []
@@ -164,42 +81,7 @@ async def _open_page(make_page):
 async def _watch_proxy(page, base, secret):
     """Open the workspace, watch the proxy from the Engines window, and
     stream a first position/go/info so the board and eval render."""
-    await pin_arena_tournament_ux(page)
-    await page.goto(f"{base}/")
-    await page.wait_for_selector("#play-perspective")
-    await wait_perspective_ready(page)
-    await page.click('button[data-perspective="engines"]')
-    await page.wait_for_selector(".tournament-row")
-
-    # Open workspace. Default opens 3 windows
-    # (Standings + Live Games + Event log; the log window
-    # auto-opens for running tournaments via initWorkspace).
-    await page.click(".tournament-row")
-    await page.click(".tournaments-ribbon .t-workspace")
-    await page.wait_for_function(
-        "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
-    )
-
-    # Open the Engines window via the workspace JS API.
-    # Hovering the nested submenu (Window -> Tournament ->
-    # Engines) is brittle in Playwright; the API call is
-    # what the menu handler invokes anyway.
-    await page.evaluate(
-        """async () => {
-            const m = await import('/ui/app/tournament-workspace.js');
-            m.getActiveWorkspace().openSystemWindow('engines');
-        }"""
-    )
-    await page.wait_for_function(
-        "() => document.querySelectorAll('.winbox.sturddle-wb').length === 4",
-    )
-
-    # The workspace seeds from `proxies_active` on its
-    # initial refresh -- the active proxy should appear
-    # immediately as an Engines row.
-    await page.wait_for_selector(
-        ".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn",
-    )
+    await open_arena_engines_window(page, base)
 
     # Click the watch button -> live game window opens.
     await page.click(
@@ -216,7 +98,7 @@ async def _watch_proxy(page, base, secret):
     #      side-to-move = "b").
     #   2. go -> triggers orientation flip + clock display.
     #   3. info -> eval score renders.
-    await _post_proxy(base, secret, [
+    await post_proxy(base, secret, [
         "position startpos moves e2e4",
         "go wtime 300000 btime 300000",
         "info depth 12 score cp 35 pv e7e5",
@@ -242,7 +124,7 @@ async def _wait_eval_change(page, previous):
 
 @pytest.mark.asyncio
 async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_page):
-    async with _running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
         page, page_errors = await _open_page(make_page)
         await _watch_proxy(page, base, secret)
 
@@ -322,7 +204,7 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
 async def test_live_game_window_survives_dropped_socket(tmp_path, monkeypatch, make_page):
     """Mobile backgrounding drops the watcher socket; the window must stay
     open, reconnect, and repaint from the server's snapshot replay."""
-    async with _running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
         page, page_errors = await _open_page(make_page)
         # (page side, server side) per watcher connection.
         connections = []
@@ -355,7 +237,7 @@ async def test_live_game_window_survives_dropped_socket(tmp_path, monkeypatch, m
         assert reconnected.is_set(), "watch window closed instead of reconnecting"
 
         # Reaches the window via the live feed or the snapshot replay.
-        await _post_proxy(base, secret, ["info depth 14 score cp 80 pv e7e5"])
+        await post_proxy(base, secret, ["info depth 14 score cp 80 pv e7e5"])
         await _wait_eval_change(page, first_eval)
         assert await page.locator(".winbox.sturddle-wb-live").count() == 1
         assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
@@ -365,19 +247,19 @@ async def _finished_game(app, base, secret):
     """Confirm a white/black pair, then end its game via ucinewgame (the
     pair dissolves server-side). Returns the pair id."""
     orch = app.state.tournament_orch
-    await _post_proxy(base, secret, [], proxy_id=_PROXY_ID_BLACK, engine_name="Engine B")
-    await _post_proxy(base, secret, ["position startpos", "bestmove e2e4"])
-    await _post_proxy(base, secret, ["position startpos moves e2e4"], proxy_id=_PROXY_ID_BLACK)
+    await post_proxy(base, secret, [], proxy_id=_PROXY_ID_BLACK, engine_name=LIVE_ENGINE_B)
+    await post_proxy(base, secret, ["position startpos", "bestmove e2e4"])
+    await post_proxy(base, secret, ["position startpos moves e2e4"], proxy_id=_PROXY_ID_BLACK)
     pair_id = next(iter(orch._pair_proxies))
-    await _post_proxy(base, secret, ["ucinewgame"])
+    await post_proxy(base, secret, ["ucinewgame"])
     assert pair_id not in orch._pair_proxies
     return pair_id
 
 
 def _saved_game_board(pair_id):
     return {
-        "proxyId": _PROXY_ID, "gameId": pair_id,
-        "label": "Engine A vs Engine B", "engineName": "Engine A",
+        "proxyId": LIVE_PROXY_ID, "gameId": pair_id,
+        "label": f"{LIVE_ENGINE_A} vs {LIVE_ENGINE_B}", "engineName": LIVE_ENGINE_A,
         "min": False, "max": False,
     }
 
@@ -387,9 +269,9 @@ async def _reconcile_while_away(app, t, pair_id):
     history) before any page connects."""
     app.state.tournament_store.pgn_path(t.id).write_text(_RECONCILED_PGN, encoding="utf-8")
     await app.state.tournament_orch._emit_reconciled(ReconciledMatch(
-        pair_id=pair_id, white_proxy=_PROXY_ID, black_proxy=_PROXY_ID_BLACK,
-        white_engine="Engine A", black_engine="Engine B",
-        pgn_white="Engine A", pgn_black="Engine B",
+        pair_id=pair_id, white_proxy=LIVE_PROXY_ID, black_proxy=_PROXY_ID_BLACK,
+        white_engine=LIVE_ENGINE_A, black_engine=LIVE_ENGINE_B,
+        pgn_white=LIVE_ENGINE_A, pgn_black=LIVE_ENGINE_B,
         result=_RECONCILED_RESULT, termination=UNKNOWN_TERMINATION,
         game_n=1, ply_count=2,
     ))
@@ -460,7 +342,7 @@ _UIS = pytest.mark.parametrize(
 async def test_reload_restores_finished_game_board(tmp_path, monkeypatch, make_page, load_ui):
     """Mobile discards the backgrounded tab; on reload a saved board whose
     game ended while away must come back with its result banner."""
-    async with _running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
         pair_id = await _finished_game(app, base, secret)
         page, page_errors = await _open_page(make_page)
         await load_ui(page, base, t, _saved_game_board(pair_id))
@@ -474,7 +356,7 @@ async def test_reload_restores_finished_game_board(tmp_path, monkeypatch, make_p
 async def test_reload_restores_reconciled_game_board_frozen(tmp_path, monkeypatch, make_page, load_ui):
     """Reconciled while away: the backfilled game_reconciled resolves the
     board, so it reopens frozen (with Replay) instead of live."""
-    async with _running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
         pair_id = await _finished_game(app, base, secret)
         await _reconcile_while_away(app, t, pair_id)
         page, page_errors = await _open_page(make_page)
@@ -494,7 +376,7 @@ async def test_reload_resolves_board_whose_reconcile_left_history(
     game's game_reconciled is gone, so the board reattaches live. The
     replay's end message must still carry the game number (Review) and the
     opponent's name, and the resolution must persist for the next reload."""
-    async with _running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
         pair_id = await _finished_game(app, base, secret)
         await _reconcile_while_away(app, t, pair_id)
         # Stand-in for ring eviction after many later games.
@@ -504,7 +386,7 @@ async def test_reload_resolves_board_whose_reconcile_left_history(
 
         await page.wait_for_selector(f"{_GAME_WINDOW} .lg-result-replay", state="visible")
         assert await page.locator(f"{_GAME_WINDOW} .lg-result-score").text_content() == _RECONCILED_RESULT
-        assert await page.locator(f"{_GAME_WINDOW} .lg-top-name").text_content() == "Engine B"
+        assert await page.locator(f"{_GAME_WINDOW} .lg-top-name").text_content() == LIVE_ENGINE_B
         resolved = await saved_resolved(page, t)
         assert resolved == {
             "gameN": 1, "result": _RECONCILED_RESULT, "termination": UNKNOWN_TERMINATION,
@@ -517,7 +399,7 @@ async def test_arena_restore_waits_for_board_style(tmp_path, monkeypatch, make_p
     """Arena restores saved boards once the tournament detail and event
     history are in. On a slow link the board-style fetch can land after
     them: the restored board must still wear the saved style."""
-    async with _running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
         async with AsyncClient(base_url=base) as http:
             r = await http.put(_SETTINGS_PATH, json={"board_style": _BOARD_STYLE})
             assert r.is_success, r.text
