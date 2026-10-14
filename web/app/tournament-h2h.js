@@ -2,26 +2,25 @@
 // LOS, computed client-side from the tournament detail (no backend call). The
 // shared Standings table stays untouched; this is the "more detail" surface.
 //
-// Split like the standings table: makeH2HBody builds the DOM once (and wires
-// resizable columns); renderH2H fills the banner + rows from a tournament
-// `detail` payload (standings engines + the per-game {white, black, result}
-// list, both already in hand). The split keeps resize listeners from leaking
-// on each live repaint.
+// Split like the standings table: makeH2HBody builds the DOM once (a
+// resize-only data-table.js table); renderH2H fills the banner + rows from a
+// tournament `detail` payload (standings engines + the per-game {white,
+// black, result} list, both already in hand). The split keeps resize
+// listeners from leaking on each live repaint.
 
 import { RESULT } from "./chess-consts.js";
 import { MIDDOT, NO_GAMES_MSG } from "./tournament-row.js";
 import { STORAGE_KEY } from "./storage-keys.js";
-import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
+import { createTable } from "./data-table.js";
 import { escapeHtml, markSelectable } from "./wb-utils.js";
 import { fmtSignedElo, fmtMargin } from "./tournament-format.js";
-import { wireSplitScroll } from "./split-table.js";
 
 const NA = "--";
 // Banner segment separator, matching the SPRT line and progress label.
 const SEP = ` ${MIDDOT} `;
-// Column widths (Side, Score, %, W-D-L, Elo, LOS) + resize floor.
-const H2H_DEFAULT_PCTS = [18, 16, 12, 20, 20, 14];
+// Resize floor (default widths live on H2H_COLUMNS).
 const H2H_MIN_PCT = 6;
+const GROUP_ROW_CLASS = "h2h-group";
 
 // Logistic Elo from a 0..1 score; null for a perfect 0/1 (Elo undefined).
 function eloFromScore(score) {
@@ -120,36 +119,35 @@ function fmtLos(wins, losses, draws) {
   return v == null ? NA : `${v.toFixed(1)}%`;
 }
 
-// One detail line: side label, score, percent, W=D-L, and (color rows only)
-// Elo + LOS. The Overall row leaves the Elo/LOS cells blank.
-function statRow(label, wins, losses, draws, withElo) {
-  const n = wins + losses + draws;
-  const pts = wins + 0.5 * draws;
-  const pct = n ? (pts / n) * 100 : 0;
-  return (
-    `<tr><td class="h2h-side">${label}</td>` +
-    `<td>${fmtPts(pts)}/${n}</td>` +
-    `<td>${pct.toFixed(1)}%</td>` +
-    `<td class="h2h-wld">+${wins} =${draws} -${losses}</td>` +
-    `<td>${withElo ? fmtElo(wins, losses, draws) : ""}</td>` +
-    `<td>${withElo ? fmtLos(wins, losses, draws) : ""}</td></tr>`
-  );
-}
+const statN = (r) => r.wins + r.losses + r.draws;
+const statPts = (r) => r.wins + 0.5 * r.draws;
 
-// A per-engine group: a name banner row then Overall / White / Black. Overall
-// is the white+black sum (single source -- the games list), so the three rows
-// are always self-consistent regardless of the standings W/L/D.
+// Detail-line columns: side label, score, percent, W-D-L, and (color rows
+// only, `withElo`) Elo + LOS. The Overall row leaves the Elo/LOS cells blank.
+const H2H_COLUMNS = [
+  { key: "side", label: "", width: 18, tdClass: "h2h-side", cell: (r) => r.side },
+  { key: "score", label: "Score", width: 16, cell: (r) => `${fmtPts(statPts(r))}/${statN(r)}` },
+  { key: "pct", label: "%", width: 12,
+    cell: (r) => `${(statN(r) ? (statPts(r) / statN(r)) * 100 : 0).toFixed(1)}%` },
+  { key: "wld", label: "W-D-L", width: 20, tdClass: "h2h-wld", cell: (r) => `+${r.wins} =${r.draws} -${r.losses}` },
+  { key: "elo", label: "Elo", width: 20, cell: (r) => (r.withElo ? fmtElo(r.wins, r.losses, r.draws) : "") },
+  { key: "los", label: "LOS", width: 14, cell: (r) => (r.withElo ? fmtLos(r.wins, r.losses, r.draws) : "") },
+];
+
+// A per-engine group: a name group row (full width) then Overall / White /
+// Black. Overall is the white+black sum (single source -- the games list), so
+// the three rows are always self-consistent regardless of the standings W/L/D.
 function engineRows(e, games) {
   const { white, black } = colorSplit(games, e.name);
-  const oWins = white.wins + black.wins;
-  const oLosses = white.losses + black.losses;
-  const oDraws = white.draws + black.draws;
-  return (
-    `<tr class="h2h-group"><td colspan="6">${escapeHtml(e.name)}</td></tr>` +
-    statRow("Overall", oWins, oLosses, oDraws, false) +
-    statRow("White", white.wins, white.losses, white.draws, true) +
-    statRow("Black", black.wins, black.losses, black.draws, true)
-  );
+  const overall = {
+    wins: white.wins + black.wins, losses: white.losses + black.losses, draws: white.draws + black.draws,
+  };
+  return [
+    { group: e.name },
+    { side: "Overall", ...overall, withElo: false },
+    { side: "White", wins: white.wins, losses: white.losses, draws: white.draws, withElo: true },
+    { side: "Black", wins: black.wins, losses: black.losses, draws: black.draws, withElo: true },
+  ];
 }
 
 // 2-engine headline: leader (engines[0], sorted by points) vs the other, with
@@ -165,54 +163,29 @@ function bannerHtml(engines) {
 }
 
 // Build the H2H body once: a banner slot, an empty-state line, and a
-// resizable-column table the fill step populates. Mirrors makeStandingsBody.
+// resize-only table (no sort, no columns menu) the fill step populates.
+// Mirrors makeStandingsBody.
 export function makeH2HBody() {
   const el = document.createElement("div");
   el.className = "wb-h2h";
   el.innerHTML = `
     <div class="h2h-banner-slot"></div>
-    <div class="wb-empty h2h-empty">${NO_GAMES_MSG}</div>
-    <div class="h2h-table-wrap" hidden>
-      <div class="h2h-head-scroll">
-        <table class="wb-table h2h-tbl h2h-head-tbl">
-          <colgroup><col><col><col><col><col><col></colgroup>
-          <thead><tr>
-            <th><span class="th-grip"></span></th>
-            <th>Score<span class="th-grip"></span></th>
-            <th>%<span class="th-grip"></span></th>
-            <th>W-D-L<span class="th-grip"></span></th>
-            <th>Elo<span class="th-grip"></span></th>
-            <th>LOS</th>
-          </tr></thead>
-        </table>
-      </div>
-      <div class="h2h-body-scroll">
-        <table class="wb-table h2h-tbl h2h-body-tbl">
-          <colgroup><col><col><col><col><col><col></colgroup>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>`;
-  const wrapEl = el.querySelector(".h2h-table-wrap");
-  const headTableEl = el.querySelector(".h2h-head-tbl");
-  const bodyTableEl = el.querySelector(".h2h-body-tbl");
-  const headScrollEl = el.querySelector(".h2h-head-scroll");
-  const bodyScrollEl = el.querySelector(".h2h-body-scroll");
-  markSelectable(headTableEl);
-  markSelectable(bodyTableEl);
-  wireSplitScroll(headScrollEl, bodyScrollEl);
-  const headColEls = Array.from(headTableEl.querySelectorAll("col"));
-  const bodyColEls = Array.from(bodyTableEl.querySelectorAll("col"));
-  const colPcts = H2H_DEFAULT_PCTS.slice();
-  attachColumnResize({
-    table: headTableEl,
-    grips: Array.from(headTableEl.querySelectorAll(".th-grip")),
-    overlayHost: wrapEl,
-    storageKey: STORAGE_KEY.STUDIO_H2H_COL_PCTS,
-    sizes: colPcts,
-    unit: "pct",
-    applySizes: makePctApplySizes([headColEls, bodyColEls], H2H_MIN_PCT),
+    <div class="wb-empty h2h-empty">${NO_GAMES_MSG}</div>`;
+  const table = createTable({
+    cls: "h2h",
+    tableClass: "wb-table h2h-tbl",
+    columns: H2H_COLUMNS,
+    layoutKey: STORAGE_KEY.STUDIO_H2H_LAYOUT,
+    minPct: H2H_MIN_PCT,
+    traits: { resize: true },
+    rowAttrs: (r) => ({ class: r.group != null ? GROUP_ROW_CLASS : null }),
+    fullRow: (r) => (r.group != null ? escapeHtml(r.group) : null),
   });
+  table.wrap.hidden = true;
+  markSelectable(table.headTable);
+  markSelectable(table.bodyTable);
+  el.append(table.wrap);
+  el._table = table;
   return el;
 }
 
@@ -222,8 +195,7 @@ export function renderH2H(el, detail) {
   if (!el) return;
   const bannerSlot = el.querySelector(".h2h-banner-slot");
   const emptyEl = el.querySelector(".h2h-empty");
-  const wrapEl = el.querySelector(".h2h-table-wrap");
-  const tbody = el.querySelector(".h2h-body-tbl tbody");
+  const wrapEl = el._table.wrap;
   const engines = detail?.standings?.engines || [];
   const games = detail?.games || [];
   if (engines.length === 0 || games.length === 0) {
@@ -238,5 +210,5 @@ export function renderH2H(el, detail) {
   // played-so-far standings (a 3-engine RR is transiently 2-engine early on).
   const isPair = detail.engines?.length === 2 && engines.length === 2;
   bannerSlot.innerHTML = isPair ? bannerHtml(engines) : "";
-  tbody.innerHTML = engines.map((e) => engineRows(e, games)).join("");
+  el._table.render(engines.flatMap((e) => engineRows(e, games)));
 }

@@ -83,7 +83,7 @@ export const STORAGE_KEY = {
   STUDIO_HISTORY_SORT: "sturddle:studio:historySort",
   STUDIO_HISTORY_STACK: "sturddle:studio:historyStack",
   STUDIO_HISTORY_LAYOUT: "sturddle:studio:historyLayout",
-  STUDIO_H2H_COL_PCTS: "sturddle:studio:h2hColPcts",
+  STUDIO_H2H_LAYOUT: "sturddle:studio:h2hLayout",
   STUDIO_ENGINES_SORT: "sturddle:studio:enginesSort",
   WORKSPACE_PREFIX: "sturddle:workspace:",
   LIVE_PVTABLE_COL_WIDTHS: "sturddle:live:pvtable:colWidths",

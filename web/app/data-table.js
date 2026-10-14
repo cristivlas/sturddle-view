@@ -161,9 +161,13 @@ function positionMenu(menu, btn) {
 // traits: { sort?: { sortKey, stackKey, defaultState }, resize?, reorder?,
 // hide?, fit? }. `cls` prefixes the wrap/scroller/table classes; the caller
 // appends `wrap` and fills it via render(rows). rowAttrs sets each <tr>'s
-// attributes (see trOpen). onRender(reason) runs after every body rebuild
-// (RENDER_REASON), so callers can repaint row state.
-export function createTable({ cls, tableClass, columns, layoutKey, minPct, traits = {}, rowAttrs, onRender }) {
+// attributes (see trOpen). fullRow(row) => html|null renders a row as one
+// cell spanning every column (group headings) instead of per-column cells.
+// onRender(reason) runs after every body rebuild (RENDER_REASON), so callers
+// can repaint row state.
+export function createTable({
+  cls, tableClass, columns, layoutKey, minPct, traits = {}, rowAttrs, fullRow, onRender,
+}) {
   const byKey = new Map(columns.map((c) => [c.key, c]));
   const layout = reconcileLayout(columns, loadJson(layoutKey) || {});
   const hasMenu = traits.reorder || traits.hide || traits.fit;
@@ -209,7 +213,13 @@ export function createTable({ cls, tableClass, columns, layoutKey, minPct, trait
     const active = document.activeElement;
     const focusedId = tbody.contains(active) ? active.closest("tr")?.dataset.id : undefined;
     tbody.innerHTML = sorted
-      .map((r, i) => `${trOpen(r, i, rowAttrs)}${cols.map((c) => tdHtml(c, r)).join("")}</tr>`)
+      .map((r, i) => {
+        const full = fullRow?.(r);
+        const cells = full != null
+          ? `<td colspan="${cols.length}">${full}</td>`
+          : cols.map((c) => tdHtml(c, r)).join("");
+        return `${trOpen(r, i, rowAttrs)}${cells}</tr>`;
+      })
       .join("");
     if (focusedId != null) {
       tbody.querySelector(`tr[data-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
