@@ -269,6 +269,32 @@ async def _fit(page):
     await page.click(f'{MENU} [data-action="fit"]')
 
 
+# fitPcts on content that fits: natural px widths, the available px, minPct.
+FIT_NATURAL = [50, 100, 150]
+FIT_AVAILABLE = 600
+FIT_MIN_PCT = 5
+FULL_PCT = 100
+PCT_TOL = 1e-9
+
+
+@pytest.mark.asyncio
+async def test_fit_spare_is_shared_evenly(server, make_page):
+    """With room to spare, every column gets its natural width plus the same
+    extra px, so the gaps between contents are even."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    await _open_standings(page, server)
+    pcts = await page.evaluate(
+        """async ([natural, available, minPct]) => {
+            const { fitPcts } = await import('/ui/app/data-table.js');
+            return fitPcts(natural, available, minPct);
+        }""",
+        [FIT_NATURAL, FIT_AVAILABLE, FIT_MIN_PCT],
+    )
+    extra = (FIT_AVAILABLE - sum(FIT_NATURAL)) / len(FIT_NATURAL)
+    expected = [(w + extra) / FIT_AVAILABLE * FULL_PCT for w in FIT_NATURAL]
+    assert pcts == pytest.approx(expected, abs=PCT_TOL)
+
+
 @pytest.mark.asyncio
 async def test_fit_when_all_fits_truncates_nothing(server, make_page):
     """With room for everything, Fit gives each column its content width:

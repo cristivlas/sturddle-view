@@ -78,18 +78,21 @@ function reconcileLayout(columns, saved) {
 }
 
 // Column widths (% of the body) from each column's natural (max-content) px
-// width, sized like a browser's auto table. All fit: the spare is spread in
-// proportion to the natural widths. Overflow: columns no wider
-// than an even share of the space keep their natural width (water-filling),
-// and the wider ones split what's left evenly. Every column gets at least
-// minPct; too many columns for that floor: equal shares.
-function fitPcts(natural, available, minPct) {
+// width. All fit: every column gets its natural width plus an equal share of
+// the spare, so the gaps between contents are even. Overflow: columns no
+// wider than an even share of the space keep their natural width
+// (water-filling), and the wider ones split what's left evenly. Every
+// column gets at least minPct; too many columns for that floor: equal shares.
+export function fitPcts(natural, available, minPct) {
   const n = natural.length;
   if (minPct * n >= FULL_PCT || available <= 0) return natural.map(() => FULL_PCT / n);
   const floor = (minPct / FULL_PCT) * available;
   const px = natural.map((w) => Math.max(w, floor));
   const total = px.reduce((s, w) => s + w, 0);
-  if (total <= available) return px.map((w) => (w / total) * FULL_PCT);
+  if (total <= available) {
+    const extra = (available - total) / n;
+    return px.map((w) => ((w + extra) / available) * FULL_PCT);
+  }
   let free = px.map((_, i) => i);
   let budget = available;
   for (;;) {
