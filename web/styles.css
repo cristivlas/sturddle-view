@@ -7,9 +7,9 @@
   --scrollbar-thumb-min-h: 50px;
   --wb-outline: rgba(136, 136, 136, 0.4);
   --wb-radius: 8px;
-  /* Dialog panel background (wa-dialog's --dialog-bg); dropdown menus share
-     it. A separate name: --dialog-bg must stay undefined outside dialogs,
-     where tables reading it fall back to transparent. */
+  /* Command-and-control surface: dialogs (wa-dialog's --dialog-bg), menus,
+     the ribbon. A separate name: --dialog-bg must stay undefined outside
+     dialogs, where tables reading it fall back to transparent. */
   --panel-bg: #363a42;
   /* Hovered/focused menu item: a blue-gray accent over the gray panel. */
   --panel-item-hover: #364b66;
@@ -17,9 +17,10 @@
      cancel, engine Refresh/Reset): a step lighter than --panel-bg. */
   --panel-btn-bg: #464b55;
   --panel-btn-bg-hover: #525864;
-  /* Button ribbon background: docked rails and the floating window; the
-     mobile horizontal bars blend into the page instead. */
-  --ribbon-bg: var(--panel);
+  /* Button ribbon background (a command surface, see --panel-bg): docked
+     rails and the floating window; the mobile horizontal bars blend into the
+     page instead. */
+  --ribbon-bg: var(--panel-bg);
   --ribbon-bar-bg: transparent;
   /* Minimized-WinBox dock strip; tournament-workspace.js reads it as
      MINIMIZE_FOOTER_H. */
@@ -3354,17 +3355,59 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 .dt-menu-move:focus { background: var(--panel-item-hover); }
 .dt-menu-move:disabled { opacity: 0.3; cursor: default; }
+/* Pointer devices: a row's move arrows show only while it holds focus. The
+   mouse moves focus to the item under it (menu-nav.js), so focus alone
+   tracks mouse and keyboard; :hover would light a second row after a key
+   press or a move-click. Hidden by color, not opacity/visibility, so they
+   stay focusable and keep the disabled dimming. */
+@media (hover: hover) {
+  .dt-menu-col:not(:focus-within) .dt-menu-move { color: transparent; }
+}
 /* Baseline, not middle: the taller menu button in the first cell would
    otherwise push that cell's label below the other labels. */
 .dt-head-tbl th { vertical-align: baseline; }
+/* Header drag-to-reorder (data-table.js): dimmed source cell, grabbing
+   cursor while the drag runs, the cell's floating copy, and the
+   header-height drop marker. */
+.dt-th-dragging { opacity: 0.5; }
+.dt-drag-ghost {
+  position: absolute;
+  table-layout: fixed;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  z-index: 6;
+}
+/* A lifted cell: solid lighter fill, full-strength label, and an accent edge
+   (the drop marker stays neutral so the two don't clash; on the cell, as its
+   fill would cover a table outline). Top-aligned so data-table.js can pad
+   its label onto the header's line. Two classes outrank the per-table header
+   th rules. */
+.dt-head-tbl.dt-drag-ghost th {
+  vertical-align: top;
+  background: var(--panel-btn-bg);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.dt-reordering th, .dt-reordering th * { cursor: grabbing; }
+.dt-drop-marker {
+  position: absolute;
+  width: 2px; margin-left: -1px;
+  background: var(--wb-outline);
+  pointer-events: none;
+  /* Above the floating copy, which often sits over the drop boundary. */
+  z-index: 7;
+}
 /* rowNav: the body table is the Tab stop, but the ring goes on its current
    row (the selection, or the cursor) rather than boxing the whole table.
    Cursor mode has no selection styling of its own, so it also tints. */
 .dt-rownav:focus, .dt-rownav:focus-visible { outline: none; }
 .dt-rownav:focus-visible tr[aria-selected="true"] { outline: 1px solid var(--accent); outline-offset: -1px; }
 .dt-rownav-cursor:focus-visible tr[aria-selected="true"] { background: var(--row-bg-selected); }
+/* height/line-height: undo Web Awesome's native button sizing (form-control
+   height); the vertical padding sets the header row's height instead. */
 .dt-menu-btn {
-  background: none; border: none; padding: 0; margin-right: 12px;
+  background: none; border: none; padding: 8px 0; margin-right: 12px;
+  height: auto; line-height: 1;
   color: inherit; font-size: 0.875rem; cursor: pointer; vertical-align: middle;
 }
 .dt-menu-btn:hover { color: var(--fg); }
@@ -4035,8 +4078,6 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
    the panel, outside the scroll pane, so it stays put as content tails. */
 .studio-tabs wa-tab-panel[name="log"]::part(base),
 .studio-tabs wa-tab-panel[name="engines"]::part(base),
-.studio-tabs wa-tab-panel[name="h2h"]::part(base),
-.studio-tabs wa-tab-panel[name="standings"]::part(base),
 .studio-tabs wa-tab-panel[name="livegames"]::part(base) { padding-top: 8px; }
 /* Keep the watch buttons off the pane's right edge / scrollbar. */
 .studio-pane .wb-sched-attach-btn { margin-right: 8px; }
@@ -4737,12 +4778,13 @@ wa-dialog.tournament-info-dialog::part(body) {
 }
 .wb-sprt--h1 { box-shadow: inset 3px 0 0 #2d6a3f; }
 .wb-sprt--h0 { box-shadow: inset 3px 0 0 #7a2222; }
-.wb-sprt--studio { background: var(--row-bg-selected); margin: 0 8px 10px; }
+/* Top margin: headroom under the Studio tabs (the table header sits flush). */
+.wb-sprt--studio { background: var(--row-bg-selected); margin: 8px 8px 10px; }
 /* Studio Head-to-Head: a fixed 2-engine banner + an internally scrolled
    table (split-table pattern above, tournament-h2h.js); the head th is
    positioned so it anchors the .th-grip handles. */
 .wb-h2h { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-.h2h-banner { margin: 0 8px 10px; background: var(--row-bg-selected); }
+.h2h-banner { margin: 8px 8px 10px; background: var(--row-bg-selected); }
 .h2h-table-wrap { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .h2h-tbl { table-layout: fixed; }
 .h2h-head-tbl th { position: relative; background: var(--bg); }

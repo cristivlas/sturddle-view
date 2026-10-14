@@ -1,6 +1,6 @@
 // Per-engine settings dialog. Two tabs:
-//   Options — UCI option grid (rendered from option_schema).
-//   Launch  — extra command-line argv + per-engine environment overrides.
+//   Options -- UCI option grid (rendered from option_schema).
+//   Launch  -- extra command-line argv + per-engine environment overrides.
 // Save persists name + options + args + env in one PATCH; Refresh re-probes
 // the engine using the *currently-edited* path/args/env (not the saved
 // profile) so the user sees what the new launch profile actually exposes.
@@ -107,7 +107,8 @@ function buildField(name, entry, current, ctx) {
         const syncTitle = syncTooltip(text);
         const browse = document.createElement("wa-button");
         browse.size = "small";
-        browse.title = "Browse…";
+        browse.classList.add(PANEL_BTN_CLASS);
+        browse.title = "Browse\u2026";
         browse.setAttribute("aria-label", `Pick ${name}`);
         const browseIcon = document.createElement("wa-icon");
         browseIcon.setAttribute("name", "folder-open");
@@ -160,8 +161,8 @@ function buildField(name, entry, current, ctx) {
 
 // `launchState.args` and `launchState.env` are the persisted shapes
 // (filtered list[str] and dict[str,str] respectively). The dialog keeps
-// parallel working copies — `argsRows: string[]` and `envRows: {key, value}[]`
-// — so the user can leave blank rows in flight without persisting them
+// parallel working copies -- `argsRows: string[]` and `envRows: {key, value}[]`
+// -- so the user can leave blank rows in flight without persisting them
 // or colliding on duplicate keys. Each input event syncs the working
 // copy back into the persisted shape (filtering out empties); Save and
 // Refresh always read the persisted shape.
@@ -179,7 +180,7 @@ function buildLaunchTab(engine, launchState) {
   argsHdr.className = "engine-launch-section-hdr";
   const argsHelp = document.createElement("p");
   argsHelp.className = "muted engine-launch-help";
-  argsHelp.textContent = "Values pass through verbatim — no shell parsing.";
+  argsHelp.textContent = "Values pass through verbatim \u2014 no shell parsing.";
   const argsList = document.createElement("div");
   argsList.className = "engine-launch-args-list";
 
@@ -261,7 +262,7 @@ function buildLaunchTab(engine, launchState) {
   // Working copy: array of {key, value} so multiple empty rows don't
   // collapse on each other (a Record<string,string> can't hold dupes).
   // Persisted shape (launchState.env) is rebuilt on every edit, dropping
-  // rows with an empty key. On duplicate keys the last entry wins —
+  // rows with an empty key. On duplicate keys the last entry wins --
   // matches what the server would do anyway.
   if (!Array.isArray(launchState.envRows)) {
     launchState.envRows = Object.entries(launchState.env || {}).map(
@@ -368,7 +369,7 @@ export function showEngineOptionsDialog({
 
       // Tab group ------------------------------------------------------
       const tabs = document.createElement("wa-tab-group");
-      // Side tabs on desktop, top tabs on narrow viewports — the rail
+      // Side tabs on desktop, top tabs on narrow viewports -- the rail
       // eats too much horizontal space on phones.
       const isNarrow = mqNarrowDialog.matches;
       tabs.placement = isNarrow ? "top" : "start";
@@ -400,7 +401,7 @@ export function showEngineOptionsDialog({
       const form = document.createElement("div");
       form.className = "engine-opt-form";
 
-      // Display name — defaults to what the engine announced via UCI id name
+      // Display name -- defaults to what the engine announced via UCI id name
       // (or the binary basename if the probe failed). Editable; this is the
       // label shown in clocks, PGN headers, and tournaments.
       const startName = engine.name || "";
@@ -591,7 +592,7 @@ export function showEngineOptionsDialog({
 
       dialog.append(refresh, defaultsBtn, save);
 
-      // Refresh and Reset are options-tab actions — hide them on the
+      // Refresh and Reset are options-tab actions -- hide them on the
       // Launch tab where they have no meaningful target.
       function syncFooterForTab(panelName) {
         const onOptions = panelName === "options";

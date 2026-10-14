@@ -1,7 +1,7 @@
 """E2E: data-table.js traits on the Studio Standings table (Playwright/Chromium).
 
-Columns menu (hide/show, reorder, fit, reset), layout persistence across a
-reload, hidden sort columns dropping out of the row order, and keyboard
+Columns menu (hide/show, reorder, fit, reset), header drag-to-reorder,
+layout persistence across a reload, hidden sort columns dropping out of the row order, and keyboard
 access (tab order + Enter to sort, arrow-key menu navigation).
 
 Skipped if Playwright/Chromium isn't installed.
@@ -166,6 +166,61 @@ async def test_reorder_skips_hidden_neighbor(server, make_page):
     assert_no_page_errors(errors)
 
 
+# Header drag: pointer steps, and where on the target header the drag ends
+# (past its midpoint, so the drop lands after it).
+DRAG_STEPS = 8
+DROP_FRAC = 0.8
+_DRAG_LEFTOVERS = "() => document.querySelectorAll('.dt-drag-ghost, .dt-drop-marker').length"
+DEFAULT_SORT = {"%": "descending"}
+
+
+async def _press_and_drag(page, label, onto):
+    """Press `label`'s header and drag it over `onto`'s; the button stays down."""
+    src = await page.locator(_th_at(label)).bounding_box()
+    dst = await page.locator(_th_at(onto)).bounding_box()
+    y = src["y"] + src["height"] / 2
+    await page.mouse.move(src["x"] + src["width"] / 2, y)
+    await page.mouse.down()
+    await page.mouse.move(dst["x"] + dst["width"] * DROP_FRAC, y, steps=DRAG_STEPS)
+
+
+@pytest.mark.asyncio
+async def test_drag_header_reorders_and_persists(server, make_page):
+    """Dragging G's header past D's midpoint drops it after D without
+    sorting G; the order survives a reload."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_standings(page, server)
+
+    await _press_and_drag(page, "G", "D")
+    await page.mouse.up()
+    expected = ["Engine", "W", "L", "D", "G", *DEFAULT_LABELS[5:]]
+    assert await page.evaluate(_LABELS) == expected
+    assert await page.evaluate(_SORTED_HEADERS) == DEFAULT_SORT
+    assert await page.evaluate(_DRAG_LEFTOVERS) == 0
+
+    await _reload_standings(page)
+    assert await page.evaluate(_LABELS) == expected
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_drag_header_escape_cancels(server, make_page):
+    """Esc mid-drag drops nothing: the order stays, and the release doesn't
+    sort."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_standings(page, server)
+
+    await _press_and_drag(page, "G", "D")
+    await page.keyboard.press("Escape")
+    await page.mouse.up()
+    assert await page.evaluate(_LABELS) == DEFAULT_LABELS
+    assert await page.evaluate(_SORTED_HEADERS) == DEFAULT_SORT
+    assert await page.evaluate(_DRAG_LEFTOVERS) == 0
+    assert_no_page_errors(errors)
+
+
 @pytest.mark.asyncio
 async def test_fit_columns_widens_content_and_persists(server, make_page):
     """Fit sizes columns by content: the truncated long-name Engine column
@@ -212,6 +267,32 @@ _ARROW_FITS = (
 async def _fit(page):
     await _open_menu(page)
     await page.click(f'{MENU} [data-action="fit"]')
+
+
+# fitPcts on content that fits: natural px widths, the available px, minPct.
+FIT_NATURAL = [50, 100, 150]
+FIT_AVAILABLE = 600
+FIT_MIN_PCT = 5
+FULL_PCT = 100
+PCT_TOL = 1e-9
+
+
+@pytest.mark.asyncio
+async def test_fit_spare_is_shared_evenly(server, make_page):
+    """With room to spare, every column gets its natural width plus the same
+    extra px, so the gaps between contents are even."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    await _open_standings(page, server)
+    pcts = await page.evaluate(
+        """async ([natural, available, minPct]) => {
+            const { fitPcts } = await import('/ui/app/data-table.js');
+            return fitPcts(natural, available, minPct);
+        }""",
+        [FIT_NATURAL, FIT_AVAILABLE, FIT_MIN_PCT],
+    )
+    extra = (FIT_AVAILABLE - sum(FIT_NATURAL)) / len(FIT_NATURAL)
+    expected = [(w + extra) / FIT_AVAILABLE * FULL_PCT for w in FIT_NATURAL]
+    assert pcts == pytest.approx(expected, abs=PCT_TOL)
 
 
 @pytest.mark.asyncio

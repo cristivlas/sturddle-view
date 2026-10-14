@@ -23,6 +23,7 @@ import pytest
 import pytest_asyncio
 import uvicorn
 from fastapi.testclient import TestClient
+from httpx import AsyncClient
 
 import sturddle_view.api.tournaments as tournaments_api
 import sturddle_view.app as app_mod
@@ -38,6 +39,8 @@ from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.play.chess_clock import ChessClock, TimeControl
 from sturddle_view.play.human_vs_engine import HumanVsEngine
+from sturddle_view.tournament import fastchess as fc_mod
+from sturddle_view.tournament.fastchess import FastchessRunner
 
 
 SNAPSHOT_UPDATE_FLAG = "--snapshot-update"
@@ -911,6 +914,114 @@ async def open_arena_workspace(page) -> None:
     await page.click('.tournaments-ribbon .t-workspace')
     await page.wait_for_function(
         "() => document.querySelectorAll('.winbox.sturddle-wb').length >= 1",
+    )
+
+
+# Minimal fake fastchess: stays alive so the tournament stays "running".
+_FAKE_FASTCHESS = r"""
+import sys, time
+i = 1
+while i < len(sys.argv):
+    if sys.argv[i] == "--sleep":
+        time.sleep(float(sys.argv[i + 1])); i += 2
+    else:
+        i += 1
+"""
+_FAKE_FASTCHESS_SLEEP_S = "60"
+LIVE_ENGINE_A = "Engine A"
+LIVE_ENGINE_B = "Engine B"
+# The proxy running_tournament registers (a LIVE_ENGINE_A process).
+LIVE_PROXY_ID = "proxy-white"
+PROXY_POST_PATH = "/internal/proxy"
+
+
+@contextlib.asynccontextmanager
+async def running_tournament(tmp_path, monkeypatch):
+    """Serve the app with a running tournament (fake fastchess) and one
+    registered proxy, LIVE_PROXY_ID. Yields (app, base, tournament, proxy
+    secret)."""
+    monkeypatch.setattr(
+        FastchessRunner, "detect_binary",
+        staticmethod(lambda configured: configured),
+    )
+    monkeypatch.setattr(
+        fc_mod, "build_command",
+        lambda spec: [sys.executable, "-c", _FAKE_FASTCHESS, "--sleep", _FAKE_FASTCHESS_SLEEP_S],
+    )
+
+    port = free_port()
+    s = Settings(token="test", auth_disabled=True, port=port)
+    s.tournament_root = str(tmp_path / "tournaments")
+    s.tournament_fastchess_path = sys.executable
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
+    engines = (LIVE_ENGINE_A, LIVE_ENGINE_B)
+    for name in engines:
+        registry.add(name=name, path=sys.executable)
+    app = create_app(settings=s, engine_registry=registry)
+
+    with run_uvicorn(app, port=port) as (base, _s):
+        store = app.state.tournament_store
+        t = store.create(
+            name="live-e2e",
+            template={"tc": "5+0.1", "rounds": 1, "games_in_parallel": 1},
+            engines=[{"name": name, "cmd": sys.executable} for name in engines],
+        )
+        await app.state.tournament_orch.start(t.id)
+        try:
+            # Posting over HTTP runs proxy_session_started in uvicorn's event
+            # loop (not the test's), so the WS subscriber queue is correctly
+            # populated for later lines. start() assigned the secret already.
+            orch = app.state.tournament_orch
+            secret = orch.proxy_secret()
+            assert secret, "orchestrator must have a secret while running"
+            await post_proxy(base, secret, [], engine_name=LIVE_ENGINE_A)
+            assert orch.engine_name_for(LIVE_PROXY_ID) == LIVE_ENGINE_A
+            yield app, base, t, secret
+        finally:
+            try:
+                await app.state.tournament_orch.stop(t.id)
+            except Exception:
+                pass
+
+
+async def post_proxy(base, secret, lines, *, proxy_id=LIVE_PROXY_ID, client=None, **extra):
+    """Post proxy lines as the engine proxy would. Pass `client` (an
+    AsyncClient on `base`) to reuse one connection across many posts."""
+    body = {"proxy_id": proxy_id, "secret": secret, "lines": lines, **extra}
+    if client is None:
+        async with AsyncClient(base_url=base) as http:
+            r = await http.post(PROXY_POST_PATH, json=body)
+    else:
+        r = await client.post(PROXY_POST_PATH, json=body)
+    # 200 (want-info gate signaled) or 204 (steady-state); both succeed.
+    assert r.is_success, f"proxy post failed: {r.status_code} {r.text}"
+
+
+async def open_arena_engines_window(page, base: str) -> None:
+    """Open the first tournament's Arena workspace plus its Engines window,
+    and wait for LIVE_PROXY_ID's row there."""
+    await goto_arena_tournaments(page, base)
+    # Default opens 3 windows (Standings + Live Games + Event log; the log
+    # auto-opens for running tournaments via initWorkspace).
+    await page.click(".tournament-row")
+    await page.click(".tournaments-ribbon .t-workspace")
+    await page.wait_for_function(
+        "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
+    )
+    # Hovering the nested Window -> Tournament -> Engines submenu is brittle
+    # in Playwright; the API call is what the menu handler invokes anyway.
+    await page.evaluate(
+        """async () => {
+            const m = await import('/ui/app/tournament-workspace.js');
+            m.getActiveWorkspace().openSystemWindow('engines');
+        }"""
+    )
+    await page.wait_for_function(
+        "() => document.querySelectorAll('.winbox.sturddle-wb').length === 4",
+    )
+    # The workspace seeds from `proxies_active` on its initial refresh.
+    await page.wait_for_selector(
+        ".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn",
     )
 
 
