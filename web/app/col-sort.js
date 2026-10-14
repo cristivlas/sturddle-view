@@ -19,6 +19,7 @@ import { ACTIVATE_KEYS } from "./keys.js";
 export const SORT_DIR = Object.freeze({ ASC: "asc", DESC: "desc", NONE: "none" });
 
 export const ARROW_CLASS = "th-sort-arrow";
+export const TH_SORTABLE_CLASS = "th-sortable";
 export const ARROW_DESC = "caret-down";
 export const ARROW_ASC = "caret-up";
 
@@ -176,7 +177,7 @@ export function attachColumnSort({
   ths.forEach((th, i) => {
     const col = columns[i];
     if (!col || col.sortable === false) return;
-    th.classList.add("th-sortable");
+    th.classList.add(TH_SORTABLE_CLASS);
     th.addEventListener("click", (ev) => {
       // Don't sort when the click was on the resize grip or a control inside
       // the th (columns-menu button); those clicks still bubble on.

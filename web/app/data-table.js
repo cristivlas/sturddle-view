@@ -9,7 +9,7 @@
 import { loadJson, saveJson } from "./storage.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
-import { attachColumnSort, TH_LABEL_CLASS } from "./col-sort.js";
+import { ARROW_CLASS, ARROW_DESC, attachColumnSort, TH_LABEL_CLASS, TH_SORTABLE_CLASS } from "./col-sort.js";
 import { attachMenuNav, focusFirstItem } from "./menu-nav.js";
 import { wireSplitScroll } from "./split-table.js";
 import { escapeHtml, LIST_NAV_KEYS, wireArrowKeyNav } from "./wb-utils.js";
@@ -61,25 +61,33 @@ function reconcileLayout(columns, saved) {
   return { order, hidden, widths };
 }
 
-// Proportional shares of the `natural` widths summing to 100%, each at least
-// minPct: columns pinned at the floor drop out and the rest re-share. Too
-// many columns for the floor: equal shares.
-function fitPcts(natural, minPct) {
-  if (minPct * natural.length >= FULL_PCT) return natural.map(() => FULL_PCT / natural.length);
-  const out = new Array(natural.length);
-  let free = natural.map((_, i) => i);
-  let budget = FULL_PCT;
+// Column widths (% of the body) from each column's natural (max-content) px
+// width, sized like a browser's auto table. All fit: the spare is spread in
+// proportion to the natural widths. Overflow: columns no wider
+// than an even share of the space keep their natural width (water-filling),
+// and the wider ones split what's left evenly. Every column gets at least
+// minPct; too many columns for that floor: equal shares.
+function fitPcts(natural, available, minPct) {
+  const n = natural.length;
+  if (minPct * n >= FULL_PCT || available <= 0) return natural.map(() => FULL_PCT / n);
+  const floor = (minPct / FULL_PCT) * available;
+  const px = natural.map((w) => Math.max(w, floor));
+  const total = px.reduce((s, w) => s + w, 0);
+  if (total <= available) return px.map((w) => (w / total) * FULL_PCT);
+  let free = px.map((_, i) => i);
+  let budget = available;
   for (;;) {
-    const total = free.reduce((s, i) => s + natural[i], 0) || 1;
-    const low = free.filter((i) => (natural[i] / total) * budget < minPct);
-    if (!low.length) {
-      free.forEach((i) => { out[i] = (natural[i] / total) * budget; });
-      return out;
+    const share = budget / free.length;
+    const fits = free.filter((i) => px[i] <= share);
+    if (!fits.length) {
+      // Each step keeps share >= floor (available >= n * floor).
+      free.forEach((i) => { px[i] = share; });
+      break;
     }
-    low.forEach((i) => { out[i] = minPct; });
-    budget -= minPct * low.length;
-    free = free.filter((i) => !low.includes(i));
+    fits.forEach((i) => { budget -= px[i]; });
+    free = free.filter((i) => px[i] > share);
   }
+  return px.map((w) => (w / available) * FULL_PCT);
 }
 
 const weightSum = (layout, cols) => cols.reduce((s, c) => s + layout.widths[c.key], 0) || 1;
@@ -357,10 +365,20 @@ export function createTable({
       tableLayout: "auto", width: "max-content",
     });
     probe.append(thead.cloneNode(true), tbody.cloneNode(true));
+    // Full-width rows (fullRow) would spread their text across the columns.
+    for (const td of probe.querySelectorAll("tbody td[colspan]")) td.parentElement.remove();
+    // Room for a sort arrow on every sortable header, not just the one sorted
+    // now, so sorting another column later doesn't truncate its label.
+    for (const th of probe.querySelectorAll(`th.${TH_SORTABLE_CLASS}:not(:has(.${ARROW_CLASS}))`)) {
+      const arrow = document.createElement("wa-icon");
+      arrow.className = ARROW_CLASS;
+      arrow.setAttribute("name", ARROW_DESC);
+      th.append(arrow);
+    }
     wrap.append(probe);
     const natural = Array.from(probe.rows[0].cells, (c) => c.getBoundingClientRect().width);
     probe.remove();
-    storeVisiblePcts(layout, cols, fitPcts(natural, minPct));
+    storeVisiblePcts(layout, cols, fitPcts(natural, bodyTable.getBoundingClientRect().width, minPct));
   }
 
   // Rebuilt in place on every change; focus returns to the same control, or

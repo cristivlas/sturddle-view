@@ -189,6 +189,66 @@ async def test_fit_columns_widens_content_and_persists(server, make_page):
     assert_no_page_errors(errors)
 
 
+# Header labels of columns with any truncated body cell.
+_TRUNCATED_COLS = f"""() => {{
+  const labels = [...document.querySelectorAll('{HEAD} th .th-label')].map((e) => e.textContent);
+  const out = new Set();
+  for (const tr of document.querySelectorAll('.wb-standings-body-tbl tbody tr')) {{
+    [...tr.cells].forEach((td, i) => {{ if (td.scrollWidth > td.clientWidth) out.add(labels[i]); }});
+  }}
+  return [...out].sort();
+}}"""
+# Narrow enough that the Standings content can't all fit.
+NARROW_VIEWPORT = {"width": 900, "height": 900}
+# Header px widths beyond rounding when comparing column widths.
+WIDTH_TOL_PX = 1
+# Sort arrow's right edge within its th's padding box (subpixel slack).
+_ARROW_FITS = (
+    "(th) => th.querySelector('.th-sort-arrow').getBoundingClientRect().right"
+    f" <= th.getBoundingClientRect().right - parseFloat(getComputedStyle(th).paddingRight) + {WIDTH_TOL_PX}"
+)
+
+
+async def _fit(page):
+    await _open_menu(page)
+    await page.click(f'{MENU} [data-action="fit"]')
+
+
+@pytest.mark.asyncio
+async def test_fit_when_all_fits_truncates_nothing(server, make_page):
+    """With room for everything, Fit gives each column its content width:
+    no cell is truncated."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_standings(page, server)
+    await _fit(page)
+    assert await page.evaluate(_TRUNCATED_COLS) == []
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_fit_on_overflow_truncates_only_wide_columns(server, make_page):
+    """Without room, Fit water-fills: short columns keep their full width and
+    only the widest give up space, so every truncated column is at least as
+    wide as every untruncated one. Then sorting a column that wasn't sorted
+    at fit time doesn't truncate its header (Fit reserved arrow room)."""
+    _ctx, page = await make_page(viewport=NARROW_VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_standings(page, server)
+    await _fit(page)
+    truncated = set(await page.evaluate(_TRUNCATED_COLS))
+    widths = await page.evaluate(_HEAD_WIDTHS)
+    assert truncated, "precondition: the content overflows at this width"
+    kept = set(widths) - truncated
+    assert min(widths[c] for c in truncated) + WIDTH_TOL_PX >= max(widths[c] for c in kept), widths
+
+    # The th's own scrollWidth can't tell: its resize grip overhangs the
+    # edge. The new arrow must end inside the cell's content box instead.
+    await page.click(f'{_th_at("G")} .th-label')
+    assert await page.locator(_th_at("G")).evaluate(_ARROW_FITS)
+    assert_no_page_errors(errors)
+
+
 @pytest.mark.asyncio
 async def test_hidden_sort_column_drops_out_of_order(server, make_page):
     """Sorting W ascending puts B first; hiding W reverts to the deeper
