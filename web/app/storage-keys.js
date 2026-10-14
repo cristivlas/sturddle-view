@@ -8,18 +8,18 @@ export const STORAGE_KEY = {
   FS_PICKER_EXE_ONLY_PREFIX: "sturddle:fs-picker:exeOnly:",
 
   // Engines list view state.
-  ENGINES_COL_PCTS: "sturddle:engines:colPcts3",
+  ENGINES_LAYOUT: "sturddle:engines:layout",
   ENGINES_HEADER_SORT: "sturddle:engines:headerSort",
   // Legacy scalar name-sort, superseded by ENGINES_HEADER_SORT. Kept only so
   // the stale entry can be cleared on mount; safe to drop once users migrate.
   ENGINES_SORT_ORDER_LEGACY: "sturddle:engines:sortOrder",
-  ENGINES_SETTINGS_COL_PCTS: "sturddle:engines:settings:colPcts3",
+  ENGINES_SETTINGS_LAYOUT: "sturddle:engines:settings:layout",
 
   // Import dialog recents cache.
   IMPORT_RECENTS: "sturddle:import:recent",
-  OPENINGS_COL_PCTS: "sturddle:openings:colPcts3",
+  OPENINGS_LAYOUT: "sturddle:openings:layout",
   OPENINGS_SORT: "sturddle:openings:sort",
-  FS_PICKER_COL_PCTS: "sturddle:fs-picker:colPcts3",
+  FS_PICKER_LAYOUT: "sturddle:fs-picker:layout",
   FS_PICKER_SORT: "sturddle:fs-picker:sort",
 
   // Active perspective + per-view flip.
@@ -79,15 +79,15 @@ export const STORAGE_KEY = {
   STUDIO_LEFT_FOLDED: "sturddle:studio:leftFolded",
   STUDIO_TOURNEY_SORT: "sturddle:studio:tourneySort",
   STUDIO_TOURNEY_STACK: "sturddle:studio:tourneyStack",
-  STUDIO_TOURNEY_COL_PCTS: "sturddle:studio:tourneyColPcts",
+  STUDIO_TOURNEY_LAYOUT: "sturddle:studio:tourneyLayout",
   STUDIO_HISTORY_SORT: "sturddle:studio:historySort",
   STUDIO_HISTORY_STACK: "sturddle:studio:historyStack",
-  STUDIO_HISTORY_COL_PCTS: "sturddle:studio:historyColPcts",
-  STUDIO_H2H_COL_PCTS: "sturddle:studio:h2hColPcts",
+  STUDIO_HISTORY_LAYOUT: "sturddle:studio:historyLayout",
+  STUDIO_H2H_LAYOUT: "sturddle:studio:h2hLayout",
   STUDIO_ENGINES_SORT: "sturddle:studio:enginesSort",
   WORKSPACE_PREFIX: "sturddle:workspace:",
   LIVE_PVTABLE_COL_WIDTHS: "sturddle:live:pvtable:colWidths",
-  TOURNAMENTS_STANDINGS_COL_PCTS: "sturddle:tournaments:standingsColPcts",
+  TOURNAMENTS_STANDINGS_LAYOUT: "sturddle:tournaments:standingsLayout",
   TOURNAMENTS_STANDINGS_SORT: "sturddle:tournaments:standingsSort",
   TOURNAMENTS_STANDINGS_STACK: "sturddle:tournaments:standingsStack",
   TOURNAMENTS_ENGINES_SORT: "sturddle:tournaments:enginesSort",

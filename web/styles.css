@@ -7,6 +7,16 @@
   --scrollbar-thumb-min-h: 50px;
   --wb-outline: rgba(136, 136, 136, 0.4);
   --wb-radius: 8px;
+  /* Dialog panel background (wa-dialog's --dialog-bg); dropdown menus share
+     it. A separate name: --dialog-bg must stay undefined outside dialogs,
+     where tables reading it fall back to transparent. */
+  --panel-bg: #363a42;
+  /* Hovered/focused menu item: a blue-gray accent over the gray panel. */
+  --panel-item-hover: #364b66;
+  /* Button ribbon background: docked rails and the floating window; the
+     mobile horizontal bars blend into the page instead. */
+  --ribbon-bg: var(--panel);
+  --ribbon-bar-bg: transparent;
   /* Minimized-WinBox dock strip; tournament-workspace.js reads it as
      MINIMIZE_FOOTER_H. */
   --wb-min-footer-h: 36px;
@@ -206,6 +216,15 @@ wa-select::part(listbox)::-webkit-scrollbar-thumb {
 wa-select::part(listbox)::-webkit-scrollbar-thumb:hover { background: var(--wa-color-focus); }
 wa-select::part(listbox)::-webkit-scrollbar-corner { background: transparent; }
 wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
+/* WA rings a focused switch's thumb in the focus orange, which vanishes on
+   the near-identical orange "on" track: ring it in the text color instead.
+   Overrides the composed token (its color var resolves at :root). */
+wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-width) var(--fg); }
+/* WinBox gives a maximized title bar the default cursor, yet it is a drag
+   handle (dragging un-maximizes under the pointer, winbox-factory.js): keep
+   WinBox's move cursor there in every view. Fixed (no-move) windows can't be
+   dragged, so they keep theirs. */
+.winbox.max:not(.no-move) .wb-drag { cursor: move; }
 
 /* Toggling `disabled` runs WA's 150ms color transition, briefly painting a
    brighter "enabled" border -- reads as a focus flash on the AI rows when the
@@ -1304,9 +1323,8 @@ wa-dialog:has(.import-pos-form)::part(body) {
 }
 .openings-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; border-bottom: 2px solid var(--accent-line); }
 .openings-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
-.openings-list:focus { outline: none; }
 .openings-table { table-layout: fixed; width: 100%; border-collapse: separate; border-spacing: 0; }
-.openings-head-table th {
+.openings-head-tbl th {
   background: var(--dialog-bg);
   padding: 6px 10px;
   text-align: left;
@@ -1320,8 +1338,8 @@ wa-dialog:has(.import-pos-form)::part(body) {
   text-overflow: ellipsis;
   user-select: none;
 }
-.openings-head-table th { position: relative; }
-.openings-head-table th:hover {
+.openings-head-tbl th { position: relative; }
+.openings-head-tbl th:hover {
   background: #252830;
 }
 .openings-list-item {
@@ -1336,7 +1354,9 @@ wa-dialog:has(.import-pos-form)::part(body) {
   background: transparent;
   border-bottom: 1px solid var(--border-faint);
 }
-.openings-list-item:hover { background: var(--row-bg-hover); }
+/* :where() gate (see .dt-kbd in data-table.js) keeps the hover rule's own
+   specificity, so .selected still wins on a hovered selected row. */
+:where(:not(.dt-kbd) > tbody) > .openings-list-item:hover { background: var(--row-bg-hover); }
 .openings-list-item.selected { background: var(--row-bg-selected); }
 /* .openings-list-item.selected td:first-child { box-shadow: inset 3px 0 0 #5a6070; } */
 .openings-list-item.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
@@ -1472,7 +1492,7 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   left: 0; top: var(--arena-ribbon-top, 0); bottom: 0;
   width: var(--ribbon-w);
   z-index: 10;
-  background: var(--panel);
+  background: var(--ribbon-bg);
   border-right: var(--ribbon-border-w) solid var(--border-subtle);
 }
 /* Play's rail sits at 8px; the mobile flip block's fluid gap overrides this
@@ -1877,7 +1897,7 @@ body .side-popover.popover-floating {
     justify-content: center;
     width: auto;
     padding: 6px 0;
-    background: transparent;
+    background: var(--ribbon-bar-bg);
     border-right: 0;
     border-bottom: 1px solid var(--border-subtle);
     /* Never break into a second row at any width. Fluid gap: fixed gaps are
@@ -2677,7 +2697,7 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
 }
 .engine-launch-section-add { flex: 0 0 auto; }
 
-/* Split header/body table (see Openings above, engines-list-layout.js). */
+/* Split header/body table (data-table.js; see Openings above). */
 .engines-table-wrap {
   position: relative;
   display: flex;
@@ -2689,14 +2709,13 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
 }
 .engines-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; border-bottom: 2px solid var(--accent-line); }
 .engines-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
-.engines-list:focus { outline: none; }
 .engines-table {
   table-layout: fixed;
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
 }
-.engines-head-table th {
+.engines-head-tbl th {
   position: relative;
   background: var(--dialog-bg);
   padding: 6px 10px;
@@ -2711,7 +2730,7 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   text-overflow: ellipsis;
   user-select: none;
 }
-.engines-head-table th:hover {
+.engines-head-tbl th:hover {
   background: #252830;
 }
 .engines-list-item {
@@ -2729,7 +2748,7 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
 .engines-list-item td:last-child {
   border-right: none;
 }
-.engines-list-item:hover { background: var(--row-bg-hover); }
+:where(:not(.dt-kbd) > tbody) > .engines-list-item:hover { background: var(--row-bg-hover); }
 .engines-list-item.focused { background: var(--row-bg-selected); }
 .engines-list-item.focused td:first-child {
   /* box-shadow: inset 3px 0 0 #5a6070; */
@@ -2741,7 +2760,6 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.engines-col-active-hdr { text-align: left; }
 .engines-list-active-cell { text-align: left; }
 .engines-list-active-badge {
   color: var(--accent);
@@ -2903,7 +2921,7 @@ wa-dialog::part(body) { overflow: visible !important; }
    amber on open, since showModal focuses before any user gesture. */
 wa-dialog::part(body):focus-visible { outline: none; }
 wa-dialog {
-  --dialog-bg: #253347;
+  --dialog-bg: var(--panel-bg);
   /* Lighter tint of --dialog-bg, same hue: confirm/alert popup background. */
   --dialog-bg-raised: #2f4258;
   /* Darker tint of --dialog-bg, same hue: cancel-style button fill in
@@ -3178,7 +3196,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-picker-pathbar wa-input { flex: 1; }
 .fs-exe-only-btn[aria-pressed="true"] { color: var(--accent); }
 /* Overlay host for the resize drag-lines, and the scroll container. Split
-   header/body table (see Openings above, dialogs.js). */
+   header/body table (data-table.js; see Openings above, dialogs.js). */
 .fs-picker-table-wrap {
   position: relative;
   display: flex;
@@ -3200,7 +3218,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   border-collapse: separate;
   border-spacing: 0;
 }
-.fs-picker-head-table th {
+.fs-picker-head-tbl th {
   position: relative;
   background: #1b1e24;
   padding: 6px 8px;
@@ -3216,12 +3234,16 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   text-overflow: ellipsis;
   user-select: none;
 }
-.fs-picker-head-table th:hover {
+.fs-picker-head-tbl th:hover {
   background: #252830;
 }
 /* Size header sits over right-aligned values. */
-.fs-picker-head-table th:last-child { text-align: right; }
+.fs-picker-head-tbl th:last-child { text-align: right; }
 .th-sortable { cursor: pointer; }
+/* A focused .th-label (the tab stop when present) rings its whole th. */
+.th-sortable:focus-visible,
+.th-sortable:has(> .th-label:focus-visible) { outline: 1px solid var(--accent); outline-offset: -1px; }
+.th-sortable .th-label:focus-visible { outline: none; }
 .th-sort-arrow {
   font-size: 0.7rem;
   margin-left: 4px;
@@ -3236,7 +3258,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   white-space: nowrap;
   border-bottom: 1px solid var(--border-faint);
 }
-.fs-entry:hover > td { background: var(--nav-btn-bg); }
+:where(:not(.dt-kbd) > tbody) > .fs-entry:hover > td { background: var(--nav-btn-bg); }
 .fs-entry.dim { color: var(--muted); }
 .fs-entry.selected > td { background: var(--row-bg-selected); color: var(--text); }
 .fs-entry.selected > td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
@@ -3275,7 +3297,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .tmb-dropdown {
   display: none; position: absolute; top: 100%; left: 0; z-index: 9000;
   list-style: none; margin: 0; padding: 6px 0; min-width: 160px;
-  background: var(--wa-color-surface-raised, #2a2a2a);
+  background: var(--panel-bg);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.25);
@@ -3287,7 +3309,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .tmb-dd-submenu { position: relative; }
 .tmb-dd-submenu > .tmb-dd-item::after { content: "\25B6"; position: absolute; right: 10px; font-size: 0.625rem; }
 .tmb-dd-submenu > .tmb-dropdown { top: -6px; left: 100%; z-index: 9001; }
-.tmb-dd-submenu:hover > .tmb-dropdown { display: block; }
+.tmb-dd-submenu:hover > .tmb-dropdown,
+.tmb-dd-submenu.open > .tmb-dropdown { display: block; }
 .tmb-dd-submenu:has(> .tmb-dd-item:disabled):hover > .tmb-dropdown { display: none; }
 .tmb-dd-item {
   display: block; width: 100%; background: none; border: none; border-radius: 0;
@@ -3296,15 +3319,53 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   font-size: 0.8125rem; line-height: 1.5; cursor: pointer;
   position: relative;
 }
-.tmb-dd-item:hover {
-  background: var(--nav-btn-bg-hover);
+/* Focus alone drives the highlight: mouse hover moves focus (menu-nav.js),
+   so a resting mouse never leaves a second highlight beside the keyboard's.
+   An open submenu keeps its trigger lit as the path. */
+.tmb-dd-item:focus, .tmb-dd-submenu.open > .tmb-dd-item {
+  background: var(--panel-item-hover);
   box-shadow: inset 3px 0 0 var(--accent-line);
 }
 .tmb-dd-item.tmb-active::before { content: "\2713"; position: absolute; left: 8px; }
+/* Inset ring: a scrolling dropdown (columns menu) clips outer outlines. */
+.tmb-dropdown button:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .tmb-separator {
   border-top: 1px solid var(--wa-color-border-loud, #333);
   margin: 4px 0;
 }
+
+/* data-table.js: columns menu (top-layer popover, reusing the .tmb-dropdown
+   look) and its header button. Must follow .tmb-dropdown: same specificity,
+   fixed placement (JS sets top/left) overrides its absolute one. */
+.dt-menu {
+  position: fixed; inset: auto; color: var(--fg);
+  /* JS max-height (viewport room) includes padding/border; tall menus scroll. */
+  box-sizing: border-box; overflow-y: auto;
+}
+.dt-menu:popover-open { display: block; }
+.dt-menu-col { display: flex; align-items: center; padding-right: 6px; }
+.dt-menu-col .dt-menu-toggle { flex: 1 1 auto; width: auto; }
+.dt-menu .tmb-dd-item:disabled { opacity: 0.5; cursor: default; }
+.dt-menu-move {
+  background: none; border: none; border-radius: 0; color: inherit;
+  padding: 4px 6px; cursor: pointer;
+}
+.dt-menu-move:focus { background: var(--panel-item-hover); }
+.dt-menu-move:disabled { opacity: 0.3; cursor: default; }
+/* Baseline, not middle: the taller menu button in the first cell would
+   otherwise push that cell's label below the other labels. */
+.dt-head-tbl th { vertical-align: baseline; }
+/* rowNav: the body table is the Tab stop, but the ring goes on its current
+   row (the selection, or the cursor) rather than boxing the whole table.
+   Cursor mode has no selection styling of its own, so it also tints. */
+.dt-rownav:focus, .dt-rownav:focus-visible { outline: none; }
+.dt-rownav:focus-visible tr[aria-selected="true"] { outline: 1px solid var(--accent); outline-offset: -1px; }
+.dt-rownav-cursor:focus-visible tr[aria-selected="true"] { background: var(--row-bg-selected); }
+.dt-menu-btn {
+  background: none; border: none; padding: 0; margin-right: 12px;
+  color: inherit; font-size: 0.875rem; cursor: pointer; vertical-align: middle;
+}
+.dt-menu-btn:hover { color: var(--fg); }
 
 /* Settings dialog: Tournament tab */
 .settings-tournament-path-row {
@@ -3319,6 +3380,10 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   display: flex; align-items: center; gap: 8px; min-width: 0;
 }
 .settings-tournament-path-inner .path-field { flex: 1; min-width: 0; }
+/* Path rows' Browse/Clear buttons: a fill a step lighter than the dialog so
+   they read as buttons beside the field. */
+.settings-tournament-path-inner wa-button::part(base) { background: #464b55; }
+.settings-tournament-path-inner wa-button:not([disabled])::part(base):hover { background: #525864; }
 wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
 .sprt-settings-grid,
 .sprt-params-form {
@@ -3445,6 +3510,9 @@ button.recents-btn {
   align-items: center; font-size: 0.9em; line-height: 1;
 }
 button.recents-btn:hover:not(:disabled) { color: var(--fg); }
+/* Inset ring: the twisty sits at the scroll wrap's left edge, which clips an
+   outer outline. */
+button.recents-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .engines-body-main { padding: 0; }
 
@@ -3933,7 +4001,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 }
 .studio-pane-standings > *, .studio-pane-tourneys > *,
 .studio-pane-history > *, .studio-pane-h2h > * { min-height: 0; }
-.studio-tourney-wrap, .studio-history-wrap { height: 100%; }
+.studio-tourney-table-wrap, .studio-history-table-wrap { height: 100%; }
 /* Selection-change loading state for the selDetail-fed panes (Standings,
    Head-to-Head, Games): dim the outgoing tourney's rows and spin, so stale
    numbers never read as current.
@@ -3978,7 +4046,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
    Settings engines look). The wrap hosts the resize overlay, mirroring the
    file picker's tableWrap. Split header/body table (see Openings above,
    tournament-studio.js). */
-.studio-tourney-wrap, .studio-history-wrap { position: relative; display: flex; flex-direction: column; min-height: 0; }
+.studio-tourney-table-wrap, .studio-history-table-wrap { position: relative; display: flex; flex-direction: column; min-height: 0; }
 .studio-tourney-head-scroll, .studio-history-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; }
 .studio-tourney-body-scroll, .studio-history-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
 .studio-tourney-tbl, .studio-history-tbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
@@ -4007,23 +4075,18 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   border-bottom: 1px solid var(--border-faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* Being a tab stop opts the list out of the generic container-ring
-   suppression above. Its selected row is the focus affordance, so drop the
-   ring that would box the whole table (as in the fs picker's list). */
-.studio-tourney-body-tbl:focus, .studio-tourney-body-tbl:focus-visible { outline: none; }
 .studio-tourney-row, .studio-history-row {
   cursor: pointer;
   user-select: none; -webkit-user-select: none;
 }
-.studio-tourney-row:hover, .studio-history-row:hover { background: var(--row-bg-hover); }
-.studio-history-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+:where(:not(.dt-kbd) > tbody) > :is(.studio-tourney-row, .studio-history-row):hover { background: var(--row-bg-hover); }
 /* .marked: the extra rows of a multi-selection, styled like the selected one. */
 .studio-tourney-row.selected, .studio-tourney-row.marked { background: var(--row-bg-selected); }
 .studio-tourney-row.selected td:first-child,
 .studio-tourney-row.marked td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
 .studio-history-num, .studio-history-result { color: var(--muted); }
 .studio-history-result { font-family: var(--wa-font-family-code); }
-.studio-tourney-created { color: var(--muted); }
+.studio-tourney-created, .studio-tourney-started { color: var(--muted); }
 /* Status + optional SPRT pill: clip (no ellipsis) rather than widen. */
 .studio-tourney-tbl tbody td.studio-tourney-status { text-overflow: clip; }
 /* Running tourney's Games cell: Arena's progress bar + inline label. */
@@ -4064,7 +4127,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
     position: static;
     flex-direction: row; justify-content: center;
     width: auto;
-    background: transparent;
+    background: var(--ribbon-bar-bg);
     border-right: 0; border-bottom: 1px solid var(--border-subtle);
     padding: 6px 0;
     flex-wrap: nowrap;
@@ -4103,7 +4166,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
     display: block; height: auto; overflow: visible;
   }
   .wb-standings, .wb-h2h { height: auto; }
-  .studio-tourney-wrap, .studio-history-wrap { height: auto; }
+  .studio-tourney-table-wrap, .studio-history-table-wrap { height: auto; }
   .wb-standings-table-wrap, .h2h-table-wrap { display: block; }
   .wb-standings-body-scroll, .h2h-body-scroll,
   .studio-tourney-body-scroll, .studio-history-body-scroll { overflow: visible; }
@@ -4536,7 +4599,7 @@ wa-dialog.tournament-info-dialog::part(body) {
   overflow: hidden !important;
   top: 20px !important; /* thin title bar height, vs the default 35px */
   contain: none !important;
-  background: var(--panel) !important;
+  background: var(--ribbon-bg) !important;
 }
 /* Center the ribbon child without making the body a flex container, which
    would constrain ribbon scrollWidth during orientation toggles and break

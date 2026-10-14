@@ -15,6 +15,7 @@ import { fmtClock, fmtCount, fmtScore, flashWindow, rafCoalesce } from "./wb-uti
 import { terminationPhrase } from "./format-termination.js";
 import { mqMobile } from "./breakpoints.js";
 import { connect } from "./ws.js";
+import { createWinBox } from "./winbox-factory.js";
 
 // Eval-row info strings (shared by own-side and opponent rows). Each blanks
 // when its field is absent. Format: "d:<depth>/<seldepth>", "nps:<count>",
@@ -297,7 +298,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   const defaultClass = gameId
     ? "sturddle-wb sturddle-wb-live sturddle-wb-live-game no-full"
     : "sturddle-wb sturddle-wb-live sturddle-wb-live-proxy no-full";
-  const wb = new WinBox({
+  const wb = createWinBox({
     title: titleWithTag,
     width: initialWidth,
     ...(initialHeight ? { height: initialHeight } : {}),

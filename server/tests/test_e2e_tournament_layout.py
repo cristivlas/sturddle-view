@@ -4,56 +4,30 @@ Skipped if Playwright/Chromium isn't installed.
 """
 from __future__ import annotations
 
-import sys
-
 import pytest
 
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-from sturddle_view.tournament.store import TournamentStore  # noqa: E402
-
 from .conftest import (  # noqa: E402
-    REGISTRY_FILE,
-    e2e_env,
-    pin_arena_tournament_ux,
+    goto_arena_tournaments,
+    open_arena_workspace,
     run_uvicorn_subprocess,
-    wait_perspective_ready,
+    seed_tournament,
+    tournament_server_env,
 )
+
+ENGINES = ("engine-A", "engine-B")
 
 
 @pytest.fixture
 def server(tmp_path):
-    # Seed engine registry and two tournaments on disk, then launch an
-    # out-of-process server pointed at those paths (SV_* -> Settings).
-    # tournament_fastchess_path is sys.executable (a real file detect_binary
-    # echoes back); fastchess is never spawned -- the test only drives the UI.
-    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
-    registry.add(name="engine-A", path=sys.executable)
-    registry.add(name="engine-B", path=sys.executable)
-    store = TournamentStore(tmp_path / "tournaments")
+    # Two unplayed tournaments on disk; fastchess is never spawned -- the
+    # test only drives the UI.
     for name in ("alpha", "bravo"):
-        store.create(
-            name=name,
-            template={"tc": "10+0.1"},
-            engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
-        )
-    env = {
-        **e2e_env(tmp_path),
-        "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,
-    }
-    with run_uvicorn_subprocess(env_overrides=env) as base:
+        seed_tournament(tmp_path, name, ENGINES, [])
+    with run_uvicorn_subprocess(env_overrides=tournament_server_env(tmp_path, ENGINES)) as base:
         yield base
-
-
-async def _goto_tournaments(page, base):
-    await pin_arena_tournament_ux(page)
-    await page.goto(base + "/")
-    await page.wait_for_selector("#play-perspective")
-    await wait_perspective_ready(page)
-    await page.click('button[data-perspective="engines"]')
-    await page.wait_for_selector(".tournament-row")
 
 
 async def _select_tournament(page, name):
@@ -66,13 +40,6 @@ async def _select_tournament(page, name):
             row.click();
         }""",
         name,
-    )
-
-
-async def _open_workspace(page):
-    await page.click('.tournaments-ribbon .t-workspace')
-    await page.wait_for_function(
-        "() => document.querySelectorAll('.winbox.sturddle-wb').length >= 1",
     )
 
 
@@ -102,11 +69,11 @@ async def test_layout_persists_per_tournament(server, make_page):
         f"console.{msg.type}: {msg.text}"
     ) if msg.type == "error" else None)
 
-    await _goto_tournaments(page, server)
+    await goto_arena_tournaments(page, server)
 
     # Open workspace for alpha and set Tidy layout.
     await _select_tournament(page, "alpha")
-    await _open_workspace(page)
+    await open_arena_workspace(page)
     await _click_window_menu_tidy(page)
 
     state_alpha = await _layout_state(page)
@@ -154,10 +121,10 @@ async def test_layout_cleared_after_xclose_reopen(server, make_page):
         f"console.{msg.type}: {msg.text}"
     ) if msg.type == "error" else None)
 
-    await _goto_tournaments(page, server)
+    await goto_arena_tournaments(page, server)
 
     await _select_tournament(page, "alpha")
-    await _open_workspace(page)
+    await open_arena_workspace(page)
     await _click_window_menu_tidy(page)
 
     state = await _layout_state(page)

@@ -49,33 +49,41 @@ function promoteSort(stack, state) {
 // repromoted on each click. Returns the live stack via get() for the renderer.
 // `defaultState` ({ key, dir }) applies on first-ever visit only: a persisted
 // stack -- including the empty one a clearing third click leaves -- wins.
-export function attachLayeredSort({ table, columns, sortKey, stackKey, onChange, defaultState = null }) {
-  let stack = [];
+export function attachLayeredSort({ table, columns, sortKey, stackKey, onChange, defaultState = null, keyboard = false }) {
+  const saved = loadJson(stackKey);
+  let stack = Array.isArray(saved) && saved.length ? saved : [];
+  // The header arrow and click cycle follow the topmost stack entry this
+  // table shows: when `columns` omits a stacked key (a hidden column), the
+  // next entry down is the effective sort.
+  const shownTop = stack.find((s) => columns.some((c) => c.key === s.key)) || null;
   const sortCtrl = attachColumnSort({
-    table, columns, storageKey: sortKey,
+    table, columns, storageKey: sortKey, keyboard,
+    initialState: stack.length ? shownTop : undefined,
     onSort: (state) => {
       stack = promoteSort(stack, state);
       saveJson(stackKey, stack);
       onChange();
     },
   });
-  const saved = loadJson(stackKey);
-  const cur = sortCtrl.current();
-  if (Array.isArray(saved) && saved.length) stack = saved;
-  else if (cur) stack = [{ key: cur.key, dir: cur.dir }];
-  else if (defaultState && !Array.isArray(saved)) {
-    // set() routes through the arrow-sync + persist + onSort path, so the
-    // header indicator matches the seeded stack.
-    sortCtrl.set(defaultState);
+  if (!stack.length) {
+    const cur = sortCtrl.current();
+    if (cur) stack = [{ key: cur.key, dir: cur.dir }];
+    else if (defaultState && !Array.isArray(saved)) {
+      // set() routes through the arrow-sync + persist + onSort path, so the
+      // header indicator matches the seeded stack.
+      sortCtrl.set(defaultState);
+    }
   }
-  return { get: () => stack };
+  return { get: () => stack, set: (state) => sortCtrl.set(state) };
 }
 
 // Stable in-place sort: walk the MRU stack, first differing column wins; the
 // column flagged `tiebreak` resolves rows equal on every stacked column. Empty
 // stack leaves the rows untouched (natural order). The column->cmp plan is
-// resolved up front so the comparator hot path carries no lookup.
-export function sortByStack(rows, stack, columns) {
+// resolved up front so the comparator hot path carries no lookup. `group`,
+// if given, orders before everything and is not dir-flipped (fixed
+// partitions such as folders-before-files).
+export function sortByStack(rows, stack, columns, group = null) {
   if (!stack.length) return;
   const plan = [];
   for (const s of stack) {
@@ -87,6 +95,7 @@ export function sortByStack(rows, stack, columns) {
   const tieCol = columns.find((c) => c.tiebreak);
   const tie = tieCol ? columnCmp(tieCol) : () => 0;
   rows.sort((a, b) => {
+    if (group) { const g = group(a, b); if (g) return g; }
     for (const p of plan) { const c = p.dir * p.cmp(a, b); if (c) return c; }
     return tie(a, b);
   });

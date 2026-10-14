@@ -14,6 +14,7 @@ import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, s
 import { APP_EVT } from "./app-events.js";
 import { baseCompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { rankCmp } from "./sort-stack.js";
+import { attachMenuNav, focusFirstItem, MENU_OPEN_CLASS } from "./menu-nav.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import {
@@ -26,7 +27,7 @@ import {
 import { BOOK_KEYS, mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { makePathRow } from "./settings-path-row.js";
 import { mountSprtButton } from "./tournament-sprt-button.js";
-import { formatType, formatResign, formatDraw } from "./tournament-format.js";
+import { formatDraw, formatResign, formatStamp, formatType } from "./tournament-format.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
 import { applyListClick, createMultiSelect, selectionTargets } from "./multi-select.js";
@@ -190,13 +191,6 @@ function fitMiddleEllipsis(el, full) {
   const head = Math.ceil(lo / 2);
   const tail = lo - head;
   el.textContent = full.slice(0, head) + ID_ELLIPSIS + full.slice(full.length - tail);
-}
-
-function formatTime(iso) {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  return d.toLocaleString();
 }
 
 function formatGames(t) {
@@ -776,9 +770,9 @@ function buildInfoContent(ctx, t, onStatusClick) {
       row("Book order", ed.book_order);
     }
   }
-  row("Created", formatTime(t.created_at));
-  if (t.status === STATUS.RUNNING || t.status === STATUS.FAILED || t.status === STATUS.STOPPED) row("Started", formatTime(t.started_at));
-  if (t.status === STATUS.STOPPED) row("Stopped", formatTime(t.stopped_at));
+  row("Created", formatStamp(t.created_at));
+  if (t.status === STATUS.RUNNING || t.status === STATUS.FAILED || t.status === STATUS.STOPPED) row("Started", formatStamp(t.started_at));
+  if (t.status === STATUS.STOPPED) row("Stopped", formatStamp(t.stopped_at));
 
   const enginesList = document.createElement("ul");
   enginesList.className = "tournament-info-engines";
@@ -1230,8 +1224,23 @@ function syncWindowMenu(ctx) {
   ctx.windowMenuBtn.disabled = !getActiveWorkspace();
 }
 
+// Closes every open menu and submenu. Focus inside a closing menu (keyboard
+// use) returns to its menubar button instead of dropping to <body>.
 function closeMenus(ctx) {
-  ctx.container.querySelectorAll(".tmb-menu.open").forEach(m => m.classList.remove("open"));
+  for (const m of ctx.container.querySelectorAll(`.tmb-menu.${MENU_OPEN_CLASS}, .tmb-dd-submenu.${MENU_OPEN_CLASS}`)) {
+    const hadFocus = m.contains(document.activeElement);
+    m.classList.remove(MENU_OPEN_CLASS);
+    if (hadFocus && m.classList.contains("tmb-menu")) m.querySelector(":scope > .tmb-item")?.focus();
+  }
+}
+
+// Toggle a menubar menu; opening moves focus to its first item.
+function toggleMenu(ctx, menu) {
+  const isOpen = menu.classList.contains(MENU_OPEN_CLASS);
+  closeMenus(ctx);
+  if (isOpen) return;
+  menu.classList.add(MENU_OPEN_CLASS);
+  focusFirstItem(menu.querySelector(":scope > .tmb-dropdown"));
 }
 
 function syncSortMenu(ctx) {
@@ -1431,11 +1440,12 @@ function wireListKeyboard(ctx) {
 }
 
 function wireMenus(ctx) {
+  for (const menu of [ctx.sortMenu, ctx.windowMenu]) {
+    attachMenuNav(menu.querySelector(":scope > .tmb-dropdown"), { close: () => closeMenus(ctx) });
+  }
   ctx.sortMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    const isOpen = ctx.sortMenu.classList.contains("open");
-    closeMenus(ctx);
-    if (!isOpen) ctx.sortMenu.classList.add("open");
+    toggleMenu(ctx, ctx.sortMenu);
   });
   for (const opt of ctx.container.querySelectorAll(".tmb-sort-opt")) {
     opt.addEventListener("click", () => {
@@ -1458,9 +1468,7 @@ function wireMenus(ctx) {
   ctx.windowMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (ctx.windowMenuBtn.disabled) return;
-    const isOpen = ctx.windowMenu.classList.contains("open");
-    closeMenus(ctx);
-    if (!isOpen) ctx.windowMenu.classList.add("open");
+    toggleMenu(ctx, ctx.windowMenu);
   });
 
   ctx.snapBtn.addEventListener("click", () => {

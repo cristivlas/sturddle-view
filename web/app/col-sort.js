@@ -12,14 +12,21 @@
 // handle) are ignored, so dragging a divider never triggers a sort.
 
 import { loadJson, loadRaw, saveJson } from "./storage.js";
+import { ACTIVATE_KEYS } from "./keys.js";
 
 // Sort direction vocabulary, shared with sort-stack.js and table callers
 // (column firstDir). NONE is the cleared/no-sort sentinel.
 export const SORT_DIR = Object.freeze({ ASC: "asc", DESC: "desc", NONE: "none" });
 
 export const ARROW_CLASS = "th-sort-arrow";
+export const TH_SORTABLE_CLASS = "th-sortable";
 export const ARROW_DESC = "caret-down";
 export const ARROW_ASC = "caret-up";
+
+// Optional label element inside a th: when present it is the keyboard tab
+// stop instead of the th, so controls placed before it in the th (a menu
+// button) come first in tab order.
+export const TH_LABEL_CLASS = "th-label";
 
 // Locale string compare shared by every table's name/text tiebreak and
 // text-column primaries (case-insensitive, natural numeric order).
@@ -129,11 +136,15 @@ export function attachColumnSort({
   columns,        // [{ key, firstDir?, sortable? }]; mapped to <thead> th by position (index), not by any attribute
   storageKey,     // optional; persists { key, dir }
   onSort,         // (state|null) => void; state = { key, dir, column }
+  keyboard = false, // sortable ths become tab stops; Enter/Space = click
+  initialState,   // optional { key, dir } | null; overrides the persisted state
 }) {
   const ths = Array.from(table.querySelectorAll("thead th"));
   let active = null; // { key, dir }
 
-  const saved = storageKey ? loadJson(storageKey) : null;
+  const saved = initialState !== undefined
+    ? initialState
+    : storageKey ? loadJson(storageKey) : null;
   if (saved && saved.key && (saved.dir === SORT_DIR.ASC || saved.dir === SORT_DIR.DESC)) {
     const col = columns.find((c) => c.key === saved.key && c.sortable !== false);
     if (col) active = { key: saved.key, dir: saved.dir };
@@ -166,16 +177,29 @@ export function attachColumnSort({
   ths.forEach((th, i) => {
     const col = columns[i];
     if (!col || col.sortable === false) return;
-    th.classList.add("th-sortable");
+    th.classList.add(TH_SORTABLE_CLASS);
     th.addEventListener("click", (ev) => {
-      // Don't sort when the click was on the resize grip.
-      if (ev.target.closest(".th-grip")) return;
+      // Don't sort when the click was on the resize grip or a control inside
+      // the th (columns-menu button); those clicks still bubble on.
+      if (ev.target.closest(".th-grip, button")) return;
       const firstDir = col.firstDir || SORT_DIR.ASC;
       const current = active && active.key === col.key ? active.dir : SORT_DIR.NONE;
       const dir = nextDir(current, firstDir);
       active = dir === SORT_DIR.NONE ? null : { key: col.key, dir };
       syncIndicators();
       emit();
+    });
+    if (!keyboard) return;
+    const label = th.querySelector(`.${TH_LABEL_CLASS}`);
+    const focusEl = label || th;
+    focusEl.tabIndex = 0;
+    // A th keeps its columnheader role; a label span acts as the button.
+    if (label) label.setAttribute("role", "button");
+    focusEl.addEventListener("keydown", (ev) => {
+      // Own keys only: Enter on a control inside the th (menu button) is its own.
+      if (ev.target !== focusEl || !ACTIVATE_KEYS.has(ev.key)) return;
+      ev.preventDefault();
+      th.click();
     });
   });
 

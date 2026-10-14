@@ -1,5 +1,6 @@
 import { scrollRowIntoView } from "./col-sort.js";
 import { mqMobile } from "./breakpoints.js";
+import { ACTIVATE_KEYS } from "./keys.js";
 
 // Split at the last / or \ (trailing ones ignored) into { dir, name };
 // dir is "" when there is none. Roots keep their separator ("/", "C:\").
@@ -237,7 +238,7 @@ export function wireSpanButton(el, label) {
   el.setAttribute("aria-label", label);
   el.tabIndex = -1;
   el.addEventListener("keydown", (ev) => {
-    if (ev.key !== "Enter" && ev.key !== " ") return;
+    if (!ACTIVATE_KEYS.has(ev.key)) return;
     ev.preventDefault();
     el.click();
   });
@@ -268,12 +269,12 @@ export function addTitleControl(wb, cls, label, click) {
 // move is blocked at an edge, for callers that need to signal the bump.
 // `scroll(row)` defaults to the sticky-header-aware row scroller; callers that
 // scroll their own way (e.g. WinBox boards) pass their own or a no-op.
-const LIST_NAV_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
+export const LIST_NAV_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
 const GRID_NAV_KEYS = new Set([...LIST_NAV_KEYS, "ArrowLeft", "ArrowRight"]);
 
 // Index the key moves to, or `cur` to stay put. A row jump landing outside the
 // grid is a no-op: clamping it to the last cell would silently change column.
-function nextNavIndex(key, cur, len, step) {
+export function nextNavIndex(key, cur, len, step) {
   if (key === "Home") return 0;
   if (key === "End") return len - 1;
   if (key === "ArrowRight") return cur < 0 ? 0 : Math.min(cur + 1, len - 1);

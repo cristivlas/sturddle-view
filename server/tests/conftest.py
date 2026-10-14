@@ -886,6 +886,90 @@ async def pin_arena_tournament_ux(page) -> None:
     )
 
 
+async def wait_winbox_settled(page, sel: str, tol_px: float = 2) -> None:
+    """WinBox animates maximize/restore: wait until the window's rendered
+    width reaches its target (the inline style width)."""
+    await page.wait_for_function(
+        "([sel, tol]) => { const el = document.querySelector(sel);"
+        " return Math.abs(el.getBoundingClientRect().width - parseFloat(el.style.width)) <= tol; }",
+        arg=[sel, tol_px],
+    )
+
+
+async def goto_arena_tournaments(page, base: str) -> None:
+    """Mount the Arena UX on the engines perspective, tournament list shown."""
+    await pin_arena_tournament_ux(page)
+    await page.goto(base + "/")
+    await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
+    await page.click('button[data-perspective="engines"]')
+    await page.wait_for_selector(".tournament-row")
+
+
+async def open_arena_workspace(page) -> None:
+    """Open the selected tournament's workspace (enables the Window menu)."""
+    await page.click('.tournaments-ribbon .t-workspace')
+    await page.wait_for_function(
+        "() => document.querySelectorAll('.winbox.sturddle-wb').length >= 1",
+    )
+
+
+def tournament_server_env(tmp_path: Path, engine_names) -> dict[str, str]:
+    """Engine registry + SV_* env for an out-of-process server (fastchess is
+    never spawned -- tests seed the PGN directly)."""
+    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
+    for name in engine_names:
+        registry.add(name=name, path=sys.executable)
+    return {
+        **e2e_env(tmp_path),
+        "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,
+    }
+
+
+def _games_pgn(games) -> str:
+    """Render (round, white, black, result) tuples as a minimal PGN. The
+    header-only scanner only reads the four tags; the movetext is filler."""
+    out = []
+    for rnd, white, black, result in games:
+        out += [
+            '[Event "test"]',
+            f'[Round "{rnd}"]',
+            f'[White "{white}"]',
+            f'[Black "{black}"]',
+            f'[Result "{result}"]',
+            "",
+            f"1. e4 e5 {result}",
+            "",
+        ]
+    return "\n".join(out) + "\n"
+
+
+def seed_tournament(tmp_path: Path, name: str, engines, games):
+    """Create a tournament and write its games.pgn. Returns the Tournament."""
+    store = ts_mod.TournamentStore(tmp_path / "tournaments")
+    t = store.create(
+        name=name,
+        template={"tc": "5+0.05"},
+        engines=[{"name": e, "cmd": f"/bin/{e}"} for e in engines],
+    )
+    store.pgn_path(t.id).write_text(_games_pgn(games), encoding="utf-8")
+    return t
+
+
+async def open_studio_tab(page, base: str, panel: str) -> None:
+    """Mount Studio, switch to the engines perspective, open a bottom-right
+    tab (`panel` = its wa-tab-panel name)."""
+    await page.add_init_script(
+        f"localStorage.setItem('{TOURNAMENT_UX_KEY}', '{TOURNAMENT_UX_STUDIO}')"
+    )
+    await page.goto(base + "/")
+    await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
+    await page.click('button[data-perspective="engines"]')
+    await page.wait_for_selector(".studio-panel")
+    await page.click(f'.studio-bottom-right wa-tab[panel="{panel}"]')
+
+
 @pytest.fixture(autouse=True)
 def _isolate_user_config(tmp_path, monkeypatch):
     """Redirect default user-config paths to per-test tmp locations.

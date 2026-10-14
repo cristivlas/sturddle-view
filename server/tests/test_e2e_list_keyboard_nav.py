@@ -42,7 +42,7 @@ PICKER_ROW = ".fs-entry"
 TOURNEY_TABLE = ".studio-tourney-tbl"
 TOURNEY_ROW = ".studio-tourney-row"
 HISTORY_ROW = ".studio-history-row"
-OPENINGS_LIST = ".openings-list"
+OPENINGS_LIST = ".openings-body-tbl"
 OPENINGS_ROW = "tr.openings-list-item"
 
 SEEDED_TOURNEYS = 3
@@ -167,7 +167,7 @@ async def test_fs_picker_header_click_selects_nothing(tmp_path, make_page):
             f"() => document.querySelectorAll('{PICKER_ROW}').length > 1"
         )
 
-        await page.click(".fs-picker-head-table thead th:first-child")
+        await page.click(".fs-picker-head-tbl thead th:first-child")
         assert await page.evaluate(_row_text(PICKER_ROW, ".fs-name")) is None
         assert not errors, errors
 
@@ -211,8 +211,8 @@ async def test_studio_tourney_list_arrow_navigation(tmp_path, make_page):
 
 @pytest.mark.asyncio
 async def test_studio_history_is_one_tab_stop(tmp_path, make_page):
-    """Games history roves a single tabindex=0 instead of making every row a
-    Tab stop, so a long list costs one Tab to cross, not one per game."""
+    """Games history is one Tab stop (its body table, not every row), so a
+    long list costs one Tab to cross; arrows walk a row cursor inside it."""
     games = 4
     _seed(tmp_path, 1, games=games)
     with run_uvicorn_subprocess(env_overrides=_server_env(tmp_path)) as base:
@@ -225,20 +225,25 @@ async def test_studio_history_is_one_tab_stop(tmp_path, make_page):
         )
 
         assert await page.evaluate(
-            f"() => document.querySelectorAll('{HISTORY_ROW}[tabindex=\"0\"]').length"
-        ) == 1, "history should expose exactly one Tab stop"
+            f"() => document.querySelectorAll('{HISTORY_ROW}[tabindex]').length"
+        ) == 0, "rows must not be Tab stops"
+        assert await page.evaluate(
+            "() => document.querySelector('.studio-history-body-tbl').tabIndex"
+        ) == 0, "the body table is the one Tab stop"
 
-        # Arrowing moves both focus and the roving stop, so Tab still re-enters
-        # the list where the user left it.
-        await page.evaluate(f"() => document.querySelector('{HISTORY_ROW}').focus()")
-        await page.keyboard.press("ArrowDown")
-        assert await page.evaluate(
+        # Arrows move the cursor row one step; focus stays on the body.
+        cursor_index = (
             f"() => {{ const rows = [...document.querySelectorAll('{HISTORY_ROW}')];"
-            " return rows.indexOf(document.activeElement); }"
-        ) == 1
+            " return rows.findIndex((r) => r.getAttribute('aria-selected') === 'true'); }"
+        )
+        await page.focus(".studio-history-body-tbl")
+        await page.keyboard.press("ArrowDown")
+        first = await page.evaluate(cursor_index)
+        await page.keyboard.press("ArrowDown")
+        assert first >= 0 and await page.evaluate(cursor_index) == first + 1
         assert await page.evaluate(
-            f"() => document.querySelectorAll('{HISTORY_ROW}[tabindex=\"0\"]').length"
-        ) == 1
+            "() => document.activeElement.classList.contains('studio-history-body-tbl')"
+        )
 
         assert not errors, errors
 

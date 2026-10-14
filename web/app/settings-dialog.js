@@ -18,7 +18,7 @@ import { buildDisplayTab } from "./settings-display-tab.js";
 import { buildRecentsTab } from "./settings-recents-tab.js";
 import { debounce } from "./wb-utils.js";
 
-const SETTINGS_ENGINES_COL_PCTS_KEY = STORAGE_KEY.ENGINES_SETTINGS_COL_PCTS;
+const SETTINGS_ENGINES_LAYOUT_KEY = STORAGE_KEY.ENGINES_SETTINGS_LAYOUT;
 const PLAYER_NAME_KEY = STORAGE_KEY.PLAYER_NAME;
 export const PLAYER_NAME_DEFAULT = "Human";
 const PLAYER_NAME_MAX_LEN = 32;
@@ -213,7 +213,7 @@ export async function openSettingsDialog({
       enginesHost.className = "settings-engines-host";
       enginesPanel.appendChild(enginesHost);
       const mountEngines = () => mountEngineList(enginesHost, api, {
-        colPctsKey: SETTINGS_ENGINES_COL_PCTS_KEY,
+        layoutKey: SETTINGS_ENGINES_LAYOUT_KEY,
       });
       let enginesMounted = false;
       tabs.addEventListener("wa-tab-show", (ev) => {

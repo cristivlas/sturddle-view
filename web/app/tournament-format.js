@@ -5,6 +5,14 @@
 
 const TYPE_LABEL = Object.freeze({ roundrobin: "Round-robin", gauntlet: "Gauntlet" });
 
+// Local date+time for an ISO timestamp (created_at, started_at, ...); "" when
+// absent, the raw string when unparseable.
+export function formatStamp(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
 export function formatType(v) {
   if (!v) return null;
   return TYPE_LABEL[v] || (v.charAt(0).toUpperCase() + v.slice(1));
