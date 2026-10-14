@@ -212,6 +212,10 @@ wa-select::part(listbox)::-webkit-scrollbar-thumb {
 wa-select::part(listbox)::-webkit-scrollbar-thumb:hover { background: var(--wa-color-focus); }
 wa-select::part(listbox)::-webkit-scrollbar-corner { background: transparent; }
 wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
+/* WA rings a focused switch's thumb in the focus orange, which vanishes on
+   the near-identical orange "on" track: ring it in the text color instead.
+   Overrides the composed token (its color var resolves at :root). */
+wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-width) var(--fg); }
 
 /* Toggling `disabled` runs WA's 150ms color transition, briefly painting a
    brighter "enabled" border -- reads as a focus flash on the AI rows when the
