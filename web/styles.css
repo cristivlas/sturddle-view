@@ -13,6 +13,10 @@
   --panel-bg: #253347;
   /* Lighter same-hue tint of --panel-bg: hovered/focused menu item. */
   --panel-item-hover: #364b66;
+  /* Button ribbon background: docked rails and the floating window; the
+     mobile horizontal bars blend into the page instead. */
+  --ribbon-bg: var(--panel);
+  --ribbon-bar-bg: transparent;
   /* Minimized-WinBox dock strip; tournament-workspace.js reads it as
      MINIMIZE_FOOTER_H. */
   --wb-min-footer-h: 36px;
@@ -1488,7 +1492,7 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   left: 0; top: var(--arena-ribbon-top, 0); bottom: 0;
   width: var(--ribbon-w);
   z-index: 10;
-  background: var(--panel);
+  background: var(--ribbon-bg);
   border-right: var(--ribbon-border-w) solid var(--border-subtle);
 }
 /* Play's rail sits at 8px; the mobile flip block's fluid gap overrides this
@@ -1893,7 +1897,7 @@ body .side-popover.popover-floating {
     justify-content: center;
     width: auto;
     padding: 6px 0;
-    background: transparent;
+    background: var(--ribbon-bar-bg);
     border-right: 0;
     border-bottom: 1px solid var(--border-subtle);
     /* Never break into a second row at any width. Fluid gap: fixed gaps are
@@ -4116,7 +4120,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
     position: static;
     flex-direction: row; justify-content: center;
     width: auto;
-    background: transparent;
+    background: var(--ribbon-bar-bg);
     border-right: 0; border-bottom: 1px solid var(--border-subtle);
     padding: 6px 0;
     flex-wrap: nowrap;
@@ -4588,7 +4592,7 @@ wa-dialog.tournament-info-dialog::part(body) {
   overflow: hidden !important;
   top: 20px !important; /* thin title bar height, vs the default 35px */
   contain: none !important;
-  background: var(--panel) !important;
+  background: var(--ribbon-bg) !important;
 }
 /* Center the ribbon child without making the body a flex container, which
    would constrain ribbon scrollWidth during orientation toggles and break
