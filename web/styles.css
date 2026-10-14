@@ -3510,6 +3510,9 @@ button.recents-btn {
   align-items: center; font-size: 0.9em; line-height: 1;
 }
 button.recents-btn:hover:not(:disabled) { color: var(--fg); }
+/* Inset ring: the twisty sits at the scroll wrap's left edge, which clips an
+   outer outline. */
+button.recents-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .engines-body-main { padding: 0; }
 
