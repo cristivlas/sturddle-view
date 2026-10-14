@@ -3,3 +3,4 @@
 
 // Keys that activate a focused button-like control (button semantics).
 export const ACTIVATE_KEYS = new Set(["Enter", " "]);
+export const ESCAPE_KEY = "Escape";

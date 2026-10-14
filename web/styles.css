@@ -3358,6 +3358,37 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 /* Baseline, not middle: the taller menu button in the first cell would
    otherwise push that cell's label below the other labels. */
 .dt-head-tbl th { vertical-align: baseline; }
+/* Header drag-to-reorder (data-table.js): dimmed source cell, grabbing
+   cursor while the drag runs, the cell's floating copy, and the
+   header-height drop marker. */
+.dt-th-dragging { opacity: 0.5; }
+.dt-drag-ghost {
+  position: absolute;
+  table-layout: fixed;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  z-index: 6;
+}
+/* A lifted cell: solid lighter fill, full-strength label, and an accent edge
+   (the drop marker stays neutral so the two don't clash; on the cell, as its
+   fill would cover a table outline). Top-aligned so data-table.js can pad
+   its label onto the header's line. Two classes outrank the per-table header
+   th rules. */
+.dt-head-tbl.dt-drag-ghost th {
+  vertical-align: top;
+  background: var(--panel-btn-bg);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.dt-reordering th, .dt-reordering th * { cursor: grabbing; }
+.dt-drop-marker {
+  position: absolute;
+  width: 2px; margin-left: -1px;
+  background: var(--wb-outline);
+  pointer-events: none;
+  /* Above the floating copy, which often sits over the drop boundary. */
+  z-index: 7;
+}
 /* rowNav: the body table is the Tab stop, but the ring goes on its current
    row (the selection, or the cursor) rather than boxing the whole table.
    Cursor mode has no selection styling of its own, so it also tints. */

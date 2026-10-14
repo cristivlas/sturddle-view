@@ -10,6 +10,7 @@ import { loadJson, saveJson } from "./storage.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { ARROW_CLASS, ARROW_DESC, attachColumnSort, TH_LABEL_CLASS, TH_SORTABLE_CLASS } from "./col-sort.js";
+import { ESCAPE_KEY } from "./keys.js";
 import { attachMenuNav, focusFirstItem } from "./menu-nav.js";
 import { wireSplitScroll } from "./split-table.js";
 import { escapeHtml, LIST_NAV_KEYS, wireArrowKeyNav } from "./wb-utils.js";
@@ -38,6 +39,19 @@ const NAV_ROW_SEL = "tr[data-id]";
 const CURRENT_ATTR = "aria-selected";
 const CURRENT_ROW_SEL = `tr[${CURRENT_ATTR}="true"]`;
 const GRID_ROLE = "grid";
+const GRIP_CLASS = "th-grip";
+// Header drag-to-reorder (styles.css): the dragged th, the head table while
+// a drag runs (grabbing cursor), the drop marker, and the cell's floating copy.
+const DRAGGING_CLASS = "dt-th-dragging";
+const REORDERING_CLASS = "dt-reordering";
+const DROP_MARKER_CLASS = "dt-drop-marker";
+const DRAG_GHOST_CLASS = "dt-drag-ghost";
+// Presses here belong to the resize grip or the columns-menu button.
+const REORDER_IGNORE_SEL = `.${GRIP_CLASS}, button`;
+const MOUSE_POINTER = "mouse";
+// Sideways travel before a header press becomes a drag (a shorter one stays
+// a click, which sorts).
+const DRAG_THRESHOLD_PX = 5;
 const MENU_GAP_PX = 4;
 const MENU_EDGE_PX = 8;
 const FULL_PCT = 100;
@@ -117,6 +131,17 @@ function moveColumn(layout, key, dir) {
   if (j < 0) return;
   layout.order.splice(i, 1);
   layout.order.splice(j, 0, key);
+}
+
+// Move visible column `from` to visible boundary `slot` (0 = first, n =
+// after the last); hidden columns keep their place among their neighbors.
+function dropColumn(layout, cols, from, slot) {
+  const key = cols[from].key;
+  layout.order.splice(layout.order.indexOf(key), 1);
+  const at = slot < cols.length
+    ? layout.order.indexOf(cols[slot].key)
+    : layout.order.indexOf(cols[cols.length - 1].key) + 1;
+  layout.order.splice(at, 0, key);
 }
 
 function toggleColumn(layout, key, visibleCount) {
@@ -230,6 +255,134 @@ function rowNavAttrs(rowAttrs, nav, cursor) {
   };
 }
 
+// Visible boundary nearest x: 0 = before the first column, n = after the last.
+function dropSlot(ths, x) {
+  let slot = 0;
+  ths.forEach((th, i) => {
+    const r = th.getBoundingClientRect();
+    if (x > r.left + r.width / 2) slot = i + 1;
+  });
+  return slot;
+}
+
+// Swallow the click a drag's release produces, ahead of the th's sort
+// handler; the next press on `el` disarms it if no click came.
+function swallowNextClick(el) {
+  const eat = (ev) => { ev.stopPropagation(); ev.preventDefault(); disarm(); };
+  const disarm = () => {
+    el.removeEventListener("click", eat, true);
+    el.removeEventListener("pointerdown", disarm, true);
+  };
+  el.addEventListener("click", eat, true);
+  el.addEventListener("pointerdown", disarm, true);
+}
+
+// A floating copy of `th` that follows the drag: a one-cell table carrying
+// the head table's classes, so the header CSS styles it the same.
+function makeDragGhost(th, headTable) {
+  const ghost = document.createElement("table");
+  ghost.className = `${headTable.className} ${DRAG_GHOST_CLASS}`;
+  ghost.inert = true;
+  const cell = th.cloneNode(true);
+  cell.querySelector(`.${GRIP_CLASS}`)?.remove();
+  ghost.createTHead().insertRow().append(cell);
+  const r = th.getBoundingClientRect();
+  Object.assign(ghost.style, { width: `${r.width}px`, height: `${r.height}px` });
+  return ghost;
+}
+
+// Line the (placed) copy's label up with the original's: the header row's
+// height and baseline come from the menu button, which most copies lack.
+function alignGhostLabel(ghost, th) {
+  const labelTop = (el) => el.querySelector(`.${TH_LABEL_CLASS}`).getBoundingClientRect().top;
+  const cell = ghost.tHead.rows[0].cells[0];
+  const dy = labelTop(th) - labelTop(ghost);
+  cell.style.paddingTop = `${parseFloat(getComputedStyle(cell).paddingTop) + dy}px`;
+}
+
+// reorder trait, mouse: drag a header cell sideways; past DRAG_THRESHOLD_PX
+// a copy of the cell follows the pointer along the header, a marker shows
+// the drop boundary, and the release calls onDrop(from, slot) (see
+// dropColumn). Esc cancels.
+function attachHeaderReorder(headTable, overlayHost, onDrop) {
+  const ths = Array.from(headTable.tHead.rows[0].cells);
+  ths.forEach((th, from) => {
+    th.addEventListener("pointerdown", (eDown) => {
+      if (eDown.pointerType !== MOUSE_POINTER || eDown.button !== 0) return;
+      if (eDown.target.closest(REORDER_IGNORE_SEL)) return;
+      let marker = null;
+      let ghost = null;
+      let thLeft = 0;
+      let slot = from;
+
+      // Ghost: the cell's start position plus the pointer's travel, kept
+      // within the header. Marker: on the drop boundary.
+      function place(clientX) {
+        const host = overlayHost.getBoundingClientRect();
+        const head = headTable.getBoundingClientRect();
+        const top = `${head.top - host.top}px`;
+        const ghostLeft = Math.min(Math.max(thLeft + clientX - eDown.clientX, head.left),
+          head.right - ghost.offsetWidth);
+        Object.assign(ghost.style, { left: `${ghostLeft - host.left}px`, top });
+        const x = slot < ths.length
+          ? ths[slot].getBoundingClientRect().left
+          : ths[ths.length - 1].getBoundingClientRect().right;
+        Object.assign(marker.style, { left: `${x - host.left}px`, top, height: `${head.height}px` });
+      }
+      function startDrag() {
+        thLeft = th.getBoundingClientRect().left;
+        ghost = makeDragGhost(th, headTable);
+        marker = document.createElement("div");
+        marker.className = DROP_MARKER_CLASS;
+        overlayHost.append(marker, ghost);
+        place(eDown.clientX);
+        alignGhostLabel(ghost, th);
+        th.classList.add(DRAGGING_CLASS);
+        headTable.classList.add(REORDERING_CLASS);
+        // The th keeps the pointer (and its grabbing cursor) off-cell; losing
+        // it without a release (e.g. the window loses focus) cancels.
+        th.setPointerCapture(eDown.pointerId);
+        th.addEventListener("lostpointercapture", onCancel);
+      }
+      function onMove(ev) {
+        if (!marker) {
+          if (Math.abs(ev.clientX - eDown.clientX) < DRAG_THRESHOLD_PX) return;
+          startDrag();
+        }
+        slot = dropSlot(ths, ev.clientX);
+        place(ev.clientX);
+      }
+      function end(drop) {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.removeEventListener("pointercancel", onCancel);
+        document.removeEventListener("keydown", onKey, true);
+        th.removeEventListener("lostpointercapture", onCancel);
+        if (!marker) return;
+        marker.remove();
+        marker = null;
+        ghost.remove();
+        th.classList.remove(DRAGGING_CLASS);
+        headTable.classList.remove(REORDERING_CLASS);
+        swallowNextClick(headTable);
+        if (drop && slot !== from && slot !== from + 1) onDrop(from, slot);
+      }
+      const onUp = () => end(true);
+      const onCancel = () => end(false);
+      function onKey(ev) {
+        if (ev.key !== ESCAPE_KEY || !marker) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        end(false);
+      }
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+      document.addEventListener("pointercancel", onCancel);
+      document.addEventListener("keydown", onKey, true);
+    });
+  });
+}
+
 // traits: { sort?: { sortKey, stackKey?, defaultState?, single?, group? },
 // resize?, reorder?, hide?, fit?, rowNav? }; sort.single keeps one active
 // column (no layered stack); sort.group(a, b) is a fixed partition applied
@@ -306,7 +459,7 @@ export function createTable({
     const btn = i === 0 && hasMenu
       ? `<button class="dt-menu-btn" title="${MENU_BTN_LABEL}" aria-label="${MENU_BTN_LABEL}"><wa-icon name="${MENU_ICON}"></wa-icon></button>`
       : "";
-    const grip = traits.resize && i < cols.length - 1 ? `<span class="th-grip"></span>` : "";
+    const grip = traits.resize && i < cols.length - 1 ? `<span class="${GRIP_CLASS}"></span>` : "";
     return `<th>${btn}<span class="${TH_LABEL_CLASS}">${escapeHtml(col.label)}</span>${grip}</th>`;
   }
 
@@ -330,7 +483,7 @@ export function createTable({
     if (traits.resize) {
       resizeCtrl = attachColumnResize({
         table: headTable,
-        grips: Array.from(thead.querySelectorAll(".th-grip")),
+        grips: Array.from(thead.querySelectorAll(`.${GRIP_CLASS}`)),
         overlayHost: wrap,
         sizes,
         unit: "pct",
@@ -341,6 +494,13 @@ export function createTable({
       applySizes(sizes);
     }
     if (traits.sort) sortCtrl = attachSort(cols);
+    if (traits.reorder) {
+      attachHeaderReorder(headTable, wrap, (from, slot) => {
+        dropColumn(layout, cols, from, slot);
+        saveLayout();
+        relayout();
+      });
+    }
     renderBody(RENDER_REASON.LAYOUT);
   }
 
