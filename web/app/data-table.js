@@ -10,6 +10,7 @@ import { loadJson, saveJson } from "./storage.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { TH_LABEL_CLASS } from "./col-sort.js";
+import { attachMenuNav, focusFirstItem } from "./menu-nav.js";
 import { wireSplitScroll } from "./split-table.js";
 import { escapeHtml } from "./wb-utils.js";
 
@@ -261,30 +262,40 @@ export function createTable({ cls, tableClass, columns, layoutKey, minPct, trait
     menu.innerHTML = menuHtml(layout, byKey, traits, visibleCols().length);
     if (!focusFid) return;
     const el = menu.querySelector(`[data-fid="${CSS.escape(focusFid)}"]`);
-    (el && !el.disabled ? el : el?.closest("li").querySelector(ENABLED_BTN) || menu.querySelector(ENABLED_BTN))?.focus();
+    const target = el && !el.disabled ? el : el?.closest("li").querySelector(ENABLED_BTN);
+    if (target) target.focus();
+    else focusFirstItem(menu);
   }
 
   // Opened and placed synchronously (no unpositioned first paint). Light
   // dismiss closes the menu on pointerup, before this click: pointerdown
   // records whether it was open so a second click closes, not reopens.
-  // stopPropagation keeps the click from the th's sort handler.
+  // The click bubbles on (col-sort skips th controls), so document-level
+  // listeners such as other menus' close-on-click still see it.
   function wireMenuButton(btn) {
     let wasOpen = false;
-    btn.addEventListener("pointerdown", () => { wasOpen = menu.matches(":popover-open"); });
-    btn.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      const close = wasOpen || menu.matches(":popover-open");
+    btn.addEventListener("pointerdown", () => { wasOpen = isMenuOpen(); });
+    btn.addEventListener("click", () => {
+      const close = wasOpen || isMenuOpen();
       wasOpen = false;
       if (close) {
-        if (menu.matches(":popover-open")) menu.hidePopover();
+        closeMenu();
         return;
       }
       renderMenu();
       menu.showPopover();
       positionMenu(menu, btn);
-      // Keyboard activation (detail 0): move focus into the menu.
-      if (ev.detail === 0) menu.querySelector(ENABLED_BTN)?.focus();
+      focusFirstItem(menu);
     });
+  }
+
+  function isMenuOpen() {
+    return menu.matches(":popover-open");
+  }
+
+  // The beforetoggle handler below returns focus to the button.
+  function closeMenu() {
+    if (isMenuOpen()) menu.hidePopover();
   }
 
   function onMenuClick(ev) {
@@ -308,8 +319,9 @@ export function createTable({ cls, tableClass, columns, layoutKey, minPct, trait
     menu.className = "tmb-dropdown dt-menu";
     menu.setAttribute("popover", "auto");
     menu.addEventListener("click", onMenuClick);
-    // Esc with focus inside would drop it to <body>: hand it back to the
-    // button instead. (A light-dismiss click already moved focus.)
+    attachMenuNav(menu, { close: closeMenu });
+    // Closing with focus inside (Esc, Tab) would drop it to <body>: hand it
+    // back to the button instead. (A light-dismiss click already moved focus.)
     menu.addEventListener("beforetoggle", (ev) => {
       if (ev.newState === "closed" && menu.contains(document.activeElement)) {
         thead.querySelector(".dt-menu-btn")?.focus();

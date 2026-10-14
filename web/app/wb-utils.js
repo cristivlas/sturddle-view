@@ -273,7 +273,7 @@ const GRID_NAV_KEYS = new Set([...LIST_NAV_KEYS, "ArrowLeft", "ArrowRight"]);
 
 // Index the key moves to, or `cur` to stay put. A row jump landing outside the
 // grid is a no-op: clamping it to the last cell would silently change column.
-function nextNavIndex(key, cur, len, step) {
+export function nextNavIndex(key, cur, len, step) {
   if (key === "Home") return 0;
   if (key === "End") return len - 1;
   if (key === "ArrowRight") return cur < 0 ? 0 : Math.min(cur + 1, len - 1);

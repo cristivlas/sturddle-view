@@ -3291,7 +3291,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .tmb-dd-submenu { position: relative; }
 .tmb-dd-submenu > .tmb-dd-item::after { content: "\25B6"; position: absolute; right: 10px; font-size: 0.625rem; }
 .tmb-dd-submenu > .tmb-dropdown { top: -6px; left: 100%; z-index: 9001; }
-.tmb-dd-submenu:hover > .tmb-dropdown { display: block; }
+.tmb-dd-submenu:hover > .tmb-dropdown,
+.tmb-dd-submenu.open > .tmb-dropdown { display: block; }
 .tmb-dd-submenu:has(> .tmb-dd-item:disabled):hover > .tmb-dropdown { display: none; }
 .tmb-dd-item {
   display: block; width: 100%; background: none; border: none; border-radius: 0;
@@ -3300,11 +3301,14 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   font-size: 0.8125rem; line-height: 1.5; cursor: pointer;
   position: relative;
 }
-.tmb-dd-item:hover {
+/* Keyboard focus highlights like hover (menu convention). */
+.tmb-dd-item:hover, .tmb-dd-item:focus-visible {
   background: var(--nav-btn-bg-hover);
   box-shadow: inset 3px 0 0 var(--accent-line);
 }
 .tmb-dd-item.tmb-active::before { content: "\2713"; position: absolute; left: 8px; }
+/* Inset ring: a scrolling dropdown (columns menu) clips outer outlines. */
+.tmb-dropdown button:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .tmb-separator {
   border-top: 1px solid var(--wa-color-border-loud, #333);
   margin: 4px 0;
@@ -3327,7 +3331,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   background: none; border: none; border-radius: 0; color: inherit;
   padding: 4px 6px; cursor: pointer;
 }
-.dt-menu-move:hover:not(:disabled) { background: var(--nav-btn-bg-hover); }
+.dt-menu-move:hover:not(:disabled), .dt-menu-move:focus-visible { background: var(--nav-btn-bg-hover); }
 .dt-menu-move:disabled { opacity: 0.3; cursor: default; }
 .dt-menu-btn {
   background: none; border: none; padding: 0; margin-right: 12px;

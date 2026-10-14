@@ -2,7 +2,7 @@
 
 Columns menu (hide/show, reorder, fit, reset), layout persistence across a
 reload, hidden sort columns dropping out of the row order, and keyboard
-access (tab order + Enter to sort).
+access (tab order + Enter to sort, arrow-key menu navigation).
 
 Skipped if Playwright/Chromium isn't installed.
 """
@@ -17,8 +17,8 @@ from .conftest import (  # noqa: E402
     assert_no_page_errors,
     open_studio_tab,
     run_uvicorn_subprocess,
-    seed_studio_tournament,
-    studio_server_env,
+    seed_tournament,
+    tournament_server_env,
     wait_perspective_ready,
     watch_page_errors,
 )
@@ -108,8 +108,8 @@ async def _open_menu(page):
 
 @pytest.fixture
 def server(tmp_path):
-    seed_studio_tournament(tmp_path, "dt", list(ENGINES), GAMES)
-    with run_uvicorn_subprocess(env_overrides=studio_server_env(tmp_path, ENGINES)) as base:
+    seed_tournament(tmp_path, "dt", list(ENGINES), GAMES)
+    with run_uvicorn_subprocess(env_overrides=tournament_server_env(tmp_path, ENGINES)) as base:
         yield base
 
 
@@ -242,4 +242,45 @@ async def test_keyboard_tab_order_and_enter(server, make_page):
     await page.keyboard.press("Escape")
     await page.wait_for_selector(f"{MENU}:not(:popover-open)", state="attached")
     assert await page.evaluate("() => document.activeElement.classList.contains('dt-menu-btn')")
+    assert_no_page_errors(errors)
+
+
+_FOCUSED_FID = "() => document.activeElement.dataset.fid"
+
+
+@pytest.mark.asyncio
+async def test_columns_menu_arrow_keys(server, make_page):
+    """Opening focuses the first enabled control (Engine's down arrow);
+    Up/Down keep the column across rows, Left/Right step within a row,
+    Home/End jump, Enter activates, Tab closes and moves on from the button
+    to the next tab stop (the Engine label)."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_standings(page, server)
+    await _open_menu(page)
+    assert await page.evaluate(_FOCUSED_FID) == "name:1"
+
+    for key, fid in (
+        ("ArrowDown", "games:1"),
+        ("ArrowLeft", "games:-1"),
+        ("ArrowLeft", "games:toggle"),
+    ):
+        await page.keyboard.press(key)
+        assert await page.evaluate(_FOCUSED_FID) == fid, key
+
+    await page.keyboard.press("Enter")
+    assert "G" not in await page.evaluate(_LABELS)
+    assert await page.evaluate(_FOCUSED_FID) == "games:toggle"
+
+    await page.keyboard.press("End")
+    assert await page.evaluate(_FOCUSED_FID) == "reset"
+    await page.keyboard.press("Home")
+    assert await page.evaluate(_FOCUSED_FID) == "name:1"
+
+    await page.keyboard.press("Tab")
+    await page.wait_for_selector(f"{MENU}:not(:popover-open)", state="attached")
+    assert await page.evaluate(
+        "() => document.activeElement.classList.contains('th-label')"
+        " && document.activeElement.textContent"
+    ) == "Engine"
     assert_no_page_errors(errors)

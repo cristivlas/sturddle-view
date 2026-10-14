@@ -14,6 +14,7 @@ import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, s
 import { APP_EVT } from "./app-events.js";
 import { baseCompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { rankCmp } from "./sort-stack.js";
+import { attachMenuNav, focusFirstItem, MENU_OPEN_CLASS } from "./menu-nav.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import {
@@ -1230,8 +1231,23 @@ function syncWindowMenu(ctx) {
   ctx.windowMenuBtn.disabled = !getActiveWorkspace();
 }
 
+// Closes every open menu and submenu. Focus inside a closing menu (keyboard
+// use) returns to its menubar button instead of dropping to <body>.
 function closeMenus(ctx) {
-  ctx.container.querySelectorAll(".tmb-menu.open").forEach(m => m.classList.remove("open"));
+  for (const m of ctx.container.querySelectorAll(`.tmb-menu.${MENU_OPEN_CLASS}, .tmb-dd-submenu.${MENU_OPEN_CLASS}`)) {
+    const hadFocus = m.contains(document.activeElement);
+    m.classList.remove(MENU_OPEN_CLASS);
+    if (hadFocus && m.classList.contains("tmb-menu")) m.querySelector(":scope > .tmb-item")?.focus();
+  }
+}
+
+// Toggle a menubar menu; opening moves focus to its first item.
+function toggleMenu(ctx, menu) {
+  const isOpen = menu.classList.contains(MENU_OPEN_CLASS);
+  closeMenus(ctx);
+  if (isOpen) return;
+  menu.classList.add(MENU_OPEN_CLASS);
+  focusFirstItem(menu.querySelector(":scope > .tmb-dropdown"));
 }
 
 function syncSortMenu(ctx) {
@@ -1431,11 +1447,12 @@ function wireListKeyboard(ctx) {
 }
 
 function wireMenus(ctx) {
+  for (const menu of [ctx.sortMenu, ctx.windowMenu]) {
+    attachMenuNav(menu.querySelector(":scope > .tmb-dropdown"), { close: () => closeMenus(ctx) });
+  }
   ctx.sortMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    const isOpen = ctx.sortMenu.classList.contains("open");
-    closeMenus(ctx);
-    if (!isOpen) ctx.sortMenu.classList.add("open");
+    toggleMenu(ctx, ctx.sortMenu);
   });
   for (const opt of ctx.container.querySelectorAll(".tmb-sort-opt")) {
     opt.addEventListener("click", () => {
@@ -1458,9 +1475,7 @@ function wireMenus(ctx) {
   ctx.windowMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (ctx.windowMenuBtn.disabled) return;
-    const isOpen = ctx.windowMenu.classList.contains("open");
-    closeMenus(ctx);
-    if (!isOpen) ctx.windowMenu.classList.add("open");
+    toggleMenu(ctx, ctx.windowMenu);
   });
 
   ctx.snapBtn.addEventListener("click", () => {

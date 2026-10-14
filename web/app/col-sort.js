@@ -180,8 +180,9 @@ export function attachColumnSort({
     if (!col || col.sortable === false) return;
     th.classList.add("th-sortable");
     th.addEventListener("click", (ev) => {
-      // Don't sort when the click was on the resize grip.
-      if (ev.target.closest(".th-grip")) return;
+      // Don't sort when the click was on the resize grip or a control inside
+      // the th (columns-menu button); those clicks still bubble on.
+      if (ev.target.closest(".th-grip, button")) return;
       const firstDir = col.firstDir || SORT_DIR.ASC;
       const current = active && active.key === col.key ? active.dir : SORT_DIR.NONE;
       const dir = nextDir(current, firstDir);

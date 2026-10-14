@@ -25,8 +25,8 @@ from sturddle_view.tournament.pgn_stats import (  # noqa: E402
 from .conftest import (  # noqa: E402
     open_studio_tab,
     run_uvicorn_subprocess,
-    seed_studio_tournament,
-    studio_server_env,
+    seed_tournament,
+    tournament_server_env,
     watch_page_errors,
 )
 
@@ -120,9 +120,9 @@ async def test_h2h_two_engine_values_and_banner(tmp_path, make_page):
         ("5", "engine-B", "engine-A", WHITE_WIN),
         ("6", "engine-B", "engine-A", WHITE_WIN),
     ]
-    seed_studio_tournament(tmp_path, "h2h-pair", ["engine-A", "engine-B"], games)
+    seed_tournament(tmp_path, "h2h-pair", ["engine-A", "engine-B"], games)
 
-    with run_uvicorn_subprocess(env_overrides=studio_server_env(tmp_path, ENGINES)) as base:
+    with run_uvicorn_subprocess(env_overrides=tournament_server_env(tmp_path, ENGINES)) as base:
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
         errors = watch_page_errors(page)
         await open_studio_tab(page, base, "h2h")
@@ -164,9 +164,9 @@ async def test_h2h_three_engine_no_banner(tmp_path, make_page):
         ("3", "engine-B", "engine-C", DRAW),
         ("3", "engine-C", "engine-B", BLACK_WIN),
     ]
-    seed_studio_tournament(tmp_path, "h2h-rr3", list(ENGINES), games)
+    seed_tournament(tmp_path, "h2h-rr3", list(ENGINES), games)
 
-    with run_uvicorn_subprocess(env_overrides=studio_server_env(tmp_path, ENGINES)) as base:
+    with run_uvicorn_subprocess(env_overrides=tournament_server_env(tmp_path, ENGINES)) as base:
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
         errors = watch_page_errors(page)
         await open_studio_tab(page, base, "h2h")

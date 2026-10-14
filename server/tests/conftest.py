@@ -886,7 +886,25 @@ async def pin_arena_tournament_ux(page) -> None:
     )
 
 
-def studio_server_env(tmp_path: Path, engine_names) -> dict[str, str]:
+async def goto_arena_tournaments(page, base: str) -> None:
+    """Mount the Arena UX on the engines perspective, tournament list shown."""
+    await pin_arena_tournament_ux(page)
+    await page.goto(base + "/")
+    await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
+    await page.click('button[data-perspective="engines"]')
+    await page.wait_for_selector(".tournament-row")
+
+
+async def open_arena_workspace(page) -> None:
+    """Open the selected tournament's workspace (enables the Window menu)."""
+    await page.click('.tournaments-ribbon .t-workspace')
+    await page.wait_for_function(
+        "() => document.querySelectorAll('.winbox.sturddle-wb').length >= 1",
+    )
+
+
+def tournament_server_env(tmp_path: Path, engine_names) -> dict[str, str]:
     """Engine registry + SV_* env for an out-of-process server (fastchess is
     never spawned -- tests seed the PGN directly)."""
     registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
@@ -916,7 +934,7 @@ def _games_pgn(games) -> str:
     return "\n".join(out) + "\n"
 
 
-def seed_studio_tournament(tmp_path: Path, name: str, engines, games):
+def seed_tournament(tmp_path: Path, name: str, engines, games):
     """Create a tournament and write its games.pgn. Returns the Tournament."""
     store = ts_mod.TournamentStore(tmp_path / "tournaments")
     t = store.create(
