@@ -3655,7 +3655,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   flex: 1; min-height: 0;
 }
 .studio-main {
-  width: calc(100vw - 2 * (var(--ribbon-w) + var(--ribbon-border-w)));
+  /* --ribbon-w already includes the ribbon's border (border-box). */
+  width: calc(100vw - 2 * var(--ribbon-w));
   margin-left: auto; margin-right: auto;
   display: flex; flex-direction: column;
   min-height: 0;
@@ -3970,14 +3971,9 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 }
 .winbox.sturddle-wb-studio.min { display: none; }
 /* Rooted Studio boards position within the scrolling region, not the
-   viewport, and skip the slide transition so re-grids land instantly. Square
-   corners are enforced near the shared .sturddle-wb radius rules below
-   (source order matters at equal specificity). */
-.winbox.sturddle-wb-studio {
-  position: absolute; transition: none;
-  /* Grid-placed: no drag-shadow, header isn't a drag handle. */
-  box-shadow: none;
-}
+   viewport, and skip the slide transition so re-grids land instantly. They
+   carry no-shadow (layout-managed): square, seam borders -- see below. */
+.winbox.sturddle-wb-studio { position: absolute; transition: none; }
 .winbox.sturddle-wb-studio .wb-drag { cursor: default; }
 .studio-bottom {
   flex: 1 1 0; min-height: 0; display: flex; gap: 6px;
@@ -4586,10 +4582,8 @@ wa-dialog.tournament-info-dialog::part(body) {
 .winbox.sturddle-wb {
   background: var(--panel);
   color: var(--fg);
-  /* Edge as an inside border, not an outline: an outline paints 1px outside
-     the window, off its grid rect and over the menubar/ribbon. */
-  border: 1px solid var(--wb-outline);
-  box-sizing: border-box;
+  border: none;
+  outline: 1px solid var(--wb-outline);
   opacity: 1 !important;
   border-radius: var(--wb-radius);
 }
@@ -4606,6 +4600,15 @@ wa-dialog.tournament-info-dialog::part(body) {
 .winbox.sturddle-wb.no-shadow,
 .winbox.sturddle-wb.no-shadow .wb-header,
 .winbox.sturddle-wb.no-shadow .wb-body { border-radius: 0; }
+/* Managed windows tile edge to edge: each draws only its right and bottom
+   border, so neighbors share one seam and the outer edges meet the ribbon's
+   border and the header/menubar line. A border renders >= 1 device px; a 1px
+   gap would vanish at some offsets below 1 DPR. */
+.winbox.sturddle-wb.no-shadow:not(.min) { border-width: 0 1px 1px 0; }
+/* Flush-right windows end exactly where the ribbon (or its mirrored reserve)
+   starts: stretched by layout, not a JS width, which can't hit the same
+   fractional value. !important beats WinBox's inline size. */
+.winbox.sturddle-wb.no-shadow.wb-edge-right:not(.min) { border-right-width: 0; right: var(--ribbon-w); width: auto !important; }
 /* Minimized: square while docked in the bottom strip. Restore removes .min,
    handing the shape back to the float/tiled rules above. */
 .winbox.sturddle-wb.min,
@@ -4616,11 +4619,12 @@ wa-dialog.tournament-info-dialog::part(body) {
 .winbox.sturddle-wb-ribbon,
 .winbox.sturddle-wb-ribbon .wb-header,
 .winbox.sturddle-wb-ribbon .wb-body { border-radius: 0; }
-/* Studio boards: always straight corners; must follow the .sturddle-wb radius
-   rules above to win at equal specificity. */
-.winbox.sturddle-wb-studio,
-.winbox.sturddle-wb-studio .wb-header,
-.winbox.sturddle-wb-studio .wb-body { border-radius: 0; }
+/* Studio boards: inside-the-box edge (an outline sits in the clipped pad);
+   here to beat .sturddle-wb { border: none }. */
+.winbox.sturddle-wb-studio { border: 1px solid var(--wb-outline); box-sizing: border-box; outline: none; }
+/* Studio boards sit in their scroll region, not the viewport. */
+.winbox.sturddle-wb-studio.no-shadow.wb-edge-right:not(.min) { right: 0; }
+.winbox.sturddle-wb-studio.max { bottom: 0; height: auto !important; }
 .winbox.sturddle-wb-ribbon {
   border: 1px solid lightgray;
   /* WB_VERT_W/H etc. size the content; the border sits outside them. */

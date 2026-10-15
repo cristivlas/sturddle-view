@@ -17,7 +17,7 @@ import { createTable, RENDER_REASON } from "./data-table.js";
 import { ACTIVATE_KEYS } from "./keys.js";
 import { formatStamp } from "./tournament-format.js";
 import { reportError, toast } from "./dialogs.js";
-import { debounce, escapeHtml, flashWindow, markSelectable, roveTabStop, suppressModifierClickSelect, syncRovingTabStop, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
+import { debounce, escapeHtml, flashWindow, markSelectable, roveTabStop, suppressModifierClickSelect, syncRovingTabStop, WB_EDGE_RIGHT_CLASS, WB_NO_SHADOW_CLASS, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
 import { createMultiSelect, selectionTargets } from "./multi-select.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS, STATUS_RANK } from "./tournament-events.js";
 import { newTournamentCta, removeSelected, ribbonHtml, setStartVerb, tournamentActions } from "./tournaments.js";
@@ -55,13 +55,10 @@ const READY_TIMEOUT_MS = 4000;
 // Boards region grid: always 4 columns; cells stretch to fill the region
 // width (keeping the board square), clamped to the Arena minimum board
 // width -- below that the row overflows and scrolls. Unlimited rows scroll
-// vertically. Boards are laid out (no-move), absolutely positioned.
+// vertically. Boards are laid out (no-move), absolutely positioned, edge to
+// edge: their right/bottom borders are the seams (see the CSS).
 const STUDIO_COLS = 4;
-const STUDIO_BOARD_GAP = 1;
-// Inset so boards don't sit flush against the region border (abs-positioned
-// boards ignore container padding, so the offset is applied in placement).
-const STUDIO_BOARD_PAD = 1;
-const STUDIO_BOARD_CLASS = "sturddle-wb-studio no-move no-resize";
+const STUDIO_BOARD_CLASS = `sturddle-wb-studio no-move no-resize ${WB_NO_SHADOW_CLASS}`;
 // Minimized boards live in the tray (display:none), so they are not cells.
 const BOARD_SEL = ".winbox.sturddle-wb-studio:not(.min)";
 // The board grid roves one tab stop, so the "current" board is the one Tab
@@ -768,12 +765,27 @@ function studioCols() {
 
 // Cell size: width fills the region across the columns (>= the Arena board
 // minimum), height keeps the board square (width + the fixed window chrome).
+// Height is whole device px off the narrowest column (snapped widths vary by
+// 1px), so no board's own square cap (width + chrome) trims it shorter.
+// x0/dpr: the region's page x and the device pixel ratio, for slotRect.
 function boardCell(ctx) {
   const cols = studioCols();
-  const w = ctx.boardsEl?.clientWidth ?? 0;
-  const cw = Math.max(LIVE_MIN_WIDTH,
-    Math.floor((w - 2 * STUDIO_BOARD_PAD - STUDIO_BOARD_GAP * (cols - 1)) / cols));
-  return { cw, ch: cw + (LIVE_MIN_HEIGHT() - LIVE_MIN_WIDTH), cols };
+  const el = ctx.boardsEl;
+  const dpr = window.devicePixelRatio;
+  const fit = (el?.clientWidth ?? 0) / cols;
+  const cw = Math.max(LIVE_MIN_WIDTH, fit);
+  const chDev = Math.floor(cw * dpr) + Math.floor((LIVE_MIN_HEIGHT() - LIVE_MIN_WIDTH) * dpr);
+  return { cw, ch: chDev / dpr, cols, overflowX: cw > fit, x0: el?.getBoundingClientRect().left ?? 0, dpr };
+}
+
+// Edges land on whole device pixels (columns in page coordinates), so the
+// seam two boards share always rounds to the same pixel at any DPR. The last
+// column's right edge is left to CSS (WB_EDGE_RIGHT_CLASS).
+function slotRect(i, { cw, ch, cols, x0, dpr }) {
+  const col = i % cols, row = Math.floor(i / cols);
+  const colEdge = (c) => Math.round((x0 + c * cw) * dpr) / dpr - x0;
+  const x = colEdge(col);
+  return { x, y: row * ch, w: colEdge(col + 1) - x, h: ch };
 }
 
 // Reposition every open board into its slot; size the scroll canvas to the
@@ -781,31 +793,29 @@ function boardCell(ctx) {
 // minimized windows keep their dock geometry.
 function regridBoards(ctx) {
   if (!ctx.boardsEl) return;
-  const { cw, ch, cols } = boardCell(ctx);
+  const cell = boardCell(ctx);
   // Only laid-out boards take slots; minimized (trayed) and maximized boards
   // are skipped so visible boards pack with no gaps.
   let slot = 0;
   for (const wb of getLiveWindows()) {
     if (wb.min) continue;
+    const lastCol = wb.max || (!cell.overflowX && slot % cell.cols === cell.cols - 1);
+    wb.g?.classList.toggle(WB_EDGE_RIGHT_CLASS, lastCol);
     if (wb.max) { fillRegion(ctx, wb); continue; }
-    const col = slot % cols, row = Math.floor(slot / cols);
-    wb.resize(cw, ch).move(
-      STUDIO_BOARD_PAD + col * (cw + STUDIO_BOARD_GAP),
-      STUDIO_BOARD_PAD + row * (ch + STUDIO_BOARD_GAP),
-    );
-    slot++;
+    const r = slotRect(slot++, cell);
+    wb.resize(r.w, r.h).move(r.x, r.y);
   }
-  sizeCanvas(ctx, slot, cw, ch, cols);
+  sizeCanvas(ctx, slot, cell);
   syncRovingTabStop(ctx.boardsEl, BOARD_SEL, BOARD_CONTROL_SELS);
   // Single source of truth for board presence (laid-out or maximized).
   const hasBoards = anyBoardsShown();
   // The info wall fills the region when no boards are shown; boards hide it
   // (paintWall also toggles the .no-boards scroll-clip class).
   paintWall(ctx, hasBoards);
-  // Mobile: pin the board area to one board (plus the top/bottom inset so it
-  // fits exactly); collapse to nothing when there are no boards rather than
-  // reserve a blank strip. Desktop lets the flex split govern the height.
-  ctx.boardsEl.style.height = mqMobile.matches ? (hasBoards ? `${ch + 2 * STUDIO_BOARD_PAD}px` : "0") : "";
+  // Mobile: pin the board area to one board; collapse to nothing when there
+  // are no boards rather than reserve a blank strip. Desktop lets the flex
+  // split govern the height.
+  ctx.boardsEl.style.height = mqMobile.matches ? (hasBoards ? `${slotRect(0, cell).h}px` : "0") : "";
 }
 
 // Any board occupying the region (laid-out or maximized; minimized don't count).
@@ -848,20 +858,24 @@ function renderEmptyWall(ctx) {
 // Canvas defines the scrollable extent (both axes) of the board grid. Zero
 // when there are no laid-out boards so the region reserves nothing (no stray
 // scrollbar / blank strip).
-function sizeCanvas(ctx, count, cw, ch, gridCols) {
+function sizeCanvas(ctx, count, cell) {
   if (!ctx.boardsCanvasEl) return;
   if (count <= 0) {
     ctx.boardsCanvasEl.style.width = "0";
     ctx.boardsCanvasEl.style.height = "0";
     return;
   }
-  const cols = Math.min(gridCols, Math.max(1, count));
-  const rows = Math.max(1, Math.ceil(count / gridCols));
-  ctx.boardsCanvasEl.style.width = `${2 * STUDIO_BOARD_PAD + cols * cw + (cols - 1) * STUDIO_BOARD_GAP}px`;
-  ctx.boardsCanvasEl.style.height = `${2 * STUDIO_BOARD_PAD + rows * ch + (rows - 1) * STUDIO_BOARD_GAP}px`;
+  // Width only when the minimum board width overflows the region: otherwise
+  // the last column already ends at the region edge, and a rounded canvas
+  // could poke past it into a horizontal scrollbar.
+  const right = slotRect(Math.min(cell.cols, count) - 1, cell);
+  const bottom = slotRect(count - 1, cell);
+  ctx.boardsCanvasEl.style.width = cell.overflowX ? `${right.x + right.w}px` : "0";
+  ctx.boardsCanvasEl.style.height = `${bottom.y + bottom.h}px`;
 }
 
-// Size a board to fill the visible region, pinned to its top-left.
+// Size a board to fill the visible region, pinned to its top-left. CSS
+// stretches it to the exact edges; this keeps WinBox's own size close.
 function fillRegion(ctx, wb) {
   wb.resize(ctx.boardsEl.clientWidth, ctx.boardsEl.clientHeight).move(0, 0);
 }
@@ -878,7 +892,7 @@ function scrollBoardIntoView(ctx, wb) {
   const viewBottom = viewTop + region.clientHeight;
   const fullyVisible = wb.y >= viewTop && wb.y + wb.height <= viewBottom;
   if (fullyVisible) return;
-  region.scrollTo({ top: wb.y - STUDIO_BOARD_PAD, behavior: "smooth" });
+  region.scrollTo({ top: wb.y, behavior: "smooth" });
 }
 
 // A maximized board fills the whole region, so any other board that becomes
@@ -952,13 +966,7 @@ function renderTray(ctx) {
 }
 
 function studioSlotRect(ctx, i) {
-  const { cw, ch, cols } = boardCell(ctx);
-  const col = i % cols, row = Math.floor(i / cols);
-  return {
-    x: STUDIO_BOARD_PAD + col * (cw + STUDIO_BOARD_GAP),
-    y: STUDIO_BOARD_PAD + row * (ch + STUDIO_BOARD_GAP),
-    w: cw, h: ch,
-  };
+  return slotRect(i, boardCell(ctx));
 }
 
 // Sync every watch control's state to the open boards. Called when a board
