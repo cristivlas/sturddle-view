@@ -1275,11 +1275,18 @@ function ensureSortToast(ctx, ws) {
   ctx.dismissSortToast = toast(msg, { duration: 0 });
 }
 
+// Window-menu layout toggles: [button, layout, apply it to a workspace].
+function layoutToggles(ctx) {
+  return [
+    [ctx.snapBtn, LAYOUT.SNAP, (ws) => ws.snap()],
+    [ctx.tileBtn, LAYOUT.TILE, (ws) => ws.tile()],
+    [ctx.tidyBtn, LAYOUT.TIDY, (ws) => ws.tidy()],
+  ];
+}
+
 function syncTidyBtn(ctx) {
   const layout = getActiveLayout();
-  ctx.snapBtn.classList.toggle("tmb-active", layout === LAYOUT.SNAP);
-  ctx.tileBtn.classList.toggle("tmb-active", layout === LAYOUT.TILE);
-  ctx.tidyBtn.classList.toggle("tmb-active", layout === LAYOUT.TIDY);
+  for (const [btn, mode] of layoutToggles(ctx)) btn.classList.toggle("tmb-active", layout === mode);
 }
 
 // ---- Live updates from WS -----------------------------------------------
@@ -1454,27 +1461,16 @@ function wireMenus(ctx) {
     toggleMenu(ctx, ctx.windowMenu);
   });
 
-  ctx.snapBtn.addEventListener("click", () => {
-    closeMenus(ctx);
-    const ws = getActiveWorkspace();
-    if (!ws) return;
-    if (getActiveLayout() === LAYOUT.SNAP) ws.untidy(); else ws.snap();
-    syncTidyBtn(ctx);
-  });
-  ctx.tileBtn.addEventListener("click", () => {
-    closeMenus(ctx);
-    const ws = getActiveWorkspace();
-    if (!ws) return;
-    if (getActiveLayout() === LAYOUT.TILE) ws.untidy(); else ws.tile();
-    syncTidyBtn(ctx);
-  });
-  ctx.tidyBtn.addEventListener("click", () => {
-    closeMenus(ctx);
-    const ws = getActiveWorkspace();
-    if (!ws) return;
-    if (getActiveLayout() === LAYOUT.TIDY) ws.untidy(); else ws.tidy();
-    syncTidyBtn(ctx);
-  });
+  // Each toggle applies its layout, or reverts when that layout is active.
+  for (const [btn, mode, apply] of layoutToggles(ctx)) {
+    btn.addEventListener("click", () => {
+      closeMenus(ctx);
+      const ws = getActiveWorkspace();
+      if (!ws) return;
+      if (getActiveLayout() === mode) ws.untidy(); else apply(ws);
+      syncTidyBtn(ctx);
+    });
+  }
   ctx.container.querySelector(".tmb-closeall").addEventListener("click", () => {
     closeMenus(ctx);
     const ws = getActiveWorkspace();
