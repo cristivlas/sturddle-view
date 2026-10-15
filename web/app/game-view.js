@@ -13,7 +13,7 @@ import {
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
-import { SIDE, FEN_STM } from "./chess-consts.js";
+import { SIDE, FEN_STM, uciSquares } from "./chess-consts.js";
 import { fmtClock, fmtCount, fmtMoveNo, fmtScore, markSelectable, rafCoalesce } from "./wb-utils.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
@@ -789,12 +789,8 @@ function applyEngineInfo(ctx, evt) {
     ctx.enginePv.setAttribute("title", full);
   }
   syncPvVisibility(ctx);
-  if (!ctx.editing && evt.payload.pv_uci && evt.payload.pv_uci.length > 0) {
-    const m = evt.payload.pv_uci[0];
-    if (m && m.length >= 4) {
-      ctx.board.setArrow(m.slice(0, 2), m.slice(2, 4));
-    }
-  }
+  const squares = ctx.editing ? null : uciSquares(evt.payload.pv_uci?.[0]);
+  if (squares) ctx.board.setArrow(...squares);
 }
 
 function applyEvent(ctx, evt) {
@@ -814,13 +810,14 @@ function applyEvent(ctx, evt) {
     case KIND.ENGINE_INFO:
       if (ctx.showEngineInfo) applyEngineInfo(ctx, evt);
       break;
-    case KIND.AI_RECOMMENDATION:
-      if (!ctx.editing && evt.payload.uci && evt.payload.uci.length >= 4) {
-        const u = evt.payload.uci;
-        ctx.board.setRecommendArrow(u.slice(0, 2), u.slice(2, 4));
+    case KIND.AI_RECOMMENDATION: {
+      const squares = ctx.editing ? null : uciSquares(evt.payload.uci);
+      if (squares) {
+        ctx.board.setRecommendArrow(...squares);
         ctx.board.setAlternativeArrows(evt.payload.alternatives);
       }
       break;
+    }
     case KIND.GAME_RESULT:
       if (ctx.interactive && !ctx.editing) ctx.board.enableInput(false);
       if (!ctx.editing) ctx.board.cancelAnimations();

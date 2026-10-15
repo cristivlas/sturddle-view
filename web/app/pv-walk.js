@@ -5,6 +5,7 @@
 // en-passant are handled here.
 
 import { Position } from "../vendor/cm-chessboard/src/model/Position.js";
+import { uciSquares } from "./chess-consts.js";
 
 const SQUARE_RE = /^[a-h][1-8]$/;
 const CASTLE_ROOK_HOP = {
@@ -19,8 +20,7 @@ const CASTLE_ROOK_HOP = {
 // alternate with the previous ply. Any of these truncates the walk.
 function applyPly(position, uci, expectedColor) {
   if (!uci || uci === "0000" || (uci.length !== 4 && uci.length !== 5)) return null;
-  const from = uci.slice(0, 2);
-  const to = uci.slice(2, 4);
+  const [from, to] = uciSquares(uci);
   if (!SQUARE_RE.test(from) || !SQUARE_RE.test(to)) return null;
   const piece = position.getPiece(from);
   if (!piece) return null;

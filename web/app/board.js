@@ -14,7 +14,7 @@ import {
 } from "../vendor/cm-chessboard/src/extensions/promotion-dialog/PromotionDialog.js";
 import { PositionEditor } from "../vendor/cm-chessboard-position-editor/src/PositionEditor.js";
 import { resolveBoardStyle } from "./board-styles.js";
-import { SIDE } from "./chess-consts.js";
+import { SIDE, uciSquares } from "./chess-consts.js";
 import { createLineShow } from "./line-show.js";
 
 // Pinned cm-chessboard version this patch was verified against. On upgrade,
@@ -232,13 +232,7 @@ export function mountBoard({ element, onMove, styleId }) {
       settled = true;
       Promise.all([Promise.resolve(done), spriteReady]).catch(() => {}).then(() => resolveReady());
     }
-    board.removeMarkers();
-    if (moveUci && moveUci.length >= 4) {
-      const from = moveUci.slice(0, 2);
-      const to = moveUci.slice(2, 4);
-      board.addMarker(MARKER_TYPE.frame, from);
-      board.addMarker(MARKER_TYPE.frame, to);
-    }
+    markMove(moveUci);
   }
 
   // Internal: moves the board without touching markers or the line-show
@@ -251,10 +245,7 @@ export function mountBoard({ element, onMove, styleId }) {
 
   function markMove(uci) {
     board.removeMarkers();
-    if (uci && uci.length >= 4) {
-      board.addMarker(MARKER_TYPE.frame, uci.slice(0, 2));
-      board.addMarker(MARKER_TYPE.frame, uci.slice(2, 4));
-    }
+    for (const square of uciSquares(uci) ?? []) board.addMarker(MARKER_TYPE.frame, square);
   }
 
   function enableInput(yes) {
@@ -361,8 +352,9 @@ export function mountBoard({ element, onMove, styleId }) {
   function setAlternativeArrows(ucis) {
     if (lineShow.shouldRedirectArrows()) {
       const pairs = (ucis || [])
-        .filter((u) => u && u.length >= 4)
-        .map((u) => ({ from: u.slice(0, 2), to: u.slice(2, 4) }));
+        .map(uciSquares)
+        .filter(Boolean)
+        .map(([from, to]) => ({ from, to }));
       lineShow.onOutsideArrows(ARROW_TYPE.info, pairs);
       return;
     }
@@ -371,7 +363,8 @@ export function mountBoard({ element, onMove, styleId }) {
     }
     if (typeof board.addArrow !== "function") return;
     for (const u of ucis || []) {
-      if (u && u.length >= 4) board.addArrow(ARROW_TYPE.info, u.slice(0, 2), u.slice(2, 4));
+      const squares = uciSquares(u);
+      if (squares) board.addArrow(ARROW_TYPE.info, ...squares);
     }
   }
 

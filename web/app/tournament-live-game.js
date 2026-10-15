@@ -7,7 +7,7 @@ import { mountBoard } from "./board.js";
 import { reportError, toast } from "./dialogs.js";
 import { activatePlay, confirmOpenInView, GAME_STATUS_PATH, importForView, OPEN_VERDICT } from "./open-in-view.js";
 import { APP_EVT } from "./app-events.js";
-import { SIDE, FEN_STM } from "./chess-consts.js";
+import { SIDE, FEN_STM, uciSquares } from "./chess-consts.js";
 import { createEvalGraph } from "./eval-graph.js";
 import { createPvTable } from "./pv-table.js";
 import { STORAGE_KEY } from "./storage-keys.js";
@@ -855,12 +855,11 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     }
   }
 
-  function pvArrowMove(p) {
+  function pvArrowSquares(p) {
     const pv = p.pv_uci;
     if (!pv || !pv.length) return null;
     if (!p.time || p.time < ARROW_MIN_TIME_MS) return null;
-    const m = pv[0];
-    return m && m.length >= 4 ? m : null;
+    return uciSquares(pv[0]);
   }
 
   function handlePairedParsed(p, thinkingSide) {
@@ -883,8 +882,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     const pv = p.pv_uci;
     if (pvSidesVisible) row.pvSide().update(p, pv?.join(" "));
     if (pv?.length) row.pvEl.textContent = pv.slice(0, PV_PREVIEW_PLIES).join(" ");
-    const m = pvArrowMove(p);
-    if (m) row.setArrow(m.slice(0, 2), m.slice(2, 4));
+    const squares = pvArrowSquares(p);
+    if (squares) row.setArrow(...squares);
   }
 
   return {

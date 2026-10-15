@@ -20,3 +20,12 @@ export const RESULT = {
   BLACK_WIN: "0-1",
   DRAW: "1/2-1/2",
 };
+
+// UCI long-algebraic move: from-square, to-square, optional promotion piece.
+const SQUARE_LEN = 2;
+
+// [from, to] squares of a UCI move, or null when too short to be one.
+export function uciSquares(uci) {
+  if (!uci || uci.length < 2 * SQUARE_LEN) return null;
+  return [uci.slice(0, SQUARE_LEN), uci.slice(SQUARE_LEN, 2 * SQUARE_LEN)];
+}
