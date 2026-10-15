@@ -1707,38 +1707,34 @@ function mountEngineBuilder({ host, available, initial = [] }) {
     return available.filter((e) => !pickedIds.includes(e.id)).map((e) => e.id);
   }
 
-  function render() {
-    availableList.innerHTML = "";
-    for (const e of available) {
-      if (pickedIds.includes(e.id)) continue;
-      const li = document.createElement("li");
-      li.className = "ne-item" + (availableSelected.has(e.id) ? " selected" : "");
-      li.dataset.id = e.id;
-      li.textContent = e.name;
-      li.title = e.name;
-      li.addEventListener("click", (ev) => {
-        applyListClick(ev, e.id, availableSelected, availableAnchor, visibleAvailableIds);
-        render();
-      });
-      li.addEventListener("dblclick", () => doAdd([e.id]));
-      availableList.appendChild(li);
-    }
+  // One pane row: click (multi-)selects within its pane, dblclick moves it
+  // across. The tooltip shows a name cut off by the pane width.
+  function paneItem(e, { selected, anchor, idsInOrder, onMove }) {
+    const li = document.createElement("li");
+    li.className = "ne-item" + (selected.has(e.id) ? " selected" : "");
+    li.dataset.id = e.id;
+    li.textContent = e.name;
+    li.title = e.name;
+    li.addEventListener("click", (ev) => {
+      applyListClick(ev, e.id, selected, anchor, idsInOrder);
+      render();
+    });
+    li.addEventListener("dblclick", () => onMove([e.id]));
+    return li;
+  }
 
-    pickedList.innerHTML = "";
-    for (const id of pickedIds) {
-      const e = byId.get(id);
-      if (!e) continue;
-      const li = document.createElement("li");
-      li.className = "ne-item" + (pickedSelected.has(id) ? " selected" : "");
-      li.dataset.id = id;
-      li.textContent = e.name;
-      li.addEventListener("click", (ev) => {
-        applyListClick(ev, id, pickedSelected, pickedAnchor, () => [...pickedIds]);
-        render();
-      });
-      li.addEventListener("dblclick", () => doRemove([id]));
-      pickedList.appendChild(li);
-    }
+  function render() {
+    availableList.replaceChildren(...available
+      .filter((e) => !pickedIds.includes(e.id))
+      .map((e) => paneItem(e, {
+        selected: availableSelected, anchor: availableAnchor, idsInOrder: visibleAvailableIds, onMove: doAdd,
+      })));
+    pickedList.replaceChildren(...pickedIds
+      .map((id) => byId.get(id))
+      .filter(Boolean)
+      .map((e) => paneItem(e, {
+        selected: pickedSelected, anchor: pickedAnchor, idsInOrder: () => [...pickedIds], onMove: doRemove,
+      })));
 
     addBtn.disabled = availableSelected.size === 0;
     removeBtn.disabled = pickedSelected.size === 0;
