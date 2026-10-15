@@ -35,11 +35,13 @@ export function ribbonWidthPx(selector) {
 }
 
 // Bottom edge of the nav header (its amber accent line) -- the top boundary
-// for floating windows. The header is content-sized, so measure it.
+// for floating windows. The header is content-sized, so measure it. Unrounded:
+// font metrics can make it fractional, and a rounded copy lands on a
+// different device pixel at low DPR.
 const HEADER_H_FALLBACK_PX = 44;
 export function headerBottomPx() {
   const h = document.querySelector("header");
-  return h ? Math.round(h.getBoundingClientRect().bottom) : HEADER_H_FALLBACK_PX;
+  return h ? h.getBoundingClientRect().bottom : HEADER_H_FALLBACK_PX;
 }
 
 // Hover tooltip showing the full value on inputs that may overflow.
