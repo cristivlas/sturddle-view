@@ -1040,6 +1040,20 @@ async function loadAvailableEngines(ctx) {
   return available;
 }
 
+// New and Copy both POST a fresh tournament. false keeps the dialog open; a
+// name-taken failure rethrows flagged so the dialog shakes the name field.
+async function postTournament(ctx, data, failMsg) {
+  try {
+    await ctx.api("POST", "/api/tournaments", data);
+    toast(`Created new tournament "${data.name}"`, { variant: "success" });
+  } catch (e) {
+    reportError({ log: ctx.log }, failMsg, e);
+    if (/-> 409\b/.test(e.message)) throw Object.assign(e, { isNameCollision: true });
+    return false;
+  }
+  await ctx.loadList();
+}
+
 async function openNewTournamentDialog(ctx) {
   const available = await loadAvailableEngines(ctx);
   if (!available) return;
@@ -1055,17 +1069,7 @@ async function openNewTournamentDialog(ctx) {
     // existing tournament's frozen template, which does win).
     initialTemplate: null,
     available,
-    onSubmit: async (data) => {
-      try {
-        await ctx.api("POST", "/api/tournaments", data);
-        toast(`Created new tournament "${data.name}"`, { variant: "success" });
-      } catch (e) {
-        reportError({ log: ctx.log }, "Creating tournament failed", e);
-        if (/-> 409\b/.test(e.message)) throw Object.assign(e, { isNameCollision: true });
-        return false;
-      }
-      await ctx.loadList();
-    },
+    onSubmit: (data) => postTournament(ctx, data, "Creating tournament failed"),
   });
 }
 
@@ -1193,17 +1197,7 @@ async function openDuplicateTournamentDialog(ctx, t) {
     initialBook: t.engine_defaults || null,
     available,
     onOpened: () => warnDroppedEngines(droppedCount, "creating the copy"),
-    onSubmit: async (data) => {
-      try {
-        await ctx.api("POST", "/api/tournaments", data);
-        toast(`Created new tournament "${data.name}"`, { variant: "success" });
-      } catch (e) {
-        reportError({ log: ctx.log }, "Duplicating tournament failed", e);
-        if (/-> 409\b/.test(e.message)) throw Object.assign(e, { isNameCollision: true });
-        return false;
-      }
-      await ctx.loadList();
-    },
+    onSubmit: (data) => postTournament(ctx, data, "Duplicating tournament failed"),
   });
 }
 
