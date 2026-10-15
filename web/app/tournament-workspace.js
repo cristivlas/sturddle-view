@@ -582,7 +582,7 @@ function attachWatch(ctx, btn, attachKey, openOpts) {
   let result;
   try {
     result = openLiveGameWindow({
-      ...openOpts, token: ctx.token, tournamentId: ctx.tournament.id,
+      ...openOpts, tournamentId: ctx.tournament.id,
       top: ctx.top, left: ctx.left, right: ctx.getRightInset(),
       boardStyle: ctx.boardStyleCached,
       initialRect: claim ? { x: claim.x, y: claim.y, w: claim.w, h: claim.h } : (openOpts.initialRect ?? null),
@@ -948,7 +948,7 @@ async function initWorkspace(ctx) {
         const fres = openFrozenGameWindow({
           proxyId: s.proxyId, gameId: s.gameId,
           label: s.label, engineName: s.engineName,
-          token: ctx.token, tournamentId: ctx.tournament.id,
+          tournamentId: ctx.tournament.id,
           gameN: resolved.gameN,
           result: resolved.result,
           termination: resolved.termination,
@@ -1309,7 +1309,7 @@ function setLayout(ctx, mode) {
 // Wiring shell: builds the shared `ctx` state object, opens the initial
 // windows, registers listeners, and returns the workspace control API.
 // The behavior lives in the module-level helpers that take `ctx`.
-export function openTournamentWorkspace({ api, events, log, token, tournament, top = 0, left = 0, getRight = () => window.innerWidth }) {
+export function openTournamentWorkspace({ api, events, log, tournament, top = 0, left = 0, getRight = () => window.innerWidth }) {
   // Single-active model. Re-clicking the workspace icon for the
   // already-open tournament is a no-op (just focus its windows) so
   // attached engine windows survive -- closing here would tear them
@@ -1363,7 +1363,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // scalars (detail, body refs, lifecycle guards), and the bound listener
   // thunks (added/removed by the same reference).
   const ctx = {
-    api, events, log, token, tournament, top, left, getRight,
+    api, events, log, tournament, top, left, getRight,
     savedState, restoreFromSaved, slotGrid, lastGeometry,
     live,
     eventLog: live.eventLog, seenSeqs: live.seenSeqs,

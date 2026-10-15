@@ -44,6 +44,7 @@ const CURRENT_ATTR = "aria-selected";
 const CURRENT_ROW_SEL = `tr[${CURRENT_ATTR}="true"]`;
 const GRID_ROLE = "grid";
 const GRIP_CLASS = "th-grip";
+const MENU_BTN_CLASS = "dt-menu-btn";
 // Header drag-to-reorder (styles.css): the dragged th, the head table while
 // a drag runs (grabbing cursor), the drop marker, and the cell's floating copy.
 const DRAGGING_CLASS = "dt-th-dragging";
@@ -52,6 +53,8 @@ const DROP_MARKER_CLASS = "dt-drop-marker";
 const DRAG_GHOST_CLASS = "dt-drag-ghost";
 // Presses here belong to the resize grip or the columns-menu button.
 const REORDER_IGNORE_SEL = `.${GRIP_CLASS}, button`;
+// Header-cell controls left out of the drag copy.
+const GHOST_STRIP_SEL = `.${GRIP_CLASS}, .${MENU_BTN_CLASS}`;
 const MOUSE_POINTER = "mouse";
 // Sideways travel before a header press becomes a drag (a shorter one stays
 // a click, which sorts).
@@ -291,7 +294,7 @@ function makeDragGhost(th, headTable) {
   ghost.className = `${headTable.className} ${DRAG_GHOST_CLASS}`;
   ghost.inert = true;
   const cell = th.cloneNode(true);
-  cell.querySelector(`.${GRIP_CLASS}`)?.remove();
+  cell.querySelectorAll(GHOST_STRIP_SEL).forEach((el) => el.remove());
   ghost.createTHead().insertRow().append(cell);
   const r = th.getBoundingClientRect();
   Object.assign(ghost.style, { width: `${r.width}px`, height: `${r.height}px` });
@@ -299,7 +302,7 @@ function makeDragGhost(th, headTable) {
 }
 
 // Line the (placed) copy's label up with the original's: the header row's
-// height and baseline come from the menu button, which most copies lack.
+// height and baseline come from the menu button, which copies lack.
 function alignGhostLabel(ghost, th) {
   const labelTop = (el) => el.querySelector(`.${TH_LABEL_CLASS}`).getBoundingClientRect().top;
   const cell = ghost.tHead.rows[0].cells[0];
@@ -464,7 +467,7 @@ export function createTable({
 
   function thHtml(col, i, cols) {
     const btn = i === 0 && hasMenu
-      ? `<button class="dt-menu-btn" title="${MENU_BTN_LABEL}" aria-label="${MENU_BTN_LABEL}"><wa-icon name="${MENU_ICON}"></wa-icon></button>`
+      ? `<button class="${MENU_BTN_CLASS}" title="${MENU_BTN_LABEL}" aria-label="${MENU_BTN_LABEL}"><wa-icon name="${MENU_ICON}"></wa-icon></button>`
       : "";
     const grip = traits.resize && i < cols.length - 1 ? `<span class="${GRIP_CLASS}"></span>` : "";
     return `<th>${btn}<span class="${TH_LABEL_CLASS}">${escapeHtml(col.label)}</span>${grip}</th>`;
@@ -478,7 +481,7 @@ export function createTable({
     headColgroup.innerHTML = colsHtml;
     bodyColgroup.innerHTML = colsHtml;
     thead.innerHTML = `<tr>${cols.map(thHtml).join("")}</tr>`;
-    const menuBtn = thead.querySelector(".dt-menu-btn");
+    const menuBtn = thead.querySelector(`.${MENU_BTN_CLASS}`);
     if (menuBtn) wireMenuButton(menuBtn);
 
     const total = weightSum(layout, cols);
@@ -638,7 +641,7 @@ export function createTable({
     // back to the button instead. (A light-dismiss click already moved focus.)
     menu.addEventListener("beforetoggle", (ev) => {
       if (ev.newState === "closed" && menu.contains(document.activeElement)) {
-        thead.querySelector(".dt-menu-btn")?.focus();
+        thead.querySelector(`.${MENU_BTN_CLASS}`)?.focus();
       }
     });
     wrap.append(menu);

@@ -43,11 +43,14 @@ DEFAULT_LABELS = ["Engine", "G", "W", "L", "D", "Pts", "%", "Elo", "Ordo"]
 VIEWPORT = {"width": 1400, "height": 900}
 
 HEAD = ".wb-standings-head-tbl"
-MENU_BTN = f"{HEAD} .dt-menu-btn"
+MENU_BTN_CLASS = "dt-menu-btn"
+MENU_BTN = f"{HEAD} .{MENU_BTN_CLASS}"
+TH_LABEL_CLASS = "th-label"
+TH_LABEL_SEL = f"{HEAD} th .{TH_LABEL_CLASS}"
 # Scoped: Studio has several factory tables, each with its own menu.
 MENU = ".wb-standings-table-wrap .dt-menu"
 
-_LABELS = f"() => [...document.querySelectorAll('{HEAD} th .th-label')].map(e => e.textContent)"
+_LABELS = f"() => [...document.querySelectorAll('{TH_LABEL_SEL}')].map(e => e.textContent)"
 _ROW_NAMES = (
     "() => [...document.querySelectorAll('.wb-standings-body-tbl tbody td.wb-eng-name')]"
     ".map(e => e.textContent)"
@@ -59,7 +62,7 @@ _CELLS_PER_ROW = (
 # Rendered px width of each header column, keyed by label.
 _HEAD_WIDTHS = (
     f"() => Object.fromEntries([...document.querySelectorAll('{HEAD} th')]"
-    ".map(th => [th.querySelector('.th-label').textContent, th.getBoundingClientRect().width]))"
+    f".map(th => [th.querySelector('.{TH_LABEL_CLASS}').textContent, th.getBoundingClientRect().width]))"
 )
 _NAME_TRUNCATED = (
     "() => { const td = document.querySelector('.wb-standings-body-tbl tbody td.wb-eng-name');"
@@ -80,7 +83,13 @@ def _th_at(label):
 _SORTED_HEADERS = (
     f"() => Object.fromEntries([...document.querySelectorAll('{HEAD} th')]"
     ".filter(th => th.getAttribute('aria-sort') !== 'none')"
-    ".map(th => [th.querySelector('.th-label').textContent, th.getAttribute('aria-sort')]))"
+    f".map(th => [th.querySelector('.{TH_LABEL_CLASS}').textContent, th.getAttribute('aria-sort')]))"
+)
+
+# Text of the focused header label, or false when focus is elsewhere.
+_FOCUSED_LABEL_TEXT = (
+    "(cls) => document.activeElement.classList.contains(cls)"
+    " && document.activeElement.textContent"
 )
 
 
@@ -170,7 +179,8 @@ async def test_reorder_skips_hidden_neighbor(server, make_page):
 # (past its midpoint, so the drop lands after it).
 DRAG_STEPS = 8
 DROP_FRAC = 0.8
-_DRAG_LEFTOVERS = "() => document.querySelectorAll('.dt-drag-ghost, .dt-drop-marker').length"
+DRAG_GHOST_CLASS = "dt-drag-ghost"
+_DRAG_LEFTOVERS = f"() => document.querySelectorAll('.{DRAG_GHOST_CLASS}, .dt-drop-marker').length"
 DEFAULT_SORT = {"%": "descending"}
 
 
@@ -222,6 +232,23 @@ async def test_drag_header_escape_cancels(server, make_page):
 
 
 @pytest.mark.asyncio
+async def test_drag_first_header_copy_leaves_menu_button_out(server, make_page):
+    """The first header hosts the columns-menu button; its drag copy shows
+    the label only."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_standings(page, server)
+
+    await _press_and_drag(page, "Engine", "G")
+    ghost = page.locator(f".{DRAG_GHOST_CLASS}")
+    assert await ghost.locator(f".{TH_LABEL_CLASS}").text_content() == "Engine"
+    assert await ghost.locator(f".{MENU_BTN_CLASS}").count() == 0
+    await page.keyboard.press("Escape")
+    await page.mouse.up()
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
 async def test_fit_columns_widens_content_and_persists(server, make_page):
     """Fit sizes columns by content: the truncated long-name Engine column
     grows, the one-digit G column shrinks, and the widths survive a reload."""
@@ -246,7 +273,7 @@ async def test_fit_columns_widens_content_and_persists(server, make_page):
 
 # Header labels of columns with any truncated body cell.
 _TRUNCATED_COLS = f"""() => {{
-  const labels = [...document.querySelectorAll('{HEAD} th .th-label')].map((e) => e.textContent);
+  const labels = [...document.querySelectorAll('{TH_LABEL_SEL}')].map((e) => e.textContent);
   const out = new Set();
   for (const tr of document.querySelectorAll('.wb-standings-body-tbl tbody tr')) {{
     [...tr.cells].forEach((td, i) => {{ if (td.scrollWidth > td.clientWidth) out.add(labels[i]); }});
@@ -325,7 +352,7 @@ async def test_fit_on_overflow_truncates_only_wide_columns(server, make_page):
 
     # The th's own scrollWidth can't tell: its resize grip overhangs the
     # edge. The new arrow must end inside the cell's content box instead.
-    await page.click(f'{_th_at("G")} .th-label')
+    await page.click(f'{_th_at("G")} .{TH_LABEL_CLASS}')
     assert await page.locator(_th_at("G")).evaluate(_ARROW_FITS)
     assert_no_page_errors(errors)
 
@@ -339,7 +366,7 @@ async def test_hidden_sort_column_drops_out_of_order(server, make_page):
     errors = watch_page_errors(page)
     await _open_standings(page, server)
 
-    w_label = f'{_th_at("W")} .th-label'
+    w_label = f'{_th_at("W")} .{TH_LABEL_CLASS}'
     await page.click(w_label)  # W opens descending
     await page.click(w_label)  # -> ascending
     assert await page.evaluate(_ROW_NAMES) == [ENGINE_B, ENGINE_A]
@@ -357,7 +384,7 @@ async def test_hidden_sort_column_drops_out_of_order(server, make_page):
 
 # Bottom edge of every header label's text box, in header order.
 _LABEL_BOTTOMS = (
-    f"() => [...document.querySelectorAll('{HEAD} th .th-label')]"
+    f"() => [...document.querySelectorAll('{TH_LABEL_SEL}')]"
     ".map(e => e.getBoundingClientRect().bottom)"
 )
 LABEL_ALIGN_TOL_PX = 1
@@ -389,8 +416,7 @@ async def test_keyboard_tab_order_and_enter(server, make_page):
     await page.focus(MENU_BTN)
     await page.keyboard.press("Tab")
     assert await page.evaluate(
-        "() => document.activeElement.classList.contains('th-label')"
-        " && document.activeElement.textContent"
+        _FOCUSED_LABEL_TEXT, TH_LABEL_CLASS,
     ) == "Engine"
 
     await page.keyboard.press("Enter")
@@ -404,7 +430,9 @@ async def test_keyboard_tab_order_and_enter(server, make_page):
 
     await page.keyboard.press("Escape")
     await page.wait_for_selector(f"{MENU}:not(:popover-open)", state="attached")
-    assert await page.evaluate("() => document.activeElement.classList.contains('dt-menu-btn')")
+    assert await page.evaluate(
+        "(cls) => document.activeElement.classList.contains(cls)", MENU_BTN_CLASS,
+    )
     assert_no_page_errors(errors)
 
 
@@ -443,8 +471,7 @@ async def test_columns_menu_arrow_keys(server, make_page):
     await page.keyboard.press("Tab")
     await page.wait_for_selector(f"{MENU}:not(:popover-open)", state="attached")
     assert await page.evaluate(
-        "() => document.activeElement.classList.contains('th-label')"
-        " && document.activeElement.textContent"
+        _FOCUSED_LABEL_TEXT, TH_LABEL_CLASS,
     ) == "Engine"
     assert_no_page_errors(errors)
 

@@ -630,7 +630,7 @@ const HISTORY_COLUMNS = [
 function openHistoryRow(ctx, row) {
   const tid = ctx.selDetail?.id;
   if (!tid) return;
-  replayTournamentGame({ tournamentId: tid, gameN: Number(row.dataset.id), token: ctx.token })
+  replayTournamentGame({ tournamentId: tid, gameN: Number(row.dataset.id) })
     .catch((e) => reportError({ log: ctx.log }, REVIEW_FAIL_MSG, e));
 }
 
@@ -1032,7 +1032,7 @@ function placeBoard(ctx, res) {
 // for a genuine Watch click -- restore passes false (silent reopen).
 function openBoard(ctx, openOpts, min, flash = true) {
   return placeBoard(ctx, openLiveGameWindow({
-    ...openOpts, token: ctx.token, tournamentId: ctx.liveTid,
+    ...openOpts, tournamentId: ctx.liveTid,
     root: ctx.boardsEl, variantClass: STUDIO_BOARD_CLASS,
     boardStyle: ctx.boardStyleCached, top: 0, left: 0, right: 0, min, flash,
     initialRect: nextSlotRect(ctx),
@@ -1046,7 +1046,7 @@ function openFrozenBoard(ctx, b, flash = true) {
   if (b.gameId && ctx.live) ctx.live.resolvedGames.set(b.gameId, b.resolved);
   return placeBoard(ctx, openFrozenGameWindow({
     proxyId: b.proxyId, gameId: b.gameId, label: b.label, engineName: b.engineName,
-    token: ctx.token, tournamentId: ctx.liveTid,
+    tournamentId: ctx.liveTid,
     gameN: b.resolved.gameN, result: b.resolved.result, termination: b.resolved.termination,
     root: ctx.boardsEl, variantClass: STUDIO_BOARD_CLASS,
     boardStyle: ctx.boardStyleCached, top: 0, left: 0, right: 0, min: !!b.min, flash,
@@ -1276,11 +1276,11 @@ function wireSplitters(ctx) {
 
 // Thin shell: render the static frame, collect refs into ctx, wire the
 // resizers, announce the ribbon. Region behavior lands in later steps.
-export function mountTournamentStudio({ container, api, events, log, token }) {
+export function mountTournamentStudio({ container, api, events, log }) {
   container.innerHTML = STUDIO_HTML;
   const q = (sel) => container.querySelector(sel);
   const ctx = {
-    api, events, log, token, container,
+    api, events, log, container,
     panel: q(".studio-panel"),
     ribbonEl: q(".studio-ribbon"),
     boardsEl: q(".studio-boards"),

@@ -1179,6 +1179,8 @@ svg.cm-chessboard {
 html, body { height: 100%; }
 body { display: flex; flex-direction: column; --main-pad: 16px; }
 main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden; }
+/* Play/View and Studio start flush under the header's amber line. */
+#perspective-root:has(#play-perspective, .studio-panel) { padding-top: 0; }
 #app-footer {
   flex: 0 0 auto;
   text-align: center;
@@ -1439,6 +1441,7 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   align-items: center;
   gap: 10px;
   padding: 6px 12px;
+  margin-bottom: 8px;
   background: rgba(120, 144, 168, 0.10);
   border: 1px solid rgba(120, 144, 168, 0.35);
   border-radius: 4px;
@@ -1469,7 +1472,9 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   grid-template-areas:
     ". banner ."
     ". board  side";
-  gap: 8px var(--grid-gap);
+  /* No row gap: the banner carries its own spacing, so the board sits flush
+     under the header while the banner row is hidden. */
+  gap: 0 var(--grid-gap);
   justify-content: center;
   align-content: start;
   min-height: 0;
@@ -1892,6 +1897,7 @@ body .side-popover.popover-floating {
     gap: 12px;
     height: auto;
   }
+  .no-engine-banner { margin-bottom: 0; }
   .play-board-host { display: block; }
   /* Inline AI panel: visible in the stacked layout, below the board. The
      base .inline-empty rule handles empty-state hiding. */
@@ -3866,7 +3872,9 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .iw-footer {
   display: flex; align-items: center; justify-content: space-between;
   flex-wrap: wrap; gap: 12px;
-  margin-top: clamp(20px, 3vw, 40px);
+  /* Pinned to the poster's bottom; padding keeps the old minimum spacing. */
+  margin-top: auto;
+  padding-top: clamp(20px, 3vw, 40px);
 }
 .iw-progress { display: flex; align-items: center; gap: 12px; flex: 1 1 280px; max-width: 75%; }
 .iw-progress .tournament-progress { flex: 1 1 auto; }
@@ -4991,6 +4999,9 @@ wa-dialog.tournament-info-dialog::part(body) {
 }
 .wb-livegame .lg-eval > span:not(:empty) ~ span:not(:empty) { margin-left: 0.5em; }
 .wb-livegame .lg-eval-score { color: var(--accent); font-weight: 500; }
+/* The more optimistic engine's score vs the other's; ties stay accent. */
+.wb-livegame .lg-eval-score.lg-score-ahead { color: var(--wa-color-green-60, #00ac49); }
+.wb-livegame .lg-eval-score.lg-score-behind { color: var(--wa-color-red-60, #f3676c); }
 .wb-livegame .lg-pv {
   font-family: var(--wa-font-family-code); font-size: 0.6875rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -5027,8 +5038,9 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-sched-attach-btn:disabled, .wb-sched-unwatch-btn:disabled {
   opacity: 0.35; cursor: default;
 }
-.wb-sched-attach-btn--live { border-color: var(--accent); color: var(--accent); }
-.wb-sched-attach-btn--live:hover { background: var(--nav-btn-bg-hover); }
+/* Watched: the Playing badge's slate fill; hover keeps it (amber border only). */
+.wb-sched-attach-btn--live,
+.wb-sched-attach-btn--live:hover:not(:disabled) { background: var(--row-bg-selected); }
 .wb-sched-pair .wb-sched-icon { color: var(--muted); }
 
 /* Engine rows: playing/idle (3+ engine tourneys leave engines idle). Playing
