@@ -1668,9 +1668,10 @@ body .side-popover.popover-floating {
 .play-dock-left {
   grid-column: 1;
   grid-row: 1;
-  /* Fixed so it aligns with the ribbon regardless of grid centering. */
+  /* Fixed so it sits flush with the ribbon regardless of grid centering
+     (--ribbon-w already includes the ribbon's border). */
   position: fixed;
-  left: calc(var(--ribbon-w) + var(--ribbon-border-w));
+  left: var(--ribbon-w);
   /* JS sets top/bottom/width to align with the clock rows and board. */
   --dock-grip-size: 5px;
   display: flex;
@@ -4600,10 +4601,9 @@ wa-dialog.tournament-info-dialog::part(body) {
 .winbox.sturddle-wb.no-shadow,
 .winbox.sturddle-wb.no-shadow .wb-header,
 .winbox.sturddle-wb.no-shadow .wb-body { border-radius: 0; }
-/* Managed windows tile edge to edge: each draws only its right and bottom
-   border, so neighbors share one seam and the outer edges meet the ribbon's
-   border and the header/menubar line. A border renders >= 1 device px; a 1px
-   gap would vanish at some offsets below 1 DPR. */
+/* Managed windows tile edge to edge. Bordered ones (Studio boards; Arena's
+   are outlined, border: none) draw only right/bottom, so neighbors share one
+   seam. A border renders >= 1 device px; a 1px gap can vanish below 1 DPR. */
 .winbox.sturddle-wb.no-shadow:not(.min) { border-width: 0 1px 1px 0; }
 /* Flush-right windows end exactly where the ribbon (or its mirrored reserve)
    starts: stretched by layout, not a JS width, which can't hit the same
@@ -5210,7 +5210,7 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
   body[data-ribbon-side="right"] .play-dock-left {
     grid-column: 3;
     left: auto;
-    right: calc(var(--ribbon-w) + var(--ribbon-border-w));
+    right: var(--ribbon-w);
   }
   body[data-ribbon-side="right"] .tournaments-ribbon,
   body[data-ribbon-side="right"] .studio-ribbon {

@@ -122,18 +122,18 @@ export function isMobileLayout() {
   return mqMobile.matches || mqMobileHPlay.matches;
 }
 
+// Gap between the docked column and the board.
+const DOCK_BOARD_GAP_PX = 8;
+
 function applyDockBounds(el) {
   if (!el || isMobileLayout()) return;
   const board = document.querySelector(".play-board-host");
   if (!board) return;
   const rect = board.getBoundingClientRect();
-  const ribbonW = ribbonWidthPx(PLAY_GRID_SEL);
-  const ribbonSide = document.body.dataset.ribbonSide === "right" ? "right" : "left";
-  if (ribbonSide === "right") {
-    el.style.width = (window.innerWidth - Math.round(rect.right) - ribbonW - 9) + "px";
-  } else {
-    el.style.width = (Math.round(rect.left) - ribbonW - 9) + "px";
-  }
+  // Board's distance from the ribbon-side viewport edge.
+  const side = document.body.dataset.ribbonSide === "right"
+    ? window.innerWidth - Math.round(rect.right) : Math.round(rect.left);
+  el.style.width = (side - ribbonWidthPx(PLAY_GRID_SEL) - DOCK_BOARD_GAP_PX) + "px";
 
   const clockTop = document.querySelector(".clock-row.clock-top");
   const clockBot = document.querySelector(".clock-row.clock-bottom");
