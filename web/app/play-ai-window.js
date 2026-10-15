@@ -612,7 +612,7 @@ export function setAiUsage(usage) {
   if (!inst.body || !usage) return;
   const out = usage.output_tokens || 0;
   inst.body._statusTokens.textContent =
-    out > 0 ? `${fmtTokensCompact(out)} tokens` : "";
+    out > 0 ? `${fmtTokensCompact(out)} token${out === 1 ? "" : "s"}` : "";
 }
 
 // Delta-less thinking event carrying only a server duration, for a round

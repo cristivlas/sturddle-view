@@ -30,13 +30,13 @@ export function fmtMargin(m) {
 
 export function formatResign(r) {
   if (!r || r.movecount == null || r.score == null) return null;
-  const base = `after ${r.movecount} moves at ±${r.score} cp`;
+  const base = `after ${r.movecount} move${r.movecount === 1 ? "" : "s"} at ±${r.score} cp`;
   return r.twosided ? `${base} (two-sided)` : base;
 }
 
 export function formatDraw(d) {
   if (!d || d.movenumber == null) return null;
-  return `from move ${d.movenumber}, ${d.movecount} moves within ±${d.score} cp`;
+  return `from move ${d.movenumber}, ${d.movecount} move${d.movecount === 1 ? "" : "s"} within ±${d.score} cp`;
 }
 
 export function shortResign(r) {

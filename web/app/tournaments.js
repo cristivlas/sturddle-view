@@ -514,7 +514,7 @@ async function stopOne(ctx, t) {
   // from scratch. Warn before clicking through.
   const games = t.standings?.games ?? 0;
   const message = games > 0
-    ? `Stop "${t.name}"?\nRestarting discards all ${games} recorded games.`
+    ? `Stop "${t.name}"?\nRestarting discards all ${games} recorded game${games === 1 ? "" : "s"}.`
     : `Stop "${t.name}"?\nOn restart this tournament will start from scratch.`;
   const ok = await confirm({
     message,
@@ -576,7 +576,7 @@ async function removeMany(ctx, list) {
     }
   }
   const removed = n - failed.length;
-  if (removed) toast(`Removed ${removed} tournaments`, { variant: "success" });
+  if (removed) toast(`Removed ${removed} tournament${removed === 1 ? "" : "s"}`, { variant: "success" });
   if (failed.length) {
     const { t, e } = failed[0];
     const more = failed.length > 1 ? ` (+${failed.length - 1} more)` : "";

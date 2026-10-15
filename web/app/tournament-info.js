@@ -185,7 +185,9 @@ function footerHtml(t) {
   } else if (t.status === STATUS.RUNNING && total) {
     lead = `<div class="iw-progress">${progressLabelHtml(played, total)}${progressBarHtml(played, total)}</div>`;
   } else {
-    const tally = total ? `${played} / ${total} games` : (played ? `${played} games` : "");
+    const tally = total
+      ? `${played} / ${total} game${total === 1 ? "" : "s"}`
+      : (played ? `${played} game${played === 1 ? "" : "s"}` : "");
     lead = `<div class="iw-tally">${escapeHtml(tally)}</div>`;
   }
   const created = formatStamp(t.created_at);

@@ -23,7 +23,7 @@ export const DRIFT_DIALOG_LABEL = "Engine settings changed";
 
 function buildRestartConfirm(name, games) {
   const message = games > 0
-    ? `Restart "${name}" from scratch?\nAll ${games} recorded games will be permanently deleted.`
+    ? `Restart "${name}" from scratch?\nAll ${games} recorded game${games === 1 ? "" : "s"} will be permanently deleted.`
     : `Restart "${name}" from scratch?`;
   return {
     message,
@@ -179,7 +179,7 @@ function openDriftDialog(t) {
       p.className = "confirm-message confirm-message--multiline";
       let message = `Engine settings changed since "${t.name}" was saved.`;
       if (games > 0) {
-        message += `\n\nEither way, all ${games} recorded games will be permanently deleted.`;
+        message += `\n\nEither way, all ${games} recorded game${games === 1 ? "" : "s"} will be permanently deleted.`;
       }
       p.textContent = message;
 
