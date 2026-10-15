@@ -5,9 +5,8 @@
 // overlaps its rect. That way, dragging a window out of its slot makes
 // the slot reusable without any explicit release call.
 
-export const SLOT_GAP = 1;
-
-export function createSlotGrid({ top, left, getCellWidth, cellHeight, gap = SLOT_GAP, getWindows, getRight = () => window.innerWidth, getBottom = () => window.innerHeight, getMaxRows = () => Infinity }) {
+// Default gap 0: managed windows' right/bottom borders are the seams.
+export function createSlotGrid({ top, left, getCellWidth, cellHeight, gap = 0, getWindows, getRight = () => window.innerWidth, getBottom = () => window.innerHeight, getMaxRows = () => Infinity }) {
   function gridDims() {
     const cw = getCellWidth();
     const availW = Math.max(0, getRight() - left);

@@ -36,8 +36,10 @@ import {
   isPinnedToBottom,
   markSelectable,
   scrollToBottom,
+  WB_EDGE_RIGHT_CLASS,
+  WB_NO_SHADOW_CLASS,
 } from "./wb-utils.js";
-import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
+import { createSlotGrid } from "./workspace-slot-grid.js";
 import {
   addLogEntry, applyEventKind, backfillEvent, createLiveState, seedFromDetail,
 } from "./tournament-live-state.js";
@@ -152,8 +154,11 @@ function getMinSizes() {
   };
 }
 
-function setShadow(wb, on) {
-  wb.g?.classList.toggle("no-shadow", !on);
+// on=false: layout-managed. With ctx, a window ending at the workspace's
+// right edge is marked so CSS stretches it exactly there.
+function setShadow(wb, on, ctx = null) {
+  wb.g?.classList.toggle(WB_NO_SHADOW_CLASS, !on);
+  wb.g?.classList.toggle(WB_EDGE_RIGHT_CLASS, !on && !!ctx && wb.x + wb.width >= ctx.getRight());
 }
 
 // Send a window to the minimize footer: minimize + shadow on.
@@ -205,9 +210,12 @@ function tile(ctx, wbsIn, { reserveDock = false, preserveMin = false, preserveMa
     const row = Math.floor(i / cols);
     // Window size = cell minus TILE_MARGIN, but floored to per-window min
     // (live-game windows stash svMinWidth/svMinHeight at creation; WinBox
-    // doesn't expose config min* on the instance).
-    const ww = Math.max(w - TILE_MARGIN, wb.svMinWidth ?? 0);
-    const hh = Math.max(h - TILE_MARGIN, wb.svMinHeight ?? 0);
+    // doesn't expose config min* on the instance). The last column/row take
+    // the floor remainder so the grid reaches the workspace's edges.
+    const cellW = col === cols - 1 ? availW - col * w : w;
+    const cellH = row === rows - 1 ? availH - row * h : h;
+    const ww = Math.max(cellW - TILE_MARGIN, wb.svMinWidth ?? 0);
+    const hh = Math.max(cellH - TILE_MARGIN, wb.svMinHeight ?? 0);
     // Clamp position so bottom-right stays inside [availW, availH] when
     // min size > cell size -- prevents the bottom row from spilling into
     // the reserved dock area. Trade-off: pushed windows may overlap the
@@ -215,7 +223,7 @@ function tile(ctx, wbsIn, { reserveDock = false, preserveMin = false, preserveMa
     const x = Math.max(left, Math.min(left + col * w, left + availW - ww));
     const y = Math.max(top,  Math.min(top  + row * h, top  + availH - hh));
     wb.resize(ww, hh).move(x, y);
-    setShadow(wb, false);
+    setShadow(wb, false, ctx);
   });
   // Don't re-stack while a maximized window is preserved on top.
   if (!keepMaxed) zOrder(wbs);
@@ -257,7 +265,7 @@ function tidy(ctx, { preserveMin = false } = {}) {
         unminimize(wb);
         const r = slotGrid.rectAt(slot++);
         wb.resize(r.w, r.h).move(r.x, r.y);
-        setShadow(wb, false);
+        setShadow(wb, false, ctx);
       } else {
         minimizeToDock(wb);
       }
@@ -294,7 +302,7 @@ function tidy(ctx, { preserveMin = false } = {}) {
     if (!wb) continue;
     unminimize(wb);
     wb.resize(w, h).move(x, y);
-    setShadow(wb, false);
+    setShadow(wb, false, ctx);
   }
   if (!preserveMin) zOrder(openWindows(ctx).filter(wb => !wb.min));
 }
@@ -387,7 +395,7 @@ function snap(ctx, { preserveMax = false } = {}) {
   for (const it of items) {
     const r = it.rect;
     it.wb.resize(r.w - TILE_MARGIN, r.h - TILE_MARGIN).move(r.x, r.y);
-    setShadow(it.wb, false);
+    setShadow(it.wb, false, ctx);
   }
   // Don't re-stack while a maximized window is preserved on top.
   if (!keepMaxed) zOrder(wbs);
@@ -468,7 +476,7 @@ function onReflow(ctx, wb, isRestore) {
         wb._justRestored = true;
         touchLiveWindow(wb);
         wb.resize(c.w, c.h).move(c.x, c.y);
-        setShadow(wb, false);
+        setShadow(wb, false, ctx);
       } else {
         // No slot even after eviction: the grid shrank (e.g. browser resized
         // while this window was maximized) so stale slot positions no longer
@@ -1350,7 +1358,7 @@ export function openTournamentWorkspace({ api, events, log, tournament, top = 0,
     top, left, getRight,
     getCellWidth: () => {
       const cols = Math.min(MAX_GRID_COLS, Number(ctx.detail?.template?.games_in_parallel) || MAX_GRID_COLS);
-      return Math.max(LIVE_MIN_WIDTH, Math.floor((getRight() - left - SLOT_GAP * (cols - 1)) / cols));
+      return Math.max(LIVE_MIN_WIDTH, Math.floor((getRight() - left) / cols));
     },
     cellHeight: LIVE_MIN_HEIGHT(),
     getWindows: () => getLiveWindows(),

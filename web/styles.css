@@ -7,6 +7,8 @@
   --scrollbar-thumb-min-h: 50px;
   --wb-outline: rgba(136, 136, 136, 0.4);
   --wb-radius: 8px;
+  /* Above WinBox's header (1) and resize handles (2). */
+  --wb-overlay-z: 3;
   /* Command-and-control surface: dialogs (wa-dialog's --dialog-bg), menus,
      the ribbon. A separate name: --dialog-bg must stay undefined outside
      dialogs, where tables reading it fall back to transparent. */
@@ -1666,9 +1668,10 @@ body .side-popover.popover-floating {
 .play-dock-left {
   grid-column: 1;
   grid-row: 1;
-  /* Fixed so it aligns with the ribbon regardless of grid centering. */
+  /* Fixed so it sits flush with the ribbon regardless of grid centering
+     (--ribbon-w already includes the ribbon's border). */
   position: fixed;
-  left: calc(var(--ribbon-w) + var(--ribbon-border-w));
+  left: var(--ribbon-w);
   /* JS sets top/bottom/width to align with the clock rows and board. */
   --dock-grip-size: 5px;
   display: flex;
@@ -3653,7 +3656,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   flex: 1; min-height: 0;
 }
 .studio-main {
-  width: calc(100vw - 2 * (var(--ribbon-w) + var(--ribbon-border-w)));
+  /* --ribbon-w already includes the ribbon's border (border-box). */
+  width: calc(100vw - 2 * var(--ribbon-w));
   margin-left: auto; margin-right: auto;
   display: flex; flex-direction: column;
   min-height: 0;
@@ -3968,15 +3972,9 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 }
 .winbox.sturddle-wb-studio.min { display: none; }
 /* Rooted Studio boards position within the scrolling region, not the
-   viewport, and skip the slide transition so re-grids land instantly. Square
-   corners are enforced near the shared .sturddle-wb radius rules below
-   (source order matters at equal specificity). */
-.winbox.sturddle-wb-studio {
-  position: absolute; transition: none;
-  /* Grid-placed: no drag-shadow, header isn't a drag handle. The edge is a
-     border (set below), not an outline -- outline sits in the clipped pad. */
-  box-shadow: none; outline: none;
-}
+   viewport, and skip the slide transition so re-grids land instantly. They
+   carry no-shadow (layout-managed): square, seam borders -- see below. */
+.winbox.sturddle-wb-studio { position: absolute; transition: none; }
 .winbox.sturddle-wb-studio .wb-drag { cursor: default; }
 .studio-bottom {
   flex: 1 1 0; min-height: 0; display: flex; gap: 6px;
@@ -4139,6 +4137,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 /* Running tourney's Games cell: Arena's progress bar + inline label. */
 .studio-progress { display: flex; align-items: center; gap: 8px; }
 .tournaments-body-main {
+  /* 1px clear of each ribbon's border on purpose: unlike .studio-main, this
+     is the in-flow list only; Arena's windows are placed by JS. */
   width: calc(100vw - 2 * (var(--ribbon-w) + var(--ribbon-border-w)));
   margin-left: auto; margin-right: auto;
   display: flex; flex-direction: column;
@@ -4603,6 +4603,14 @@ wa-dialog.tournament-info-dialog::part(body) {
 .winbox.sturddle-wb.no-shadow,
 .winbox.sturddle-wb.no-shadow .wb-header,
 .winbox.sturddle-wb.no-shadow .wb-body { border-radius: 0; }
+/* Managed windows tile edge to edge. Bordered ones (Studio boards; Arena's
+   are outlined, border: none) draw only right/bottom, so neighbors share one
+   seam. A border renders >= 1 device px; a 1px gap can vanish below 1 DPR. */
+.winbox.sturddle-wb.no-shadow:not(.min) { border-width: 0 1px 1px 0; }
+/* Flush-right windows end exactly where the ribbon (or its mirrored reserve)
+   starts: stretched by layout, not a JS width, which can't hit the same
+   fractional value. !important beats WinBox's inline size. */
+.winbox.sturddle-wb.no-shadow.wb-edge-right:not(.min) { border-right-width: 0; right: var(--ribbon-w); width: auto !important; }
 /* Minimized: square while docked in the bottom strip. Restore removes .min,
    handing the shape back to the float/tiled rules above. */
 .winbox.sturddle-wb.min,
@@ -4613,16 +4621,16 @@ wa-dialog.tournament-info-dialog::part(body) {
 .winbox.sturddle-wb-ribbon,
 .winbox.sturddle-wb-ribbon .wb-header,
 .winbox.sturddle-wb-ribbon .wb-body { border-radius: 0; }
-/* Studio boards: always straight corners; must follow the .sturddle-wb radius
-   rules above to win at equal specificity. */
-.winbox.sturddle-wb-studio,
-.winbox.sturddle-wb-studio .wb-header,
-.winbox.sturddle-wb-studio .wb-body { border-radius: 0; }
-/* Inside-the-box edge; here to beat .sturddle-wb { border: none }. */
-.winbox.sturddle-wb-studio { border: 1px solid var(--wb-outline); box-sizing: border-box; }
+/* Studio boards: inside-the-box edge (an outline sits in the clipped pad);
+   here to beat .sturddle-wb { border: none }. */
+.winbox.sturddle-wb-studio { border: 1px solid var(--wb-outline); box-sizing: border-box; outline: none; }
+/* Studio boards sit in their scroll region, not the viewport. */
+.winbox.sturddle-wb-studio.no-shadow.wb-edge-right:not(.min) { right: 0; }
+.winbox.sturddle-wb-studio.max { bottom: 0; height: auto !important; }
 .winbox.sturddle-wb-ribbon {
   border: 1px solid lightgray;
-  outline: none;
+  /* WB_VERT_W/H etc. size the content; the border sits outside them. */
+  box-sizing: content-box;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
   z-index: 2147483000 !important; /* always above other WinBoxes / dock content */
 }
@@ -4719,11 +4727,21 @@ wa-dialog.tournament-info-dialog::part(body) {
 .winbox.sturddle-wb-ribbon.ribbon-vertical .wb-body .ribbon-btn:focus-visible {
   outline-offset: 2px;
 }
+/* Overlay ring, not an outline: below 1 DPR the outline snaps fully inside
+   and WinBox's z-indexed header/body paint over it. */
 @keyframes wb-attention {
-  0%, 40% { outline: 2px solid var(--accent); outline-offset: -1px; }
-  100%     { outline: 2px solid transparent;  outline-offset: -1px; }
+  0%, 40% { border-color: var(--accent); }
+  100%     { border-color: transparent; }
 }
-.winbox.wb-attention { animation: wb-attention 1.1s ease-out forwards; }
+.winbox.wb-attention::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid transparent;
+  pointer-events: none;
+  z-index: var(--wb-overlay-z);
+  animation: wb-attention 1.1s ease-out forwards;
+}
 /* Title bar matches the panel; WinBox's default blue jars with the theme. */
 .winbox.sturddle-wb .wb-header {
   background: var(--nav-btn-bg);
@@ -5194,7 +5212,7 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
   body[data-ribbon-side="right"] .play-dock-left {
     grid-column: 3;
     left: auto;
-    right: calc(var(--ribbon-w) + var(--ribbon-border-w));
+    right: var(--ribbon-w);
   }
   body[data-ribbon-side="right"] .tournaments-ribbon,
   body[data-ribbon-side="right"] .studio-ribbon {

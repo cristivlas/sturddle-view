@@ -457,16 +457,17 @@ async function navigateTo(ctx, newId) {
 // Anchor the fixed ribbon's top to the menubar's rendered bottom so the rail
 // starts at the menubar hairline (it extends to the viewport bottom in CSS).
 function syncRibbonTop(ctx) {
-  const menubar = ctx.container.querySelector(".tournaments-menubar");
-  if (!menubar) return;
-  const bottom = Math.round(menubar.getBoundingClientRect().bottom);
-  ctx.container.style.setProperty("--arena-ribbon-top", `${bottom}px`);
+  ctx.container.style.setProperty("--arena-ribbon-top", `${menubarBottom(ctx)}px`);
+}
+
+// Unrounded, as headerBottomPx: a rounded copy of a fractional bottom lands
+// on a different device pixel at low DPR. 0 = the ribbon's CSS default.
+function menubarBottom(ctx) {
+  return ctx.container.querySelector(".tournaments-menubar")?.getBoundingClientRect().bottom ?? 0;
 }
 
 function openWorkspace(ctx, t) {
-  const menubar = ctx.container.querySelector(".tournaments-menubar");
   const ribbon = ctx.container.querySelector(".tournaments-ribbon");
-  const rect = menubar.getBoundingClientRect();
   // Reserve the ribbon's width on BOTH edges regardless of which side
   // it docks to (or whether it's floating). Keeps the workspace symmetric
   // and ribbon-side-flips don't reshape the available area.
@@ -477,7 +478,7 @@ function openWorkspace(ctx, t) {
     const w = ribbon?.getBoundingClientRect().width || 0;
     return w > 0 ? Math.ceil(w) : ribbonWidthPx(".tournaments-body");
   };
-  const top = Math.round(rect.bottom);
+  const top = menubarBottom(ctx);
   const left = ribbonReserveW();
   const getRight = () => Math.floor(window.innerWidth) - ribbonReserveW();
   openTournamentWorkspace({ api: ctx.api, events: ctx.events, log: ctx.log, tournament: t, top, left, getRight });
