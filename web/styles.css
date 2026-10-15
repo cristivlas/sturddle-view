@@ -3975,9 +3975,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
    (source order matters at equal specificity). */
 .winbox.sturddle-wb-studio {
   position: absolute; transition: none;
-  /* Grid-placed: no drag-shadow, header isn't a drag handle. The edge is a
-     border (set below), not an outline -- outline sits in the clipped pad. */
-  box-shadow: none; outline: none;
+  /* Grid-placed: no drag-shadow, header isn't a drag handle. */
+  box-shadow: none;
 }
 .winbox.sturddle-wb-studio .wb-drag { cursor: default; }
 .studio-bottom {
@@ -4587,8 +4586,10 @@ wa-dialog.tournament-info-dialog::part(body) {
 .winbox.sturddle-wb {
   background: var(--panel);
   color: var(--fg);
-  border: none;
-  outline: 1px solid var(--wb-outline);
+  /* Edge as an inside border, not an outline: an outline paints 1px outside
+     the window, off its grid rect and over the menubar/ribbon. */
+  border: 1px solid var(--wb-outline);
+  box-sizing: border-box;
   opacity: 1 !important;
   border-radius: var(--wb-radius);
 }
@@ -4620,11 +4621,10 @@ wa-dialog.tournament-info-dialog::part(body) {
 .winbox.sturddle-wb-studio,
 .winbox.sturddle-wb-studio .wb-header,
 .winbox.sturddle-wb-studio .wb-body { border-radius: 0; }
-/* Inside-the-box edge; here to beat .sturddle-wb { border: none }. */
-.winbox.sturddle-wb-studio { border: 1px solid var(--wb-outline); box-sizing: border-box; }
 .winbox.sturddle-wb-ribbon {
   border: 1px solid lightgray;
-  outline: none;
+  /* WB_VERT_W/H etc. size the content; the border sits outside them. */
+  box-sizing: content-box;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
   z-index: 2147483000 !important; /* always above other WinBoxes / dock content */
 }
