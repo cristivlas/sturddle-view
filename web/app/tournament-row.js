@@ -13,6 +13,8 @@ export const MIDDOT = "\u00B7";
 
 // Empty-state message shared by the standings and H2H surfaces.
 export const NO_GAMES_MSG = "No completed games yet.";
+// Placeholder in a workspace body until its first data load.
+export const LOADING_MSG = "Loading...";
 
 // Live-row glyphs (engine list, games-in-play list), shared by the Arena
 // workspace and Studio. The trailing U+FE0E is variation selector-15, which

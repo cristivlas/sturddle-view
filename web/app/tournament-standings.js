@@ -4,7 +4,7 @@
 // tournament `detail` payload.
 
 import { SPRT, sprtVerdict } from "./tournament-events.js";
-import { MIDDOT, NO_GAMES_MSG } from "./tournament-row.js";
+import { LOADING_MSG, MIDDOT, NO_GAMES_MSG } from "./tournament-row.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { SORT_DIR } from "./col-sort.js";
 import { createTable } from "./data-table.js";
@@ -24,7 +24,7 @@ const signedEloCell = (elo, margin) => fmtSignedElo(elo) + fmtMargin(margin);
 
 // Anchored (absolute, unsigned) when any engine carries a known rating;
 // mean-centered signed relative otherwise.
-function ordoCell(e) {
+export function ordoCell(e) {
   if (e.elo_anchored != null) {
     return `<span title="${ANCHORED_TITLE}">${Math.round(e.elo_anchored)}${fmtMargin(e.elo_ordo_margin_95)}</span>`;
   }
@@ -55,7 +55,7 @@ export function makeStandingsBody() {
   el.className = "wb-standings";
   el.innerHTML = `
     <div class="wb-sprt-slot"></div>
-    <div class="wb-empty wb-standings-empty">Loading...</div>
+    <div class="wb-empty wb-standings-empty">${LOADING_MSG}</div>
   `;
   // Shared by every standings surface (Arena + Studio).
   const table = createTable({

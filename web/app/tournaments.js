@@ -28,7 +28,7 @@ import { BOOK_KEYS, mountTournamentTemplateForm } from "./tournament-template-fo
 import { makePathRow } from "./settings-path-row.js";
 import { mountSprtButton } from "./tournament-sprt-button.js";
 import { formatDraw, formatResign, formatStamp, formatType } from "./tournament-format.js";
-import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
+import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace, STANDINGS_VIEW } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
 import { applyListClick, createMultiSelect, selectionTargets } from "./multi-select.js";
 import { basename, cooldown, debounce, guard, isCtrlA, markSelectable, ribbonWidthPx, suppressModifierClickSelect, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
@@ -55,6 +55,13 @@ const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
 const EMPTY_CTA_SUFFIX = " to create one.";
 const SHOW_STANDINGS_TITLE = "Show standings";
 const REVEAL_COOLDOWN_MS = 1500;
+// Checkmark on a menu item (styles.css .tmb-dd-item.tmb-active).
+const MENU_CHECK_CLASS = "tmb-active";
+// Window-menu items for the Standings window's two views.
+const STANDINGS_VIEW_ITEMS = [
+  [".tmb-sys-standings", STANDINGS_VIEW.TABLE],
+  [".tmb-sys-crosstable", STANDINGS_VIEW.CROSSTABLE],
+];
 // Unicode ellipsis is intentional: this glyph is rendered into the
 // tournament-id span (user-facing), not a code token. ASCII-only rule
 // does not apply to surfaced UI text.
@@ -127,6 +134,7 @@ const PANEL_HTML = `
               <button class="tmb-dd-item tmb-sys-trigger">Tournament</button>
               <ul class="tmb-dropdown">
                 <li><button class="tmb-dd-item tmb-sys-standings">Standings</button></li>
+                <li><button class="tmb-dd-item tmb-sys-crosstable">Crosstable</button></li>
                 <li><button class="tmb-dd-item tmb-sys-schedule">Live Games</button></li>
                 <li><button class="tmb-dd-item tmb-sys-engines">Engines</button></li>
                 <li class="tmb-separator"></li>
@@ -1275,7 +1283,16 @@ function layoutToggles(ctx) {
 
 function syncTidyBtn(ctx) {
   const layout = getActiveLayout();
-  for (const [btn, mode] of layoutToggles(ctx)) btn.classList.toggle("tmb-active", layout === mode);
+  for (const [btn, mode] of layoutToggles(ctx)) btn.classList.toggle(MENU_CHECK_CLASS, layout === mode);
+}
+
+// Check the open Standings window's view; synced on menu open, since the
+// window's own title-bar toggle can flip it too.
+function syncStandingsViewItems(ctx) {
+  const view = getActiveWorkspace()?.standingsView;
+  for (const [cls, v] of STANDINGS_VIEW_ITEMS) {
+    ctx.container.querySelector(cls).classList.toggle(MENU_CHECK_CLASS, view === v);
+  }
 }
 
 // ---- Live updates from WS -----------------------------------------------
@@ -1447,6 +1464,7 @@ function wireMenus(ctx) {
   ctx.windowMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (ctx.windowMenuBtn.disabled) return;
+    syncStandingsViewItems(ctx);
     toggleMenu(ctx, ctx.windowMenu);
   });
 
@@ -1466,15 +1484,16 @@ function wireMenus(ctx) {
     if (ws) { dismissSortToastNow(ctx); ws.closeAll(); }
     syncWindowMenu(ctx);
   });
-  for (const [cls, key] of [
-    [".tmb-sys-standings", "standings"],
-    [".tmb-sys-schedule",  "schedule"],
-    [".tmb-sys-engines",   "engines"],
-    [".tmb-sys-log",       "log"],
+  for (const [cls, open] of [
+    ...STANDINGS_VIEW_ITEMS.map(([c, view]) => [c, (ws) => ws.showStandingsView(view)]),
+    [".tmb-sys-schedule",   (ws) => ws.openSystemWindow("schedule")],
+    [".tmb-sys-engines",    (ws) => ws.openSystemWindow("engines")],
+    [".tmb-sys-log",        (ws) => ws.openSystemWindow("log")],
   ]) {
     ctx.container.querySelector(cls).addEventListener("click", () => {
       closeMenus(ctx);
-      getActiveWorkspace()?.openSystemWindow(key);
+      const ws = getActiveWorkspace();
+      if (ws) open(ws);
     });
   }
 }

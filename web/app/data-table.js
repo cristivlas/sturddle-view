@@ -68,10 +68,13 @@ export const RENDER_REASON = Object.freeze({ DATA: "data", SORT: "sort", LAYOUT:
 
 // Saved { order, hidden, widths } reconciled with the current column list:
 // unknown keys drop, new columns append, alwaysOn columns never hide. An
-// empty `saved` yields the defaults. Widths are relative weights.
-function reconcileLayout(columns, saved) {
+// empty `saved` yields the defaults. Widths are relative weights. Without the
+// reorder trait the declared order always wins (a column list that varies,
+// e.g. one column per engine, would otherwise append new keys at the end).
+function reconcileLayout(columns, saved, fixedOrder) {
   const byKey = new Map(columns.map((c) => [c.key, c]));
-  const order = (Array.isArray(saved.order) ? saved.order : []).filter((k) => byKey.has(k));
+  const savedOrder = !fixedOrder && Array.isArray(saved.order) ? saved.order : [];
+  const order = savedOrder.filter((k) => byKey.has(k));
   for (const c of columns) if (!order.includes(c.key)) order.push(c.key);
   const hidden = new Set((Array.isArray(saved.hidden) ? saved.hidden : [])
     .filter((k) => byKey.has(k) && !byKey.get(k).alwaysOn));
@@ -406,7 +409,7 @@ export function createTable({
   cls, tableClass, columns, layoutKey, minPct, traits = {}, rowAttrs, fullRow, onRender,
 }) {
   const byKey = new Map(columns.map((c) => [c.key, c]));
-  const layout = reconcileLayout(columns, loadJson(layoutKey) || {});
+  const layout = reconcileLayout(columns, loadJson(layoutKey) || {}, !traits.reorder);
   const hasMenu = traits.reorder || traits.hide || traits.fit;
 
   const wrap = document.createElement("div");
@@ -611,7 +614,7 @@ export function createTable({
     if (btn.dataset.dir) moveColumn(layout, key, Number(btn.dataset.dir));
     else if (action === MENU_ACTION.TOGGLE) toggleColumn(layout, key, visibleCols().length);
     else if (action === MENU_ACTION.FIT) fitColumns();
-    else if (action === MENU_ACTION.RESET) Object.assign(layout, reconcileLayout(columns, {}));
+    else if (action === MENU_ACTION.RESET) Object.assign(layout, reconcileLayout(columns, {}, !traits.reorder));
     else return;
     saveLayout();
     relayout();

@@ -1810,6 +1810,7 @@ body .side-popover.popover-floating {
 .wb-log-copy-ctrl,
 .wb-sort-asc-ctrl,
 .wb-sort-desc-ctrl,
+.wb-view-toggle-ctrl,
 .winbox.sturddle-wb-ribbon .wb-close {
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
   -webkit-mask-position: center; mask-position: center;
@@ -4821,11 +4822,38 @@ wa-dialog.tournament-info-dialog::part(body) {
 .h2h-tbl .h2h-group td { font-weight: 600; color: var(--fg); }
 .h2h-tbl .h2h-side { color: var(--muted); padding-left: 16px; }
 .h2h-tbl .h2h-wld { color: var(--muted); }
+/* Crosstable (tournament-crosstable.js): factory split table like Standings.
+   min-width (per column) makes a big field scroll instead of squeezing; the
+   name column sticks to the left of both scrollers, so it needs a background. */
+.wb-standings-view { height: 100%; }
+.wb-crosstable { --xt-col-min: 3.5em; height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.xt-table-wrap { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.xt-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; }
+.xt-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
+/* separate: collapsed borders belong to the table, so they'd scroll out from
+   under the sticky name column; separate ones travel with their cells. */
+.xt-tbl {
+  table-layout: fixed; min-width: calc(var(--xt-cols) * var(--xt-col-min));
+  border-collapse: separate; border-spacing: 0;
+}
+.xt-head-tbl th { position: relative; background: var(--bg); }
+.xt-tbl td { overflow: hidden; text-overflow: ellipsis; }
+.xt-tbl th:not(:first-child), .xt-tbl td:not(:first-child) { text-align: center; }
+.xt-tbl th:first-child, .xt-tbl td:first-child { position: sticky; left: 0; z-index: 1; }
+.xt-tbl td:first-child { background: var(--panel); }
+/* Grid lines a step louder than other tables': the grid reads across and down. */
+.xt-tbl th, .xt-tbl td { border-bottom-color: var(--wa-color-border-loud, #353841); }
+.xt-tbl th + th, .xt-tbl td + td { border-left: 1px solid var(--wa-color-border-loud, #353841); }
+.dt-rownav-cursor:focus-visible tr[aria-selected="true"] > td.xt-name { background: var(--row-bg-selected); }
+.xt-tbl .xt-name { font-weight: 500; }
+.xt-tbl .xt-rank { color: var(--muted); margin-right: 6px; }
 .wb-sched-list, .wb-eventlog-list { list-style: none; padding: 0; margin: 0; }
-/* Arena window title-bar icons: Event Log copy, Engine Instances A-Z / Z-A. */
+/* Arena window title-bar icons: Event Log copy, Engine Instances A-Z / Z-A,
+   Standings / Crosstable view toggle (icon = the view it switches to). */
 .wb-log-copy-ctrl,
 .wb-sort-asc-ctrl,
-.wb-sort-desc-ctrl {
+.wb-sort-desc-ctrl,
+.wb-view-toggle-ctrl {
   -webkit-mask-size: 14px;
   mask-size: 14px;
   background-color: rgba(255,255,255,0.9) !important;
@@ -4841,6 +4869,14 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-sort-desc-ctrl {
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-down-z-a.svg);
   mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-down-z-a.svg);
+}
+.wb-view-toggle-ctrl {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/border-all.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/border-all.svg);
+}
+.wb-view-toggle-ctrl.is-crosstable {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/list-ol.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/list-ol.svg);
 }
 /* The lit sort button takes the brand color, like the Engines page's. */
 .wb-sort-asc-ctrl.is-active,

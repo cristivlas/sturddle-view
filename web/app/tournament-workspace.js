@@ -1,5 +1,5 @@
-// Tournament workspace: WinBox windows for Standings, Schedule, Event log,
-// plus on-demand Live Game windows (one per engine POV).
+// Tournament workspace: WinBox windows for Standings (or Crosstable), Schedule,
+// Event log, plus on-demand Live Game windows (one per engine POV).
 //
 // State: one workspace per tab; opening a different tournament closes the
 // prior one. Desktop state (open windows, position, size, min/max, z-order)
@@ -22,7 +22,7 @@ import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { SIDE } from "./chess-consts.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
-import { loadJson, saveJson, saveRaw, removeKey } from "./storage.js";
+import { loadJson, loadRaw, saveJson, saveRaw, removeKey } from "./storage.js";
 import { attachButtonSort, loadSortDir, SORT_ASC_LABEL, SORT_DESC_LABEL, SORT_DIR } from "./col-sort.js";
 import { gatedStart } from "./tournament-restart.js";
 import { apiErrorDetail, copyToClipboard, toast } from "./dialogs.js";
@@ -44,8 +44,9 @@ import {
   addLogEntry, applyEventKind, backfillEvent, createLiveState, seedFromDetail,
 } from "./tournament-live-state.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
+import { makeCrosstableBody, renderCrosstable } from "./tournament-crosstable.js";
 import { eventLogText, renderEventLogList } from "./tournament-eventlog.js";
-import { engineRowEntries, ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow } from "./tournament-row.js";
+import { engineRowEntries, ICON_ENGINE_ROW, ICON_GAME_ROW, LOADING_MSG, markEngineRow } from "./tournament-row.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 import { createWinBox } from "./winbox-factory.js";
 
@@ -69,14 +70,44 @@ const TIDY_GAP = 0;
 const ARENA_WINDOW_CLASS = "sturddle-wb-arena";
 // The Live Games / Engines row list.
 const SCHED_LIST_CLASS = "wb-sched-list";
+// Every system window, in open/tile order (ctx.windows key order).
+const SYSTEM_WINDOW_KEYS = ["standings", "schedule", "engines", "log"];
+
+// The Standings window shows one of two views of the same results; its
+// title names the view, and a title-bar toggle (icon = the other view) flips it.
+export const STANDINGS_VIEW = Object.freeze({ TABLE: "standings", CROSSTABLE: "crosstable" });
+const STANDINGS_VIEW_TITLE = Object.freeze({
+  [STANDINGS_VIEW.TABLE]: "Standings", [STANDINGS_VIEW.CROSSTABLE]: "Crosstable",
+});
+const VIEW_TOGGLE_LABEL = Object.freeze({
+  [STANDINGS_VIEW.TABLE]: "Show crosstable", [STANDINGS_VIEW.CROSSTABLE]: "Show standings",
+});
+const VIEW_TOGGLE_CTRL = "wb-view-toggle-ctrl";
+// On the toggle while the crosstable shows: its icon switches to standings.
+const VIEW_TOGGLE_XT_CLASS = "is-crosstable";
+
+function loadStandingsView() {
+  const v = loadRaw(STORAGE_KEY.TOURNAMENTS_STANDINGS_VIEW);
+  return Object.values(STANDINGS_VIEW).includes(v) ? v : STANDINGS_VIEW.TABLE;
+}
 
 // ---- Window body builders (pure DOM; no workspace state) ----------------
 
 
+// Standings window body: both views, one shown (syncStandingsView).
+function makeStandingsView() {
+  const el = document.createElement("div");
+  el.className = "wb-standings-view";
+  el._standings = makeStandingsBody();
+  el._crosstable = makeCrosstableBody();
+  el.append(el._standings, el._crosstable);
+  return el;
+}
+
 function makeScheduleBody() {
   const el = document.createElement("div");
   el.className = "wb-schedule";
-  el.innerHTML = `<div class="wb-empty">Loading...</div>`;
+  el.innerHTML = `<div class="wb-empty">${LOADING_MSG}</div>`;
   return el;
 }
 
@@ -91,7 +122,7 @@ function makeLogBody() {
 function makeEnginesBody() {
   const el = document.createElement("div");
   el.className = "wb-engines";
-  el.innerHTML = `<div class="wb-empty">Loading...</div>`;
+  el.innerHTML = `<div class="wb-empty">${LOADING_MSG}</div>`;
   return el;
 }
 
@@ -645,6 +676,7 @@ function applyDetail(ctx, fresh) {
   ctx.detail = fresh;
   seedFromDetail(ctx.live, fresh);
   renderStandings(ctx.standingsBody, ctx.detail);
+  renderCrosstable(ctx.crosstableBody, ctx.detail);
   renderSchedule(ctx);
   renderEngines(ctx);
   renderEventLog(ctx);
@@ -1231,15 +1263,56 @@ function wireEnginesSort(ctx, wb) {
 }
 
 
+// Show the current view's body; title + toggle follow when the window is open.
+function syncStandingsView(ctx) {
+  const view = ctx.standingsView;
+  const isXt = view === STANDINGS_VIEW.CROSSTABLE;
+  ctx.standingsBody.hidden = isXt;
+  ctx.crosstableBody.hidden = !isXt;
+  const wb = ctx.windows.standings;
+  if (!wb) return;
+  wb.setTitle(STANDINGS_VIEW_TITLE[view]);
+  const btn = wb.g.querySelector(`.${VIEW_TOGGLE_CTRL}`);
+  btn.classList.toggle(VIEW_TOGGLE_XT_CLASS, isXt);
+  btn.title = VIEW_TOGGLE_LABEL[view];
+  btn.setAttribute("aria-label", VIEW_TOGGLE_LABEL[view]);
+}
+
+function setStandingsView(ctx, view) {
+  ctx.standingsView = view;
+  saveRaw(STORAGE_KEY.TOURNAMENTS_STANDINGS_VIEW, view);
+  syncStandingsView(ctx);
+}
+
+function wireStandingsViewToggle(ctx, wb) {
+  addTitleControl(wb, VIEW_TOGGLE_CTRL, VIEW_TOGGLE_LABEL[ctx.standingsView], () =>
+    setStandingsView(ctx, ctx.standingsView === STANDINGS_VIEW.TABLE ? STANDINGS_VIEW.CROSSTABLE : STANDINGS_VIEW.TABLE));
+  syncStandingsView(ctx);
+}
+
+// Menu entry point: switch the Standings window to `view`, opening it if needed.
+function showStandingsView(ctx, view) {
+  setStandingsView(ctx, view);
+  openSystemWindow(ctx, "standings");
+}
+
+
 // ---- Window spec table --------------------------------------------------
 
 function buildWindowSpecs(ctx) {
   return {
     standings: {
-      title: "Standings",
-      makeBody: makeStandingsBody,
-      setBody: (b) => { ctx.standingsBody = b; },
-      render: () => renderStandings(ctx.standingsBody, ctx.detail),
+      get title() { return STANDINGS_VIEW_TITLE[ctx.standingsView]; },
+      makeBody: makeStandingsView,
+      setBody: (b) => {
+        ctx.standingsBody = b._standings;
+        ctx.crosstableBody = b._crosstable;
+      },
+      render: () => {
+        renderStandings(ctx.standingsBody, ctx.detail);
+        renderCrosstable(ctx.crosstableBody, ctx.detail);
+      },
+      postCreate: (wb) => wireStandingsViewToggle(ctx, wb),
       // The split header/body tables scroll internally (see
       // tournament-standings.js); the WinBox body itself must not also
       // scroll, or the header table scrolls out of view with it.
@@ -1336,7 +1409,7 @@ export function openTournamentWorkspace({ api, events, log, tournament, top = 0,
   const restoreFromSaved = hasOpenWindows(savedState);
   const initialLayout = restoreFromSaved ? (savedState._layout ?? LAYOUT.NONE) : LAYOUT.NONE;
   const lastGeometry = {};
-  for (const key of ["standings", "schedule", "engines", "log"]) {
+  for (const key of SYSTEM_WINDOW_KEYS) {
     const s = savedState?.[key];
     lastGeometry[key] = s
       ? { x: s.x, y: s.y, width: s.width, height: s.height }
@@ -1377,11 +1450,12 @@ export function openTournamentWorkspace({ api, events, log, tournament, top = 0,
     eventLog: live.eventLog, seenSeqs: live.seenSeqs,
     activeProxies: live.activeProxies, livePairings: live.livePairings,
     resolvedGames: live.resolvedGames,
-    windows: { standings: null, schedule: null, engines: null, log: null },
+    windows: Object.fromEntries(SYSTEM_WINDOW_KEYS.map((k) => [k, null])),
     activeLayout: initialLayout,
     boardStyleCached: null, boardStyleReady: null, detail: null,
     otherActiveId: null, otherActiveName: null,
     enginesSort: loadSortDir(STORAGE_KEY.TOURNAMENTS_ENGINES_SORT),
+    standingsView: loadStandingsView(),
     _schedulePending: false, _enginesPending: false, _eventLogPending: false,
     unsubscribe: null,
     // True when close() / closeAll() drove the tear-down. Distinguishes from
@@ -1397,7 +1471,7 @@ export function openTournamentWorkspace({ api, events, log, tournament, top = 0,
   // Body refs live on ctx: reassigned when a window is re-opened after the
   // user closed it (windowSpecs.setBody), so renderers re-read ctx.* to
   // target the current body.
-  ctx.standingsBody = makeStandingsBody();
+  const standingsView = makeStandingsView();
   ctx.scheduleBody = makeScheduleBody();
   ctx.logBody = makeLogBody();
   ctx.enginesBody = makeEnginesBody();
@@ -1420,6 +1494,7 @@ export function openTournamentWorkspace({ api, events, log, tournament, top = 0,
 
   const windowSpecs = buildWindowSpecs(ctx);
   ctx.windowSpecs = windowSpecs;
+  windowSpecs.standings.setBody(standingsView);
 
   if (restoreFromSaved) {
     // Recreate in saved z-order so the highest-z slot ends up topmost.
@@ -1436,7 +1511,8 @@ export function openTournamentWorkspace({ api, events, log, tournament, top = 0,
     }
   } else {
     // Default: standings only; initWorkspace opens more based on tournament status.
-    ctx.windows.standings = makeBox(ctx, "standings", windowSpecs.standings.title, ctx.standingsBody);
+    ctx.windows.standings = makeBox(ctx, "standings", windowSpecs.standings.title, standingsView);
+    windowSpecs.standings.postCreate(ctx.windows.standings);
   }
   requestAnimationFrame(() => reapplyLayout(ctx));
 
@@ -1479,12 +1555,15 @@ export function openTournamentWorkspace({ api, events, log, tournament, top = 0,
     show: () => show(ctx),
     isHidden: () => isHidden(ctx),
     openSystemWindow: (key, o) => openSystemWindow(ctx, key, o),
+    showStandingsView: (view) => showStandingsView(ctx, view),
     refresh: () => refresh(ctx),
     applyDetail: (fresh) => applyDetail(ctx, fresh),
     setOtherActive: (id, name) => setOtherActive(ctx, id, name),
     tournamentId: tournament.id,
     get layout() { return ctx.activeLayout; },
     get isTidy() { return ctx.activeLayout === LAYOUT.TIDY; },
+    // The Standings window's view, or null while it's closed.
+    get standingsView() { return ctx.windows.standings ? ctx.standingsView : null; },
   };
   ctx.workspace = workspace;
   activeWorkspace = workspace;

@@ -82,7 +82,7 @@ async def test_window_menu_submenu_keys(server, make_page):
     await page.focus(".tmb-window-btn")
     await _press_expect(page, "Enter", "Tournament")
     await _press_expect(page, "ArrowRight", "Standings")
-    await _press_expect(page, "ArrowDown", "Live Games")
+    await _press_expect(page, "ArrowDown", "Crosstable")
     await _press_expect(page, "Escape", "Tournament")
     assert await page.evaluate(_OPEN_MENUS) == 1
     await _press_expect(page, "ArrowDown", "Snap")

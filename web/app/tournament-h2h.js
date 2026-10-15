@@ -79,7 +79,7 @@ function los(wins, losses, draws) {
 }
 
 // Tally a single engine's W/L/D from the engine's own POV, split by color.
-function colorSplit(games, name) {
+export function colorSplit(games, name) {
   const white = { wins: 0, losses: 0, draws: 0 };
   const black = { wins: 0, losses: 0, draws: 0 };
   for (const g of games) {
@@ -96,7 +96,14 @@ function colorSplit(games, name) {
   return { white, black };
 }
 
-function fmtPts(pts) {
+// A colorSplit's white + black records summed into the overall record.
+export function sumSplit({ white, black }) {
+  return {
+    wins: white.wins + black.wins, losses: white.losses + black.losses, draws: white.draws + black.draws,
+  };
+}
+
+export function fmtPts(pts) {
   return Number.isInteger(pts) ? String(pts) : pts.toFixed(1);
 }
 
@@ -120,7 +127,8 @@ function fmtLos(wins, losses, draws) {
 }
 
 const statN = (r) => r.wins + r.losses + r.draws;
-const statPts = (r) => r.wins + 0.5 * r.draws;
+export const statPts = (r) => r.wins + 0.5 * r.draws;
+export const fmtWdl = (r) => `+${r.wins} =${r.draws} -${r.losses}`;
 
 // Detail-line columns: side label, score, percent, W-D-L, and (color rows
 // only, `withElo`) Elo + LOS. The Overall row leaves the Elo/LOS cells blank.
@@ -129,7 +137,7 @@ const H2H_COLUMNS = [
   { key: "score", label: "Score", width: 16, cell: (r) => `${fmtPts(statPts(r))}/${statN(r)}` },
   { key: "pct", label: "%", width: 12,
     cell: (r) => `${(statN(r) ? (statPts(r) / statN(r)) * 100 : 0).toFixed(1)}%` },
-  { key: "wld", label: "W-D-L", width: 20, tdClass: "h2h-wld", cell: (r) => `+${r.wins} =${r.draws} -${r.losses}` },
+  { key: "wld", label: "W-D-L", width: 20, tdClass: "h2h-wld", cell: fmtWdl },
   { key: "elo", label: "Elo", width: 20, cell: (r) => (r.withElo ? fmtElo(r.wins, r.losses, r.draws) : "") },
   { key: "los", label: "LOS", width: 14, cell: (r) => (r.withElo ? fmtLos(r.wins, r.losses, r.draws) : "") },
 ];
@@ -138,10 +146,9 @@ const H2H_COLUMNS = [
 // Black. Overall is the white+black sum (single source -- the games list), so
 // the three rows are always self-consistent regardless of the standings W/L/D.
 function engineRows(e, games) {
-  const { white, black } = colorSplit(games, e.name);
-  const overall = {
-    wins: white.wins + black.wins, losses: white.losses + black.losses, draws: white.draws + black.draws,
-  };
+  const split = colorSplit(games, e.name);
+  const { white, black } = split;
+  const overall = sumSplit(split);
   return [
     { group: e.name },
     { engine: e.name, side: "Overall", ...overall, withElo: false },
