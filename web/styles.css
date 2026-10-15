@@ -4160,6 +4160,9 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   background: linear-gradient(to right, var(--row-bg-selected), var(--bg) 75%);
   box-shadow: inset 3px 0 0 0 var(--accent-line);
 }
+/* The list is the Tab stop but its own ring is suppressed (markSelectable);
+   ring the lead row (where the arrows move from) instead, like data-table rowNav. */
+.tournaments-list:focus-visible .tournament-row.lead { outline: 1px solid var(--accent); outline-offset: -1px; }
 .tournament-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 
 /* Same gate as mqMobileHPlay (breakpoints.js): height half is touch-only. */
