@@ -755,21 +755,12 @@ function buildInfoContent(ctx, t, onStatusClick) {
   };
   row("Threads", defaultSpan(ed.threads));
   row("Hash (MB)", defaultSpan(ed.hash_mb));
-  {
-    const span = ed.syzygy_path
-      ? defaultSpan(basename(ed.syzygy_path), ed.syzygy_path)
-      : defaultSpan(null);
-    row("Syzygy", span);
-  }
-  {
-    const span = ed.book_path
-      ? defaultSpan(basename(ed.book_path), ed.book_path)
-      : defaultSpan(null);
-    row("Opening book", span);
-    if (ed.book_path) {
-      row("Book plies", ed.book_plies);
-      row("Book order", ed.book_order);
-    }
+  // basename() of an unset path is "", which defaultSpan shows as the default.
+  row("Syzygy", defaultSpan(basename(ed.syzygy_path), ed.syzygy_path));
+  row("Opening book", defaultSpan(basename(ed.book_path), ed.book_path));
+  if (ed.book_path) {
+    row("Book plies", ed.book_plies);
+    row("Book order", ed.book_order);
   }
   row("Created", formatStamp(t.created_at));
   if (t.status === STATUS.RUNNING || t.status === STATUS.FAILED || t.status === STATUS.STOPPED) row("Started", formatStamp(t.started_at));
@@ -1228,10 +1219,8 @@ function toggleMenu(ctx, menu) {
 
 function syncSortMenu(ctx) {
   for (const opt of ctx.container.querySelectorAll(".tmb-sort-opt")) {
-    opt.classList.toggle("is-active", opt.dataset.sort === ctx.sortBy);
-  }
-  for (const opt of ctx.container.querySelectorAll(".tmb-sort-opt")) {
     const active = opt.dataset.sort === ctx.sortBy;
+    opt.classList.toggle("is-active", active);
     if (active) opt.dataset.dir = ctx.sortAsc ? "asc" : "desc";
     else delete opt.dataset.dir;
   }
