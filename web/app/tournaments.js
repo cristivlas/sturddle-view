@@ -1022,19 +1022,27 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
   });
 }
 
-async function openNewTournamentDialog(ctx) {
+// Registry engines for the New/Edit/Copy dialogs, or null (after telling the
+// user why) when the registry fails to load or holds fewer than 2 engines.
+async function loadAvailableEngines(ctx) {
   let registry;
   try {
     registry = await ctx.api("GET", "/engines");
   } catch (e) {
     reportError({ log: ctx.log }, "Loading engine registry failed", e);
-    return;
+    return null;
   }
   const available = registry.engines || [];
   if (available.length < 2) {
     toast(buildToastWithActions(NEED_TWO_ENGINES_MSG, [OPEN_ENGINES_ACTION]), { variant: "danger" });
-    return;
+    return null;
   }
+  return available;
+}
+
+async function openNewTournamentDialog(ctx) {
+  const available = await loadAvailableEngines(ctx);
+  if (!available) return;
 
   await openTournamentDialog(ctx, {
     label: NEW_TOURNAMENT_LABEL,
@@ -1111,18 +1119,8 @@ async function openEditTournamentDialog(ctx, t) {
     if (!proceed) return;
   }
 
-  let registry;
-  try {
-    registry = await ctx.api("GET", "/engines");
-  } catch (e) {
-    reportError({ log: ctx.log }, "Loading engine registry failed", e);
-    return;
-  }
-  const available = registry.engines || [];
-  if (available.length < 2) {
-    toast(buildToastWithActions(NEED_TWO_ENGINES_MSG, [OPEN_ENGINES_ACTION]), { variant: "danger" });
-    return;
-  }
+  const available = await loadAvailableEngines(ctx);
+  if (!available) return;
 
   const { initialEngines, droppedCount } = resolveInitialEngines(available, t.engines);
 
@@ -1170,18 +1168,8 @@ async function openEditTournamentDialog(ctx, t) {
 // frozen template, SPRT included) under a non-conflicting copy name. Unlike
 // Edit this POSTs a new tournament, so there are no game-deletion gates.
 async function openDuplicateTournamentDialog(ctx, t) {
-  let registry;
-  try {
-    registry = await ctx.api("GET", "/engines");
-  } catch (e) {
-    reportError({ log: ctx.log }, "Loading engine registry failed", e);
-    return;
-  }
-  const available = registry.engines || [];
-  if (available.length < 2) {
-    toast(buildToastWithActions(NEED_TWO_ENGINES_MSG, [OPEN_ENGINES_ACTION]), { variant: "danger" });
-    return;
-  }
+  const available = await loadAvailableEngines(ctx);
+  if (!available) return;
 
   const { initialEngines, droppedCount } = resolveInitialEngines(available, t.engines);
 
