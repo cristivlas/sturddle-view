@@ -7,6 +7,8 @@
   --scrollbar-thumb-min-h: 50px;
   --wb-outline: rgba(136, 136, 136, 0.4);
   --wb-radius: 8px;
+  /* Above WinBox's header (1) and resize handles (2). */
+  --wb-overlay-z: 3;
   /* Command-and-control surface: dialogs (wa-dialog's --dialog-bg), menus,
      the ribbon. A separate name: --dialog-bg must stay undefined outside
      dialogs, where tables reading it fall back to transparent. */
@@ -4719,11 +4721,21 @@ wa-dialog.tournament-info-dialog::part(body) {
 .winbox.sturddle-wb-ribbon.ribbon-vertical .wb-body .ribbon-btn:focus-visible {
   outline-offset: 2px;
 }
+/* Overlay ring, not an outline: below 1 DPR the outline snaps fully inside
+   and WinBox's z-indexed header/body paint over it. */
 @keyframes wb-attention {
-  0%, 40% { outline: 2px solid var(--accent); outline-offset: -1px; }
-  100%     { outline: 2px solid transparent;  outline-offset: -1px; }
+  0%, 40% { border-color: var(--accent); }
+  100%     { border-color: transparent; }
 }
-.winbox.wb-attention { animation: wb-attention 1.1s ease-out forwards; }
+.winbox.wb-attention::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid transparent;
+  pointer-events: none;
+  z-index: var(--wb-overlay-z);
+  animation: wb-attention 1.1s ease-out forwards;
+}
 /* Title bar matches the panel; WinBox's default blue jars with the theme. */
 .winbox.sturddle-wb .wb-header {
   background: var(--nav-btn-bg);
