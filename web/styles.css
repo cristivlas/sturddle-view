@@ -4137,6 +4137,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 /* Running tourney's Games cell: Arena's progress bar + inline label. */
 .studio-progress { display: flex; align-items: center; gap: 8px; }
 .tournaments-body-main {
+  /* 1px clear of each ribbon's border on purpose: unlike .studio-main, this
+     is the in-flow list only; Arena's windows are placed by JS. */
   width: calc(100vw - 2 * (var(--ribbon-w) + var(--ribbon-border-w)));
   margin-left: auto; margin-right: auto;
   display: flex; flex-direction: column;
