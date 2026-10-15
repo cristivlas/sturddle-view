@@ -480,7 +480,7 @@ function openWorkspace(ctx, t) {
   const top = Math.round(rect.bottom);
   const left = ribbonReserveW();
   const getRight = () => Math.floor(window.innerWidth) - ribbonReserveW();
-  openTournamentWorkspace({ api: ctx.api, events: ctx.events, log: ctx.log, token: ctx.token, tournament: t, top, left, getRight });
+  openTournamentWorkspace({ api: ctx.api, events: ctx.events, log: ctx.log, tournament: t, top, left, getRight });
   // Seed the workspace's view of the other-active tournament so the
   // banner Restart button reflects busy state on open, not just after
   // the next loadList tick.
@@ -1512,11 +1512,11 @@ function wireMenus(ctx) {
 }
 
 // oversized-ok removed: factory decomposed into module-level helpers below.
-export function mountTournaments({ container, api, events, log, token }) {
+export function mountTournaments({ container, api, events, log }) {
   container.innerHTML = PANEL_HTML;
 
   const ctx = {
-    container, api, events, log, token,
+    container, api, events, log,
     newBtn: container.querySelector(".t-new"),
     windowMenu: container.querySelector(".tmb-window-menu"),
     windowMenuBtn: container.querySelector(".tmb-window-btn"),

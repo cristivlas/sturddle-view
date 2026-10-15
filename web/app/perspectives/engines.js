@@ -13,7 +13,6 @@ function mountArena(host, ctx) {
     api: ctx.api,
     events: ctx.events,
     log: ctx.log,
-    token: ctx.token,
   });
 
   // Tournament workspace stays visible while this perspective is mounted.
@@ -42,7 +41,7 @@ export const enginesPerspective = {
     root.innerHTML = `<section id="engines-perspective"></section>`;
     const host = root.querySelector("#engines-perspective");
     return getTournamentUx() === TOURNAMENT_UX.STUDIO
-      ? mountTournamentStudio({ container: host, api: ctx.api, events: ctx.events, log: ctx.log, token: ctx.token })
+      ? mountTournamentStudio({ container: host, api: ctx.api, events: ctx.events, log: ctx.log })
       : mountArena(host, ctx);
   },
 };

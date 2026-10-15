@@ -42,6 +42,47 @@ function _applyEvalInfo({ depthEl, npsEl, hashEl, tbhitsEl }, p) {
   tbhitsEl.textContent = _fmtTb(p);
 }
 
+// Eval rows: the window's own engine (bottom) and its opponent (top).
+const EVAL_ROW_EDGE = Object.freeze({ OWN: "bottom", OPP: "top" });
+const PV_PREVIEW_PLIES = 12;
+function _evalRowRefs(body, edge) {
+  const q = (part) => body.querySelector(`.lg-${part}-${edge}`);
+  return {
+    scoreEl: q("eval-score"), depthEl: q("eval-depth"), npsEl: q("eval-nps"),
+    hashEl: q("eval-hash"), tbhitsEl: q("eval-tbhits"), pvEl: q("pv"),
+  };
+}
+
+// Each engine reports from its own POV; the more optimistic of the two rows
+// tints "ahead", the other "behind". Near-ties or a missing side stay untinted.
+const SCORE_AHEAD_CLASS = "lg-score-ahead";
+const SCORE_BEHIND_CLASS = "lg-score-behind";
+const SCORE_TINT_DEADZONE_CP = 10;
+// Mate outranks any cp score; a shorter mate outranks a longer one.
+const MATE_RANK_CP = 1e6;
+function _scoreRank(score) {
+  if (score?.mate != null) {
+    // UCI "mate 0": the side to move is already mated, i.e. lost.
+    const sign = score.mate > 0 ? 1 : -1;
+    return sign * (MATE_RANK_CP - Math.abs(score.mate));
+  }
+  return score?.cp ?? null;
+}
+function _tintScoreEl(el, ahead, behind) {
+  el.classList.toggle(SCORE_AHEAD_CLASS, ahead);
+  el.classList.toggle(SCORE_BEHIND_CLASS, behind);
+}
+// `own` / `opp`: eval rows carrying the score they show.
+function _tintScorePair(own, opp) {
+  const a = _scoreRank(own.score);
+  const b = _scoreRank(opp.score);
+  const delta = a != null && b != null ? a - b : 0;
+  const ownAhead = delta > SCORE_TINT_DEADZONE_CP;
+  const oppAhead = delta < -SCORE_TINT_DEADZONE_CP;
+  _tintScoreEl(own.scoreEl, ownAhead, oppAhead);
+  _tintScoreEl(opp.scoreEl, oppAhead, ownAhead);
+}
+
 // 0-based ply about to be played in `fen` (fullmove + side to move).
 function fenPly(fen) {
   const parts = fen.split(" ");
@@ -53,7 +94,7 @@ const REVIEW_LEAVE_MSG = "Review this tournament game and leave the current one?
 const REVIEW_OK_LABEL = "Review";
 const REVIEW_FORMAT = "pgn";
 
-export async function replayTournamentGame({ tournamentId, gameN, token, pairId = null }) {
+export async function replayTournamentGame({ tournamentId, gameN, pairId = null }) {
   const headers = { "Content-Type": "application/json" };
   let pgn, pgnHash, pgnSummary, status;
   try {
@@ -201,7 +242,7 @@ const PV_SIDE_GAP = 8;
 // machinery, registers in `liveWindows`. Caller adds WS (live) or
 // final-state painting (frozen) and assigns a real `wb.onclose` that
 // cleans up its own resources after invoking `disposeShared`.
-function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token, tournamentId, top, left, right = 0, boardStyle, avoidRect, initialRect, min, max = false, flash, variantClass, root = null, onPvSides = null }) {
+function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, tournamentId, top, left, right = 0, boardStyle, avoidRect, initialRect, min, max = false, flash, variantClass, root = null, onPvSides = null }) {
   const body = document.createElement("div");
   body.className = "wb-livegame lg-measuring";
   body.innerHTML = `
@@ -259,18 +300,8 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   // below) so it appears complete in one shot, not assembling piece by piece.
   body.style.visibility = "hidden";
 
-  const evalScoreEl = body.querySelector(".lg-eval-score-bottom");
-  const evalDepthEl = body.querySelector(".lg-eval-depth-bottom");
-  const evalNpsEl = body.querySelector(".lg-eval-nps-bottom");
-  const evalHashEl = body.querySelector(".lg-eval-hash-bottom");
-  const evalTbhitsEl = body.querySelector(".lg-eval-tbhits-bottom");
-  const pvEl = body.querySelector(".lg-pv-bottom");
-  const oppEvalScoreEl = body.querySelector(".lg-eval-score-top");
-  const oppEvalDepthEl = body.querySelector(".lg-eval-depth-top");
-  const oppEvalNpsEl = body.querySelector(".lg-eval-nps-top");
-  const oppEvalHashEl = body.querySelector(".lg-eval-hash-top");
-  const oppEvalTbhitsEl = body.querySelector(".lg-eval-tbhits-top");
-  const oppPvEl = body.querySelector(".lg-pv-top");
+  const ownEvalRow = _evalRowRefs(body, EVAL_ROW_EDGE.OWN);
+  const oppEvalRow = _evalRowRefs(body, EVAL_ROW_EDGE.OPP);
   const clockTopEl = body.querySelector(".lg-clock-top");
   const clockBottomEl = body.querySelector(".lg-clock-bottom");
   const topNameEl = body.querySelector(".lg-top-name");
@@ -370,7 +401,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
       replayInFlight = true;
       replayBtnEl.disabled = true;
       try {
-        await replayTournamentGame({ tournamentId, gameN: reconciledGameN, token, pairId: gameId });
+        await replayTournamentGame({ tournamentId, gameN: reconciledGameN, pairId: gameId });
       } finally {
         replayInFlight = false;
         replayBtnEl.disabled = false;
@@ -454,8 +485,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   return {
     wb, body, board, boardHost,
     refs: {
-      evalScoreEl, evalDepthEl, evalNpsEl, evalHashEl, evalTbhitsEl, pvEl,
-      oppEvalScoreEl, oppEvalDepthEl, oppEvalNpsEl, oppEvalHashEl, oppEvalTbhitsEl, oppPvEl,
+      ownEvalRow, oppEvalRow,
       clockTopEl, clockBottomEl,
       topNameEl, bottomNameEl, topTimeEl, bottomTimeEl,
       resultOverlayEl, resultScoreEl, resultTerminationEl, replayBtnEl,
@@ -476,7 +506,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
 // timers, and board paint all coordinate over shared state (conn, engineColor,
 // currentFen, positionGen, clock fields). Closures return a control API;
 // splitting would scatter the feed/clock/paint coordination.
-export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, right = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, max = false, flash = true, root = null, variantClass = null }) {
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, tournamentId = null, top = 0, left = 0, right = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, max = false, flash = true, root = null, variantClass = null }) {
   if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
   if (!windowKey) {
     console.error("[WATCH] no windowKey -- need at least one of proxyId/gameId", { proxyId, gameId });
@@ -501,7 +531,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   let pvSidesVisible = false;
 
   const built = buildLiveGameBox({
-    windowKey, gameId, proxyId, label, engineName, token, tournamentId,
+    windowKey, gameId, proxyId, label, engineName, tournamentId,
     top, left, right, boardStyle, avoidRect, initialRect, min, max, flash,
     variantClass, root,
     onPvSides: (visible) => {
@@ -512,14 +542,17 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       if (visible) { pvSideWhite.fit(); pvSideBlack.fit(); }
     },
   });
-  const { wb, body, board, refs, showResult, setReplayGameN, disposeShared } = built;
+  const { wb, board, refs, showResult, setReplayGameN, disposeShared } = built;
   const {
-    evalScoreEl, evalDepthEl, evalNpsEl, evalHashEl, evalTbhitsEl, pvEl,
-    oppEvalScoreEl, oppEvalDepthEl, oppEvalNpsEl, oppEvalHashEl, oppEvalTbhitsEl, oppPvEl,
+    ownEvalRow, oppEvalRow,
     clockTopEl, clockBottomEl,
     topNameEl, bottomNameEl, topTimeEl, bottomTimeEl,
     pvNameBlackEl, pvNameWhiteEl, pvTableBlackEl, pvTableWhiteEl, evalGraphHostEl,
   } = refs;
+  // Each row also tracks its shown score (pair tint), its color-routed PV
+  // side table, and its board arrow.
+  const ownRow = { ...ownEvalRow, score: null, pvSide: pvOwn, setArrow: (from, to) => board.setArrow(from, to) };
+  const oppRow = { ...oppEvalRow, score: null, pvSide: pvOpp, setArrow: (from, to) => board.setOpponentArrow(from, to) };
   pvTableWhiteEl.appendChild(pvSideWhite.el);
   pvTableBlackEl.appendChild(pvSideBlack.el);
   evalGraphHostEl.appendChild(evalGraph.el);
@@ -769,7 +802,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       case "info":
         if (p.score == null) break;  // ignore PV lines without an eval
         lastOwnInfo = p;
-        renderEval(p);
+        renderEvalRow(ownRow, p);
         break;
       case "go":
         // Own engine starts a new search; drop the previous one's lines.
@@ -843,29 +876,21 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     if (p.score == null) return;  // ignore PV lines without an eval
     if (engineColor && thinkingSide === engineColor) return;
     lastOppInfo = p;
-    renderOpponentEval(p);
-    if (pvSidesVisible) pvOpp().update(p, p.pv_uci?.join(" "));
+    renderEvalRow(oppRow, p);
+  }
+
+  // One info line into an eval row: score (re-tinting the pair), stats, PV
+  // preview, PV side table, and arrow.
+  function renderEvalRow(row, p) {
+    row.score = p.score;
+    row.scoreEl.textContent = fmtScore(p.score, { empty: "--", matePrefix: "M", signed: true });
+    _tintScorePair(ownRow, oppRow);
+    _applyEvalInfo(row, p);
+    const pv = p.pv_uci;
+    if (pvSidesVisible) row.pvSide().update(p, pv?.join(" "));
+    if (pv?.length) row.pvEl.textContent = pv.slice(0, PV_PREVIEW_PLIES).join(" ");
     const m = pvArrowMove(p);
-    if (m) board.setOpponentArrow(m.slice(0, 2), m.slice(2, 4));
-  }
-
-  function renderOpponentEval(p) {
-    oppEvalScoreEl.textContent = fmtScore(p.score, { empty: "--", matePrefix: "M", signed: true });
-    _applyEvalInfo({ depthEl: oppEvalDepthEl, npsEl: oppEvalNpsEl, hashEl: oppEvalHashEl, tbhitsEl: oppEvalTbhitsEl }, p);
-    const pv = p.pv_uci;
-    if (pv && pv.length) oppPvEl.textContent = pv.slice(0, 12).join(" ");
-  }
-
-  function renderEval(p) {
-    evalScoreEl.textContent = fmtScore(p.score, { empty: "--", matePrefix: "M", signed: true });
-    _applyEvalInfo({ depthEl: evalDepthEl, npsEl: evalNpsEl, hashEl: evalHashEl, tbhitsEl: evalTbhitsEl }, p);
-    if (pvSidesVisible) pvOwn().update(p, p.pv_uci?.join(" "));
-    const pv = p.pv_uci;
-    if (pv && pv.length) {
-      pvEl.textContent = pv.slice(0, 12).join(" ");
-      const m = pvArrowMove(p);
-      if (m) board.setArrow(m.slice(0, 2), m.slice(2, 4));
-    }
+    if (m) row.setArrow(m.slice(0, 2), m.slice(2, 4));
   }
 
   return {
@@ -884,7 +909,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 // workspace whose snapshot has resolved game entries.
 export function openFrozenGameWindow({
   proxyId, gameId, windowKey = gameId, label, engineName,
-  token, tournamentId, gameN, result, termination,
+  tournamentId, gameN, result, termination,
   top = 0, left = 0, right = 0, boardStyle = null, initialRect = null, min = false, max = false, flash = true,
   root = null, variantClass = null,
 }) {
@@ -905,7 +930,7 @@ export function openFrozenGameWindow({
   }
 
   const built = buildLiveGameBox({
-    windowKey, gameId, proxyId, label, engineName, token, tournamentId,
+    windowKey, gameId, proxyId, label, engineName, tournamentId,
     top, left, right, boardStyle, avoidRect: null, initialRect, min, max, flash,
     variantClass: variantClass ? `sturddle-wb-live-frozen ${variantClass}` : "sturddle-wb-live-frozen",
     root,
