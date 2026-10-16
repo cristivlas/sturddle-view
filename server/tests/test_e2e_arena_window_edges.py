@@ -186,3 +186,54 @@ async def test_board_row_touches_system_windows(tmp_path, monkeypatch, make_page
         s = await page.evaluate(_SPANS)
         assert s["wb-livegame"][1] == s["wb-engines"][0], (dpr, s["wb-livegame"], s["wb-engines"])
         assert_no_page_errors(errors)
+
+
+# The Standings window's target CSS-px bottom (inline style; see _SPANS) and
+# whether WinBox has it maximized.
+_STANDINGS_BOTTOM = """() => {
+  const w = document.querySelector('.winbox.sturddle-wb-standings');
+  return [parseFloat(w.style.top) + parseFloat(w.style.height), w.classList.contains('max')];
+}"""
+LAYOUT_ITEMS = {"snap": ".tmb-snap", "tile": ".tmb-tile"}
+
+
+async def _standings_ends_on_list_border(page, dpr, expect_max=False):
+    bottom, is_max = await page.evaluate(_STANDINGS_BOTTOM)
+    list_bottom, outline = await page.evaluate(_LIST_BOTTOM_AND_OUTLINE)
+    assert is_max == expect_max
+    assert bottom + outline == pytest.approx(list_bottom, abs=SUBPIXEL), (dpr, bottom, list_bottom)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dpr", DPRS)
+@pytest.mark.parametrize("layout", sorted(LAYOUT_ITEMS))
+async def test_snap_and_tile_end_on_list_border(server, make_page, layout, dpr):
+    """Snap / Tile, nothing minimized: the bottom window's outline lands on
+    the list's bottom border, as in Clean -- not at the viewport's bottom."""
+    _ctx, page = await make_page(viewport=VIEWPORT, device_scale_factor=dpr)
+    errors = watch_page_errors(page)
+    await goto_arena_tournaments(page, server)
+    await page.click(".tournament-row")
+    await open_arena_workspace(page)
+    await page.click(".tmb-window-btn")
+    await page.click(LAYOUT_ITEMS[layout])
+    await page.wait_for_function("() => !!document.querySelector('.winbox.sturddle-wb-standings.no-shadow')")
+
+    await _standings_ends_on_list_border(page, dpr)
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dpr", DPRS)
+async def test_maximized_window_ends_on_list_border(server, make_page, dpr):
+    """A maximized window stops at the list's bottom border too."""
+    _ctx, page = await make_page(viewport=VIEWPORT, device_scale_factor=dpr)
+    errors = watch_page_errors(page)
+    await goto_arena_tournaments(page, server)
+    await page.click(".tournament-row")
+    await open_arena_workspace(page)
+    await page.click(".winbox.sturddle-wb-standings .wb-max")
+    await page.wait_for_function("() => !!document.querySelector('.winbox.sturddle-wb-standings.max')")
+
+    await _standings_ends_on_list_border(page, dpr, expect_max=True)
+    assert_no_page_errors(errors)

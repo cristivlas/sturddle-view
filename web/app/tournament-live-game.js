@@ -242,7 +242,7 @@ const PV_SIDE_GAP = 8;
 // machinery, registers in `liveWindows`. Caller adds WS (live) or
 // final-state painting (frozen) and assigns a real `wb.onclose` that
 // cleans up its own resources after invoking `disposeShared`.
-function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, tournamentId, top, left, right = 0, boardStyle, avoidRect, initialRect, min, max = false, flash, variantClass, root = null, onPvSides = null }) {
+function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, tournamentId, top, left, right = 0, bottom = 0, boardStyle, avoidRect, initialRect, min, max = false, flash, variantClass, root = null, onPvSides = null }) {
   const body = document.createElement("div");
   body.className = "wb-livegame lg-measuring";
   body.innerHTML = `
@@ -340,6 +340,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, tourn
     top,
     left,
     right,
+    bottom,
     min,
     max,
     mount: body,
@@ -506,7 +507,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, tourn
 // timers, and board paint all coordinate over shared state (conn, engineColor,
 // currentFen, positionGen, clock fields). Closures return a control API;
 // splitting would scatter the feed/clock/paint coordination.
-export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, tournamentId = null, top = 0, left = 0, right = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, max = false, flash = true, root = null, variantClass = null }) {
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, tournamentId = null, top = 0, left = 0, right = 0, bottom = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, max = false, flash = true, root = null, variantClass = null }) {
   if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
   if (!windowKey) {
     console.error("[WATCH] no windowKey -- need at least one of proxyId/gameId", { proxyId, gameId });
@@ -532,7 +533,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   const built = buildLiveGameBox({
     windowKey, gameId, proxyId, label, engineName, tournamentId,
-    top, left, right, boardStyle, avoidRect, initialRect, min, max, flash,
+    top, left, right, bottom, boardStyle, avoidRect, initialRect, min, max, flash,
     variantClass, root,
     onPvSides: (visible) => {
       pvSidesVisible = visible;
@@ -903,7 +904,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 export function openFrozenGameWindow({
   proxyId, gameId, windowKey = gameId, label, engineName,
   tournamentId, gameN, result, termination,
-  top = 0, left = 0, right = 0, boardStyle = null, initialRect = null, min = false, max = false, flash = true,
+  top = 0, left = 0, right = 0, bottom = 0, boardStyle = null, initialRect = null, min = false, max = false, flash = true,
   root = null, variantClass = null,
 }) {
   if (!windowKey) {
@@ -924,7 +925,7 @@ export function openFrozenGameWindow({
 
   const built = buildLiveGameBox({
     windowKey, gameId, proxyId, label, engineName, tournamentId,
-    top, left, right, boardStyle, avoidRect: null, initialRect, min, max, flash,
+    top, left, right, bottom, boardStyle, avoidRect: null, initialRect, min, max, flash,
     variantClass: variantClass ? `sturddle-wb-live-frozen ${variantClass}` : "sturddle-wb-live-frozen",
     root,
   });

@@ -67,6 +67,12 @@ function minimizeFooterH() {
 function dockTop() {
   return window.innerHeight - minimizeFooterH();
 }
+
+// Bottom edge of the managed layouts and of maximize: getBottom (the list's,
+// in Arena), never past the viewport -- nor into the dock strip when reserved.
+function workspaceBottom(ctx, reserveDock) {
+  return Math.min(ctx.getBottom(), reserveDock ? dockTop() : window.innerHeight);
+}
 // Visual gap between tiled/snapped windows; also absorbs WinBox rounding.
 const TILE_MARGIN = 0;
 const TIDY_GAP = 0;
@@ -230,7 +236,7 @@ function tile(ctx, wbsIn, { reserveDock = false, preserveMin = false, preserveMa
   else wbs.forEach(unminimize);
   if (!wbs.length) return;
   const availW = ctx.getRight() - left;
-  const availH = window.innerHeight - top - (reserveDock ? minimizeFooterH() : 0);
+  const availH = workspaceBottom(ctx, reserveDock) - top;
   const maxMinW = Math.max(...wbs.map(wb => wb.svMinWidth ?? 0));
   const maxMinH = Math.max(...wbs.map(wb => wb.svMinHeight ?? 0));
   const n = wbs.length;
@@ -311,8 +317,8 @@ function tidy(ctx, { preserveMin = false } = {}) {
     }
   }
   const availW = ctx.getRight() - left;
-  // Never into the minimized-window dock strip, wherever getBottom lands.
-  const availH = Math.min(ctx.getBottom(), dockTop()) - top;
+  // Clean always keeps the minimized-window dock strip clear.
+  const availH = workspaceBottom(ctx, true) - top;
   const mins = getMinSizes();
   const leftW = Math.max(Math.round(availW * 0.35), mins.engines.minwidth);
   const rightW = availW - leftW - TIDY_GAP;
@@ -365,9 +371,9 @@ function snap(ctx, { preserveMax = false } = {}) {
   const wbs = allWindows.filter(wb => !wb.min && !wb.max);
   if (!wbs.length) return;
   // Reserve bottom strip for the minimize dock only if any window is
-  // currently minimized -- otherwise full viewport.
+  // currently minimized -- otherwise down to the workspace bottom.
   const hasMin = allWindows.some(wb => wb.min);
-  const vy1 = window.innerHeight - (hasMin ? minimizeFooterH() : 0);
+  const vy1 = workspaceBottom(ctx, hasMin);
 
   const items = wbs.map(wb => ({
     wb,
@@ -575,7 +581,7 @@ function makeBox(ctx, key, title, body, { min = false, max = false } = {}) {
   const extra = extraClass ? ` ${extraClass}` : "";
   const sizes = getMinSizes()[key];
   const wb = createWinBox({
-    title, mount: body, top: ctx.top, left: ctx.left, right: ctx.getRightInset(), min, max,
+    title, mount: body, top: ctx.top, left: ctx.left, right: ctx.getRightInset(), bottom: ctx.getBottomInset(), min, max,
     ...(cfg ? { x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height } : {}),
     class: `sturddle-wb ${ARENA_WINDOW_CLASS} no-full${extra}`,
     ...sizes,
@@ -629,7 +635,7 @@ function attachWatch(ctx, btn, attachKey, openOpts) {
   try {
     result = openLiveGameWindow({
       ...openOpts, tournamentId: ctx.tournament.id,
-      top: ctx.top, left: ctx.left, right: ctx.getRightInset(),
+      top: ctx.top, left: ctx.left, right: ctx.getRightInset(), bottom: ctx.getBottomInset(),
       boardStyle: ctx.boardStyleCached,
       initialRect: claim ? { x: claim.x, y: claim.y, w: claim.w, h: claim.h } : (openOpts.initialRect ?? null),
     });
@@ -999,7 +1005,7 @@ async function initWorkspace(ctx) {
           gameN: resolved.gameN,
           result: resolved.result,
           termination: resolved.termination,
-          top: ctx.top, left: ctx.left, right: ctx.getRightInset(),
+          top: ctx.top, left: ctx.left, right: ctx.getRightInset(), bottom: ctx.getBottomInset(),
           boardStyle: ctx.boardStyleCached,
           initialRect: rect, min: !!s.min, max: !!s.max, flash: false,
         });
@@ -1397,10 +1403,10 @@ function setLayout(ctx, mode) {
 // Wiring shell: builds the shared `ctx` state object, opens the initial
 // windows, registers listeners, and returns the workspace control API.
 // The behavior lives in the module-level helpers that take `ctx`.
-// getBottom: Clean (tidy) layout's bottom edge, capped at the dock strip's top.
+// getBottom: the managed layouts' and maximize's bottom edge (workspaceBottom).
 export function openTournamentWorkspace({
   api, events, log, tournament, top = 0, left = 0,
-  getRight = () => window.innerWidth, getBottom = dockTop,
+  getRight = () => window.innerWidth, getBottom = () => window.innerHeight,
 }) {
   // Single-active model. Re-clicking the workspace icon for the
   // already-open tournament is a no-op (just focus its windows) so
@@ -1501,6 +1507,8 @@ export function openTournamentWorkspace({
   // area -- ribbon width when docked right, 0 when docked left. WinBox's
   // maximize() respects this so a maximized window stops at the ribbon.
   ctx.getRightInset = () => Math.max(0, window.innerWidth - getRight());
+  // Likewise below: maximize stops at the workspace bottom (the list's, in Arena).
+  ctx.getBottomInset = () => Math.max(0, window.innerHeight - workspaceBottom(ctx, false));
   ctx.pendingDragX = null;
 
   const windowSpecs = buildWindowSpecs(ctx);
