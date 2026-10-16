@@ -4150,7 +4150,35 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   width: calc(100vw - 2 * var(--ribbon-w));
   margin-left: auto; margin-right: auto;
   display: flex; flex-direction: column;
+  /* Search bar host: it slides in from above, clipped to this box. */
+  position: relative; overflow: hidden;
+  --t-search-h: 48px;
 }
+/* Arena search (tournaments.js setupTournamentSearch): a drop-down bar under
+   the menubar, overlaid on the list's top; the list pads its top while it's
+   open, so no row hides under it. */
+.tournaments-search-wrap {
+  position: absolute; left: 0; right: 0; top: 0;
+  height: var(--t-search-h); padding: 6px 10px; box-sizing: border-box;
+  background: var(--panel);
+  border: 1px solid var(--wa-color-border-loud, #333); border-top: 0;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transform: translateY(-100%);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.15s ease-out,
+              visibility 0s 0.2s;
+  z-index: 2;
+}
+.search-open .tournaments-search-wrap {
+  opacity: 1; visibility: visible; pointer-events: auto;
+  transform: translateY(0);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.15s ease-out,
+              visibility 0s;
+}
+.search-open .tournaments-list { padding-top: var(--t-search-h); }
+.tournaments-search { width: 100%; --wa-focus-ring-width: 0px; }
+.tournaments-no-match { padding: 12px; text-align: center; }
 .tournament-row {
   display: flex; align-items: center; gap: 8px;
   background: linear-gradient(to right, var(--row-bg), var(--bg) 75%);

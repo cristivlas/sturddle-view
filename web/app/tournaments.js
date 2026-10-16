@@ -14,6 +14,7 @@ import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, s
 import { APP_EVT } from "./app-events.js";
 import { baseCompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { rankCmp } from "./sort-stack.js";
+import { ESCAPE_KEY } from "./keys.js";
 import { attachMenuNav, focusFirstItem, MENU_OPEN_CLASS } from "./menu-nav.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
@@ -46,6 +47,16 @@ const TOURNAMENT_DETAILS_LABEL = "Tournament details";
 const EDIT_TOURNAMENT_LABEL = "Edit tournament";
 const COPY_TOURNAMENT_LABEL = "Copy tournament";
 const DELETE_TOURNAMENT_LABEL = "Delete tournament";
+const SEARCH_TOURNAMENTS_LABEL = "Search tournaments";
+const SEARCH_PLACEHOLDER = "Search tournaments...";
+const NO_MATCH_MSG = "No matching tournaments.";
+const SEARCH_MINIMIZED_MSG = "Windows minimized while searching";
+const RESTORE_WINDOWS_LABEL = "Restore windows";
+// On .tournaments-body-main while the search bar is down (styles.css).
+const SEARCH_OPEN_CLASS = "search-open";
+// The lit ribbon button, as on the Engines page.
+const RIBBON_ACTIVE_CLASS = "is-active";
+const SELECTED_ROW_SEL = ".tournament-row.selected";
 const CREATE_ACTION_LABEL = "Create";
 const REMOVE_ACTION_LABEL = "Remove";
 const DELETE_WARNING = "All games and data will be permanently deleted.";
@@ -84,8 +95,10 @@ function loadSortBy() {
 const IS_LOCAL = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
 // One builder for both action ribbons; prefix scopes the button classes
-// (t-*, studio-*), withWorkspace adds Arena's workspace button.
-export function ribbonHtml({ className, ariaLabel, prefix, withWorkspace }) {
+// (t-*, studio-*), withWorkspace / withSearch add Arena's workspace and
+// search buttons. Search sits with New: both act on the list, not on the
+// selected tournament.
+export function ribbonHtml({ className, ariaLabel, prefix, withWorkspace, withSearch }) {
   const sep = '<span class="ribbon-sep" aria-hidden="true"></span>';
   const btn = (suffix, icon, title, { danger = false, enabled = false, iconClass = "" } = {}) => `
           <button class="ribbon-btn ${danger ? "ribbon-btn--danger " : ""}${prefix}-${suffix}"${enabled ? "" : " disabled"} aria-label="${title}" title="${title}">
@@ -93,6 +106,7 @@ export function ribbonHtml({ className, ariaLabel, prefix, withWorkspace }) {
           </button>`;
   return `<div class="${className}" role="toolbar" aria-label="${ariaLabel}">
           ${btn("new", "plus", NEW_TOURNAMENT_LABEL, { enabled: true })}
+          ${withSearch ? btn("search", "magnifying-glass", SEARCH_TOURNAMENTS_LABEL, { enabled: true }) : ""}
           ${sep}
           ${btn("start", "play", START_TOURNAMENT_LABEL, { iconClass: `${prefix}-start-icon` })}
           ${btn("stop", "hand", STOP_TOURNAMENT_LABEL)}
@@ -155,9 +169,12 @@ const PANEL_HTML = `
       </menu>
 
       <div class="tournaments-body">
-        ${ribbonHtml({ className: "tournaments-ribbon", ariaLabel: "Tournament actions", prefix: "t", withWorkspace: true })}
+        ${ribbonHtml({ className: "tournaments-ribbon", ariaLabel: "Tournament actions", prefix: "t", withWorkspace: true, withSearch: true })}
 
         <div class="tournaments-body-main">
+          <div class="tournaments-search-wrap">
+            <wa-input class="tournaments-search" size="small" placeholder="${SEARCH_PLACEHOLDER}" clearable autocomplete="off"></wa-input>
+          </div>
           <div class="tournaments-empty hidden">
             <p class="empty-message"></p>
           </div>
@@ -280,18 +297,37 @@ function renderList(ctx) {
   ctx.emptyEl.classList.add("hidden");
 
   const sorted = sortedTournaments(ctx);
+  // Over the whole list, not the filtered rows: filtering hides the
+  // selection, it doesn't move it.
   if (!ctx.selectedId || !sorted.some((t) => t.id === ctx.selectedId)) {
     ctx.selectedId = (ctx.activeId && sorted.some((t) => t.id === ctx.activeId)) ? ctx.activeId : sorted[0].id;
   }
-  for (const t of sorted) {
+  const needle = ctx.filterText.trim().toLowerCase();
+  const visible = sorted.filter((t) => matchesFilter(t, needle));
+  for (const t of visible) {
     ctx.listEl.appendChild(renderRow(ctx, t));
   }
+  if (!visible.length) ctx.listEl.appendChild(noMatchItem());
   ctx.ms.prune();
   syncRibbon(ctx);
   if (ctx.initialLoad) {
     ctx.initialLoad = false;
     maybeRestoreWorkspace(ctx);
   }
+}
+
+// The search filter: a case-insensitive substring of the tournament's name or
+// of any of its engines' names. An empty needle matches everything.
+function matchesFilter(t, needle) {
+  return !needle || t.name.toLowerCase().includes(needle)
+    || (t.engines || []).some((e) => e.name.toLowerCase().includes(needle));
+}
+
+function noMatchItem() {
+  const li = document.createElement("li");
+  li.className = "tournaments-no-match muted";
+  li.textContent = NO_MATCH_MSG;
+  return li;
 }
 
 function sortedTournaments(ctx) {
@@ -1437,10 +1473,100 @@ function wireRibbon(ctx) {
   });
 }
 
+// Search: a bar that slides down under the menubar and filters the list as
+// you type (top, not bottom as on the Engines page: the ribbon runs down the
+// left edge, and the bottom is where workspace windows go). Esc or a click
+// elsewhere closes it and clears the filter; clicks on the list don't, so a
+// filtered row can be picked. Workspace windows would hide the list, so
+// opening minimizes them (with a toast saying so) and closing restores them;
+// a click on the toast is a click elsewhere. Returns a teardown that closes an
+// open search (windows back, listeners off).
+function setupTournamentSearch(ctx) {
+  const btn = ctx.container.querySelector(".t-search");
+  const wrap = ctx.container.querySelector(".tournaments-search-wrap");
+  const input = ctx.container.querySelector(".tournaments-search");
+  const main = ctx.container.querySelector(".tournaments-body-main");
+  // Windows this search minimized, and its toast's dismiss.
+  let minimizedWbs = [];
+  let dismissToast = null;
+
+  input.addEventListener("input", () => {
+    ctx.filterText = input.value || "";
+    renderList(ctx);
+  });
+
+  function stopListening() {
+    document.removeEventListener("pointerdown", onOutsideClick);
+    document.removeEventListener("keydown", onSearchKey, true);
+  }
+
+  function minimizeWorkspace() {
+    const ws = getActiveWorkspace();
+    if (!ws || ws.isHidden()) return;
+    minimizedWbs = ws.minimizeAll();
+    if (!minimizedWbs.length) return;
+    const msg = document.createElement("span");
+    msg.className = "toast-sort-msg";
+    const restoreBtn = document.createElement("button");
+    restoreBtn.className = "toast-action-btn toast-ws-toggle toast-ws-restore";
+    restoreBtn.setAttribute("aria-label", RESTORE_WINDOWS_LABEL);
+    restoreBtn.title = RESTORE_WINDOWS_LABEL;
+    msg.append(SEARCH_MINIMIZED_MSG, restoreBtn);
+    dismissToast = toast(msg, { duration: 0 });
+  }
+
+  function restoreWorkspace() {
+    dismissToast?.();
+    dismissToast = null;
+    getActiveWorkspace()?.restoreWindows(minimizedWbs);
+    minimizedWbs = [];
+  }
+
+  function closeSearch() {
+    if (!main.classList.contains(SEARCH_OPEN_CLASS)) return;
+    main.classList.remove(SEARCH_OPEN_CLASS);
+    btn.classList.remove(RIBBON_ACTIVE_CLASS);
+    input.value = "";
+    ctx.filterText = "";
+    renderList(ctx);
+    // The full list is back: keep the selection in view.
+    scrollSortedRowIntoView(ctx.listEl, SELECTED_ROW_SEL);
+    restoreWorkspace();
+    stopListening();
+  }
+
+  function onOutsideClick(e) {
+    if (wrap.contains(e.target) || btn.contains(e.target) || ctx.listEl.contains(e.target)) return;
+    closeSearch();
+  }
+
+  function onSearchKey(e) {
+    if (e.key !== ESCAPE_KEY) return;
+    closeSearch();
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  btn.addEventListener("click", () => {
+    if (main.classList.contains(SEARCH_OPEN_CLASS)) {
+      closeSearch();
+      return;
+    }
+    main.classList.add(SEARCH_OPEN_CLASS);
+    btn.classList.add(RIBBON_ACTIVE_CLASS);
+    minimizeWorkspace();
+    input.focus();
+    document.addEventListener("pointerdown", onOutsideClick);
+    document.addEventListener("keydown", onSearchKey, true);
+  });
+
+  return closeSearch;
+}
+
 function wireListKeyboard(ctx) {
   wireArrowKeyNav(ctx.listEl, {
     rows: ".tournament-row",
-    selected: ".tournament-row.selected",
+    selected: SELECTED_ROW_SEL,
     lead: () => ctx.listEl.querySelector(`.tournament-row[data-id="${ctx.ms.lead()}"]`),
     select: (row) => selectRow(ctx, row.dataset.id),
     extend: (row) => ctx.ms.extendTo(row.dataset.id),
@@ -1545,6 +1671,8 @@ export function mountTournaments({ container, api, events, log }) {
     startingId: null,
     sortBy: loadSortBy(),
     sortAsc: loadRaw(STORAGE_KEY.TOURNAMENTS_SORT_ASC) !== "false",
+    // Search filter text (setupTournamentSearch); "" shows every row.
+    filterText: "",
 
     // Persistent sort toast (reused in place to avoid flicker on re-sort).
     dismissSortToast: null,
@@ -1584,6 +1712,7 @@ export function mountTournaments({ container, api, events, log }) {
   ctx.actions = guardedVerbs(ctx);
 
   wireRibbon(ctx);
+  const stopSearch = setupTournamentSearch(ctx);
   wireListKeyboard(ctx);
   wireMenus(ctx);
   ctx.newBtn.addEventListener("click", () => ctx.actions.create());
@@ -1655,6 +1784,7 @@ export function mountTournaments({ container, api, events, log }) {
       mqMobileHPlay.removeEventListener("change", ctx.onViewportChange);
       window.removeEventListener("resize", ctx.onRibbonResize);
       document.removeEventListener("click", ctx.onMenuDocClick);
+      stopSearch();
       dismissSortToastNow(ctx);
       // Hide (don't close) so the workspace survives perspective
       // navigation; it'll be re-shown when the user returns.
