@@ -20,6 +20,7 @@ pytestmark = pytest.mark.e2e
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
 from .conftest import (  # noqa: E402
+    NEXT_FRAME_JS,
     REGISTRY_FILE,
     XGAME_BY_ID_PATH,
     PageObserver,
@@ -87,9 +88,6 @@ ESCAPE = "Escape"
 OVERFLOW_X_JS = """() => getComputedStyle(
   document.querySelector('wa-dialog[open] .recents-scroll')).overflowX"""
 OVERFLOW_HIDDEN = "hidden"
-# Two frames: the layout's ResizeObserver schedules the sideways decision
-# into the next frame. Frame ordering, not a timer.
-NEXT_FRAME_JS = """() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))"""
 OVERFLOW_AUTO = "auto"
 LONG_NAME = "Long" * 60
 LONG_PGN = '[White "' + LONG_NAME + '"]\n[Black "B"]\n\n1. a3 a6 *\n'

@@ -211,7 +211,8 @@ async def test_short_laptop_keeps_desktop_layout(server, make_page):
     _ctx, page, errors = await _new_page(make_page, SHORT_VIEWPORT)
     await _goto_play(page, server)
     assert not await page.evaluate(f"() => matchMedia('{COARSE_POINTER_MQ}').matches")
-    await page.click(PV_BTN)
+    # A short rail may overflow the button into its menu (hidden): dispatch.
+    await page.dispatch_event(PV_BTN, "click")
     await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot")
     assert await _dock_displayed(page)
     assert_no_page_errors(errors)

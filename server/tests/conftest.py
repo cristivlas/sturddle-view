@@ -778,6 +778,11 @@ async def wait_perspective_ready(page) -> None:
     )
 
 
+# Resolves after two frames, so ResizeObserver work scheduled by the last
+# layout has run. Frame ordering, not a timer.
+NEXT_FRAME_JS = "() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))"
+
+
 # Monotonic suffix for wait_for_async_predicate's window slots -- one
 # page can host several concurrent/sequential waits without collisions.
 _ASYNC_WAIT_SEQ = itertools.count()
