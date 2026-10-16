@@ -122,8 +122,8 @@ export function isMobileLayout() {
   return mqMobile.matches || mqMobileHPlay.matches;
 }
 
-// Gap between the docked column and the board.
-const DOCK_BOARD_GAP_PX = 8;
+// Board's gap to both the dock column and the moves rail.
+export const gridGapPx = (grid) => parseFloat(getComputedStyle(grid).getPropertyValue("--grid-gap"));
 
 function applyDockBounds(el) {
   if (!el || isMobileLayout()) return;
@@ -133,7 +133,7 @@ function applyDockBounds(el) {
   // Board's distance from the ribbon-side viewport edge.
   const side = document.body.dataset.ribbonSide === "right"
     ? window.innerWidth - Math.round(rect.right) : Math.round(rect.left);
-  el.style.width = (side - ribbonWidthPx(PLAY_GRID_SEL) - DOCK_BOARD_GAP_PX) + "px";
+  el.style.width = (side - ribbonWidthPx(PLAY_GRID_SEL) - gridGapPx(el.parentElement)) + "px";
 
   const clockTop = document.querySelector(".clock-row.clock-top");
   const clockBot = document.querySelector(".clock-row.clock-bottom");

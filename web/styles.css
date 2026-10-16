@@ -32,6 +32,8 @@
   --play-glow-dir: to bottom;
   --play-glow-color: rgba(120, 144, 168, 0.22);
   --play-glow-reach: 100%;
+  /* Play's vertical rhythm: header line, clocks, board, moves-to-dock grip. */
+  --play-gap: 5px;
   /* Minimized-WinBox dock strip; tournament-workspace.js reads it as
      MINIMIZE_FOOTER_H. */
   --wb-min-footer-h: 36px;
@@ -1189,10 +1191,11 @@ svg.cm-chessboard {
 html, body { height: 100%; }
 body { display: flex; flex-direction: column; --main-pad: 16px; }
 main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden; }
-/* Play/View and Studio start flush under the header's amber line. */
-#perspective-root:has(#play-perspective, .studio-panel) { padding-top: 0; }
+/* Studio starts flush under the header's amber line. */
+#perspective-root:has(.studio-panel) { padding-top: 0; }
 /* On main, not #play-perspective, so it spans main's side padding too. */
 #perspective-root:has(#play-perspective) {
+  padding-top: var(--play-gap);
   background: linear-gradient(var(--play-glow-dir), var(--play-glow-color), transparent var(--play-glow-reach));
 }
 #app-footer {
@@ -1483,7 +1486,7 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
 }
 .play-grid {
   --rail-w: 240px;
-  --grid-gap: 16px;
+  --grid-gap: 8px;
   display: grid;
   grid-template-columns: var(--left-rail-w, var(--rail-w)) var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
   grid-template-rows: auto 1fr;
@@ -1741,6 +1744,9 @@ body .side-popover.popover-floating {
 }
 .play-dock-left:not(.dock-empty),
 .play-rail-dock:not(.dock-empty) { border: 1px solid #454952; }
+/* Both docks clip overflow, so slot corners follow; drop outline too. */
+.play-dock-left,
+.play-rail-dock { border-radius: var(--wb-radius); }
 /* Drag-to-dock hint (play-dock-windows.js): a title bar is being dragged, so
    reveal the drop zone even when dock-empty -- must follow the .dock-empty
    rules to win the specificity tie. The over-the-zone highlight is the
@@ -1910,7 +1916,7 @@ body .side-popover.popover-floating {
   /* !important guards against later, more specific .play-dock-left rules
      (e.g. JS-set modifier classes): mobile hides the dock unconditionally. */
   .play-dock-left { display: none !important; }
-  #perspective-root:has(#play-perspective) { background: none; }
+  #perspective-root:has(#play-perspective) { background: none; padding-top: 0; --play-gap: 8px; }
   #play-perspective { display: block; }
   .play-grid {
     display: flex;
@@ -2013,7 +2019,7 @@ body .side-popover.popover-floating {
 .game-view-board {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--play-gap);
   min-height: 0;
   align-items: center;
   /* The board is a width-capped square, so tall windows leave vertical slack.
@@ -2059,6 +2065,7 @@ body .side-popover.popover-floating {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  border-radius: var(--wb-radius);
   padding: 6px;
 }
 /* No moves yet: drop the frame so no empty box shows. */
@@ -2148,6 +2155,9 @@ body .side-popover.popover-floating {
   flex: 0 0 auto;
   max-width: 100%;
   box-sizing: border-box;
+  /* Clip the square-cornered board SVG to the rounded frame. */
+  border-radius: var(--wb-radius);
+  overflow: hidden;
 }
 .game-view-engine .engine-summary {
   background: transparent;
@@ -2357,6 +2367,7 @@ body .side-popover.popover-floating {
 .game-view-board .clock-row {
   border-color: var(--wb-outline);
   background: linear-gradient(#40434b, #34373d);
+  border-radius: var(--wb-radius);
 }
 .game-view-board .clock-row .clock-name { color: var(--muted-bright); }
 .game-view-board .clock-row.active .clock-name { color: inherit; }

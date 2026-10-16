@@ -1,5 +1,5 @@
 // GameView: board + clocks + move list + engine info, scoped to a gameId.
-// Used by Play (interactive, full-size) and Observe (read-only, in a WinBox).
+// Used by the Play perspective (play and view modes).
 
 import { mountBoard } from "./board.js";
 import { copyToClipboard } from "./dialogs.js";
@@ -8,6 +8,7 @@ import {
   DOCK_EMPTY_CLASS,
   DOCK_GRIP_CLASS,
   dockSlotCount,
+  gridGapPx,
   isMobileLayout,
 } from "./play-dock-windows.js";
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
@@ -31,10 +32,7 @@ const HALFMOVE_WARN_PLIES = 40;
 // Board/rail sizing. Lengths in px unless suffixed _REM (multiplied by the
 // root font-size at use so they honor the user's browser font preference).
 const DEFAULT_MAIN_PAD_BOTTOM_PX = 16;
-const COL_SIBLING_GAP_PX = 8;
-const NESTED_SIBLING_GAP_PX = 12;
 const BOTTOM_MARGIN_EXTRA_PX = 24;
-const DEFAULT_GRID_GAP_PX = 16;
 const DEFAULT_SIDE_PAD_PX = 32;
 const DEFAULT_ROOT_FONT_PX = 16;
 const MIN_BOARD_REM = 20;     // 320px @ default fs
@@ -54,9 +52,6 @@ const RAIL_SLOT_MIN_REM = 5;
 const RAIL_GRIP_SEL_CLASS = "play-rail-grip";
 // Hides a section that has nothing to show (display: none in styles.css).
 const IS_EMPTY_CLASS = "is-empty";
-// Grip thickness; it rides in the board-bottom gap, so it costs neither the
-// moves list nor the docked panel any height.
-const RAIL_GRIP_PX = 5;
 
 function renderMoveList(el, sanList, {
   currentIdx = null,   // highlighted ply, or null = last (play mode)
@@ -333,9 +328,10 @@ function clearEngineInfoFields(ctx) {
 
 // ---- Board sizing -------------------------------------------------------
 
-function sumSiblingsBelow(node, gap) {
+function sumSiblingsBelow(node) {
   // Only count siblings that are visually below `node` (greater top).
   // Grid layouts can place siblings beside, not below.
+  const gap = parseFloat(getComputedStyle(node.parentElement).rowGap) || 0;
   const nodeRect = node.getBoundingClientRect();
   const nodeBottom = nodeRect.top + nodeRect.height;
   let total = 0;
@@ -403,7 +399,9 @@ function ensureRailGrip(ctx, railDock) {
 // Position the side rail (moves/engine panel) flush with the board on
 // desktop; clear inline geometry on mobile so the flex layout takes over.
 function positionSideRail(ctx, geom) {
-  const { grid, gapW, railW, leftEmpty, rem, mobile } = geom;
+  // colGap doubles as the grip thickness: the grip rides in a board-bottom gap
+  // of that size, costing neither the moves list nor the docked panel height.
+  const { grid, gapW, colGap, railW, leftEmpty, rem, mobile } = geom;
   const sideHost = grid.querySelector(".play-side-host");
   if (!sideHost) return;
   const railDock = sideHost.querySelector(".play-rail-dock");
@@ -457,7 +455,7 @@ function positionSideRail(ctx, geom) {
     : boardBottom;
   // Band starts one grip-thickness below the board, so the grip fills the
   // gap between the moves list and the docked panel exactly.
-  const bareTop = boardBottom + RAIL_GRIP_PX;
+  const bareTop = boardBottom + colGap;
   const slotCount = railDock ? dockSlotCount(railDock) : 0;
   // A pending drop counts as an occupant, so the drop outline (and the hover
   // preview) shows the band at its persisted, lifted size, not the bare one.
@@ -494,9 +492,9 @@ function positionSideRail(ctx, geom) {
     const grip = ensureRailGrip(ctx, railDock);
     grip.style.display = occupied && !fromClockTop ? "" : "none";
     grip.style.left = `${left}px`;
-    grip.style.top = `${barTop - RAIL_GRIP_PX}px`;
+    grip.style.top = `${barTop - colGap}px`;
     grip.style.width = `${width}px`;
-    grip.style.height = `${RAIL_GRIP_PX}px`;
+    grip.style.height = `${colGap}px`;
     ctx.railGeom = geom;
   }
 }
@@ -506,18 +504,19 @@ function recomputeNow(ctx) {
   if (!boardCol) return;
   boardEl.style.width = "0";
   const colRect = boardCol.getBoundingClientRect();
+  const colGap = parseFloat(getComputedStyle(boardCol).rowGap);
 
   let siblingsInCol = 0;
   for (const child of boardCol.children) {
     if (child === boardEl) continue;
     if (child.offsetParent === null) continue;
-    siblingsInCol += child.getBoundingClientRect().height + COL_SIBLING_GAP_PX;
+    siblingsInCol += child.getBoundingClientRect().height + colGap;
   }
 
   let belowGameView = 0;
   let node = boardCol;
   while (node?.parentElement && node !== document.body) {
-    belowGameView += sumSiblingsBelow(node, NESTED_SIBLING_GAP_PX);
+    belowGameView += sumSiblingsBelow(node);
     const parent = node.parentElement;
     if (parent.id === "play-perspective" || parent.tagName === "MAIN") break;
     node = parent;
@@ -543,11 +542,8 @@ function recomputeNow(ctx) {
   const MIN_BOARD = rem(MIN_BOARD_REM);
   const RAIL_MIN = rem(RAIL_MIN_REM);
   const RAIL_MAX = rem(RAIL_MAX_REM);
-  const grid = boardCol.closest(".play-grid") || boardCol.closest("#play-perspective");
-  const gridStyle = grid ? getComputedStyle(grid) : null;
-  const gapW = gridStyle
-    ? parseFloat(gridStyle.getPropertyValue("--grid-gap")) || DEFAULT_GRID_GAP_PX
-    : DEFAULT_GRID_GAP_PX;
+  const grid = boardCol.closest(".play-grid");
+  const gapW = grid && gridGapPx(grid);
   const main = document.querySelector("main");
   const mainStyle = main ? getComputedStyle(main) : null;
   const sidePad = mainStyle
@@ -612,7 +608,7 @@ function recomputeNow(ctx) {
     // Align the side rail's top with the board's top (the grid would
     // otherwise place it next to the top clock row), and set its height
     // to the board's so the moves panel fills down to the board bottom.
-    positionSideRail(ctx, { grid, gapW, railW, leftEmpty, mobile, rem });
+    positionSideRail(ctx, { grid, gapW, colGap, railW, leftEmpty, mobile, rem });
   }
   board.forceResize();
 }
