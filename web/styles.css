@@ -31,16 +31,15 @@
   --ribbon-bar-bg: transparent;
   --play-glow-dir: to bottom;
   --play-glow-color: rgba(120, 144, 168, 0.22);
+  --play-glow-tint-at: 20%;
   --play-glow-reach: 100%;
   /* Play's vertical rhythm: header line, clocks, board, moves-to-dock grip. */
   --play-gap: 5px;
   /* Minimized-WinBox dock strip; tournament-workspace.js reads it as
      MINIMIZE_FOOTER_H. */
   --wb-min-footer-h: 36px;
-  /* Ribbon rail width + edge border. Centered boards and toast stacks
-     reserve both, so they clear the ribbon exactly (no 1px eat/gap). */
+  /* Ribbon rail width; centered boards and toast stacks reserve it. */
   --ribbon-w: 44px;
-  --ribbon-border-w: 1px;
   /* Viewport-edge gap beside the moves-list rail; the fork/xgame toast stack
      aligns here, not to the ribbon. Mirrors RAIL_EDGE_GAP_REM in
      game-view.js (CSS can't read the JS constant). */
@@ -1196,7 +1195,7 @@ main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden
 /* On main, not #play-perspective, so it spans main's side padding too. */
 #perspective-root:has(#play-perspective) {
   padding-top: var(--play-gap);
-  background: linear-gradient(var(--play-glow-dir), var(--play-glow-color), transparent var(--play-glow-reach));
+  background: linear-gradient(var(--play-glow-dir), var(--ribbon-bg), var(--play-glow-color) var(--play-glow-tint-at), transparent var(--play-glow-reach));
 }
 #app-footer {
   flex: 0 0 auto;
@@ -1687,8 +1686,7 @@ body .side-popover.popover-floating {
 .play-dock-left {
   grid-column: 1;
   grid-row: 1;
-  /* Fixed so it sits flush with the ribbon regardless of grid centering
-     (--ribbon-w already includes the ribbon's border). */
+  /* Fixed so it sits flush with the ribbon regardless of grid centering. */
   position: fixed;
   left: var(--ribbon-w);
   /* JS sets top/bottom/width to align with the clock rows and board. */
@@ -3673,7 +3671,6 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   flex: 1; min-height: 0;
 }
 .studio-main {
-  /* --ribbon-w already includes the ribbon's border (border-box). */
   width: calc(100vw - 2 * var(--ribbon-w));
   margin-left: auto; margin-right: auto;
   display: flex; flex-direction: column;
@@ -5275,22 +5272,9 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
 }
 
 /* min-height guard: below it the mobile block flips the ribbon horizontal and
-   these vertical-rail right-dock rules would fight it (collapsed underline,
-   stray border). 681px = one past the mobile height clause. */
+   these vertical-rail right-dock rules would fight it (collapsed underline).
+   681px = one past the mobile height clause. */
 @media (min-width: 801px) and (min-height: 681px) {
-  body[data-ribbon-side="right"] .board-ribbon {
-    left: auto;
-    right: 0;
-    border-right: 0;
-    border-left: var(--ribbon-border-w) solid var(--border-subtle);
-  }
-  /* Mirror only the board ribbon's vertical edge stripe: the .board-ribbon
-     scope leaves the top-edge accent on panel ribbons (engines, tournaments,
-     openings) intact. */
-  body[data-ribbon-side="right"] .board-ribbon .ribbon-btn::before {
-    right: auto;
-    left: -1px;
-  }
   body[data-ribbon-side="right"] .play-grid {
     grid-template-columns: var(--rail-w) var(--board-col-px, minmax(320px, 1fr)) var(--left-rail-w, var(--rail-w));
     grid-template-areas:
@@ -5302,13 +5286,15 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
     left: auto;
     right: var(--ribbon-w);
   }
+  body[data-ribbon-side="right"] .board-ribbon,
   body[data-ribbon-side="right"] .tournaments-ribbon,
   body[data-ribbon-side="right"] .studio-ribbon {
     left: auto;
     right: 0;
-    border-right: 0;
-    border-left: var(--ribbon-border-w) solid var(--border-subtle);
   }
+  /* Mirror only the docked rails' vertical edge stripe: the scoping leaves
+     the top-edge accent on panel ribbons (engines, openings) intact. */
+  body[data-ribbon-side="right"] .board-ribbon .ribbon-btn::before,
   body[data-ribbon-side="right"] .tournaments-ribbon .ribbon-btn::before,
   body[data-ribbon-side="right"] .studio-ribbon .ribbon-btn::before {
     right: auto;
