@@ -5,7 +5,8 @@ don't fit move -- bottom first -- into a vertical-ellipsis button in the
 ribbon's last slot. Every button is then either fully on the ribbon or in
 the ellipsis menu; a menu entry clicks its real button and mirrors its
 disabled state; a taller window brings the buttons back and drops the
-ellipsis. Checked on Play's and Arena's docked ribbons.
+ellipsis. "On the ribbon" means below the app header, which covers the top
+of Play's and Studio's full-height rails. Checked on Play, Arena and Studio.
 
 Skipped if Playwright/Chromium isn't installed.
 """
@@ -21,6 +22,8 @@ from .conftest import (  # noqa: E402
     goto_arena_tournaments,
     run_uvicorn_subprocess,
     seed_tournament,
+    TOURNAMENT_UX_KEY,
+    TOURNAMENT_UX_STUDIO,
     tournament_server_env,
     wait_perspective_ready,
     watch_page_errors,
@@ -31,18 +34,20 @@ SHORT = {"width": 1400, "height": 400}
 TALL = {"width": 1400, "height": 1000}
 PLAY_RIBBON = "#board-controls"
 ARENA_RIBBON = ".tournaments-ribbon"
+STUDIO_RIBBON = ".studio-ribbon"
 MORE_BTN = ".ribbon-more"
 MORE_MENU = ".ribbon-more-menu:popover-open"
 
 # The ribbon's own buttons (not the ellipsis): [aria-label, shown, fully
-# inside the ribbon's box, disabled].
+# inside the ribbon's visible part (below the header), disabled].
 _BUTTONS = """(sel) => {
   const ribbon = document.querySelector(sel);
   const r = ribbon.getBoundingClientRect();
+  const top = Math.max(r.top, document.querySelector('header').getBoundingClientRect().bottom);
   return [...ribbon.querySelectorAll(':scope > .ribbon-btn:not(.ribbon-more)')].map((b) => {
     const shown = getComputedStyle(b).display !== 'none';
     const x = b.getBoundingClientRect();
-    return [b.getAttribute('aria-label'), shown, shown && x.top >= r.top && x.bottom <= r.bottom, b.disabled];
+    return [b.getAttribute('aria-label'), shown, shown && x.top >= top && x.bottom <= r.bottom, b.disabled];
   });
 }"""
 _MORE_SHOWN = """(sel) => {
@@ -128,4 +133,18 @@ async def test_arena_ribbon_overflows_into_menu(server, make_page):
 
     await _check_overflow(page, ARENA_RIBBON)
     await _check_restored(page, ARENA_RIBBON)
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_studio_ribbon_overflows_into_menu(server, make_page):
+    _ctx, page = await make_page(viewport=SHORT)
+    errors = watch_page_errors(page)
+    await page.add_init_script(f"localStorage.setItem('{TOURNAMENT_UX_KEY}', '{TOURNAMENT_UX_STUDIO}')")
+    await _goto_play(page, server)
+    await page.click('button[data-perspective="engines"]')
+    await page.wait_for_selector(STUDIO_RIBBON)
+
+    await _check_overflow(page, STUDIO_RIBBON)
+    await _check_restored(page, STUDIO_RIBBON)
     assert_no_page_errors(errors)

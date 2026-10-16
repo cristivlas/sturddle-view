@@ -4,7 +4,7 @@
 // Horizontal ribbons (the mobile flip) are left alone.
 
 import { attachMenuNav, focusFirstItem } from "./menu-nav.js";
-import { escapeHtml } from "./wb-utils.js";
+import { escapeHtml, headerBottomPx } from "./wb-utils.js";
 
 // On the ribbon while vertical: its items keep their size (styles.css), so
 // a short rail overflows instead of squashing the buttons.
@@ -50,13 +50,15 @@ export function attachRibbonOverflow(ribbon) {
   const shownItems = () => [...ribbon.children].filter((el) => el !== menu && isShown(el));
 
   // Do the shown items fit between the ribbon's padded top and bottom?
-  // Centered content overflows at both ends, so check both.
+  // Centered content overflows at both ends, so check both. Play's and
+  // Studio's rails start under the header, so their usable top is its bottom.
   function fits() {
     const items = shownItems();
     if (!items.length) return true;
     const r = ribbon.getBoundingClientRect();
     const cs = getComputedStyle(ribbon);
-    return items[0].getBoundingClientRect().top >= r.top + parseFloat(cs.paddingTop) - FIT_SLACK_PX
+    const top = Math.max(r.top + parseFloat(cs.paddingTop), headerBottomPx());
+    return items[0].getBoundingClientRect().top >= top - FIT_SLACK_PX
       && items.at(-1).getBoundingClientRect().bottom <= r.bottom - parseFloat(cs.paddingBottom) + FIT_SLACK_PX;
   }
 
