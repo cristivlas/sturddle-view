@@ -276,7 +276,7 @@ function gamesCell(t) {
 // Rows are the tournament objects themselves; the created column is the
 // deterministic tiebreak.
 const TOURNEY_COLUMNS = [
-  { key: "status", label: "Status", width: 12, firstDir: SORT_DIR.ASC, rank: STATUS_RANK,
+  { key: "status", label: "Status", width: 24, firstDir: SORT_DIR.ASC, rank: STATUS_RANK,
     tdClass: "studio-tourney-status", cell: (t) => statusBadgeHtml(t.status) + sprtBadgeHtml(t) },
   { key: "created", label: "Created", width: 22, firstDir: SORT_DIR.DESC, field: "created_at", tiebreak: true,
     tdClass: "studio-tourney-created", cell: (t) => escapeHtml(formatStamp(t.created_at)) },

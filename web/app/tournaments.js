@@ -1632,7 +1632,7 @@ export function mountTournaments({ container, api, events, log }) {
     stoppingId: null,
     startingId: null,
     sortBy: loadSortBy(),
-    sortAsc: loadRaw(STORAGE_KEY.TOURNAMENTS_SORT_ASC) !== "false",
+    sortAsc: loadRaw(STORAGE_KEY.TOURNAMENTS_SORT_ASC) === "true",
     // Search filter text (setupTournamentSearch); "" shows every row.
     filterText: "",
 
