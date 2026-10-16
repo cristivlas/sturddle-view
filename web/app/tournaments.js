@@ -15,6 +15,7 @@ import { APP_EVT } from "./app-events.js";
 import { baseCompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { rankCmp } from "./sort-stack.js";
 import { wireInlineSearch } from "./inline-search.js";
+import { attachRibbonOverflow } from "./ribbon-overflow.js";
 import { attachMenuNav, focusFirstItem, MENU_OPEN_CLASS } from "./menu-nav.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
@@ -1673,6 +1674,7 @@ export function mountTournaments({ container, api, events, log }) {
   ctx.actions = guardedVerbs(ctx);
 
   wireRibbon(ctx);
+  const ribbonOverflow = attachRibbonOverflow(container.querySelector(".tournaments-ribbon"));
   const stopSearch = setupTournamentSearch(ctx);
   wireListKeyboard(ctx);
   wireMenus(ctx);
@@ -1746,6 +1748,7 @@ export function mountTournaments({ container, api, events, log }) {
       window.removeEventListener("resize", ctx.onRibbonResize);
       document.removeEventListener("click", ctx.onMenuDocClick);
       stopSearch();
+      ribbonOverflow.detach();
       dismissSortToastNow(ctx);
       // Hide (don't close) so the workspace survives perspective
       // navigation; it'll be re-shown when the user returns.
