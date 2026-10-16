@@ -2194,6 +2194,7 @@ body .side-popover.popover-floating {
   color: var(--muted-bright, #aaa);
   margin-top: 22px;
   padding-top: 10px;
+  padding-left: var(--grid-gap);
   border-top: 1px solid var(--border, rgba(127, 127, 127, 0.25));
   white-space: normal;
   overflow-wrap: break-word;
