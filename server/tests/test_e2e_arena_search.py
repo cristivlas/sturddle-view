@@ -30,8 +30,8 @@ VIEWPORT = {"width": 1400, "height": 900}
 DPRS = (0.75, 1)
 SEARCH_BTN = ".tournaments-ribbon .t-search"
 SEARCH_INPUT = ".tournaments-search"
-# The bar fades out after closing; its open state is the host's class.
-SEARCH_OPEN = "() => document.querySelector('.tournaments-body-main').classList.contains('search-open')"
+# The bar fades out after closing; its open state is its class.
+SEARCH_OPEN = "() => document.querySelector('.tournaments-search-wrap').classList.contains('open')"
 TOAST_TEXT = "Windows minimized while searching"
 # Arena windows: [open, minimized] counts.
 _WINDOWS = "() => { const w = [...document.querySelectorAll('.winbox.sturddle-wb-arena')]; return [w.length, w.filter((e) => e.classList.contains('min')).length]; }"

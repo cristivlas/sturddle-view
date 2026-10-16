@@ -17,6 +17,7 @@ import { createWrapSizer } from "./list-wrap-sizer.js";
 import { attachButtonSort, scrollSortedRowIntoView, SORT_ASC_LABEL, SORT_DESC_LABEL, SORT_DIR } from "./col-sort.js";
 import { saveRaw } from "./storage.js";
 import { createTable, RENDER_REASON } from "./data-table.js";
+import { wireInlineSearch } from "./inline-search.js";
 
 const COL_NAME = "name";
 const COL_ACTIVE = "active";
@@ -29,10 +30,6 @@ const ACTIVE_CLASS = "active";
 const EMPTY_CELL_CLASS = "engines-list-empty muted";
 const NO_MATCH_MSG = "No engines match.";
 const MIN_COL_PCT = 8;
-// Height of the overlaid search bar; matches the CSS rule. Added as
-// bottom padding on the list while open so the last row stays visible
-// above the bar.
-const INLINE_SEARCH_RESERVED_PX = 48;
 const ENGINES_RIBBON_H_VAR = "--engines-ribbon-h";
 
 const ENGINES_LIST_HTML = `
@@ -71,7 +68,7 @@ const ENGINES_LIST_HTML = `
         </button>
       </div>
 
-      <div class="engines-search-wrap">
+      <div class="engines-search-wrap inline-search">
         <wa-input class="engines-search" size="small" placeholder="Search engines..." clearable autocomplete="off"></wa-input>
       </div>
     </div>
@@ -318,76 +315,26 @@ async function addEngine(ctx) {
   }
 }
 
-// Inline drop-up search. The search-wrap is positioned absolutely over the
-// bottom of the panel and slides up from below, so no surrounding layout
-// changes when it opens/closes. Returns a teardown for the document-level
-// listeners so a row-commit close (which bypasses closeSearch) can't leak them.
+// Inline drop-up search (inline-search.js) at the panel bottom, by its
+// ribbon. Clicks on the list don't close it, so a filtered row can be picked.
 function setupEngineSearch(ctx) {
   const { container } = ctx;
-  const searchBtn = container.querySelector(".engines-search-btn");
-  const searchWrap = container.querySelector(".engines-search-wrap");
-  const searchInput = container.querySelector(".engines-search");
-  const tableWrap = container.querySelector(".engines-table-wrap");
-  const bodyScroll = container.querySelector(".engines-body-scroll");
-
-  searchInput.addEventListener("input", () => {
-    ctx.filterText = searchInput.value || "";
-    searchBtn.classList.toggle("is-active", !!ctx.filterText);
-    renderList(ctx);
+  return wireInlineSearch({
+    btn: container.querySelector(".engines-search-btn"),
+    bar: container.querySelector(".engines-search-wrap"),
+    input: container.querySelector(".engines-search"),
+    inside: [container.querySelector(".engines-table-wrap")],
+    onInput: (text) => {
+      ctx.filterText = text;
+      renderList(ctx);
+    },
+    onClose: () => {
+      ctx.filterText = "";
+      renderList(ctx);
+      // The full list is back: keep the picked row in view (matches openings).
+      scrollSortedRowIntoView(container.querySelector(".engines-body-scroll"), SELECTED_ROW_SEL);
+    },
   });
-
-  function closeSearch() {
-    searchWrap.classList.remove("open");
-    searchBtn.classList.remove("is-active");
-    bodyScroll.style.paddingBottom = "";
-    searchInput.value = "";
-    ctx.filterText = "";
-    renderList(ctx);
-    // Clearing the filter re-renders the full list; keep the picked row
-    // in view so the selection doesn't scroll off-screen (matches openings).
-    scrollSortedRowIntoView(bodyScroll, SELECTED_ROW_SEL);
-    document.removeEventListener("pointerdown", onOutsideClick);
-    document.removeEventListener("keydown", onSearchKey, true);
-  }
-
-  function onOutsideClick(e) {
-    // Clicks on filtered list rows must not close search: closing would
-    // re-render the unfiltered list before the click resolved and the
-    // user would hit a different row than the one they aimed at.
-    if (searchWrap.contains(e.target)) return;
-    if (searchBtn.contains(e.target)) return;
-    if (tableWrap.contains(e.target)) return;
-    closeSearch();
-  }
-
-  function onSearchKey(e) {
-    if (e.key === "Escape") {
-      closeSearch();
-      e.preventDefault();
-      e.stopPropagation();
-    }
-  }
-
-  searchBtn.addEventListener("click", () => {
-    const opening = !searchWrap.classList.contains("open");
-    if (opening) {
-      searchWrap.classList.add("open");
-      searchBtn.classList.add("is-active");
-      // Reserve scrollable space inside the list so the bottom row is
-      // not covered by the overlaid search bar.
-      bodyScroll.style.paddingBottom = INLINE_SEARCH_RESERVED_PX + "px";
-      searchInput.focus();
-      document.addEventListener("pointerdown", onOutsideClick);
-      document.addEventListener("keydown", onSearchKey, true);
-    } else {
-      closeSearch();
-    }
-  });
-
-  return () => {
-    document.removeEventListener("pointerdown", onOutsideClick);
-    document.removeEventListener("keydown", onSearchKey, true);
-  };
 }
 
 export function mountEngineList(container, api, opts = {}) {
@@ -430,7 +377,7 @@ export function mountEngineList(container, api, opts = {}) {
   ctx.openOptionsGuarded = guard(() => openOptionsForSelected(ctx));
   ctx.addGuarded = guard(() => addEngine(ctx));
 
-  const teardownSearch = setupEngineSearch(ctx);
+  const search = setupEngineSearch(ctx);
 
   ctx.detailUseBtn.addEventListener("click", ctx.activateGuarded);
   // Rows are rebuilt on every render: delegate their clicks.
@@ -482,7 +429,7 @@ export function mountEngineList(container, api, opts = {}) {
     dialog.addEventListener("wa-after-hide", function cleanup(ev) {
       if (ev.target !== dialog) return;
       sizer.teardown();
-      teardownSearch();
+      search.stopListening();
       dialog.removeEventListener("wa-after-hide", cleanup);
     });
   }

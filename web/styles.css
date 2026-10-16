@@ -6,6 +6,8 @@
   --scrollbar-thumb: rgba(255, 255, 255, 0.18);
   --scrollbar-thumb-min-h: 50px;
   --wb-outline: rgba(136, 136, 136, 0.4);
+  /* Inline search bar height (.inline-search). */
+  --inline-search-h: 48px;
   /* Workspace windows' outline; it draws outside the box, so Arena insets the
      window area by it (tournaments.js openWorkspace). */
   --wb-outline-w: 1px;
@@ -1387,31 +1389,35 @@ wa-dialog:has(.import-pos-form)::part(body) {
   left: 6px; right: 6px; top: 0; bottom: auto;
   width: auto; height: 2px;
 }
-.openings-search-wrap {
-  position: absolute;
-  left: 0; right: 0; bottom: var(--openings-ribbon-h, 36px);
-  display: block;
-  height: 48px; padding: 6px 10px;
-  opacity: 0; visibility: hidden;
-  pointer-events: none;
-  background: var(--dialog-bg);
-  border-top: 1px solid var(--wa-color-border-loud, #353841);
-  box-sizing: border-box;
-  transform: translateY(100%);
+/* Inline search bar (inline-search.js) for Engines, Openings and Arena; each
+   instance anchors it and sets --inline-search-from. Flex-centered: the input's
+   height varies with the font, so the gaps above and below it stay equal. */
+.inline-search {
+  position: absolute; left: 0; right: 0;
+  display: flex; align-items: center;
+  height: var(--inline-search-h); padding: 0 10px; box-sizing: border-box;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transform: translateY(var(--inline-search-from));
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
               opacity 0.15s ease-out,
               visibility 0s 0.2s;
   z-index: 2;
 }
-.openings-search-wrap.open {
-  opacity: 1; visibility: visible;
-  pointer-events: auto;
+.inline-search.open {
+  opacity: 1; visibility: visible; pointer-events: auto;
   transform: translateY(0);
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
               opacity 0.15s ease-out,
               visibility 0s;
 }
-.openings-search { width: 100%; --wa-focus-ring-width: 0px; }
+.inline-search wa-input { width: 100%; --wa-focus-ring-width: 0px; }
+/* Engines and Openings: drop-up, above their bottom ribbon. */
+.engines-search-wrap, .openings-search-wrap {
+  --inline-search-from: 100%;
+  background: var(--dialog-bg);
+  border-top: 1px solid var(--wa-color-border-loud, #353841);
+}
+.openings-search-wrap { bottom: var(--openings-ribbon-h, 36px); }
 /* Trash-x (or the forked row's gear) in each recents <wa-option>; subtle
    until hovered. */
 button.recent-del, button.recent-manage {
@@ -2484,7 +2490,6 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
    drop-up search bar and list-host modifiers are further down (see the
    "Settings dialog Engines tab" section). */
 .engines-body-content { display: flex; flex-direction: column; min-width: 0; }
-.engines-search { width: 100%; --wa-focus-ring-width: 0px; }
 
 .engine-opt-row { display: contents; }
 .engine-opt-label {
@@ -3571,34 +3576,11 @@ button.recents-btn:focus-visible { outline: 1px solid var(--accent); outline-off
 button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .engines-body-main { padding: 0; }
 
-/* Drop-up search bar overlaid above the ribbon, which stays reachable while
-   searching. The last list row sits behind the bar but scrolls into view (JS
-   pads the list while open). Nothing else resizes, so the dialog body
-   geometry holds and no scrollbar flashes. */
-.engines-search-wrap {
-  position: absolute;
-  left: 0; right: 0; bottom: var(--engines-ribbon-h, 36px);
-  display: block;
-  height: 48px; padding: 6px 10px;
-  opacity: 0; visibility: hidden;
-  pointer-events: none;
-  background: var(--dialog-bg);
-  border-top: 1px solid var(--wa-color-border-loud, #353841);
-  box-sizing: border-box;
-  transform: translateY(100%);
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.15s ease-out,
-              visibility 0s 0.2s;
-  z-index: 2;
-}
-.engines-search-wrap.open {
-  opacity: 1; visibility: visible;
-  pointer-events: auto;
-  transform: translateY(0);
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.15s ease-out,
-              visibility 0s;
-}
+/* Engines search bar (.inline-search) sits above the ribbon, which stays
+   reachable while searching. The list pads its bottom while it's open, so the
+   last row scrolls clear of it; nothing else resizes, so no scrollbar flashes. */
+.engines-search-wrap { bottom: var(--engines-ribbon-h, 36px); }
+.engines-list-host:has(> .engines-search-wrap.open) .engines-body-scroll { padding-bottom: var(--inline-search-h); }
 
 /* Horizontal ribbon at the panel bottom (between list and search). The top
    border faces the list above, and each button's active accent line sits on
@@ -4152,32 +4134,15 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   display: flex; flex-direction: column;
   /* Search bar host: it slides in from above, clipped to this box. */
   position: relative; overflow: hidden;
-  --t-search-h: 48px;
 }
-/* Arena search (tournaments.js setupTournamentSearch): a drop-down bar under
-   the menubar, overlaid on the list's top; the list pads its top while it's
-   open, so no row hides under it. */
+/* Arena search bar (.inline-search): drops down under the menubar, over the
+   list's top; the list pads its top while it's open, so no row hides under it. */
 .tournaments-search-wrap {
-  position: absolute; left: 0; right: 0; top: 0;
-  height: var(--t-search-h); padding: 6px 10px; box-sizing: border-box;
+  top: 0; --inline-search-from: -100%;
   background: var(--panel);
   border: 1px solid var(--wa-color-border-loud, #333); border-top: 0;
-  opacity: 0; visibility: hidden; pointer-events: none;
-  transform: translateY(-100%);
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.15s ease-out,
-              visibility 0s 0.2s;
-  z-index: 2;
 }
-.search-open .tournaments-search-wrap {
-  opacity: 1; visibility: visible; pointer-events: auto;
-  transform: translateY(0);
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.15s ease-out,
-              visibility 0s;
-}
-.search-open .tournaments-list { padding-top: var(--t-search-h); }
-.tournaments-search { width: 100%; --wa-focus-ring-width: 0px; }
+.tournaments-body-main:has(> .tournaments-search-wrap.open) .tournaments-list { padding-top: var(--inline-search-h); }
 .tournaments-no-match { padding: 12px; text-align: center; }
 .tournament-row {
   display: flex; align-items: center; gap: 8px;

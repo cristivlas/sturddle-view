@@ -14,7 +14,7 @@ import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, s
 import { APP_EVT } from "./app-events.js";
 import { baseCompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { rankCmp } from "./sort-stack.js";
-import { ESCAPE_KEY } from "./keys.js";
+import { wireInlineSearch } from "./inline-search.js";
 import { attachMenuNav, focusFirstItem, MENU_OPEN_CLASS } from "./menu-nav.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
@@ -52,10 +52,6 @@ const SEARCH_PLACEHOLDER = "Search tournaments...";
 const NO_MATCH_MSG = "No matching tournaments.";
 const SEARCH_MINIMIZED_MSG = "Windows minimized while searching";
 const RESTORE_WINDOWS_LABEL = "Restore windows";
-// On .tournaments-body-main while the search bar is down (styles.css).
-const SEARCH_OPEN_CLASS = "search-open";
-// The lit ribbon button, as on the Engines page.
-const RIBBON_ACTIVE_CLASS = "is-active";
 const SELECTED_ROW_SEL = ".tournament-row.selected";
 const CREATE_ACTION_LABEL = "Create";
 const REMOVE_ACTION_LABEL = "Remove";
@@ -172,7 +168,7 @@ const PANEL_HTML = `
         ${ribbonHtml({ className: "tournaments-ribbon", ariaLabel: "Tournament actions", prefix: "t", withWorkspace: true, withSearch: true })}
 
         <div class="tournaments-body-main">
-          <div class="tournaments-search-wrap">
+          <div class="tournaments-search-wrap inline-search">
             <wa-input class="tournaments-search" size="small" placeholder="${SEARCH_PLACEHOLDER}" clearable autocomplete="off"></wa-input>
           </div>
           <div class="tournaments-empty hidden">
@@ -1473,32 +1469,17 @@ function wireRibbon(ctx) {
   });
 }
 
-// Search: a bar that slides down under the menubar and filters the list as
-// you type (top, not bottom as on the Engines page: the ribbon runs down the
-// left edge, and the bottom is where workspace windows go). Esc or a click
-// elsewhere closes it and clears the filter; clicks on the list don't, so a
-// filtered row can be picked. Workspace windows would hide the list, so
-// opening minimizes them (with a toast saying so) and closing restores them;
-// a click on the toast is a click elsewhere. Returns a teardown that closes an
-// open search (windows back, listeners off).
+// Search (inline-search.js): a bar that slides down under the menubar (not up
+// from the bottom as on the Engines page: the ribbon runs down the left edge,
+// and the bottom is where workspace windows go). Clicks on the list don't close
+// it, so a filtered row can be picked. Workspace windows would hide the list,
+// so opening minimizes them (with a toast saying so) and closing restores them;
+// a click on the toast is a click elsewhere. Returns the close, which unmount
+// calls so windows don't stay minimized.
 function setupTournamentSearch(ctx) {
-  const btn = ctx.container.querySelector(".t-search");
-  const wrap = ctx.container.querySelector(".tournaments-search-wrap");
-  const input = ctx.container.querySelector(".tournaments-search");
-  const main = ctx.container.querySelector(".tournaments-body-main");
   // Windows this search minimized, and its toast's dismiss.
   let minimizedWbs = [];
   let dismissToast = null;
-
-  input.addEventListener("input", () => {
-    ctx.filterText = input.value || "";
-    renderList(ctx);
-  });
-
-  function stopListening() {
-    document.removeEventListener("pointerdown", onOutsideClick);
-    document.removeEventListener("keydown", onSearchKey, true);
-  }
 
   function minimizeWorkspace() {
     const ws = getActiveWorkspace();
@@ -1522,45 +1503,25 @@ function setupTournamentSearch(ctx) {
     minimizedWbs = [];
   }
 
-  function closeSearch() {
-    if (!main.classList.contains(SEARCH_OPEN_CLASS)) return;
-    main.classList.remove(SEARCH_OPEN_CLASS);
-    btn.classList.remove(RIBBON_ACTIVE_CLASS);
-    input.value = "";
-    ctx.filterText = "";
-    renderList(ctx);
-    // The full list is back: keep the selection in view.
-    scrollSortedRowIntoView(ctx.listEl, SELECTED_ROW_SEL);
-    restoreWorkspace();
-    stopListening();
-  }
-
-  function onOutsideClick(e) {
-    if (wrap.contains(e.target) || btn.contains(e.target) || ctx.listEl.contains(e.target)) return;
-    closeSearch();
-  }
-
-  function onSearchKey(e) {
-    if (e.key !== ESCAPE_KEY) return;
-    closeSearch();
-    e.preventDefault();
-    e.stopPropagation();
-  }
-
-  btn.addEventListener("click", () => {
-    if (main.classList.contains(SEARCH_OPEN_CLASS)) {
-      closeSearch();
-      return;
-    }
-    main.classList.add(SEARCH_OPEN_CLASS);
-    btn.classList.add(RIBBON_ACTIVE_CLASS);
-    minimizeWorkspace();
-    input.focus();
-    document.addEventListener("pointerdown", onOutsideClick);
-    document.addEventListener("keydown", onSearchKey, true);
+  const search = wireInlineSearch({
+    btn: ctx.container.querySelector(".t-search"),
+    bar: ctx.container.querySelector(".tournaments-search-wrap"),
+    input: ctx.container.querySelector(".tournaments-search"),
+    inside: [ctx.listEl],
+    onInput: (text) => {
+      ctx.filterText = text;
+      renderList(ctx);
+    },
+    onOpen: minimizeWorkspace,
+    onClose: () => {
+      ctx.filterText = "";
+      renderList(ctx);
+      // The full list is back: keep the selection in view.
+      scrollSortedRowIntoView(ctx.listEl, SELECTED_ROW_SEL);
+      restoreWorkspace();
+    },
   });
-
-  return closeSearch;
+  return search.close;
 }
 
 function wireListKeyboard(ctx) {
