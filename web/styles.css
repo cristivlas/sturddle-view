@@ -3330,7 +3330,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .tmb-dropdown > li { margin: 0; padding: 0; list-style: none; }
 .tmb-dd-submenu { position: relative; }
 .tmb-dd-submenu > .tmb-dd-item::after { content: "\25B6"; position: absolute; right: 10px; font-size: 0.625rem; }
-.tmb-dd-submenu > .tmb-dropdown { top: -6px; left: 100%; z-index: 9001; }
+/* top: 0 -- the submenu pane's top edge lines up with its parent item's. */
+.tmb-dd-submenu > .tmb-dropdown { top: 0; left: 100%; z-index: 9001; }
 .tmb-dd-submenu:hover > .tmb-dropdown,
 .tmb-dd-submenu.open > .tmb-dropdown { display: block; }
 .tmb-dd-submenu:has(> .tmb-dd-item:disabled):hover > .tmb-dropdown { display: none; }
