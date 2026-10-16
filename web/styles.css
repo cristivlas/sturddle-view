@@ -1910,6 +1910,7 @@ body .side-popover.popover-floating {
   /* !important guards against later, more specific .play-dock-left rules
      (e.g. JS-set modifier classes): mobile hides the dock unconditionally. */
   .play-dock-left { display: none !important; }
+  #perspective-root:has(#play-perspective) { background: none; }
   #play-perspective { display: block; }
   .play-grid {
     display: flex;
