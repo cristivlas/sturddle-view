@@ -13,6 +13,14 @@ export function formatStamp(iso) {
   return isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
+const SHORT_DATE = Object.freeze({ month: "short", day: "numeric" });
+
+// Local short date ("Oct 12") for an ISO timestamp; "" when absent or unparseable.
+export function formatShortDate(iso) {
+  const d = iso ? new Date(iso) : null;
+  return d && !isNaN(d.getTime()) ? d.toLocaleDateString(undefined, SHORT_DATE) : "";
+}
+
 export function formatType(v) {
   if (!v) return null;
   return TYPE_LABEL[v] || (v.charAt(0).toUpperCase() + v.slice(1));

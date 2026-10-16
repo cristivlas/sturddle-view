@@ -6,6 +6,9 @@
   --scrollbar-thumb: rgba(255, 255, 255, 0.18);
   --scrollbar-thumb-min-h: 50px;
   --wb-outline: rgba(136, 136, 136, 0.4);
+  /* Workspace windows' outline; it draws outside the box, so Arena insets the
+     window area by it (tournaments.js openWorkspace). */
+  --wb-outline-w: 1px;
   --wb-radius: 8px;
   /* Above WinBox's header (1) and resize handles (2). */
   --wb-overlay-z: 3;
@@ -1505,7 +1508,7 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   width: var(--ribbon-w);
   z-index: 10;
   background: var(--ribbon-bg);
-  border-right: var(--ribbon-border-w) solid var(--border-subtle);
+  /* No right border: against a hovered/selected row it read as a 1px gap. */
 }
 /* Play's rail sits at 8px; the mobile flip block's fluid gap overrides this
    when the rail turns horizontal. */
@@ -3283,8 +3286,9 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-entry .fs-size { color: inherit; text-align: right; }
 
 /* ---------- Tournaments panel ---------- */
+/* No gap: the list starts right under the menubar's bottom line. */
 .tournaments-panel {
-  display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0;
+  display: flex; flex-direction: column; flex: 1; min-height: 0;
 }
 
 .tournaments-menubar {
@@ -3634,7 +3638,9 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .about-qr { display: block; width: 176px; height: 176px; margin: 0 auto; }
 .tournaments-list {
   list-style: none; padding: 0; margin: 0;
-  display: flex; flex-direction: column; gap: 8px;
+  /* Same line as the menubar's bottom edge, which doubles as this top edge. */
+  border: 1px solid var(--wa-color-border-loud, #333); border-top: 0;
+  display: flex; flex-direction: column; gap: 2px;
   flex: 1; min-height: 0; overflow-y: auto;
   outline: none;
 }
@@ -4138,17 +4144,18 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 /* Running tourney's Games cell: Arena's progress bar + inline label. */
 .studio-progress { display: flex; align-items: center; gap: 8px; }
 .tournaments-body-main {
-  /* 1px clear of each ribbon's border on purpose: unlike .studio-main, this
-     is the in-flow list only; Arena's windows are placed by JS. */
-  width: calc(100vw - 2 * (var(--ribbon-w) + var(--ribbon-border-w)));
+  /* Flush with each ribbon's outer edge (border-box: --ribbon-w includes the
+     border). Unlike .studio-main, this is the in-flow list only; Arena's
+     windows are placed by JS. */
+  width: calc(100vw - 2 * var(--ribbon-w));
   margin-left: auto; margin-right: auto;
   display: flex; flex-direction: column;
 }
 .tournament-row {
   display: flex; align-items: center; gap: 8px;
   background: linear-gradient(to right, var(--row-bg), var(--bg) 75%);
+  /* No left border: it drew a line beside the ribbon, which read as a gap. */
   border: none;
-  border-left: 1px solid var(--border-subtle);
   border-radius: 0;
   padding: 8px 12px;
   margin: 0;
@@ -4168,7 +4175,6 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 
 /* Same gate as mqMobileHPlay (breakpoints.js): height half is touch-only. */
 @media (max-width: 800px), (max-height: 680px) and (pointer: coarse) {
-  .tournaments-panel { gap: 0; }
   .tournaments-body { display: flex; flex-direction: column; }
   /* Arena and Studio flip to the same horizontal top bar on mobile. They
      share .ribbon-btn, so the fluid sizing applies here too, and these rails
@@ -4191,6 +4197,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   }
   .tournaments-body-main { padding-left: 0; }
   .t-workspace, .tmb-window-menu { display: none; }
+  /* No room for the list's metadata columns: name and engines keep the row. */
+  .tournament-meta { display: none; }
 
   .studio-body { flex-direction: column; }
   /* Mobile Studio uses Play's document-scroll model: the page scrolls, the
@@ -4240,6 +4248,19 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   flex: 1 1 auto;
   min-width: 0;
 }
+/* Arena list's right-hand columns (tournament-row.js metaHtml): fixed widths
+   so each column lines up down the list; the engines text gives way first. */
+.tournament-meta {
+  flex: 0 0 auto;
+  display: flex; gap: 16px;
+  font-size: 0.75rem; color: var(--muted);
+  white-space: nowrap;
+}
+.tournament-meta > span { overflow: hidden; text-overflow: ellipsis; text-align: right; }
+.tournament-meta-type { width: 6.5em; }
+.tournament-meta-tc { width: 6em; }
+.tournament-meta-games { width: 7.5em; }
+.tournament-meta-date { width: 4.5em; }
 .tournament-name {
   font-weight: 500;
   flex: 0 1 auto;
@@ -4270,8 +4291,10 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 }
 /* SPRT pill: inherits .tournament-status geometry, but auto width (not the
    6em status column) and accent-tinted so it reads as a mode marker beside
-   the badge. After the base rule, so the equal-specificity wins hold. */
-.tournament-status--sprt {
+   the badge. After the base rule, so the equal-specificity wins hold. The
+   Arena list's invisible placeholder takes the same geometry. */
+.tournament-status--sprt,
+.tournament-sprt-placeholder {
   width: auto;
   padding-left: 0.5em; padding-right: 0.5em;
   margin-left: 0.4em;
@@ -4279,6 +4302,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   border-color: rgba(var(--accent-rgb), 0.4);
   color: var(--accent);
 }
+/* Arena list: every row keeps the SPRT slot, so names line up. */
+.tournament-sprt-placeholder { visibility: hidden; }
 .tournament-progress {
   position: relative;
   flex: 1 1 auto;
@@ -4590,7 +4615,7 @@ wa-dialog.tournament-info-dialog::part(body) {
   background: var(--panel);
   color: var(--fg);
   border: none;
-  outline: 1px solid var(--wb-outline);
+  outline: var(--wb-outline-w) solid var(--wb-outline);
   opacity: 1 !important;
   border-radius: var(--wb-radius);
 }
@@ -4612,9 +4637,12 @@ wa-dialog.tournament-info-dialog::part(body) {
    seam. A border renders >= 1 device px; a 1px gap can vanish below 1 DPR. */
 .winbox.sturddle-wb.no-shadow:not(.min) { border-width: 0 1px 1px 0; }
 /* Flush-right windows end exactly where the ribbon (or its mirrored reserve)
-   starts: stretched by layout, not a JS width, which can't hit the same
-   fractional value. !important beats WinBox's inline size. */
-.winbox.sturddle-wb.no-shadow.wb-edge-right:not(.min) { border-right-width: 0; right: var(--ribbon-w); width: auto !important; }
+   starts, less their outside outline: stretched by layout, not a JS width,
+   which can't hit the same fractional value. !important beats WinBox's
+   inline size. (Studio's rule below overrides `right`.) */
+.winbox.sturddle-wb.no-shadow.wb-edge-right:not(.min) {
+  border-right-width: 0; right: calc(var(--ribbon-w) + var(--wb-outline-w)); width: auto !important;
+}
 /* Minimized: square while docked in the bottom strip. Restore removes .min,
    handing the shape back to the float/tiled rules above. */
 .winbox.sturddle-wb.min,

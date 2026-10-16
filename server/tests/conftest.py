@@ -1055,12 +1055,12 @@ def _games_pgn(games) -> str:
     return "\n".join(out) + "\n"
 
 
-def seed_tournament(tmp_path: Path, name: str, engines, games):
+def seed_tournament(tmp_path: Path, name: str, engines, games, template=None):
     """Create a tournament and write its games.pgn. Returns the Tournament."""
     store = ts_mod.TournamentStore(tmp_path / "tournaments")
     t = store.create(
         name=name,
-        template={"tc": "5+0.05"},
+        template=template or {"tc": "5+0.05"},
         engines=[{"name": e, "cmd": f"/bin/{e}"} for e in engines],
     )
     store.pgn_path(t.id).write_text(_games_pgn(games), encoding="utf-8")

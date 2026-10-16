@@ -6,6 +6,7 @@
 import { STATUS } from "./tournament-events.js";
 import { escapeHtml } from "./wb-utils.js";
 import { baseCompare, SORT_DIR } from "./col-sort.js";
+import { formatShortDate, formatType } from "./tournament-format.js";
 
 // Shared status-strip separator (the tournament progress label, the SPRT
 // line, the H2H banner). Exported so those strips read consistently.
@@ -80,11 +81,15 @@ export function statusBadgeHtml(status) {
   return `<span class="tournament-status status-${s}">${s}</span>`;
 }
 
+const SPRT_PILL_HTML = `<span class="tournament-status tournament-status--sprt">SPRT</span>`;
+// The same pill, invisible: holds the SPRT slot open on non-SPRT rows.
+const SPRT_PLACEHOLDER_HTML =
+  `<span class="tournament-status tournament-sprt-placeholder" aria-hidden="true">SPRT</span>`;
+
 // SPRT marker as a status-style pill (shares .tournament-status rendering),
 // sat alongside the status badge.
 export function sprtBadgeHtml(t) {
-  return t.template?.sprt
-    ? `<span class="tournament-status tournament-status--sprt">SPRT</span>` : "";
+  return t.template?.sprt ? SPRT_PILL_HTML : "";
 }
 
 export function progressBarHtml(played, total) {
@@ -101,6 +106,24 @@ export function progressLabelHtml(played, total) {
   return `<span class="tournament-progress-label">${progressLabelText(played, total)}</span>`;
 }
 
+// SPRT has no fixed total, so its games cell is the played count alone.
+const metaGamesText = (played, total) => (total ? `${played} / ${total}` : String(played));
+const META_GAMES_SEL = ".tournament-meta-games";
+
+// Arena list: type, time control, games, and date (started, else created) in
+// fixed-width columns at the row's right end, so they line up down the list.
+function metaHtml(t, played, total) {
+  const tpl = t.template || {};
+  const cells = [
+    ["type", formatType(tpl.tournament_type)],
+    ["tc", tpl.tc],
+    ["games", metaGamesText(played, total)],
+    ["date", formatShortDate(t.started_at || t.created_at)],
+  ];
+  return `<span class="tournament-meta">${cells.map(([k, v]) =>
+    `<span class="tournament-meta-${k}">${escapeHtml(v ?? "")}</span>`).join("")}</span>`;
+}
+
 // Build the <li> for one tournament. options: { selected, onSelect(t, ev),
 // onInfo(t) }. onSelect fires on click (the event carries the multi-select
 // modifiers), onInfo on double-click.
@@ -114,12 +137,12 @@ export function renderTournamentRow(t, { selected = false, onSelect, onInfo } = 
   const total = totalGames(t);
   const trailing = (isRunning && total)
     ? progressBarHtml(played, total) + progressLabelHtml(played, total)
-    : `<span class="tournament-engines muted"></span>`;
+    : `<span class="tournament-engines muted"></span>${metaHtml(t, played, total)}`;
 
   li.innerHTML = `
     <div class="tournament-row-main">
       ${statusBadgeHtml(t.status)}
-      ${sprtBadgeHtml(t)}
+      ${sprtBadgeHtml(t) || SPRT_PLACEHOLDER_HTML}
       <span class="tournament-name"></span>
       ${trailing}
     </div>
@@ -136,11 +159,16 @@ export function renderTournamentRow(t, { selected = false, onSelect, onInfo } = 
   return li;
 }
 
-// Update an already-rendered row's progress bar in place (live game ticks).
-// No-op unless the row is in its running/progress layout.
+// Update an already-rendered row's game count in place (live game ticks): the
+// progress bar, or -- a running SPRT row has no bar -- its games column.
 export function updateRowProgress(row, t) {
   const played = t?.standings?.games;
   if (played == null || !row) return;
+  const gamesCell = row.querySelector(META_GAMES_SEL);
+  if (gamesCell) {
+    gamesCell.textContent = metaGamesText(played, totalGames(t));
+    return;
+  }
   const bar = row.querySelector(".tournament-progress");
   const fill = row.querySelector(".tournament-progress-fill");
   const label = row.querySelector(".tournament-progress-label");

@@ -31,7 +31,7 @@ import { formatDraw, formatResign, formatStamp, formatType } from "./tournament-
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace, STANDINGS_VIEW } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
 import { applyListClick, createMultiSelect, selectionTargets } from "./multi-select.js";
-import { basename, cooldown, debounce, guard, isCtrlA, markSelectable, ribbonWidthPx, suppressModifierClickSelect, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
+import { basename, cooldown, cssVarPx, debounce, guard, isCtrlA, markSelectable, ribbonWidthPx, suppressModifierClickSelect, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
@@ -55,6 +55,9 @@ const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
 const EMPTY_CTA_SUFFIX = " to create one.";
 const SHOW_STANDINGS_TITLE = "Show standings";
 const REVEAL_COOLDOWN_MS = 1500;
+// Workspace windows' outside outline width (styles.css :root).
+const WB_OUTLINE_W_VAR = "--wb-outline-w";
+const WB_OUTLINE_W_FALLBACK_PX = 1;
 // Checkmark on a menu item (styles.css .tmb-dd-item.tmb-active).
 const MENU_CHECK_CLASS = "tmb-active";
 // Window-menu items for the Standings window's two views.
@@ -480,16 +483,25 @@ function openWorkspace(ctx, t) {
   // it docks to (or whether it's floating). Keeps the workspace symmetric
   // and ribbon-side-flips don't reshape the available area.
   // Measure live so the reservation tracks the ribbon's true rendered width
-  // (including its 1px edge border) and stays correct across resizes; zero
-  // width means the docked ribbon is hidden (floating), so fall back to the var.
+  // and stays correct across resizes; zero width means the docked ribbon is
+  // hidden (floating), so fall back to the var.
   const ribbonReserveW = () => {
     const w = ribbon?.getBoundingClientRect().width || 0;
     return w > 0 ? Math.ceil(w) : ribbonWidthPx(".tournaments-body");
   };
+  // Windows draw their outline outside their box: inset by it so the outline
+  // lands on the tournament list's side (and, in Clean, bottom) borders.
+  const outlineW = () => cssVarPx(WB_OUTLINE_W_VAR, WB_OUTLINE_W_FALLBACK_PX);
   const top = menubarBottom(ctx);
-  const left = ribbonReserveW();
-  const getRight = () => Math.floor(window.innerWidth) - ribbonReserveW();
-  openTournamentWorkspace({ api: ctx.api, events: ctx.events, log: ctx.log, tournament: t, top, left, getRight });
+  const left = ribbonReserveW() + outlineW();
+  const getRight = () => Math.floor(window.innerWidth) - ribbonReserveW() - outlineW();
+  // A hidden list (perspective switched away) has no box: no bound then, so
+  // the workspace falls back to its own bottom edge.
+  const getBottom = () => {
+    const r = ctx.listEl.getBoundingClientRect();
+    return r.height ? r.bottom - outlineW() : Infinity;
+  };
+  openTournamentWorkspace({ api: ctx.api, events: ctx.events, log: ctx.log, tournament: t, top, left, getRight, getBottom });
   // Seed the workspace's view of the other-active tournament so the
   // banner Restart button reflects busy state on open, not just after
   // the next loadList tick.

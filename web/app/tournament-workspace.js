@@ -63,6 +63,10 @@ const MINIMIZE_FOOTER_FALLBACK = 36;
 function minimizeFooterH() {
   return cssVarPx("--wb-min-footer-h", MINIMIZE_FOOTER_FALLBACK);
 }
+// Top of that strip: managed layouts that keep it clear end here.
+function dockTop() {
+  return window.innerHeight - minimizeFooterH();
+}
 // Visual gap between tiled/snapped windows; also absorbs WinBox rounding.
 const TILE_MARGIN = 0;
 const TIDY_GAP = 0;
@@ -307,7 +311,8 @@ function tidy(ctx, { preserveMin = false } = {}) {
     }
   }
   const availW = ctx.getRight() - left;
-  const availH = window.innerHeight - top - minimizeFooterH();
+  // Never into the minimized-window dock strip, wherever getBottom lands.
+  const availH = Math.min(ctx.getBottom(), dockTop()) - top;
   const mins = getMinSizes();
   const leftW = Math.max(Math.round(availW * 0.35), mins.engines.minwidth);
   const rightW = availW - leftW - TIDY_GAP;
@@ -317,10 +322,12 @@ function tidy(ctx, { preserveMin = false } = {}) {
   const systemH = availH - LIVE_MIN_HEIGHT();
   const desiredRowH = Math.floor((systemH - TIDY_GAP) / 2);
   const topRowH = Math.max(desiredRowH, mins.engines.minheight, mins.standings.minheight);
-  const botRowH = Math.max(desiredRowH, mins.schedule.minheight, mins.log.minheight);
+  // The bottom row takes the rounding remainder: two floored halves would
+  // leave it as a gap between the board row and the system rows.
+  const botRowH = Math.max(systemH - TIDY_GAP - topRowH, mins.schedule.minheight, mins.log.minheight);
   // Anchor bottom edge to top + availH (which already excludes the
   // minimize footer). If clamped rows exceed availH the layout
-  // extends upward, but never below the reserved footer.
+  // extends upward, but never below that bottom edge.
   const regionTop = top + availH - (topRowH + TIDY_GAP + botRowH);
   const placements = [
     ["engines",   left,                   regionTop,                       leftW,  topRowH],
@@ -1390,7 +1397,11 @@ function setLayout(ctx, mode) {
 // Wiring shell: builds the shared `ctx` state object, opens the initial
 // windows, registers listeners, and returns the workspace control API.
 // The behavior lives in the module-level helpers that take `ctx`.
-export function openTournamentWorkspace({ api, events, log, tournament, top = 0, left = 0, getRight = () => window.innerWidth }) {
+// getBottom: Clean (tidy) layout's bottom edge, capped at the dock strip's top.
+export function openTournamentWorkspace({
+  api, events, log, tournament, top = 0, left = 0,
+  getRight = () => window.innerWidth, getBottom = dockTop,
+}) {
   // Single-active model. Re-clicking the workspace icon for the
   // already-open tournament is a no-op (just focus its windows) so
   // attached engine windows survive -- closing here would tear them
@@ -1444,7 +1455,7 @@ export function openTournamentWorkspace({ api, events, log, tournament, top = 0,
   // scalars (detail, body refs, lifecycle guards), and the bound listener
   // thunks (added/removed by the same reference).
   const ctx = {
-    api, events, log, tournament, top, left, getRight,
+    api, events, log, tournament, top, left, getRight, getBottom,
     savedState, restoreFromSaved, slotGrid, lastGeometry,
     live,
     eventLog: live.eventLog, seenSeqs: live.seenSeqs,
