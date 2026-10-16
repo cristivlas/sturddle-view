@@ -15,6 +15,7 @@ const XT_MIN_PCT = 2;
 // Default column weights (relative; the factory scales them to 100%).
 const NAME_WIDTH = 24;
 const SCORE_WIDTH = 6;
+const GAMES_WIDTH = 6;
 const PTS_WIDTH = 7;
 const ORDO_WIDTH = 16;
 // Column count, read by the CSS min-width so a big field scrolls, not squeezes.
@@ -65,7 +66,7 @@ function scoreCell(row, col, byPair) {
 }
 
 // One column per engine (headed by rank), between Engine and the optional
-// Pts / Ordo. Rank-keyed, so saved widths carry across tournaments.
+// G / Pts / Ordo. Rank-keyed, so saved widths carry across tournaments.
 function crosstableColumns(n) {
   const scoreCols = Array.from({ length: n }, (_, j) => ({
     key: `r${j + 1}`, label: String(j + 1), width: SCORE_WIDTH, alwaysOn: true, sortable: false,
@@ -76,6 +77,8 @@ function crosstableColumns(n) {
       tdTitle: (r) => r.engine.name,
       cell: (r) => `<span class="xt-rank">${r.rank}</span>${escapeHtml(r.engine.name)}` },
     ...scoreCols,
+    { key: "games", label: "G", width: GAMES_WIDTH, numeric: true, firstDir: SORT_DIR.DESC, field: "games",
+      defaultHidden: true, cell: (r) => r.engine.games },
     { key: "pts", label: "Pts", width: PTS_WIDTH, numeric: true, firstDir: SORT_DIR.DESC, field: "points",
       cell: (r) => fmtPts(r.engine.points) },
     // Sorts by rank, which already orders by Ordo with the unrated bracketed.
@@ -146,6 +149,6 @@ export function renderCrosstable(el, detail) {
   const byPair = gamesByPair(games);
   el._table.render(ranked.map((engine, i) => ({
     rank: i + 1, engine, cells: ranked.map((col) => scoreCell(engine, col, byPair)),
-    points: engine.points, ordoKey: -(i + 1),
+    games: engine.games, points: engine.points, ordoKey: -(i + 1),
   })));
 }
