@@ -1,4 +1,4 @@
-import { AI_THINKING_MODE_CLASS, apiErrorDetail, SETTINGS_PUT_DEBOUNCE_MS, toast } from "./dialogs.js";
+import { AI_THINKING_MODE_CLASS, apiErrorDetail, SETTINGS_PUT_DEBOUNCE_MS, shakeField, toast } from "./dialogs.js";
 
 // AI/analysis wire field-name constants + provider list. Mirror of the
 // server contract in server/sturddle_view/api/settings.py.
@@ -37,21 +37,39 @@ const KEY_BASED_PROVIDERS = new Set(["anthropic", "gemini"]);
 // fails with this, surface it as the key-input placeholder, not the hint.
 const NO_KEY_DETAIL_SUFFIX = "API key not configured";
 
-// Commit on blur/Enter only -- mid-typing persists would spam the
-// provider's /models with partial values (401 storm, failure toasts).
-// Esc/X close can fire before blur, so wa-hide flushes a pending edit.
-function bindDeferredCommit(input, dialog, onCommit) {
+// Commit on blur/Enter/close only: per-keystroke saves spam /models with
+// partial values. Invalid values never save -- Enter/blur shake + refocus;
+// close or blur onto an `isExitTarget` reverts to the last saved value.
+function bindDeferredCommit(input, dialog, onCommit, { isValid = () => true, isExitTarget = () => false } = {}) {
   let dirty = false;
-  const commit = async () => {
+  let saved = input.value;
+  const revert = () => { input.value = saved; dirty = false; };
+  const reject = () => { shakeField(input); requestAnimationFrame(() => input.focus()); };
+  const commit = async (onInvalid) => {
     if (!dirty) return;
+    if (!isValid(input.value)) { onInvalid(); return; }
     dirty = false;
+    saved = input.value;
     await onCommit();
   };
   input.addEventListener("input", () => { dirty = true; });
-  input.addEventListener("blur", commit);
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter") commit(); });
+  input.addEventListener("blur", (ev) => commit(isExitTarget(ev.relatedTarget) ? revert : reject));
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") commit(reject); });
   // Nested wa-select menus bubble their own wa-hide; only the dialog's counts.
-  dialog.addEventListener("wa-hide", (ev) => { if (ev.target === dialog) commit(); });
+  dialog.addEventListener("wa-hide", (ev) => { if (ev.target === dialog) commit(revert); });
+}
+
+// Client-side shape check only: blank (server default) or an http(s) URL.
+// Reachability is the models fetch's job.
+const BASE_URL_SCHEMES = new Set(["http:", "https:"]);
+function isValidBaseUrl(value) {
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  try {
+    return BASE_URL_SCHEMES.has(new URL(trimmed).protocol);
+  } catch {
+    return false;
+  }
 }
 
 // Provider select: drives the whole tab. Displayed value reflects
@@ -191,9 +209,10 @@ function buildAiKeyRow({ initial, dialog, putSettings, onKeyCommitted }) {
   return { row, input, setKeyPlaceholder, setNoKeyPrompt, syncMask };
 }
 
-// Base-URL row (Ollama). Deferred commit (see bindDeferredCommit), then
-// re-fetches models via the injected hook.
-function buildAiUrlRow({ initial, dialog, putSettings, onUrlCommitted }) {
+// Base-URL row (Ollama). Deferred, validated commit (see bindDeferredCommit),
+// then re-fetches models via the injected hook. Leaving for an
+// `isExitTarget` element (provider switch) reverts instead of trapping.
+function buildAiUrlRow({ initial, dialog, putSettings, onUrlCommitted, isExitTarget }) {
   const row = document.createElement("div");
   row.className = "settings-row ai-row";
   const label = document.createElement("label");
@@ -206,7 +225,7 @@ function buildAiUrlRow({ initial, dialog, putSettings, onUrlCommitted }) {
   bindDeferredCommit(input, dialog, async () => {
     await putSettings({ [AI_BASE_URL_KEY]: input.value });
     onUrlCommitted();
-  });
+  }, { isValid: isValidBaseUrl, isExitTarget });
   row.append(label, input);
   return { row, input };
 }
@@ -354,6 +373,7 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
   const aiUrl = buildAiUrlRow({
     initial, dialog, putSettings,
     onUrlCommitted: () => refreshAiModels(),
+    isExitTarget: (el) => !!el && aiProviderRow.contains(el),
   });
   const aiThinking = buildAiThinkingRow({
     initial, putSettings, debounce,

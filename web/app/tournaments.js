@@ -8,7 +8,7 @@
 // selected tournament. New / Sort / Window remain in the top menubar.
 
 import { mqMobile, mqMobileH, mqMobileHPlay } from "./breakpoints.js";
-import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast, TOAST_DURATION_MS } from "./dialogs.js";
+import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, shakeField, showDialog, toast, TOAST_DURATION_MS } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, sprtParamErrors, STATUS, STATUS_RANK } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
@@ -1035,12 +1035,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
             const submitted = await onSubmit(data);
             if (submitted !== false) resolve(data);
           } catch (e) {
-            if (e.isNameCollision) {
-              nameInput.classList.remove("nt-name-error");
-              void nameInput.offsetWidth;
-              nameInput.classList.add("nt-name-error");
-              nameInput.addEventListener("animationend", () => nameInput.classList.remove("nt-name-error"), { once: true });
-            }
+            if (e.isNameCollision) shakeField(nameInput);
           } finally {
             actionBtn.loading = false;
           }

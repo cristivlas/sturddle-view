@@ -603,6 +603,17 @@ export function apiErrorObject(error) {
   }
 }
 
+const FIELD_SHAKE_CLASS = "field-shake";
+
+/** Shake a form field to flag a rejected value. Reflow between remove and
+ *  add restarts the animation on repeat rejections. */
+export function shakeField(el) {
+  el.classList.remove(FIELD_SHAKE_CLASS);
+  void el.offsetWidth;
+  el.classList.add(FIELD_SHAKE_CLASS);
+  el.addEventListener("animationend", () => el.classList.remove(FIELD_SHAKE_CLASS), { once: true });
+}
+
 // Typing pause before a settings field persists.
 export const SETTINGS_PUT_DEBOUNCE_MS = 400;
 
