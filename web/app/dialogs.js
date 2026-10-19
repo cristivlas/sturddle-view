@@ -603,6 +603,9 @@ export function apiErrorObject(error) {
   }
 }
 
+// Typing pause before a settings field persists.
+export const SETTINGS_PUT_DEBOUNCE_MS = 400;
+
 export const SETTINGS_TAB_ENGINES = "engines";
 export const SETTINGS_TAB_ANALYSIS = "analysis";
 export const SETTINGS_TAB_RECENTS = "recents";

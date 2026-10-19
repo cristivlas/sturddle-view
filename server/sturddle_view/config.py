@@ -94,6 +94,7 @@ PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_GEMINI = "gemini"
 PROVIDER_OLLAMA = "ollama"
 VALID_AI_PROVIDERS = {PROVIDER_ANTHROPIC, PROVIDER_GEMINI, PROVIDER_OLLAMA}
+KEY_BASED_AI_PROVIDERS = {PROVIDER_ANTHROPIC, PROVIDER_GEMINI}
 
 # Enumerated UI settings. Shared by the Settings defaults, the settings API
 # (validation), and the code acting on them.
@@ -383,13 +384,18 @@ class Settings(BaseSettings):
 
     # API keys live in the OS keyring (see key_store.py); never persisted
     # in the settings file. The property dispatches by current provider
-    # so the provider factory just reads s.ai_api_key.
+    # so the provider factory just reads s.ai_api_key. Keyless providers
+    # (Ollama) skip the keyring entirely.
     @property
     def ai_api_key(self) -> str:
+        if self.ai_provider not in KEY_BASED_AI_PROVIDERS:
+            return ""
         return key_store.get_api_key(self.ai_provider)
 
     @ai_api_key.setter
     def ai_api_key(self, value: str) -> None:
+        if self.ai_provider not in KEY_BASED_AI_PROVIDERS:
+            return
         key_store.set_api_key(self.ai_provider, value or "")
 
     def apply_persisted(self, path: Path | None = None) -> None:
