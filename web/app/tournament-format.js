@@ -13,6 +13,14 @@ export function formatStamp(iso) {
   return isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
+const SHORT_DATE = Object.freeze({ month: "short", day: "numeric" });
+
+// Local short date ("Oct 12") for an ISO timestamp; "" when absent or unparseable.
+export function formatShortDate(iso) {
+  const d = iso ? new Date(iso) : null;
+  return d && !isNaN(d.getTime()) ? d.toLocaleDateString(undefined, SHORT_DATE) : "";
+}
+
 export function formatType(v) {
   if (!v) return null;
   return TYPE_LABEL[v] || (v.charAt(0).toUpperCase() + v.slice(1));
@@ -30,13 +38,13 @@ export function fmtMargin(m) {
 
 export function formatResign(r) {
   if (!r || r.movecount == null || r.score == null) return null;
-  const base = `after ${r.movecount} moves at ±${r.score} cp`;
+  const base = `after ${r.movecount} move${r.movecount === 1 ? "" : "s"} at ±${r.score} cp`;
   return r.twosided ? `${base} (two-sided)` : base;
 }
 
 export function formatDraw(d) {
   if (!d || d.movenumber == null) return null;
-  return `from move ${d.movenumber}, ${d.movecount} moves within ±${d.score} cp`;
+  return `from move ${d.movenumber}, ${d.movecount} move${d.movecount === 1 ? "" : "s"} within ±${d.score} cp`;
 }
 
 export function shortResign(r) {

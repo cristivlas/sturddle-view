@@ -12,6 +12,7 @@ import {
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { createTable, RENDER_REASON } from "./data-table.js";
+import { wireInlineSearch } from "./inline-search.js";
 import { SORT_DIR, attachButtonSort, scrollSortedRowIntoView, SORT_ASC_LABEL, SORT_DESC_LABEL } from "./col-sort.js";
 import { loadJson, saveJson } from "./storage.js";
 import { mqNarrowDialog } from "./breakpoints.js";
@@ -189,8 +190,6 @@ const PLACEHOLDERS = {
 
 const MUTED_CLASS = "muted";
 const STATUS = Object.freeze({ MUTED: MUTED_CLASS, OK: "ok", ERR: "err" });
-const IS_ACTIVE_CLASS = "is-active";
-const OPEN_CLASS = "open";
 const DRAG_OVER_CLASS = "drag-over";
 
 export const RECENT_IMPORTS_PATH = "/game/recent-imports";
@@ -244,65 +243,33 @@ function loadOpeningsOnce(api) {
   return _openingsPromise;
 }
 
-// Toggle-overlay search bar for the openings table (mirrors the Engines
-// list): a button reveals a slide-up input; outside-click / Escape close it.
-// Owns the document-level listeners + their teardown on dialog hide. Writes
-// the filter via setFilter; the panel owns filterText + renderList.
+// Inline drop-up search (inline-search.js) for the openings table, as on the
+// Engines list. Writes the filter via setFilter; the panel owns filterText +
+// renderList. Committing a row (dbl-click / Enter) closes the whole dialog
+// without closing the bar, so its document listeners also go on dialog hide.
 function wireOpeningsSearch(el, { setFilter, renderList, clearSelection, scrollSelectedIntoView }) {
-  const searchBtn = el.querySelector(".openings-search-btn");
-  const searchWrap = el.querySelector(".openings-search-wrap");
-  const searchInput = el.querySelector(".openings-search");
-  const tableWrap = el.querySelector(".openings-table-wrap");
-
-  searchInput.addEventListener("input", () => {
-    const text = searchInput.value || "";
-    setFilter(text);
-    searchBtn.classList.toggle(IS_ACTIVE_CLASS, !!text);
-    clearSelection();
-    renderList();
+  const search = wireInlineSearch({
+    btn: el.querySelector(".openings-search-btn"),
+    bar: el.querySelector(".openings-search-wrap"),
+    input: el.querySelector(".openings-search"),
+    inside: [el.querySelector(".openings-table-wrap")],
+    focusNextFrame: true,
+    onInput: (text) => {
+      setFilter(text);
+      clearSelection();
+      renderList();
+    },
+    onClose: () => {
+      setFilter("");
+      renderList();
+      // The full list is back: keep the picked row in view.
+      scrollSelectedIntoView();
+    },
   });
-
-  function closeSearch() {
-    searchWrap.classList.remove(OPEN_CLASS);
-    searchBtn.classList.remove(IS_ACTIVE_CLASS);
-    searchInput.value = "";
-    setFilter("");
-    renderList();
-    // Clearing the filter re-renders the full list; keep the picked row in
-    // view so the selection doesn't scroll off-screen.
-    scrollSelectedIntoView();
-    document.removeEventListener("pointerdown", onOutsideClick);
-    document.removeEventListener("keydown", onSearchKey, true);
-  }
-  function onOutsideClick(e) {
-    if (searchWrap.contains(e.target) || searchBtn.contains(e.target) || tableWrap.contains(e.target)) return;
-    closeSearch();
-  }
-  // Capture-phase so Escape closes the search bar, not the whole dialog.
-  function onSearchKey(e) {
-    if (e.key === "Escape") { closeSearch(); e.preventDefault(); e.stopPropagation(); }
-  }
-  searchBtn.addEventListener("click", () => {
-    const opening = !searchWrap.classList.contains(OPEN_CLASS);
-    if (opening) {
-      searchWrap.classList.add(OPEN_CLASS);
-      searchBtn.classList.add(IS_ACTIVE_CLASS);
-      requestAnimationFrame(() => searchInput.focus?.());
-      document.addEventListener("pointerdown", onOutsideClick);
-      document.addEventListener("keydown", onSearchKey, true);
-    } else {
-      closeSearch();
-    }
-  });
-  // Committing a row (dbl-click / Enter) closes the whole dialog without
-  // routing through closeSearch, so tear the document-level listeners down on
-  // dialog hide too -- otherwise they leak across open/close cycles.
   requestAnimationFrame(() => {
     const dialog = el.closest("wa-dialog");
     dialog?.addEventListener("wa-after-hide", (ev) => {
-      if (ev.target !== dialog) return;
-      document.removeEventListener("pointerdown", onOutsideClick);
-      document.removeEventListener("keydown", onSearchKey, true);
+      if (ev.target === dialog) search.stopListening();
     });
   });
 }
@@ -344,7 +311,7 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
         <wa-icon name="arrow-down-z-a"></wa-icon>
       </button>
     </div>
-    <div class="openings-search-wrap">
+    <div class="openings-search-wrap inline-search">
       <wa-input class="openings-search" size="small" placeholder="Search by name or ECO (e.g. Sicilian, B12)..." clearable autocomplete="off"></wa-input>
     </div>
   `;

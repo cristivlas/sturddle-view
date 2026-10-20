@@ -97,6 +97,8 @@ def _serialize(s) -> dict:
     # lying in WebView2 / privacy-throttling browsers).
     logical = psutil.cpu_count(logical=True) or 1
     physical = psutil.cpu_count(logical=False) or logical
+    # One keyring read per response.
+    api_key_set = bool(s.ai_api_key)
     return {
         PGN_AUTOSAVE_KEY: s.pgn_autosave,
         PGN_DIR_KEY: str(s.pgn_dir) if s.pgn_dir else "",
@@ -125,8 +127,8 @@ def _serialize(s) -> dict:
         AI_PROVIDER_KEY: s.ai_provider,
         AI_MODEL_KEY: s.ai_model,
         AI_BASE_URL_KEY: s.ai_base_url,
-        _AI_API_KEY_SET_KEY: bool(s.ai_api_key),
-        AI_API_KEY_KEY: _AI_KEY_MASK if s.ai_api_key else "",
+        _AI_API_KEY_SET_KEY: api_key_set,
+        AI_API_KEY_KEY: _AI_KEY_MASK if api_key_set else "",
         AI_THINKING_ENABLED_KEY: s.ai_thinking_enabled,
         AI_THINKING_BUDGET_TOKENS_KEY: s.ai_thinking_budget_tokens,
         AI_MAX_TOOL_ROUNDS_KEY: s.ai_max_tool_rounds,

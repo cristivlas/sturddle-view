@@ -8,12 +8,14 @@
 // selected tournament. New / Sort / Window remain in the top menubar.
 
 import { mqMobile, mqMobileH, mqMobileHPlay } from "./breakpoints.js";
-import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast, TOAST_DURATION_MS } from "./dialogs.js";
+import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, shakeField, showDialog, toast, TOAST_DURATION_MS } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, sprtParamErrors, STATUS, STATUS_RANK } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
 import { baseCompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { rankCmp } from "./sort-stack.js";
+import { wireInlineSearch } from "./inline-search.js";
+import { attachRibbonOverflow } from "./ribbon-overflow.js";
 import { attachMenuNav, focusFirstItem, MENU_OPEN_CLASS } from "./menu-nav.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
@@ -28,10 +30,10 @@ import { BOOK_KEYS, mountTournamentTemplateForm } from "./tournament-template-fo
 import { makePathRow } from "./settings-path-row.js";
 import { mountSprtButton } from "./tournament-sprt-button.js";
 import { formatDraw, formatResign, formatStamp, formatType } from "./tournament-format.js";
-import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
+import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace, STANDINGS_VIEW } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
 import { applyListClick, createMultiSelect, selectionTargets } from "./multi-select.js";
-import { basename, cooldown, debounce, guard, isCtrlA, markSelectable, ribbonWidthPx, suppressModifierClickSelect, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
+import { basename, cooldown, cssVarPx, debounce, guard, isCtrlA, markSelectable, ribbonWidthPx, suppressModifierClickSelect, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
@@ -46,6 +48,12 @@ const TOURNAMENT_DETAILS_LABEL = "Tournament details";
 const EDIT_TOURNAMENT_LABEL = "Edit tournament";
 const COPY_TOURNAMENT_LABEL = "Copy tournament";
 const DELETE_TOURNAMENT_LABEL = "Delete tournament";
+const SEARCH_TOURNAMENTS_LABEL = "Search tournaments";
+const SEARCH_PLACEHOLDER = "Search tournaments...";
+const NO_MATCH_MSG = "No matching tournaments.";
+const SEARCH_MINIMIZED_MSG = "Windows minimized while searching";
+const RESTORE_WINDOWS_LABEL = "Restore windows";
+const SELECTED_ROW_SEL = ".tournament-row.selected";
 const CREATE_ACTION_LABEL = "Create";
 const REMOVE_ACTION_LABEL = "Remove";
 const DELETE_WARNING = "All games and data will be permanently deleted.";
@@ -55,6 +63,16 @@ const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
 const EMPTY_CTA_SUFFIX = " to create one.";
 const SHOW_STANDINGS_TITLE = "Show standings";
 const REVEAL_COOLDOWN_MS = 1500;
+// Workspace windows' outside outline width (styles.css :root).
+const WB_OUTLINE_W_VAR = "--wb-outline-w";
+const WB_OUTLINE_W_FALLBACK_PX = 1;
+// Checkmark on a menu item (styles.css .tmb-dd-item.tmb-active).
+const MENU_CHECK_CLASS = "tmb-active";
+// Window-menu items for the Standings window's two views.
+const STANDINGS_VIEW_ITEMS = [
+  [".tmb-sys-standings", STANDINGS_VIEW.TABLE],
+  [".tmb-sys-crosstable", STANDINGS_VIEW.CROSSTABLE],
+];
 // Unicode ellipsis is intentional: this glyph is rendered into the
 // tournament-id span (user-facing), not a code token. ASCII-only rule
 // does not apply to surfaced UI text.
@@ -74,8 +92,10 @@ function loadSortBy() {
 const IS_LOCAL = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
 // One builder for both action ribbons; prefix scopes the button classes
-// (t-*, studio-*), withWorkspace adds Arena's workspace button.
-export function ribbonHtml({ className, ariaLabel, prefix, withWorkspace }) {
+// (t-*, studio-*), withWorkspace / withSearch add Arena's workspace and
+// search buttons. Search sits with New: both act on the list, not on the
+// selected tournament.
+export function ribbonHtml({ className, ariaLabel, prefix, withWorkspace, withSearch }) {
   const sep = '<span class="ribbon-sep" aria-hidden="true"></span>';
   const btn = (suffix, icon, title, { danger = false, enabled = false, iconClass = "" } = {}) => `
           <button class="ribbon-btn ${danger ? "ribbon-btn--danger " : ""}${prefix}-${suffix}"${enabled ? "" : " disabled"} aria-label="${title}" title="${title}">
@@ -83,6 +103,7 @@ export function ribbonHtml({ className, ariaLabel, prefix, withWorkspace }) {
           </button>`;
   return `<div class="${className}" role="toolbar" aria-label="${ariaLabel}">
           ${btn("new", "plus", NEW_TOURNAMENT_LABEL, { enabled: true })}
+          ${withSearch ? btn("search", "magnifying-glass", SEARCH_TOURNAMENTS_LABEL, { enabled: true }) : ""}
           ${sep}
           ${btn("start", "play", START_TOURNAMENT_LABEL, { iconClass: `${prefix}-start-icon` })}
           ${btn("stop", "hand", STOP_TOURNAMENT_LABEL)}
@@ -127,6 +148,7 @@ const PANEL_HTML = `
               <button class="tmb-dd-item tmb-sys-trigger">Tournament</button>
               <ul class="tmb-dropdown">
                 <li><button class="tmb-dd-item tmb-sys-standings">Standings</button></li>
+                <li><button class="tmb-dd-item tmb-sys-crosstable">Crosstable</button></li>
                 <li><button class="tmb-dd-item tmb-sys-schedule">Live Games</button></li>
                 <li><button class="tmb-dd-item tmb-sys-engines">Engines</button></li>
                 <li class="tmb-separator"></li>
@@ -144,9 +166,12 @@ const PANEL_HTML = `
       </menu>
 
       <div class="tournaments-body">
-        ${ribbonHtml({ className: "tournaments-ribbon", ariaLabel: "Tournament actions", prefix: "t", withWorkspace: true })}
+        ${ribbonHtml({ className: "tournaments-ribbon", ariaLabel: "Tournament actions", prefix: "t", withWorkspace: true, withSearch: true })}
 
         <div class="tournaments-body-main">
+          <div class="tournaments-search-wrap inline-search">
+            <wa-input class="tournaments-search" size="small" placeholder="${SEARCH_PLACEHOLDER}" clearable autocomplete="off"></wa-input>
+          </div>
           <div class="tournaments-empty hidden">
             <p class="empty-message"></p>
           </div>
@@ -269,18 +294,37 @@ function renderList(ctx) {
   ctx.emptyEl.classList.add("hidden");
 
   const sorted = sortedTournaments(ctx);
+  // Over the whole list, not the filtered rows: filtering hides the
+  // selection, it doesn't move it.
   if (!ctx.selectedId || !sorted.some((t) => t.id === ctx.selectedId)) {
     ctx.selectedId = (ctx.activeId && sorted.some((t) => t.id === ctx.activeId)) ? ctx.activeId : sorted[0].id;
   }
-  for (const t of sorted) {
+  const needle = ctx.filterText.trim().toLowerCase();
+  const visible = sorted.filter((t) => matchesFilter(t, needle));
+  for (const t of visible) {
     ctx.listEl.appendChild(renderRow(ctx, t));
   }
+  if (!visible.length) ctx.listEl.appendChild(noMatchItem());
   ctx.ms.prune();
   syncRibbon(ctx);
   if (ctx.initialLoad) {
     ctx.initialLoad = false;
     maybeRestoreWorkspace(ctx);
   }
+}
+
+// The search filter: a case-insensitive substring of the tournament's name or
+// of any of its engines' names. An empty needle matches everything.
+function matchesFilter(t, needle) {
+  return !needle || t.name.toLowerCase().includes(needle)
+    || (t.engines || []).some((e) => e.name.toLowerCase().includes(needle));
+}
+
+function noMatchItem() {
+  const li = document.createElement("li");
+  li.className = "tournaments-no-match muted";
+  li.textContent = NO_MATCH_MSG;
+  return li;
 }
 
 function sortedTournaments(ctx) {
@@ -472,16 +516,25 @@ function openWorkspace(ctx, t) {
   // it docks to (or whether it's floating). Keeps the workspace symmetric
   // and ribbon-side-flips don't reshape the available area.
   // Measure live so the reservation tracks the ribbon's true rendered width
-  // (including its 1px edge border) and stays correct across resizes; zero
-  // width means the docked ribbon is hidden (floating), so fall back to the var.
+  // and stays correct across resizes; zero width means the docked ribbon is
+  // hidden (floating), so fall back to the var.
   const ribbonReserveW = () => {
     const w = ribbon?.getBoundingClientRect().width || 0;
     return w > 0 ? Math.ceil(w) : ribbonWidthPx(".tournaments-body");
   };
+  // Windows draw their outline outside their box: inset by it so the outline
+  // lands on the tournament list's side (and, in Clean, bottom) borders.
+  const outlineW = () => cssVarPx(WB_OUTLINE_W_VAR, WB_OUTLINE_W_FALLBACK_PX);
   const top = menubarBottom(ctx);
-  const left = ribbonReserveW();
-  const getRight = () => Math.floor(window.innerWidth) - ribbonReserveW();
-  openTournamentWorkspace({ api: ctx.api, events: ctx.events, log: ctx.log, tournament: t, top, left, getRight });
+  const left = ribbonReserveW() + outlineW();
+  const getRight = () => Math.floor(window.innerWidth) - ribbonReserveW() - outlineW();
+  // A hidden list (perspective switched away) has no box: no bound then, so
+  // the workspace falls back to its own bottom edge.
+  const getBottom = () => {
+    const r = ctx.listEl.getBoundingClientRect();
+    return r.height ? r.bottom - outlineW() : Infinity;
+  };
+  openTournamentWorkspace({ api: ctx.api, events: ctx.events, log: ctx.log, tournament: t, top, left, getRight, getBottom });
   // Seed the workspace's view of the other-active tournament so the
   // banner Restart button reflects busy state on open, not just after
   // the next loadList tick.
@@ -514,7 +567,7 @@ async function stopOne(ctx, t) {
   // from scratch. Warn before clicking through.
   const games = t.standings?.games ?? 0;
   const message = games > 0
-    ? `Stop "${t.name}"?\nRestarting discards all ${games} recorded games.`
+    ? `Stop "${t.name}"?\nRestarting discards all ${games} recorded game${games === 1 ? "" : "s"}.`
     : `Stop "${t.name}"?\nOn restart this tournament will start from scratch.`;
   const ok = await confirm({
     message,
@@ -576,7 +629,7 @@ async function removeMany(ctx, list) {
     }
   }
   const removed = n - failed.length;
-  if (removed) toast(`Removed ${removed} tournaments`, { variant: "success" });
+  if (removed) toast(`Removed ${removed} tournament${removed === 1 ? "" : "s"}`, { variant: "success" });
   if (failed.length) {
     const { t, e } = failed[0];
     const more = failed.length > 1 ? ` (+${failed.length - 1} more)` : "";
@@ -755,21 +808,12 @@ function buildInfoContent(ctx, t, onStatusClick) {
   };
   row("Threads", defaultSpan(ed.threads));
   row("Hash (MB)", defaultSpan(ed.hash_mb));
-  {
-    const span = ed.syzygy_path
-      ? defaultSpan(basename(ed.syzygy_path), ed.syzygy_path)
-      : defaultSpan(null);
-    row("Syzygy", span);
-  }
-  {
-    const span = ed.book_path
-      ? defaultSpan(basename(ed.book_path), ed.book_path)
-      : defaultSpan(null);
-    row("Opening book", span);
-    if (ed.book_path) {
-      row("Book plies", ed.book_plies);
-      row("Book order", ed.book_order);
-    }
+  // basename() of an unset path is "", which defaultSpan shows as the default.
+  row("Syzygy", defaultSpan(basename(ed.syzygy_path), ed.syzygy_path));
+  row("Opening book", defaultSpan(basename(ed.book_path), ed.book_path));
+  if (ed.book_path) {
+    row("Book plies", ed.book_plies);
+    row("Book order", ed.book_order);
   }
   row("Created", formatStamp(t.created_at));
   if (t.status === STATUS.RUNNING || t.status === STATUS.FAILED || t.status === STATUS.STOPPED) row("Started", formatStamp(t.started_at));
@@ -991,12 +1035,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
             const submitted = await onSubmit(data);
             if (submitted !== false) resolve(data);
           } catch (e) {
-            if (e.isNameCollision) {
-              nameInput.classList.remove("nt-name-error");
-              void nameInput.offsetWidth;
-              nameInput.classList.add("nt-name-error");
-              nameInput.addEventListener("animationend", () => nameInput.classList.remove("nt-name-error"), { once: true });
-            }
+            if (e.isNameCollision) shakeField(nameInput);
           } finally {
             actionBtn.loading = false;
           }
@@ -1022,19 +1061,41 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
   });
 }
 
-async function openNewTournamentDialog(ctx) {
+// Registry engines for the New/Edit/Copy dialogs, or null (after telling the
+// user why) when the registry fails to load or holds fewer than 2 engines.
+async function loadAvailableEngines(ctx) {
   let registry;
   try {
     registry = await ctx.api("GET", "/engines");
   } catch (e) {
     reportError({ log: ctx.log }, "Loading engine registry failed", e);
-    return;
+    return null;
   }
   const available = registry.engines || [];
   if (available.length < 2) {
     toast(buildToastWithActions(NEED_TWO_ENGINES_MSG, [OPEN_ENGINES_ACTION]), { variant: "danger" });
-    return;
+    return null;
   }
+  return available;
+}
+
+// New and Copy both POST a fresh tournament. false keeps the dialog open; a
+// name-taken failure rethrows flagged so the dialog shakes the name field.
+async function postTournament(ctx, data, failMsg) {
+  try {
+    await ctx.api("POST", "/api/tournaments", data);
+    toast(`Created new tournament "${data.name}"`, { variant: "success" });
+  } catch (e) {
+    reportError({ log: ctx.log }, failMsg, e);
+    if (/-> 409\b/.test(e.message)) throw Object.assign(e, { isNameCollision: true });
+    return false;
+  }
+  await ctx.loadList();
+}
+
+async function openNewTournamentDialog(ctx) {
+  const available = await loadAvailableEngines(ctx);
+  if (!available) return;
 
   await openTournamentDialog(ctx, {
     label: NEW_TOURNAMENT_LABEL,
@@ -1047,17 +1108,7 @@ async function openNewTournamentDialog(ctx) {
     // existing tournament's frozen template, which does win).
     initialTemplate: null,
     available,
-    onSubmit: async (data) => {
-      try {
-        await ctx.api("POST", "/api/tournaments", data);
-        toast(`Created new tournament "${data.name}"`, { variant: "success" });
-      } catch (e) {
-        reportError({ log: ctx.log }, "Creating tournament failed", e);
-        if (/-> 409\b/.test(e.message)) throw Object.assign(e, { isNameCollision: true });
-        return false;
-      }
-      await ctx.loadList();
-    },
+    onSubmit: (data) => postTournament(ctx, data, "Creating tournament failed"),
   });
 }
 
@@ -1111,18 +1162,8 @@ async function openEditTournamentDialog(ctx, t) {
     if (!proceed) return;
   }
 
-  let registry;
-  try {
-    registry = await ctx.api("GET", "/engines");
-  } catch (e) {
-    reportError({ log: ctx.log }, "Loading engine registry failed", e);
-    return;
-  }
-  const available = registry.engines || [];
-  if (available.length < 2) {
-    toast(buildToastWithActions(NEED_TWO_ENGINES_MSG, [OPEN_ENGINES_ACTION]), { variant: "danger" });
-    return;
-  }
+  const available = await loadAvailableEngines(ctx);
+  if (!available) return;
 
   const { initialEngines, droppedCount } = resolveInitialEngines(available, t.engines);
 
@@ -1170,18 +1211,8 @@ async function openEditTournamentDialog(ctx, t) {
 // frozen template, SPRT included) under a non-conflicting copy name. Unlike
 // Edit this POSTs a new tournament, so there are no game-deletion gates.
 async function openDuplicateTournamentDialog(ctx, t) {
-  let registry;
-  try {
-    registry = await ctx.api("GET", "/engines");
-  } catch (e) {
-    reportError({ log: ctx.log }, "Loading engine registry failed", e);
-    return;
-  }
-  const available = registry.engines || [];
-  if (available.length < 2) {
-    toast(buildToastWithActions(NEED_TWO_ENGINES_MSG, [OPEN_ENGINES_ACTION]), { variant: "danger" });
-    return;
-  }
+  const available = await loadAvailableEngines(ctx);
+  if (!available) return;
 
   const { initialEngines, droppedCount } = resolveInitialEngines(available, t.engines);
 
@@ -1205,17 +1236,7 @@ async function openDuplicateTournamentDialog(ctx, t) {
     initialBook: t.engine_defaults || null,
     available,
     onOpened: () => warnDroppedEngines(droppedCount, "creating the copy"),
-    onSubmit: async (data) => {
-      try {
-        await ctx.api("POST", "/api/tournaments", data);
-        toast(`Created new tournament "${data.name}"`, { variant: "success" });
-      } catch (e) {
-        reportError({ log: ctx.log }, "Duplicating tournament failed", e);
-        if (/-> 409\b/.test(e.message)) throw Object.assign(e, { isNameCollision: true });
-        return false;
-      }
-      await ctx.loadList();
-    },
+    onSubmit: (data) => postTournament(ctx, data, "Duplicating tournament failed"),
   });
 }
 
@@ -1246,10 +1267,8 @@ function toggleMenu(ctx, menu) {
 
 function syncSortMenu(ctx) {
   for (const opt of ctx.container.querySelectorAll(".tmb-sort-opt")) {
-    opt.classList.toggle("is-active", opt.dataset.sort === ctx.sortBy);
-  }
-  for (const opt of ctx.container.querySelectorAll(".tmb-sort-opt")) {
     const active = opt.dataset.sort === ctx.sortBy;
+    opt.classList.toggle("is-active", active);
     if (active) opt.dataset.dir = ctx.sortAsc ? "asc" : "desc";
     else delete opt.dataset.dir;
   }
@@ -1293,11 +1312,27 @@ function ensureSortToast(ctx, ws) {
   ctx.dismissSortToast = toast(msg, { duration: 0 });
 }
 
+// Window-menu layout toggles: [button, layout, apply it to a workspace].
+function layoutToggles(ctx) {
+  return [
+    [ctx.snapBtn, LAYOUT.SNAP, (ws) => ws.snap()],
+    [ctx.tileBtn, LAYOUT.TILE, (ws) => ws.tile()],
+    [ctx.tidyBtn, LAYOUT.TIDY, (ws) => ws.tidy()],
+  ];
+}
+
 function syncTidyBtn(ctx) {
   const layout = getActiveLayout();
-  ctx.snapBtn.classList.toggle("tmb-active", layout === LAYOUT.SNAP);
-  ctx.tileBtn.classList.toggle("tmb-active", layout === LAYOUT.TILE);
-  ctx.tidyBtn.classList.toggle("tmb-active", layout === LAYOUT.TIDY);
+  for (const [btn, mode] of layoutToggles(ctx)) btn.classList.toggle(MENU_CHECK_CLASS, layout === mode);
+}
+
+// Check the open Standings window's view; synced on menu open, since the
+// window's own title-bar toggle can flip it too.
+function syncStandingsViewItems(ctx) {
+  const view = getActiveWorkspace()?.standingsView;
+  for (const [cls, v] of STANDINGS_VIEW_ITEMS) {
+    ctx.container.querySelector(cls).classList.toggle(MENU_CHECK_CLASS, view === v);
+  }
 }
 
 // ---- Live updates from WS -----------------------------------------------
@@ -1430,10 +1465,65 @@ function wireRibbon(ctx) {
   });
 }
 
+// Search (inline-search.js): a bar that slides down under the menubar (not up
+// from the bottom as on the Engines page: the ribbon runs down the left edge,
+// and the bottom is where workspace windows go). Clicks on the list don't close
+// it, so a filtered row can be picked. Workspace windows would hide the list,
+// so opening minimizes them (with a toast saying so) and closing restores them;
+// a click on the toast is a click elsewhere. Returns the close, which unmount
+// calls so windows don't stay minimized.
+function setupTournamentSearch(ctx) {
+  // Windows this search minimized, and its toast's dismiss.
+  let minimizedWbs = [];
+  let dismissToast = null;
+
+  function minimizeWorkspace() {
+    const ws = getActiveWorkspace();
+    if (!ws || ws.isHidden()) return;
+    minimizedWbs = ws.minimizeAll();
+    if (!minimizedWbs.length) return;
+    const msg = document.createElement("span");
+    msg.className = "toast-sort-msg";
+    const restoreBtn = document.createElement("button");
+    restoreBtn.className = "toast-action-btn toast-ws-toggle toast-ws-restore";
+    restoreBtn.setAttribute("aria-label", RESTORE_WINDOWS_LABEL);
+    restoreBtn.title = RESTORE_WINDOWS_LABEL;
+    msg.append(SEARCH_MINIMIZED_MSG, restoreBtn);
+    dismissToast = toast(msg, { duration: 0 });
+  }
+
+  function restoreWorkspace() {
+    dismissToast?.();
+    dismissToast = null;
+    getActiveWorkspace()?.restoreWindows(minimizedWbs);
+    minimizedWbs = [];
+  }
+
+  const search = wireInlineSearch({
+    btn: ctx.container.querySelector(".t-search"),
+    bar: ctx.container.querySelector(".tournaments-search-wrap"),
+    input: ctx.container.querySelector(".tournaments-search"),
+    inside: [ctx.listEl],
+    onInput: (text) => {
+      ctx.filterText = text;
+      renderList(ctx);
+    },
+    onOpen: minimizeWorkspace,
+    onClose: () => {
+      ctx.filterText = "";
+      renderList(ctx);
+      // The full list is back: keep the selection in view.
+      scrollSortedRowIntoView(ctx.listEl, SELECTED_ROW_SEL);
+      restoreWorkspace();
+    },
+  });
+  return search.close;
+}
+
 function wireListKeyboard(ctx) {
   wireArrowKeyNav(ctx.listEl, {
     rows: ".tournament-row",
-    selected: ".tournament-row.selected",
+    selected: SELECTED_ROW_SEL,
     lead: () => ctx.listEl.querySelector(`.tournament-row[data-id="${ctx.ms.lead()}"]`),
     select: (row) => selectRow(ctx, row.dataset.id),
     extend: (row) => ctx.ms.extendTo(row.dataset.id),
@@ -1469,45 +1559,36 @@ function wireMenus(ctx) {
   ctx.windowMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (ctx.windowMenuBtn.disabled) return;
+    syncStandingsViewItems(ctx);
     toggleMenu(ctx, ctx.windowMenu);
   });
 
-  ctx.snapBtn.addEventListener("click", () => {
-    closeMenus(ctx);
-    const ws = getActiveWorkspace();
-    if (!ws) return;
-    if (getActiveLayout() === LAYOUT.SNAP) ws.untidy(); else ws.snap();
-    syncTidyBtn(ctx);
-  });
-  ctx.tileBtn.addEventListener("click", () => {
-    closeMenus(ctx);
-    const ws = getActiveWorkspace();
-    if (!ws) return;
-    if (getActiveLayout() === LAYOUT.TILE) ws.untidy(); else ws.tile();
-    syncTidyBtn(ctx);
-  });
-  ctx.tidyBtn.addEventListener("click", () => {
-    closeMenus(ctx);
-    const ws = getActiveWorkspace();
-    if (!ws) return;
-    if (getActiveLayout() === LAYOUT.TIDY) ws.untidy(); else ws.tidy();
-    syncTidyBtn(ctx);
-  });
+  // Each toggle applies its layout, or reverts when that layout is active.
+  for (const [btn, mode, apply] of layoutToggles(ctx)) {
+    btn.addEventListener("click", () => {
+      closeMenus(ctx);
+      const ws = getActiveWorkspace();
+      if (!ws) return;
+      if (getActiveLayout() === mode) ws.untidy(); else apply(ws);
+      syncTidyBtn(ctx);
+    });
+  }
   ctx.container.querySelector(".tmb-closeall").addEventListener("click", () => {
     closeMenus(ctx);
     const ws = getActiveWorkspace();
     if (ws) { dismissSortToastNow(ctx); ws.closeAll(); }
     syncWindowMenu(ctx);
   });
-  for (const [cls, key] of [
-    [".tmb-sys-standings", "standings"],
-    [".tmb-sys-schedule",  "schedule"],
-    [".tmb-sys-engines",   "engines"],
-    [".tmb-sys-log",       "log"],
+  for (const [cls, open] of [
+    ...STANDINGS_VIEW_ITEMS.map(([c, view]) => [c, (ws) => ws.showStandingsView(view)]),
+    [".tmb-sys-schedule",   (ws) => ws.openSystemWindow("schedule")],
+    [".tmb-sys-engines",    (ws) => ws.openSystemWindow("engines")],
+    [".tmb-sys-log",        (ws) => ws.openSystemWindow("log")],
   ]) {
     ctx.container.querySelector(cls).addEventListener("click", () => {
       closeMenus(ctx);
-      getActiveWorkspace()?.openSystemWindow(key);
+      const ws = getActiveWorkspace();
+      if (ws) open(ws);
     });
   }
 }
@@ -1546,7 +1627,9 @@ export function mountTournaments({ container, api, events, log }) {
     stoppingId: null,
     startingId: null,
     sortBy: loadSortBy(),
-    sortAsc: loadRaw(STORAGE_KEY.TOURNAMENTS_SORT_ASC) !== "false",
+    sortAsc: loadRaw(STORAGE_KEY.TOURNAMENTS_SORT_ASC) === "true",
+    // Search filter text (setupTournamentSearch); "" shows every row.
+    filterText: "",
 
     // Persistent sort toast (reused in place to avoid flicker on re-sort).
     dismissSortToast: null,
@@ -1586,6 +1669,8 @@ export function mountTournaments({ container, api, events, log }) {
   ctx.actions = guardedVerbs(ctx);
 
   wireRibbon(ctx);
+  const ribbonOverflow = attachRibbonOverflow(container.querySelector(".tournaments-ribbon"));
+  const stopSearch = setupTournamentSearch(ctx);
   wireListKeyboard(ctx);
   wireMenus(ctx);
   ctx.newBtn.addEventListener("click", () => ctx.actions.create());
@@ -1657,6 +1742,8 @@ export function mountTournaments({ container, api, events, log }) {
       mqMobileHPlay.removeEventListener("change", ctx.onViewportChange);
       window.removeEventListener("resize", ctx.onRibbonResize);
       document.removeEventListener("click", ctx.onMenuDocClick);
+      stopSearch();
+      ribbonOverflow.detach();
       dismissSortToastNow(ctx);
       // Hide (don't close) so the workspace survives perspective
       // navigation; it'll be re-shown when the user returns.
@@ -1729,38 +1816,34 @@ function mountEngineBuilder({ host, available, initial = [] }) {
     return available.filter((e) => !pickedIds.includes(e.id)).map((e) => e.id);
   }
 
-  function render() {
-    availableList.innerHTML = "";
-    for (const e of available) {
-      if (pickedIds.includes(e.id)) continue;
-      const li = document.createElement("li");
-      li.className = "ne-item" + (availableSelected.has(e.id) ? " selected" : "");
-      li.dataset.id = e.id;
-      li.textContent = e.name;
-      li.title = e.name;
-      li.addEventListener("click", (ev) => {
-        applyListClick(ev, e.id, availableSelected, availableAnchor, visibleAvailableIds);
-        render();
-      });
-      li.addEventListener("dblclick", () => doAdd([e.id]));
-      availableList.appendChild(li);
-    }
+  // One pane row: click (multi-)selects within its pane, dblclick moves it
+  // across. The tooltip shows a name cut off by the pane width.
+  function paneItem(e, { selected, anchor, idsInOrder, onMove }) {
+    const li = document.createElement("li");
+    li.className = "ne-item" + (selected.has(e.id) ? " selected" : "");
+    li.dataset.id = e.id;
+    li.textContent = e.name;
+    li.title = e.name;
+    li.addEventListener("click", (ev) => {
+      applyListClick(ev, e.id, selected, anchor, idsInOrder);
+      render();
+    });
+    li.addEventListener("dblclick", () => onMove([e.id]));
+    return li;
+  }
 
-    pickedList.innerHTML = "";
-    for (const id of pickedIds) {
-      const e = byId.get(id);
-      if (!e) continue;
-      const li = document.createElement("li");
-      li.className = "ne-item" + (pickedSelected.has(id) ? " selected" : "");
-      li.dataset.id = id;
-      li.textContent = e.name;
-      li.addEventListener("click", (ev) => {
-        applyListClick(ev, id, pickedSelected, pickedAnchor, () => [...pickedIds]);
-        render();
-      });
-      li.addEventListener("dblclick", () => doRemove([id]));
-      pickedList.appendChild(li);
-    }
+  function render() {
+    availableList.replaceChildren(...available
+      .filter((e) => !pickedIds.includes(e.id))
+      .map((e) => paneItem(e, {
+        selected: availableSelected, anchor: availableAnchor, idsInOrder: visibleAvailableIds, onMove: doAdd,
+      })));
+    pickedList.replaceChildren(...pickedIds
+      .map((id) => byId.get(id))
+      .filter(Boolean)
+      .map((e) => paneItem(e, {
+        selected: pickedSelected, anchor: pickedAnchor, idsInOrder: () => [...pickedIds], onMove: doRemove,
+      })));
 
     addBtn.disabled = availableSelected.size === 0;
     removeBtn.disabled = pickedSelected.size === 0;

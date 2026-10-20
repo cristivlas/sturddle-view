@@ -46,6 +46,7 @@ import {
 import { terminationLabel } from "../format-termination.js";
 import { editAnnotation } from "../annotation-dialog.js";
 import { collapseWhitespace } from "../text-utils.js";
+import { attachRibbonOverflow } from "../ribbon-overflow.js";
 
 // Tool name the AI uses to inspect hypothetical positions; the live
 // board mirrors `input.fen` while a call with this name is in flight.
@@ -2287,6 +2288,8 @@ export const playPerspective = {
     const editCastleBtn = root.querySelector("#edit-castle-btn");
     const editCastlePopover = root.querySelector("#edit-castle-popover");
     const editCastlePopoverWrap = editCastlePopover.parentElement;
+    // Short window: a vertical ribbon's spare buttons move into a "more" menu.
+    const ribbonOverflows = [playRibbon, viewRibbon, editRibbon].map(attachRibbonOverflow);
     const editCastleCb = {
       wK: root.querySelector("#edit-castle-cb-wk"),
       wQ: root.querySelector("#edit-castle-cb-wq"),
@@ -2725,6 +2728,7 @@ export const playPerspective = {
           view.exitEditMode();
         }
         closeDebugWindows();
+        ribbonOverflows.forEach((o) => o.detach());
         // Announce no active ribbon so the global float manager unmounts it.
         window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: null } }));
         // Before setDockContainer(null): commentary now lives in the shared

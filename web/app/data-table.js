@@ -3,7 +3,7 @@
 // fit -- so a table declares its columns instead of re-wiring each helper.
 //
 // Column descriptor: { key, label, width (default %), cell(row) => html,
-// tdClass?, tdTitle?(row) => text, alwaysOn?, plus the sort-stack.js fields
+// tdClass?, tdTitle?(row) => text, alwaysOn?, defaultHidden?, plus the sort-stack.js fields
 // (field, numeric, firstDir, tiebreak, sortable) }.
 
 import { loadJson, saveJson } from "./storage.js";
@@ -67,14 +67,19 @@ const FULL_PCT = 100;
 export const RENDER_REASON = Object.freeze({ DATA: "data", SORT: "sort", LAYOUT: "layout" });
 
 // Saved { order, hidden, widths } reconciled with the current column list:
-// unknown keys drop, new columns append, alwaysOn columns never hide. An
-// empty `saved` yields the defaults. Widths are relative weights.
-function reconcileLayout(columns, saved) {
+// unknown keys drop, new columns append, alwaysOn columns never hide, and a
+// defaultHidden column starts hidden until a saved layout knows it. An
+// empty `saved` yields the defaults. Widths are relative weights. Without the
+// reorder trait the declared order always wins (a column list that varies,
+// e.g. one column per engine, would otherwise append new keys at the end).
+function reconcileLayout(columns, saved, fixedOrder) {
   const byKey = new Map(columns.map((c) => [c.key, c]));
-  const order = (Array.isArray(saved.order) ? saved.order : []).filter((k) => byKey.has(k));
+  const known = Array.isArray(saved.order) ? saved.order : [];
+  const order = (fixedOrder ? [] : known).filter((k) => byKey.has(k));
   for (const c of columns) if (!order.includes(c.key)) order.push(c.key);
   const hidden = new Set((Array.isArray(saved.hidden) ? saved.hidden : [])
     .filter((k) => byKey.has(k) && !byKey.get(k).alwaysOn));
+  for (const c of columns) if (c.defaultHidden && !known.includes(c.key)) hidden.add(c.key);
   if (hidden.size === columns.length) hidden.clear();
   const widths = {};
   for (const c of columns) {
@@ -406,7 +411,7 @@ export function createTable({
   cls, tableClass, columns, layoutKey, minPct, traits = {}, rowAttrs, fullRow, onRender,
 }) {
   const byKey = new Map(columns.map((c) => [c.key, c]));
-  const layout = reconcileLayout(columns, loadJson(layoutKey) || {});
+  const layout = reconcileLayout(columns, loadJson(layoutKey) || {}, !traits.reorder);
   const hasMenu = traits.reorder || traits.hide || traits.fit;
 
   const wrap = document.createElement("div");
@@ -611,7 +616,7 @@ export function createTable({
     if (btn.dataset.dir) moveColumn(layout, key, Number(btn.dataset.dir));
     else if (action === MENU_ACTION.TOGGLE) toggleColumn(layout, key, visibleCols().length);
     else if (action === MENU_ACTION.FIT) fitColumns();
-    else if (action === MENU_ACTION.RESET) Object.assign(layout, reconcileLayout(columns, {}));
+    else if (action === MENU_ACTION.RESET) Object.assign(layout, reconcileLayout(columns, {}, !traits.reorder));
     else return;
     saveLayout();
     relayout();

@@ -243,6 +243,66 @@ async def test_live_game_window_survives_dropped_socket(tmp_path, monkeypatch, m
         assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
 
 
+# Clock rows of the (single) live window: which runs, and each shown time in
+# seconds (from "m:ss", or the bare "s.t" shown under a minute).
+_CLOCK_STATE = """() => {
+    const q = (s) => document.querySelector(`.wb-livegame ${s}`);
+    const secs = (el) => {
+        const p = el.textContent.split(':').map(Number);
+        return p.length > 1 ? p[0] * 60 + p[1] : p[0];
+    };
+    return {
+        bottomActive: q('.lg-clock-bottom').classList.contains('active'),
+        topActive: q('.lg-clock-top').classList.contains('active'),
+        bottom: secs(q('.lg-bottom-time')),
+        top: secs(q('.lg-top-time')),
+    };
+}"""
+# Distinct per-side budgets (s) so the test can tell which side's clock runs.
+_WTIME_S = 300
+_BTIME_S = 120
+_MS_PER_S = 1000
+# Slack (s) for clock ticks between the post and the read.
+_TICK_SLACK_S = 10
+# Cap (ms) on each wait: the clock switch lands within one proxy round trip.
+_WAIT_MS = 5000
+
+
+async def _wait_clock(page, run, idle):
+    await page.wait_for_function(
+        f"() => {{ const c = ({_CLOCK_STATE})(); return c.{run}Active && !c.{idle}Active; }}",
+        timeout=_WAIT_MS,
+    )
+    return await page.evaluate(_CLOCK_STATE)
+
+
+@pytest.mark.asyncio
+async def test_live_game_clock_hands_off_on_bestmove(tmp_path, monkeypatch, make_page):
+    """`go` runs the watched (Black) engine's clock from its own budget;
+    `bestmove` hands the run to the opponent's clock from theirs."""
+    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+        page, page_errors = await _open_page(make_page)
+        # Leaves the own (bottom) clock running from _watch_proxy's `go`; hand
+        # it off first so each step below is an observable switch.
+        await _watch_proxy(page, base, secret)
+        await post_proxy(base, secret, ["bestmove e7e5"])
+        await _wait_clock(page, "top", "bottom")
+
+        await post_proxy(base, secret, [
+            "position startpos moves e2e4 e7e5 g1f3",
+            f"go wtime {_WTIME_S * _MS_PER_S} btime {_BTIME_S * _MS_PER_S}",
+        ])
+        c = await _wait_clock(page, "bottom", "top")
+        assert _BTIME_S - _TICK_SLACK_S < c["bottom"] <= _BTIME_S, c
+        # It counts down: the next 100ms tick drops below the full budget.
+        await page.wait_for_function(f"() => ({_CLOCK_STATE})().bottom < {_BTIME_S}", timeout=_WAIT_MS)
+
+        await post_proxy(base, secret, ["bestmove b8c6"])
+        c = await _wait_clock(page, "top", "bottom")
+        assert _WTIME_S - _TICK_SLACK_S < c["top"] <= _WTIME_S, c
+        assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
+
+
 async def _finished_game(app, base, secret):
     """Confirm a white/black pair, then end its game via ucinewgame (the
     pair dissolves server-side). Returns the pair id."""

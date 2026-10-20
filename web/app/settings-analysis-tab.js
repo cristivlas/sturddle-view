@@ -1,4 +1,4 @@
-import { AI_THINKING_MODE_CLASS, apiErrorDetail, toast } from "./dialogs.js";
+import { AI_THINKING_MODE_CLASS, apiErrorDetail, SETTINGS_PUT_DEBOUNCE_MS, shakeField, toast } from "./dialogs.js";
 
 // AI/analysis wire field-name constants + provider list. Mirror of the
 // server contract in server/sturddle_view/api/settings.py.
@@ -37,6 +37,41 @@ const KEY_BASED_PROVIDERS = new Set(["anthropic", "gemini"]);
 // fails with this, surface it as the key-input placeholder, not the hint.
 const NO_KEY_DETAIL_SUFFIX = "API key not configured";
 
+// Commit on blur/Enter/close only: per-keystroke saves spam /models with
+// partial values. Invalid values never save -- Enter/blur shake + refocus;
+// close or blur onto an `isExitTarget` reverts to the last saved value.
+function bindDeferredCommit(input, dialog, onCommit, { isValid = () => true, isExitTarget = () => false } = {}) {
+  let dirty = false;
+  let saved = input.value;
+  const revert = () => { input.value = saved; dirty = false; };
+  const reject = () => { shakeField(input); requestAnimationFrame(() => input.focus()); };
+  const commit = async (onInvalid) => {
+    if (!dirty) return;
+    if (!isValid(input.value)) { onInvalid(); return; }
+    dirty = false;
+    saved = input.value;
+    await onCommit();
+  };
+  input.addEventListener("input", () => { dirty = true; });
+  input.addEventListener("blur", (ev) => commit(isExitTarget(ev.relatedTarget) ? revert : reject));
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") commit(reject); });
+  // Nested wa-select menus bubble their own wa-hide; only the dialog's counts.
+  dialog.addEventListener("wa-hide", (ev) => { if (ev.target === dialog) commit(revert); });
+}
+
+// Client-side shape check only: blank (server default) or an http(s) URL.
+// Reachability is the models fetch's job.
+const BASE_URL_SCHEMES = new Set(["http:", "https:"]);
+function isValidBaseUrl(value) {
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  try {
+    return BASE_URL_SCHEMES.has(new URL(trimmed).protocol);
+  } catch {
+    return false;
+  }
+}
+
 // Provider select: drives the whole tab. Displayed value reflects
 // enabled-state (Engine only when AI is off) not just the stored LLM
 // provider. .value is set AFTER options append -- wa-select drops a
@@ -60,6 +95,43 @@ function buildAiProviderRow(initial) {
   row.append(label, select);
   const isAiOn = () => select.value !== ENGINE_ONLY;
   return { row, select, isAiOn };
+}
+
+// Model row, dual-purpose by provider:
+//  - LLM provider: a dropdown from the provider's list_models API; the
+//    free-text input takes over on fetch failure.
+//  - "Engine only": relabeled "Engine", populated from registered engines;
+//    selection persists as analysis_engine_id.
+// The hint row below it carries fetch-failure text.
+function buildAiModelRow({ initial, putSettings, putSettingsDebounced, isAiOn }) {
+  const row = document.createElement("div");
+  row.className = "settings-row ai-row";
+  const label = document.createElement("label");
+  label.textContent = "Model";
+  const select = document.createElement("wa-select");
+  select.size = "small";
+  select.setAttribute("distance", "4");
+  const input = document.createElement("wa-input");
+  input.size = "small";
+  input.setAttribute("autocomplete", "off");
+  input.value = initial[AI_MODEL_KEY] || "";
+  input.addEventListener("input", () => {
+    putSettingsDebounced({ [AI_MODEL_KEY]: input.value });
+  });
+  select.addEventListener("change", () => {
+    if (!select.value) return;
+    // Engine-only mode holds engine ids (analysis-engine pin); otherwise
+    // LLM model ids.
+    if (isAiOn()) putSettings({ [AI_MODEL_KEY]: select.value });
+    else putSettings({ [ANALYSIS_ENGINE_KEY]: select.value });
+  });
+  row.append(label, select, input);
+
+  const hint = document.createElement("div");
+  hint.className = "settings-row settings-row-hint";
+  const hintText = document.createElement("small");
+  hint.append(hintText);
+  return { row, label, select, input, hint, hintText };
 }
 
 // API-key row with a masking eye-toggle + deferred commit. Self-contained:
@@ -122,23 +194,14 @@ function buildAiKeyRow({ initial, dialog, putSettings, onKeyCommitted }) {
       requestAnimationFrame(() => { setKeyPlaceholder(); syncMask(); });
     });
   }
-  // Commit on blur/Enter only -- mid-typing persists would spam the
-  // provider's /models with partial keys (401 storm).
-  let dirty = false;
-  const commit = async () => {
-    if (!dirty) return;
-    dirty = false;
+  bindDeferredCommit(input, dialog, async () => {
     const trimmed = (input.value || "").trim();
     await putSettings({ [AI_API_KEY_KEY]: trimmed });
     initial[AI_API_KEY_SET_KEY] = !!trimmed;
     setKeyPlaceholder();
     onKeyCommitted();
-  };
-  input.addEventListener("input", () => { dirty = true; syncMask(); });
-  input.addEventListener("blur", commit);
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter") commit(); });
-  // Esc/X close can fire before blur -- flush any pending edit.
-  dialog.addEventListener("wa-hide", commit);
+  });
+  input.addEventListener("input", syncMask);
   const setNoKeyPrompt = (text) => { noKeyPrompt = text || ""; setKeyPlaceholder(); };
   syncMask();
   input.append(toggleIcon);
@@ -146,9 +209,10 @@ function buildAiKeyRow({ initial, dialog, putSettings, onKeyCommitted }) {
   return { row, input, setKeyPlaceholder, setNoKeyPrompt, syncMask };
 }
 
-// Base-URL row (Ollama). Persists on a debounced input then re-fetches
-// models via the injected hook.
-function buildAiUrlRow({ initial, putSettings, debounce, onUrlCommitted }) {
+// Base-URL row (Ollama). Deferred, validated commit (see bindDeferredCommit),
+// then re-fetches models via the injected hook. Leaving for an
+// `isExitTarget` element (provider switch) reverts instead of trapping.
+function buildAiUrlRow({ initial, dialog, putSettings, onUrlCommitted, isExitTarget }) {
   const row = document.createElement("div");
   row.className = "settings-row ai-row";
   const label = document.createElement("label");
@@ -158,11 +222,10 @@ function buildAiUrlRow({ initial, putSettings, debounce, onUrlCommitted }) {
   input.setAttribute("autocomplete", "off");
   input.placeholder = "http://localhost:11434";
   input.value = initial[AI_BASE_URL_KEY] || "";
-  const persist = debounce(async () => {
+  bindDeferredCommit(input, dialog, async () => {
     await putSettings({ [AI_BASE_URL_KEY]: input.value });
     onUrlCommitted();
-  }, 400);
-  input.addEventListener("input", persist);
+  }, { isValid: isValidBaseUrl, isExitTarget });
   row.append(label, input);
   return { row, input };
 }
@@ -216,7 +279,7 @@ function buildAiThinkingRow({ initial, putSettings, debounce, getProvider, getAd
     const n = Number(budget.value);
     if (!Number.isFinite(n) || n < AI_THINKING_BUDGET_MIN) return;
     putSettings({ [AI_THINKING_BUDGET_TOKENS_KEY]: n });
-  }, 400);
+  }, SETTINGS_PUT_DEBOUNCE_MS);
   budget.addEventListener("input", persistBudget);
   return { divider, row, mode, budget, syncBudgetVisibility };
 }
@@ -238,7 +301,7 @@ function buildAiCapRows({ initial, debounce, putSettings }) {
       const n = Number(input.value);
       if (!Number.isFinite(n) || n < min) return;
       putSettings({ [key]: n });
-    }, 400);
+    }, SETTINGS_PUT_DEBOUNCE_MS);
     input.addEventListener("input", persist);
     return input;
   };
@@ -282,39 +345,10 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
   panel.name = "analysis";
 
   const { row: aiProviderRow, select: aiProvider, isAiOn } = buildAiProviderRow(initial);
-
-  // Model row, dual-purpose by provider:
-  //  - LLM provider: a dropdown from the provider's list_models API; the
-  //    free-text input takes over on fetch failure.
-  //  - "Engine only": relabeled "Engine", populated from registered engines;
-  //    selection persists as analysis_engine_id.
-  const aiModelRow = document.createElement("div");
-  aiModelRow.className = "settings-row ai-row";
-  const aiModelLabel = document.createElement("label");
-  aiModelLabel.textContent = "Model";
-  const aiModelSelect = document.createElement("wa-select");
-  aiModelSelect.size = "small";
-  aiModelSelect.setAttribute("distance", "4");
-  const aiModelInput = document.createElement("wa-input");
-  aiModelInput.size = "small";
-  aiModelInput.setAttribute("autocomplete", "off");
-  aiModelInput.value = initial[AI_MODEL_KEY] || "";
-  aiModelInput.addEventListener("input", () => {
-    putSettingsDebounced({ [AI_MODEL_KEY]: aiModelInput.value });
-  });
-  aiModelSelect.addEventListener("change", () => {
-    if (!aiModelSelect.value) return;
-    // Engine-only mode holds engine ids (analysis-engine pin); otherwise
-    // LLM model ids.
-    if (isAiOn()) putSettings({ [AI_MODEL_KEY]: aiModelSelect.value });
-    else putSettings({ [ANALYSIS_ENGINE_KEY]: aiModelSelect.value });
-  });
-  aiModelRow.append(aiModelLabel, aiModelSelect, aiModelInput);
-
-  const aiModelHint = document.createElement("div");
-  aiModelHint.className = "settings-row settings-row-hint";
-  const aiModelHintText = document.createElement("small");
-  aiModelHint.append(aiModelHintText);
+  const {
+    row: aiModelRow, label: aiModelLabel, select: aiModelSelect, input: aiModelInput,
+    hint: aiModelHint, hintText: aiModelHintText,
+  } = buildAiModelRow({ initial, putSettings, putSettingsDebounced, isAiOn });
 
   // model id -> "adaptive" | "extended" | "none" (/settings/ai/models).
   // Unknown ids read as non-adaptive; cosmetic only -- the server
@@ -337,8 +371,9 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
     onKeyCommitted: () => refreshAiModels(),
   });
   const aiUrl = buildAiUrlRow({
-    initial, putSettings, debounce,
+    initial, dialog, putSettings,
     onUrlCommitted: () => refreshAiModels(),
+    isExitTarget: (el) => !!el && aiProviderRow.contains(el),
   });
   const aiThinking = buildAiThinkingRow({
     initial, putSettings, debounce,

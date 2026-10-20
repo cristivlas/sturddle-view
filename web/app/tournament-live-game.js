@@ -7,7 +7,7 @@ import { mountBoard } from "./board.js";
 import { reportError, toast } from "./dialogs.js";
 import { activatePlay, confirmOpenInView, GAME_STATUS_PATH, importForView, OPEN_VERDICT } from "./open-in-view.js";
 import { APP_EVT } from "./app-events.js";
-import { SIDE, FEN_STM } from "./chess-consts.js";
+import { SIDE, FEN_STM, uciSquares } from "./chess-consts.js";
 import { createEvalGraph } from "./eval-graph.js";
 import { createPvTable } from "./pv-table.js";
 import { STORAGE_KEY } from "./storage-keys.js";
@@ -242,7 +242,7 @@ const PV_SIDE_GAP = 8;
 // machinery, registers in `liveWindows`. Caller adds WS (live) or
 // final-state painting (frozen) and assigns a real `wb.onclose` that
 // cleans up its own resources after invoking `disposeShared`.
-function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, tournamentId, top, left, right = 0, boardStyle, avoidRect, initialRect, min, max = false, flash, variantClass, root = null, onPvSides = null }) {
+function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, tournamentId, top, left, right = 0, bottom = 0, boardStyle, avoidRect, initialRect, min, max = false, flash, variantClass, root = null, onPvSides = null }) {
   const body = document.createElement("div");
   body.className = "wb-livegame lg-measuring";
   body.innerHTML = `
@@ -340,6 +340,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, tourn
     top,
     left,
     right,
+    bottom,
     min,
     max,
     mount: body,
@@ -506,7 +507,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, tourn
 // timers, and board paint all coordinate over shared state (conn, engineColor,
 // currentFen, positionGen, clock fields). Closures return a control API;
 // splitting would scatter the feed/clock/paint coordination.
-export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, tournamentId = null, top = 0, left = 0, right = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, max = false, flash = true, root = null, variantClass = null }) {
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, tournamentId = null, top = 0, left = 0, right = 0, bottom = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, max = false, flash = true, root = null, variantClass = null }) {
   if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
   if (!windowKey) {
     console.error("[WATCH] no windowKey -- need at least one of proxyId/gameId", { proxyId, gameId });
@@ -532,7 +533,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   const built = buildLiveGameBox({
     windowKey, gameId, proxyId, label, engineName, tournamentId,
-    top, left, right, boardStyle, avoidRect, initialRect, min, max, flash,
+    top, left, right, bottom, boardStyle, avoidRect, initialRect, min, max, flash,
     variantClass, root,
     onPvSides: (visible) => {
       pvSidesVisible = visible;
@@ -603,7 +604,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   let wbClosed = false;
   wb.onclose = () => {
     wbClosed = true;
-    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    clearTimer();
     schedulePositionPaint.cancel();
     pendingPosition = null;
     pvSideWhite.dispose();
@@ -614,10 +615,35 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     return false;
   };
 
-  function stopTimer() {
+  function clearTimer() {
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  }
+
+  function stopTimer() {
+    clearTimer();
     clockTopEl.classList.remove("active");
     clockBottomEl.classList.remove("active");
+  }
+
+  // `side`'s clock (ms) from a wtime/btime pair, or null when either is unknown.
+  const clockMs = (wtime, btime, side) =>
+    (wtime == null || btime == null ? null : (side === SIDE.WHITE ? wtime : btime));
+
+  // Hand the running clock to `runEl` and count `ms` down into `timeEl`;
+  // with no engine color or no `ms`, just restyle and leave it stopped.
+  function startCountdown(runEl, idleEl, timeEl, ms) {
+    clearTimer();
+    idleEl.classList.remove("active");
+    runEl.classList.toggle("active", !!engineColor);
+    if (!engineColor || ms == null) return;
+    activeDeadline = Date.now() + ms;
+    const tick = () => {
+      const remaining = Math.max(0, activeDeadline - Date.now());
+      timeEl.textContent = fmtClock(remaining / 1000, { tenthsBelow: 60 });
+      if (remaining === 0) clearTimer();
+    };
+    tick();
+    timerInterval = setInterval(tick, 100);
   }
 
   function onMessage(msg) {
@@ -811,23 +837,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         lastBtime = p.btime ?? lastBtime;
         updateClocks(p.wtime, p.btime);
         if (snapshot) break;
-        clockTopEl.classList.remove("active");
-        clockBottomEl.classList.toggle("active", !!engineColor);
-        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-        if (engineColor && p.wtime != null && p.btime != null) {
-          const startMs = engineColor === SIDE.WHITE ? p.wtime : p.btime;
-          activeDeadline = Date.now() + startMs;
-          const tick = () => {
-            const remaining = Math.max(0, activeDeadline - Date.now());
-            bottomTimeEl.textContent = fmtClock(remaining / 1000, { tenthsBelow: 60 });
-            if (remaining === 0 && timerInterval) {
-              clearInterval(timerInterval);
-              timerInterval = null;
-            }
-          };
-          tick();
-          timerInterval = setInterval(tick, 100);
-        }
+        startCountdown(clockBottomEl, clockTopEl, bottomTimeEl, clockMs(p.wtime, p.btime, engineColor));
         break;
       case "bestmove":
         // Opponent thinks next; its panel restarts (heuristic depth-reset
@@ -840,33 +850,17 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         }
         if (currentFen && p.move) applyBestMove(p.move);
         if (snapshot) break;
-        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-        clockBottomEl.classList.remove("active");
-        clockTopEl.classList.toggle("active", !!engineColor);
-        if (engineColor && lastWtime != null && lastBtime != null) {
-          const oppMs = engineColor === SIDE.WHITE ? lastBtime : lastWtime;
-          activeDeadline = Date.now() + oppMs;
-          const tick = () => {
-            const remaining = Math.max(0, activeDeadline - Date.now());
-            topTimeEl.textContent = fmtClock(remaining / 1000, { tenthsBelow: 60 });
-            if (remaining === 0 && timerInterval) {
-              clearInterval(timerInterval);
-              timerInterval = null;
-            }
-          };
-          tick();
-          timerInterval = setInterval(tick, 100);
-        }
+        startCountdown(clockTopEl, clockBottomEl, topTimeEl,
+          clockMs(lastWtime, lastBtime, engineColor === SIDE.WHITE ? SIDE.BLACK : SIDE.WHITE));
         break;
     }
   }
 
-  function pvArrowMove(p) {
+  function pvArrowSquares(p) {
     const pv = p.pv_uci;
     if (!pv || !pv.length) return null;
     if (!p.time || p.time < ARROW_MIN_TIME_MS) return null;
-    const m = pv[0];
-    return m && m.length >= 4 ? m : null;
+    return uciSquares(pv[0]);
   }
 
   function handlePairedParsed(p, thinkingSide) {
@@ -889,8 +883,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     const pv = p.pv_uci;
     if (pvSidesVisible) row.pvSide().update(p, pv?.join(" "));
     if (pv?.length) row.pvEl.textContent = pv.slice(0, PV_PREVIEW_PLIES).join(" ");
-    const m = pvArrowMove(p);
-    if (m) row.setArrow(m.slice(0, 2), m.slice(2, 4));
+    const squares = pvArrowSquares(p);
+    if (squares) row.setArrow(...squares);
   }
 
   return {
@@ -910,7 +904,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 export function openFrozenGameWindow({
   proxyId, gameId, windowKey = gameId, label, engineName,
   tournamentId, gameN, result, termination,
-  top = 0, left = 0, right = 0, boardStyle = null, initialRect = null, min = false, max = false, flash = true,
+  top = 0, left = 0, right = 0, bottom = 0, boardStyle = null, initialRect = null, min = false, max = false, flash = true,
   root = null, variantClass = null,
 }) {
   if (!windowKey) {
@@ -931,7 +925,7 @@ export function openFrozenGameWindow({
 
   const built = buildLiveGameBox({
     windowKey, gameId, proxyId, label, engineName, tournamentId,
-    top, left, right, boardStyle, avoidRect: null, initialRect, min, max, flash,
+    top, left, right, bottom, boardStyle, avoidRect: null, initialRect, min, max, flash,
     variantClass: variantClass ? `sturddle-wb-live-frozen ${variantClass}` : "sturddle-wb-live-frozen",
     root,
   });

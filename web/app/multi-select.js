@@ -8,6 +8,8 @@
 // selected.
 
 const MARKED_CLASS = "marked";
+// The row the arrow keys move from; it carries the keyboard focus ring.
+const LEAD_CLASS = "lead";
 
 // Shift+Arrow extends exactly like Shift+click, so it replays the gesture.
 const SHIFT_GESTURE = { shiftKey: true };
@@ -51,9 +53,11 @@ export function createMultiSelect({ getRows, getAnchorId, selectOne, onChange })
   // carry the marked class.
   const paint = () => {
     const anchor = getAnchorId();
+    const lead = leadId ?? anchor;
     for (const row of getRows()) {
       const id = row.dataset.id;
       row.classList.toggle(MARKED_CLASS, id !== anchor && marked.has(id));
+      row.classList.toggle(LEAD_CLASS, id === lead);
     }
   };
 

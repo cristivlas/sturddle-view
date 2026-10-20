@@ -2,7 +2,7 @@
 // every toggle / input commits to the server immediately (debounced for
 // text fields). No Save button. The X just closes.
 
-import { apiErrorDetail, showDialog, toast } from "./dialogs.js";
+import { apiErrorDetail, SETTINGS_PUT_DEBOUNCE_MS, showDialog, toast } from "./dialogs.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
@@ -25,7 +25,6 @@ const PLAYER_NAME_MAX_LEN = 32;
 const SETTINGS_PATH = "/settings";
 const TOURNAMENT_SETTINGS_PATH = "/api/tournament-settings";
 const ENGINES_TAB = "engines";
-const PUT_DEBOUNCE_MS = 400;
 const FOOTER_RAIL_VAR = "--settings-footer-rail";
 const FOOTER_INSET_VAR = "--settings-footer-inset";
 const DIALOG_WIDTH = "min(690px, 94vw)";
@@ -193,7 +192,7 @@ export async function openSettingsDialog({
         }
       };
       const putSettings = (patch) => putAndNotify(SETTINGS_PATH, patch);
-      const putSettingsDebounced = debounce(putSettings, PUT_DEBOUNCE_MS);
+      const putSettingsDebounced = debounce(putSettings, SETTINGS_PUT_DEBOUNCE_MS);
       const putTournamentSettings = (patch) => putAndNotify(TOURNAMENT_SETTINGS_PATH, patch);
 
       const tabs = document.createElement("wa-tab-group");

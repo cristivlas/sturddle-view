@@ -6,6 +6,11 @@
   --scrollbar-thumb: rgba(255, 255, 255, 0.18);
   --scrollbar-thumb-min-h: 50px;
   --wb-outline: rgba(136, 136, 136, 0.4);
+  /* Inline search bar height (.inline-search). */
+  --inline-search-h: 48px;
+  /* Workspace windows' outline; it draws outside the box, so Arena insets the
+     window area by it (tournaments.js openWorkspace). */
+  --wb-outline-w: 1px;
   --wb-radius: 8px;
   /* Above WinBox's header (1) and resize handles (2). */
   --wb-overlay-z: 3;
@@ -24,13 +29,17 @@
      page instead. */
   --ribbon-bg: var(--panel-bg);
   --ribbon-bar-bg: transparent;
+  --play-glow-dir: to bottom;
+  --play-glow-color: rgba(120, 144, 168, 0.22);
+  --play-glow-tint-at: 20%;
+  --play-glow-reach: 100%;
+  /* Play's vertical rhythm: header line, clocks, board, moves-to-dock grip. */
+  --play-gap: 5px;
   /* Minimized-WinBox dock strip; tournament-workspace.js reads it as
      MINIMIZE_FOOTER_H. */
   --wb-min-footer-h: 36px;
-  /* Ribbon rail width + edge border. Centered boards and toast stacks
-     reserve both, so they clear the ribbon exactly (no 1px eat/gap). */
+  /* Ribbon rail width; centered boards and toast stacks reserve it. */
   --ribbon-w: 44px;
-  --ribbon-border-w: 1px;
   /* Viewport-edge gap beside the moves-list rail; the fork/xgame toast stack
      aligns here, not to the ribbon. Mirrors RAIL_EDGE_GAP_REM in
      game-view.js (CSS can't read the JS constant). */
@@ -1181,8 +1190,13 @@ svg.cm-chessboard {
 html, body { height: 100%; }
 body { display: flex; flex-direction: column; --main-pad: 16px; }
 main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden; }
-/* Play/View and Studio start flush under the header's amber line. */
-#perspective-root:has(#play-perspective, .studio-panel) { padding-top: 0; }
+/* Studio starts flush under the header's amber line. */
+#perspective-root:has(.studio-panel) { padding-top: 0; }
+/* On main, not #play-perspective, so it spans main's side padding too. */
+#perspective-root:has(#play-perspective) {
+  padding-top: var(--play-gap);
+  background: linear-gradient(var(--play-glow-dir), var(--ribbon-bg), var(--play-glow-color) var(--play-glow-tint-at), transparent var(--play-glow-reach));
+}
 #app-footer {
   flex: 0 0 auto;
   text-align: center;
@@ -1384,31 +1398,35 @@ wa-dialog:has(.import-pos-form)::part(body) {
   left: 6px; right: 6px; top: 0; bottom: auto;
   width: auto; height: 2px;
 }
-.openings-search-wrap {
-  position: absolute;
-  left: 0; right: 0; bottom: var(--openings-ribbon-h, 36px);
-  display: block;
-  height: 48px; padding: 6px 10px;
-  opacity: 0; visibility: hidden;
-  pointer-events: none;
-  background: var(--dialog-bg);
-  border-top: 1px solid var(--wa-color-border-loud, #353841);
-  box-sizing: border-box;
-  transform: translateY(100%);
+/* Inline search bar (inline-search.js) for Engines, Openings and Arena; each
+   instance anchors it and sets --inline-search-from. Flex-centered: the input's
+   height varies with the font, so the gaps above and below it stay equal. */
+.inline-search {
+  position: absolute; left: 0; right: 0;
+  display: flex; align-items: center;
+  height: var(--inline-search-h); padding: 0 10px; box-sizing: border-box;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transform: translateY(var(--inline-search-from));
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
               opacity 0.15s ease-out,
               visibility 0s 0.2s;
   z-index: 2;
 }
-.openings-search-wrap.open {
-  opacity: 1; visibility: visible;
-  pointer-events: auto;
+.inline-search.open {
+  opacity: 1; visibility: visible; pointer-events: auto;
   transform: translateY(0);
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
               opacity 0.15s ease-out,
               visibility 0s;
 }
-.openings-search { width: 100%; --wa-focus-ring-width: 0px; }
+.inline-search wa-input { width: 100%; --wa-focus-ring-width: 0px; }
+/* Engines and Openings: drop-up, above their bottom ribbon. */
+.engines-search-wrap, .openings-search-wrap {
+  --inline-search-from: 100%;
+  background: var(--dialog-bg);
+  border-top: 1px solid var(--wa-color-border-loud, #353841);
+}
+.openings-search-wrap { bottom: var(--openings-ribbon-h, 36px); }
 /* Trash-x (or the forked row's gear) in each recents <wa-option>; subtle
    until hovered. */
 button.recent-del, button.recent-manage {
@@ -1467,7 +1485,7 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
 }
 .play-grid {
   --rail-w: 240px;
-  --grid-gap: 16px;
+  --grid-gap: 8px;
   display: grid;
   grid-template-columns: var(--left-rail-w, var(--rail-w)) var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
   grid-template-rows: auto 1fr;
@@ -1505,7 +1523,7 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   width: var(--ribbon-w);
   z-index: 10;
   background: var(--ribbon-bg);
-  border-right: var(--ribbon-border-w) solid var(--border-subtle);
+  /* No right border: against a hovered/selected row it read as a 1px gap. */
 }
 /* Play's rail sits at 8px; the mobile flip block's fluid gap overrides this
    when the rail turns horizontal. */
@@ -1668,8 +1686,7 @@ body .side-popover.popover-floating {
 .play-dock-left {
   grid-column: 1;
   grid-row: 1;
-  /* Fixed so it sits flush with the ribbon regardless of grid centering
-     (--ribbon-w already includes the ribbon's border). */
+  /* Fixed so it sits flush with the ribbon regardless of grid centering. */
   position: fixed;
   left: var(--ribbon-w);
   /* JS sets top/bottom/width to align with the clock rows and board. */
@@ -1725,6 +1742,9 @@ body .side-popover.popover-floating {
 }
 .play-dock-left:not(.dock-empty),
 .play-rail-dock:not(.dock-empty) { border: 1px solid #454952; }
+/* Both docks clip overflow, so slot corners follow; drop outline too. */
+.play-dock-left,
+.play-rail-dock { border-radius: var(--wb-radius); }
 /* Drag-to-dock hint (play-dock-windows.js): a title bar is being dragged, so
    reveal the drop zone even when dock-empty -- must follow the .dock-empty
    rules to win the specificity tie. The over-the-zone highlight is the
@@ -1810,6 +1830,7 @@ body .side-popover.popover-floating {
 .wb-log-copy-ctrl,
 .wb-sort-asc-ctrl,
 .wb-sort-desc-ctrl,
+.wb-view-toggle-ctrl,
 .winbox.sturddle-wb-ribbon .wb-close {
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
   -webkit-mask-position: center; mask-position: center;
@@ -1893,6 +1914,7 @@ body .side-popover.popover-floating {
   /* !important guards against later, more specific .play-dock-left rules
      (e.g. JS-set modifier classes): mobile hides the dock unconditionally. */
   .play-dock-left { display: none !important; }
+  #perspective-root:has(#play-perspective) { background: none; padding-top: 0; --play-gap: 8px; }
   #play-perspective { display: block; }
   .play-grid {
     display: flex;
@@ -1995,7 +2017,7 @@ body .side-popover.popover-floating {
 .game-view-board {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--play-gap);
   min-height: 0;
   align-items: center;
   /* The board is a width-capped square, so tall windows leave vertical slack.
@@ -2041,6 +2063,7 @@ body .side-popover.popover-floating {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  border-radius: var(--wb-radius);
   padding: 6px;
 }
 /* No moves yet: drop the frame so no empty box shows. */
@@ -2130,6 +2153,9 @@ body .side-popover.popover-floating {
   flex: 0 0 auto;
   max-width: 100%;
   box-sizing: border-box;
+  /* Clip the square-cornered board SVG to the rounded frame. */
+  border-radius: var(--wb-radius);
+  overflow: hidden;
 }
 .game-view-engine .engine-summary {
   background: transparent;
@@ -2168,6 +2194,7 @@ body .side-popover.popover-floating {
   color: var(--muted-bright, #aaa);
   margin-top: 22px;
   padding-top: 10px;
+  padding-left: var(--grid-gap);
   border-top: 1px solid var(--border, rgba(127, 127, 127, 0.25));
   white-space: normal;
   overflow-wrap: break-word;
@@ -2339,6 +2366,7 @@ body .side-popover.popover-floating {
 .game-view-board .clock-row {
   border-color: var(--wb-outline);
   background: linear-gradient(#40434b, #34373d);
+  border-radius: var(--wb-radius);
 }
 .game-view-board .clock-row .clock-name { color: var(--muted-bright); }
 .game-view-board .clock-row.active .clock-name { color: inherit; }
@@ -2480,7 +2508,6 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
    drop-up search bar and list-host modifiers are further down (see the
    "Settings dialog Engines tab" section). */
 .engines-body-content { display: flex; flex-direction: column; min-width: 0; }
-.engines-search { width: 100%; --wa-focus-ring-width: 0px; }
 
 .engine-opt-row { display: contents; }
 .engine-opt-label {
@@ -3282,8 +3309,9 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-entry .fs-size { color: inherit; text-align: right; }
 
 /* ---------- Tournaments panel ---------- */
+/* No gap: the list starts right under the menubar's bottom line. */
 .tournaments-panel {
-  display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0;
+  display: flex; flex-direction: column; flex: 1; min-height: 0;
 }
 
 .tournaments-menubar {
@@ -3320,7 +3348,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .tmb-dropdown > li { margin: 0; padding: 0; list-style: none; }
 .tmb-dd-submenu { position: relative; }
 .tmb-dd-submenu > .tmb-dd-item::after { content: "\25B6"; position: absolute; right: 10px; font-size: 0.625rem; }
-.tmb-dd-submenu > .tmb-dropdown { top: -6px; left: 100%; z-index: 9001; }
+/* top: 0 -- the submenu pane's top edge lines up with its parent item's. */
+.tmb-dd-submenu > .tmb-dropdown { top: 0; left: 100%; z-index: 9001; }
 .tmb-dd-submenu:hover > .tmb-dropdown,
 .tmb-dd-submenu.open > .tmb-dropdown { display: block; }
 .tmb-dd-submenu:has(> .tmb-dd-item:disabled):hover > .tmb-dropdown { display: none; }
@@ -3346,18 +3375,26 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   margin: 4px 0;
 }
 
-/* data-table.js: columns menu (top-layer popover, reusing the .tmb-dropdown
-   look) and its header button. Must follow .tmb-dropdown: same specificity,
-   fixed placement (JS sets top/left) overrides its absolute one. */
-.dt-menu {
+/* data-table.js columns menu and ribbon-overflow.js ellipsis menu: top-layer
+   popovers reusing the .tmb-dropdown look. Must follow .tmb-dropdown: same
+   specificity, fixed placement (JS sets top/left) overrides its absolute one. */
+.dt-menu, .ribbon-more-menu {
   position: fixed; inset: auto; color: var(--fg);
   /* JS max-height (viewport room) includes padding/border; tall menus scroll. */
   box-sizing: border-box; overflow-y: auto;
 }
-.dt-menu:popover-open { display: block; }
+.dt-menu:popover-open, .ribbon-more-menu:popover-open { display: block; }
+/* Vertical ribbon overflow (ribbon-overflow.js): items keep their size, so a
+   short rail overflows into the ellipsis menu instead of squashing them. */
+.ribbon-overflow-managed > * { flex-shrink: 0; }
+.ribbon-overflowed { display: none !important; }
+/* flex-start: a flex <button> otherwise centers its content in Chromium. */
+.ribbon-more-menu .tmb-dd-item {
+  display: flex; align-items: center; justify-content: flex-start; gap: 8px; white-space: nowrap;
+}
 .dt-menu-col { display: flex; align-items: center; padding-right: 6px; }
 .dt-menu-col .dt-menu-toggle { flex: 1 1 auto; width: auto; }
-.dt-menu .tmb-dd-item:disabled { opacity: 0.5; cursor: default; }
+.dt-menu .tmb-dd-item:disabled, .ribbon-more-menu .tmb-dd-item:disabled { opacity: 0.5; cursor: default; }
 .dt-menu-move {
   background: none; border: none; border-radius: 0; color: inherit;
   padding: 4px 6px; cursor: pointer;
@@ -3566,34 +3603,11 @@ button.recents-btn:focus-visible { outline: 1px solid var(--accent); outline-off
 button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .engines-body-main { padding: 0; }
 
-/* Drop-up search bar overlaid above the ribbon, which stays reachable while
-   searching. The last list row sits behind the bar but scrolls into view (JS
-   pads the list while open). Nothing else resizes, so the dialog body
-   geometry holds and no scrollbar flashes. */
-.engines-search-wrap {
-  position: absolute;
-  left: 0; right: 0; bottom: var(--engines-ribbon-h, 36px);
-  display: block;
-  height: 48px; padding: 6px 10px;
-  opacity: 0; visibility: hidden;
-  pointer-events: none;
-  background: var(--dialog-bg);
-  border-top: 1px solid var(--wa-color-border-loud, #353841);
-  box-sizing: border-box;
-  transform: translateY(100%);
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.15s ease-out,
-              visibility 0s 0.2s;
-  z-index: 2;
-}
-.engines-search-wrap.open {
-  opacity: 1; visibility: visible;
-  pointer-events: auto;
-  transform: translateY(0);
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.15s ease-out,
-              visibility 0s;
-}
+/* Engines search bar (.inline-search) sits above the ribbon, which stays
+   reachable while searching. The list pads its bottom while it's open, so the
+   last row scrolls clear of it; nothing else resizes, so no scrollbar flashes. */
+.engines-search-wrap { bottom: var(--engines-ribbon-h, 36px); }
+.engines-list-host:has(> .engines-search-wrap.open) .engines-body-scroll { padding-bottom: var(--inline-search-h); }
 
 /* Horizontal ribbon at the panel bottom (between list and search). The top
    border faces the list above, and each button's active accent line sits on
@@ -3633,7 +3647,9 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .about-qr { display: block; width: 176px; height: 176px; margin: 0 auto; }
 .tournaments-list {
   list-style: none; padding: 0; margin: 0;
-  display: flex; flex-direction: column; gap: 8px;
+  /* Same line as the menubar's bottom edge, which doubles as this top edge. */
+  border: 1px solid var(--wa-color-border-loud, #333); border-top: 0;
+  display: flex; flex-direction: column; gap: 2px;
   flex: 1; min-height: 0; overflow-y: auto;
   outline: none;
 }
@@ -3656,7 +3672,6 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   flex: 1; min-height: 0;
 }
 .studio-main {
-  /* --ribbon-w already includes the ribbon's border (border-box). */
   width: calc(100vw - 2 * var(--ribbon-w));
   margin-left: auto; margin-right: auto;
   display: flex; flex-direction: column;
@@ -4137,17 +4152,29 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 /* Running tourney's Games cell: Arena's progress bar + inline label. */
 .studio-progress { display: flex; align-items: center; gap: 8px; }
 .tournaments-body-main {
-  /* 1px clear of each ribbon's border on purpose: unlike .studio-main, this
-     is the in-flow list only; Arena's windows are placed by JS. */
-  width: calc(100vw - 2 * (var(--ribbon-w) + var(--ribbon-border-w)));
+  /* Flush with each ribbon's outer edge (border-box: --ribbon-w includes the
+     border). Unlike .studio-main, this is the in-flow list only; Arena's
+     windows are placed by JS. */
+  width: calc(100vw - 2 * var(--ribbon-w));
   margin-left: auto; margin-right: auto;
   display: flex; flex-direction: column;
+  /* Search bar host: it slides in from above, clipped to this box. */
+  position: relative; overflow: hidden;
 }
+/* Arena search bar (.inline-search): drops down under the menubar, over the
+   list's top; the list pads its top while it's open, so no row hides under it. */
+.tournaments-search-wrap {
+  top: 0; --inline-search-from: -100%;
+  background: var(--panel);
+  border: 1px solid var(--wa-color-border-loud, #333); border-top: 0;
+}
+.tournaments-body-main:has(> .tournaments-search-wrap.open) .tournaments-list { padding-top: var(--inline-search-h); }
+.tournaments-no-match { padding: 12px; text-align: center; }
 .tournament-row {
   display: flex; align-items: center; gap: 8px;
   background: linear-gradient(to right, var(--row-bg), var(--bg) 75%);
+  /* No left border: it drew a line beside the ribbon, which read as a gap. */
   border: none;
-  border-left: 1px solid var(--border-subtle);
   border-radius: 0;
   padding: 8px 12px;
   margin: 0;
@@ -4160,11 +4187,13 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   background: linear-gradient(to right, var(--row-bg-selected), var(--bg) 75%);
   box-shadow: inset 3px 0 0 0 var(--accent-line);
 }
+/* The list is the Tab stop but its own ring is suppressed (markSelectable);
+   ring the lead row (where the arrows move from) instead, like data-table rowNav. */
+.tournaments-list:focus-visible .tournament-row.lead { outline: 1px solid var(--accent); outline-offset: -1px; }
 .tournament-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 
 /* Same gate as mqMobileHPlay (breakpoints.js): height half is touch-only. */
 @media (max-width: 800px), (max-height: 680px) and (pointer: coarse) {
-  .tournaments-panel { gap: 0; }
   .tournaments-body { display: flex; flex-direction: column; }
   /* Arena and Studio flip to the same horizontal top bar on mobile. They
      share .ribbon-btn, so the fluid sizing applies here too, and these rails
@@ -4187,6 +4216,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   }
   .tournaments-body-main { padding-left: 0; }
   .t-workspace, .tmb-window-menu { display: none; }
+  /* No room for the list's metadata columns: name and engines keep the row. */
+  .tournament-meta { display: none; }
 
   .studio-body { flex-direction: column; }
   /* Mobile Studio uses Play's document-scroll model: the page scrolls, the
@@ -4236,6 +4267,19 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   flex: 1 1 auto;
   min-width: 0;
 }
+/* Arena list's right-hand columns (tournament-row.js metaHtml): fixed widths
+   so each column lines up down the list; the engines text gives way first. */
+.tournament-meta {
+  flex: 0 0 auto;
+  display: flex; gap: 16px;
+  font-size: 0.75rem; color: var(--muted);
+  white-space: nowrap;
+}
+.tournament-meta > span { overflow: hidden; text-overflow: ellipsis; text-align: right; }
+.tournament-meta-type { width: 6.5em; }
+.tournament-meta-tc { width: 6em; }
+.tournament-meta-games { width: 7.5em; }
+.tournament-meta-date { width: 4.5em; }
 .tournament-name {
   font-weight: 500;
   flex: 0 1 auto;
@@ -4266,8 +4310,10 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 }
 /* SPRT pill: inherits .tournament-status geometry, but auto width (not the
    6em status column) and accent-tinted so it reads as a mode marker beside
-   the badge. After the base rule, so the equal-specificity wins hold. */
-.tournament-status--sprt {
+   the badge. After the base rule, so the equal-specificity wins hold. The
+   Arena list's invisible placeholder takes the same geometry. */
+.tournament-status--sprt,
+.tournament-sprt-placeholder {
   width: auto;
   padding-left: 0.5em; padding-right: 0.5em;
   margin-left: 0.4em;
@@ -4275,6 +4321,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   border-color: rgba(var(--accent-rgb), 0.4);
   color: var(--accent);
 }
+/* Arena list: every row keeps the SPRT slot, so names line up. */
+.tournament-sprt-placeholder { visibility: hidden; }
 .tournament-progress {
   position: relative;
   flex: 1 1 auto;
@@ -4390,14 +4438,14 @@ wa-dialog.tournament-info-dialog::part(body) {
   color: var(--muted);
 }
 
-@keyframes nt-name-shake {
+@keyframes field-shake {
   0%, 100% { transform: translateX(0); }
   20%       { transform: translateX(-6px); }
   40%       { transform: translateX(6px); }
   60%       { transform: translateX(-4px); }
   80%       { transform: translateX(4px); }
 }
-.nt-name-error { animation: nt-name-shake 0.4s ease-out; }
+.field-shake { animation: field-shake 0.4s ease-out; }
 
 /* Two-pane engine builder */
 .ne-panes {
@@ -4586,7 +4634,7 @@ wa-dialog.tournament-info-dialog::part(body) {
   background: var(--panel);
   color: var(--fg);
   border: none;
-  outline: 1px solid var(--wb-outline);
+  outline: var(--wb-outline-w) solid var(--wb-outline);
   opacity: 1 !important;
   border-radius: var(--wb-radius);
 }
@@ -4608,9 +4656,12 @@ wa-dialog.tournament-info-dialog::part(body) {
    seam. A border renders >= 1 device px; a 1px gap can vanish below 1 DPR. */
 .winbox.sturddle-wb.no-shadow:not(.min) { border-width: 0 1px 1px 0; }
 /* Flush-right windows end exactly where the ribbon (or its mirrored reserve)
-   starts: stretched by layout, not a JS width, which can't hit the same
-   fractional value. !important beats WinBox's inline size. */
-.winbox.sturddle-wb.no-shadow.wb-edge-right:not(.min) { border-right-width: 0; right: var(--ribbon-w); width: auto !important; }
+   starts, less their outside outline: stretched by layout, not a JS width,
+   which can't hit the same fractional value. !important beats WinBox's
+   inline size. (Studio's rule below overrides `right`.) */
+.winbox.sturddle-wb.no-shadow.wb-edge-right:not(.min) {
+  border-right-width: 0; right: calc(var(--ribbon-w) + var(--wb-outline-w)); width: auto !important;
+}
 /* Minimized: square while docked in the bottom strip. Restore removes .min,
    handing the shape back to the float/tiled rules above. */
 .winbox.sturddle-wb.min,
@@ -4818,11 +4869,38 @@ wa-dialog.tournament-info-dialog::part(body) {
 .h2h-tbl .h2h-group td { font-weight: 600; color: var(--fg); }
 .h2h-tbl .h2h-side { color: var(--muted); padding-left: 16px; }
 .h2h-tbl .h2h-wld { color: var(--muted); }
+/* Crosstable (tournament-crosstable.js): factory split table like Standings.
+   min-width (per column) makes a big field scroll instead of squeezing; the
+   name column sticks to the left of both scrollers, so it needs a background. */
+.wb-standings-view { height: 100%; }
+.wb-crosstable { --xt-col-min: 3.5em; height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.xt-table-wrap { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.xt-head-scroll { overflow: hidden; flex: 0 0 auto; scrollbar-gutter: stable; }
+.xt-body-scroll { overflow: auto; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
+/* separate: collapsed borders belong to the table, so they'd scroll out from
+   under the sticky name column; separate ones travel with their cells. */
+.xt-tbl {
+  table-layout: fixed; min-width: calc(var(--xt-cols) * var(--xt-col-min));
+  border-collapse: separate; border-spacing: 0;
+}
+.xt-head-tbl th { position: relative; background: var(--bg); }
+.xt-tbl td { overflow: hidden; text-overflow: ellipsis; }
+.xt-tbl th:not(:first-child), .xt-tbl td:not(:first-child) { text-align: center; }
+.xt-tbl th:first-child, .xt-tbl td:first-child { position: sticky; left: 0; z-index: 1; }
+.xt-tbl td:first-child { background: var(--panel); }
+/* Grid lines a step louder than other tables': the grid reads across and down. */
+.xt-tbl th, .xt-tbl td { border-bottom-color: var(--wa-color-border-loud, #353841); }
+.xt-tbl th + th, .xt-tbl td + td { border-left: 1px solid var(--wa-color-border-loud, #353841); }
+.dt-rownav-cursor:focus-visible tr[aria-selected="true"] > td.xt-name { background: var(--row-bg-selected); }
+.xt-tbl .xt-name { font-weight: 500; }
+.xt-tbl .xt-rank { color: var(--muted); margin-right: 6px; }
 .wb-sched-list, .wb-eventlog-list { list-style: none; padding: 0; margin: 0; }
-/* Arena window title-bar icons: Event Log copy, Engine Instances A-Z / Z-A. */
+/* Arena window title-bar icons: Event Log copy, Engine Instances A-Z / Z-A,
+   Standings / Crosstable view toggle (icon = the view it switches to). */
 .wb-log-copy-ctrl,
 .wb-sort-asc-ctrl,
-.wb-sort-desc-ctrl {
+.wb-sort-desc-ctrl,
+.wb-view-toggle-ctrl {
   -webkit-mask-size: 14px;
   mask-size: 14px;
   background-color: rgba(255,255,255,0.9) !important;
@@ -4838,6 +4916,14 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-sort-desc-ctrl {
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-down-z-a.svg);
   mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-down-z-a.svg);
+}
+.wb-view-toggle-ctrl {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/border-all.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/border-all.svg);
+}
+.wb-view-toggle-ctrl.is-crosstable {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/list-ol.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/list-ol.svg);
 }
 /* The lit sort button takes the brand color, like the Engines page's. */
 .wb-sort-asc-ctrl.is-active,
@@ -5187,22 +5273,9 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
 }
 
 /* min-height guard: below it the mobile block flips the ribbon horizontal and
-   these vertical-rail right-dock rules would fight it (collapsed underline,
-   stray border). 681px = one past the mobile height clause. */
+   these vertical-rail right-dock rules would fight it (collapsed underline).
+   681px = one past the mobile height clause. */
 @media (min-width: 801px) and (min-height: 681px) {
-  body[data-ribbon-side="right"] .board-ribbon {
-    left: auto;
-    right: 0;
-    border-right: 0;
-    border-left: var(--ribbon-border-w) solid var(--border-subtle);
-  }
-  /* Mirror only the board ribbon's vertical edge stripe: the .board-ribbon
-     scope leaves the top-edge accent on panel ribbons (engines, tournaments,
-     openings) intact. */
-  body[data-ribbon-side="right"] .board-ribbon .ribbon-btn::before {
-    right: auto;
-    left: -1px;
-  }
   body[data-ribbon-side="right"] .play-grid {
     grid-template-columns: var(--rail-w) var(--board-col-px, minmax(320px, 1fr)) var(--left-rail-w, var(--rail-w));
     grid-template-areas:
@@ -5214,13 +5287,15 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
     left: auto;
     right: var(--ribbon-w);
   }
+  body[data-ribbon-side="right"] .board-ribbon,
   body[data-ribbon-side="right"] .tournaments-ribbon,
   body[data-ribbon-side="right"] .studio-ribbon {
     left: auto;
     right: 0;
-    border-right: 0;
-    border-left: var(--ribbon-border-w) solid var(--border-subtle);
   }
+  /* Mirror only the docked rails' vertical edge stripe: the scoping leaves
+     the top-edge accent on panel ribbons (engines, openings) intact. */
+  body[data-ribbon-side="right"] .board-ribbon .ribbon-btn::before,
   body[data-ribbon-side="right"] .tournaments-ribbon .ribbon-btn::before,
   body[data-ribbon-side="right"] .studio-ribbon .ribbon-btn::before {
     right: auto;

@@ -30,6 +30,7 @@ import { renderEventLogList } from "./tournament-eventlog.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 import { renderInfoWall } from "./tournament-info.js";
 import { mqMobile, mqMobileH } from "./breakpoints.js";
+import { attachRibbonOverflow } from "./ribbon-overflow.js";
 
 const TOURNAMENTS_ENDPOINT = "/api/tournaments";
 const TOURNAMENT_SETTINGS_ENDPOINT = "/api/tournament-settings";
@@ -275,7 +276,7 @@ function gamesCell(t) {
 // Rows are the tournament objects themselves; the created column is the
 // deterministic tiebreak.
 const TOURNEY_COLUMNS = [
-  { key: "status", label: "Status", width: 12, firstDir: SORT_DIR.ASC, rank: STATUS_RANK,
+  { key: "status", label: "Status", width: 24, firstDir: SORT_DIR.ASC, rank: STATUS_RANK,
     tdClass: "studio-tourney-status", cell: (t) => statusBadgeHtml(t.status) + sprtBadgeHtml(t) },
   { key: "created", label: "Created", width: 22, firstDir: SORT_DIR.DESC, field: "created_at", tiebreak: true,
     tdClass: "studio-tourney-created", cell: (t) => escapeHtml(formatStamp(t.created_at)) },
@@ -1363,6 +1364,7 @@ export function mountTournamentStudio({ container, api, events, log }) {
   wireEnginesSort(ctx);
   wireLeftTabsFold(ctx);
   wireRibbonActions(ctx);
+  ctx.ribbonOverflow = attachRibbonOverflow(ctx.ribbonEl);
   announceRibbon(ctx.ribbonEl);
 
   ctx.boardStyleReady = ctx.api("GET", SETTINGS_ENDPOINT)
@@ -1432,6 +1434,7 @@ function unmountStudio(ctx) {
   // no-ops), and closes the boards.
   stopLive(ctx);
   announceRibbon(null);
+  ctx.ribbonOverflow?.detach();
   ctx.panel.remove();
   ctx.panel = ctx.ribbonEl = null;
   ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;

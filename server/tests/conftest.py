@@ -778,6 +778,11 @@ async def wait_perspective_ready(page) -> None:
     )
 
 
+# Resolves after two frames, so ResizeObserver work scheduled by the last
+# layout has run. Frame ordering, not a timer.
+NEXT_FRAME_JS = "() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))"
+
+
 # Monotonic suffix for wait_for_async_predicate's window slots -- one
 # page can host several concurrent/sequential waits without collisions.
 _ASYNC_WAIT_SEQ = itertools.count()
@@ -1055,12 +1060,12 @@ def _games_pgn(games) -> str:
     return "\n".join(out) + "\n"
 
 
-def seed_tournament(tmp_path: Path, name: str, engines, games):
+def seed_tournament(tmp_path: Path, name: str, engines, games, template=None):
     """Create a tournament and write its games.pgn. Returns the Tournament."""
     store = ts_mod.TournamentStore(tmp_path / "tournaments")
     t = store.create(
         name=name,
-        template={"tc": "5+0.05"},
+        template=template or {"tc": "5+0.05"},
         engines=[{"name": e, "cmd": f"/bin/{e}"} for e in engines],
     )
     store.pgn_path(t.id).write_text(_games_pgn(games), encoding="utf-8")
