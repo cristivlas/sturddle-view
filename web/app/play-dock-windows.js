@@ -159,6 +159,10 @@ window.addEventListener(APP_EVT.LAYOUT_CHANGED, () => {
     requestAnimationFrame(() => { updateDockBounds(); reclampFloats(); }));
 });
 
+// The dock column is viewport-fixed: follow the clocks as the document
+// scrolls (a short desktop window). Synchronous, so it moves with them.
+window.addEventListener("scroll", updateDockBounds, { passive: true });
+
 // Re-clamp floating windows off the ribbon strips when the viewport shrinks
 // (WinBox doesn't re-enforce left/right on resize). rAF-coalesced.
 window.addEventListener("resize", rafCoalesce(reclampFloats));
@@ -1144,7 +1148,7 @@ export function setRailDockContainer(el) {
 
 // -- UCI log body ------------------------------------------------------------
 
-const UCI_LOG_TITLE     = "UCI Log";
+export const UCI_LOG_TITLE = "UCI Log";
 const UCI_GEO_KEY       = STORAGE_KEY.UCILOG_GEO;
 const UCI_WIN_STATE_KEY = STORAGE_KEY.UCILOG_WIN_STATE;
 const UCI_DOCKED_KEY    = STORAGE_KEY.UCILOG_DOCKED;
@@ -1294,8 +1298,10 @@ function buildPvTableBody(events, { setOff }) {
   return pvt.el;
 }
 
+export const PV_TABLE_TITLE = "Search Lines";
+
 const pvTable = createDockableWindow({
-  title: "Search Lines",
+  title: PV_TABLE_TITLE,
   className: "sturddle-wb-pvtable",
   geoKey: PV_GEO_KEY,
   winStateKey: PV_WIN_STATE_KEY,
@@ -1411,6 +1417,8 @@ const VIEW_PV_OPEN_KEY  = STORAGE_KEY.VIEW_PVTABLE_OPEN;
 // (restore() across nav reuses inst.toggle directly and must NOT clear.)
 export function toggleUciLogWindow(events) { uciLog.openedByAnalysis = false; uciLog.toggle(events); }
 export function togglePvTableWindow(events) { pvTable.openedByAnalysis = false; pvTable.toggle(events); }
+export const isUciLogOpen = () => uciLog.mounted;
+export const isPvTableOpen = () => pvTable.mounted;
 
 // Name the engine whose UCI traffic the log is showing; CSS ellipsis-truncates.
 // Caller resolves the right engine (analysis engine while analyzing, play engine

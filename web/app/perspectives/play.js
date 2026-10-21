@@ -9,7 +9,7 @@ import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
 import { alert as showAlert, apiErrorObject, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportAiError, reportError, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, clearUciLog, isMobileLayout, setPvLineBoard } from "../play-dock-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, isUciLogOpen, isPvTableOpen, UCI_LOG_TITLE, PV_TABLE_TITLE, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, clearUciLog, isMobileLayout, setPvLineBoard } from "../play-dock-windows.js";
 import {
   commentaryWindow,
   openCommentary,
@@ -330,8 +330,8 @@ const MSG = {
   FORKED_FROM: "Forked from ",
   SHOW_VARIATIONS: "Show variations",
   ANALYZE_NEEDS_ENGINE: "Register an engine in Settings to analyze",
-  SEARCH_LINES: "Search lines",
-  UCI_LOG: "UCI log",
+  SHOW: "Show",
+  HIDE: "Hide",
   WHITE_TO_MOVE: "White to move",
   BLACK_TO_MOVE: "Black to move",
 };
@@ -382,6 +382,28 @@ function makeToastIconBtn(iconName, label, onClick) {
   btn.appendChild(ic);
   btn.addEventListener("click", onClick);
   return btn;
+}
+
+// "Show/Hide <name>" by the window's state, refreshed as the pointer or focus
+// arrives and after a click, so however the window opened or closed the label
+// never goes stale. Returns the unwire.
+function wireShowHideLabel(btn, name, isOpen) {
+  const sync = () => {
+    const label = `${isOpen() ? MSG.HIDE : MSG.SHOW} ${name}`;
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+  };
+  // After the button's own click handler has toggled the window.
+  const onClick = () => queueMicrotask(sync);
+  sync();
+  btn.addEventListener("pointerenter", sync);
+  btn.addEventListener("focus", sync);
+  btn.addEventListener("click", onClick);
+  return () => {
+    btn.removeEventListener("pointerenter", sync);
+    btn.removeEventListener("focus", sync);
+    btn.removeEventListener("click", onClick);
+  };
 }
 
 function setDisabled(btn, disabled) {
@@ -644,7 +666,7 @@ const PLAY_PERSPECTIVE_HTML = `
         <button id="pv-table-btn" class="ribbon-btn desktop-only" aria-label="Search Lines" title="Search Lines">
           <wa-icon name="table-list"></wa-icon>
         </button>
-        <button id="uci-log-btn" class="ribbon-btn desktop-only" aria-label="UCI log" title="UCI log">
+        <button id="uci-log-btn" class="ribbon-btn desktop-only" aria-label="UCI Log" title="UCI Log">
           <wa-icon name="terminal"></wa-icon>
         </button>
       </div>
@@ -722,10 +744,10 @@ const PLAY_PERSPECTIVE_HTML = `
           <wa-icon name="align-left"></wa-icon>
         </button>
         <span class="ribbon-sep ribbon-sep--push" aria-hidden="true"></span>
-        <button id="edit-confirm" class="ribbon-btn" aria-label="Confirm position" title="Confirm">
+        <button id="edit-confirm" class="ribbon-btn" aria-label="Apply edits" title="Apply edits">
           <wa-icon name="check"></wa-icon>
         </button>
-        <button id="edit-cancel" class="ribbon-btn" aria-label="Cancel editing" title="Cancel">
+        <button id="edit-cancel" class="ribbon-btn" aria-label="Cancel editing" title="Cancel editing">
           <wa-icon name="xmark"></wa-icon>
         </button>
       </div>
@@ -1723,11 +1745,13 @@ function showAnalysisToastImpl(state) {
   label.className = "toast-grow is-active";
   label.textContent = MSG.ANALYSIS_MODE;
   msg.append(label);
-  const pvTableBtn = makeToastIconBtn("table-list", MSG.SEARCH_LINES, () => togglePvTableWindow(state.ctx.events));
+  const pvTableBtn = makeToastIconBtn("table-list", PV_TABLE_TITLE, () => togglePvTableWindow(state.ctx.events));
   pvTableBtn.classList.add("desktop-only");
+  wireShowHideLabel(pvTableBtn, PV_TABLE_TITLE, isPvTableOpen);
   msg.append(pvTableBtn);
-  const uciLogBtn = makeToastIconBtn("terminal", MSG.UCI_LOG, () => toggleUciLogWindow(state.ctx.events));
+  const uciLogBtn = makeToastIconBtn("terminal", UCI_LOG_TITLE, () => toggleUciLogWindow(state.ctx.events));
   uciLogBtn.classList.add("desktop-only");
+  wireShowHideLabel(uciLogBtn, UCI_LOG_TITLE, isUciLogOpen);
   msg.append(uciLogBtn);
   const stopBtn = makeToastIconBtn(ANALYZE_ICON_STOP, MSG.STOP_ANALYSIS, () => onAnalyzeImpl(state));
   stopBtn.classList.add("is-active");
@@ -2617,6 +2641,8 @@ export const playPerspective = {
     uciLogBtn?.addEventListener("click", onUciLog);
     pvTableBtn?.addEventListener("click", onPvTable);
     restoreDebugWindows(ctx.events);
+    const unwireUciLabel = uciLogBtn ? wireShowHideLabel(uciLogBtn, UCI_LOG_TITLE, isUciLogOpen) : null;
+    const unwirePvLabel = pvTableBtn ? wireShowHideLabel(pvTableBtn, PV_TABLE_TITLE, isPvTableOpen) : null;
     // After restoreDebugWindows: sync makes the server re-emit board state and
     // the last engine_info, and only a panel that already exists can catch it.
     // Reload would otherwise leave Search Lines blank until the next info line.
@@ -2770,6 +2796,8 @@ export const playPerspective = {
         resignBtn.removeEventListener("click", onResign);
         uciLogBtn?.removeEventListener("click", onUciLog);
         pvTableBtn?.removeEventListener("click", onPvTable);
+        unwireUciLabel?.();
+        unwirePvLabel?.();
         takebackBtn.removeEventListener("click", onTakeback);
         switchSidesBtn.removeEventListener("click", onSwitchSides);
         pauseBtn.removeEventListener("click", onPause);
