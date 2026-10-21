@@ -722,10 +722,10 @@ const PLAY_PERSPECTIVE_HTML = `
           <wa-icon name="align-left"></wa-icon>
         </button>
         <span class="ribbon-sep ribbon-sep--push" aria-hidden="true"></span>
-        <button id="edit-confirm" class="ribbon-btn" aria-label="Confirm position" title="Confirm">
+        <button id="edit-confirm" class="ribbon-btn" aria-label="Apply edits" title="Apply edits">
           <wa-icon name="check"></wa-icon>
         </button>
-        <button id="edit-cancel" class="ribbon-btn" aria-label="Cancel editing" title="Cancel">
+        <button id="edit-cancel" class="ribbon-btn" aria-label="Cancel editing" title="Cancel editing">
           <wa-icon name="xmark"></wa-icon>
         </button>
       </div>

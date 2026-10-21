@@ -292,12 +292,13 @@ function buildExeOnlyToggle(storageKey, onChange) {
 // The listing table (data-table.js: resize, reorder, hide, fit, single-column
 // sort with folders first, row navigation), its layout and sort kept per
 // recallKey. isSelected/isDim(entry) drive the row classes; the rowNav arrows
-// select through the row's click (see selectFsRow).
-function buildFsTable({ recallKey, isSelected, isDim, onRender }) {
+// select through the row's click (see selectFsRow). Folder pickers drop Size:
+// folders show none.
+function buildFsTable({ recallKey, wantsDir, isSelected, isDim, onRender }) {
   const table = createTable({
     cls: "fs-picker",
     tableClass: "fs-picker-table",
-    columns: FS_COLUMNS,
+    columns: wantsDir ? FS_COLUMNS.filter((c) => c.key !== FS_COL_SIZE) : FS_COLUMNS,
     layoutKey: STORAGE_KEY.FS_PICKER_LAYOUT_PREFIX + recallKey,
     minPct: FS_MIN_COL_PCT,
     traits: {
@@ -416,6 +417,7 @@ export function pickFile({
       let highlighted = null;
       const fsTable = buildFsTable({
         recallKey,
+        wantsDir,
         isSelected: (e) => e.path === highlighted,
         isDim: (e) => !e.is_dir && !eligible(e),
         // A sort only reorders rows: keep the highlight in view.

@@ -17,8 +17,8 @@ import { escapeHtml, LIST_NAV_KEYS, wireArrowKeyNav } from "./wb-utils.js";
 
 const MENU_ICON = "sliders";
 const MENU_BTN_LABEL = "Columns";
-const FIT_LABEL = "Fit columns";
-const RESET_LABEL = "Reset columns";
+const FIT_LABEL = "Auto-fit";
+const RESET_LABEL = "Reset";
 const UP_ICON = "arrow-up-long";
 const DOWN_ICON = "arrow-down-long";
 const ACTIVE_CLASS = "tmb-active";
