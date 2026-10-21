@@ -17,8 +17,12 @@ from .conftest import assert_no_page_errors, e2e_env, run_uvicorn_subprocess, wa
 
 PLAY_PERSP = "#play-perspective"
 DOCK_LEFT = ".play-dock-left"
+RAIL_DOCK = ".play-rail-dock"
 PV_BTN = "#pv-table-btn"
 UCI_BTN = "#uci-log-btn"
+BOARD_RIBBON = ".board-ribbon"
+SHOW_UCI = "Show UCI Log"
+HIDE_UCI = "Hide UCI Log"
 UCI_WB = ".winbox.sturddle-wb-uci-log"
 PV_WB = ".winbox.sturddle-wb-pvtable"
 COARSE_POINTER_MQ = "(pointer: coarse)"
@@ -26,6 +30,26 @@ DEFAULT_VIEWPORT = {"width": 1600, "height": 1000}
 # 1366x768 laptop: taskbar + browser chrome leave a ~620px-tall viewport,
 # under --bp-mobile-h-play but far wider than --bp-mobile.
 SHORT_VIEWPORT = {"width": 1366, "height": 620}
+# Shorter still: the board sits at its minimum and Play outgrows the window.
+OVERFLOW_VIEWPORT = {"width": 1366, "height": 500}
+WHEEL_PX = 400
+SCROLL_WAIT_MS = 5000
+# Fixed overlays (dock column, side rail) vs what they line up with.
+_GEOM_JS = """() => {
+  const top = (sel) => document.querySelector(sel).getBoundingClientRect().top;
+  const clockBot = document.querySelector('.clock-row.clock-bottom').getBoundingClientRect().bottom;
+  return {
+    dockOffset: top('.play-dock-left') - top('.clock-row.clock-top'),
+    railOffset: top('.play-side-host') - top('.play-board-host'),
+    clockBot, clockTop: top('.clock-row.clock-top'), viewH: window.innerHeight,
+    headerTop: top('body > header'),
+  };
+}"""
+_FOOTER_COVERS_DOCK_JS = """() => {
+  const d = document.querySelector('.play-dock-left').getBoundingClientRect();
+  const f = document.querySelector('#app-footer').getBoundingClientRect();
+  return !!document.elementFromPoint(d.left + d.width / 2, f.top + f.height / 2)?.closest('#app-footer');
+}"""
 
 
 @pytest.fixture
@@ -215,6 +239,59 @@ async def test_short_laptop_keeps_desktop_layout(server, make_page):
     await page.dispatch_event(PV_BTN, "click")
     await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot")
     assert await _dock_displayed(page)
+    assert await page.evaluate(f"() => getComputedStyle(document.querySelector('{RAIL_DOCK}')).display !== 'none'"), (
+        "the rail dock is desktop layout too"
+    )
+    # So is the right-side ribbon mirror: the rail hangs on the right edge.
+    await page.evaluate("() => { document.body.dataset.ribbonSide = 'right'; }")
+    assert await page.evaluate(f"() => getComputedStyle(document.querySelector('{BOARD_RIBBON}')).right") == "0px"
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_debug_window_buttons_say_show_or_hide(server, make_page):
+    """The UCI Log button's label names what a click does: Show while the
+    window is closed, Hide while open, however it closed."""
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play(page, server)
+    assert await page.get_attribute(UCI_BTN, "aria-label") == SHOW_UCI
+    await page.click(UCI_BTN)
+    await page.wait_for_selector(f'{UCI_BTN}[aria-label="{HIDE_UCI}"]')
+    # Closed from its own X, not the button: hovering the button relabels it.
+    await page.click(f"{DOCK_LEFT} .dock-slot-close")
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", state="detached")
+    await page.hover(UCI_BTN)
+    assert await page.get_attribute(UCI_BTN, "title") == SHOW_UCI
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_short_laptop_overflow_scrolls_with_overlays_aligned(server, make_page):
+    """A desktop Play taller than the window scrolls, even with the wheel
+    over a docked panel, until the bottom clock row shows; the header stays
+    put, and the fixed dock column and side rail scroll along with the board
+    and clocks."""
+    _ctx, page, errors = await _new_page(make_page, OVERFLOW_VIEWPORT)
+    await _goto_play(page, server)
+    await page.dispatch_event(PV_BTN, "click")
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot")
+    before = await page.evaluate(_GEOM_JS)
+    assert before["clockBot"] > before["viewH"], before
+    # The dock runs past the window bottom: the footer covers it there.
+    assert await page.evaluate(_FOOTER_COVERS_DOCK_JS), "dock paints over the footer"
+
+    await page.mouse.move(*await _center(page, f"{DOCK_LEFT} .dock-slot-body"))
+    await page.mouse.wheel(0, WHEEL_PX)
+    await page.wait_for_function(
+        f"() => ({_GEOM_JS})().clockTop < {before['clockTop']}", timeout=SCROLL_WAIT_MS,
+    )
+    await page.wait_for_function(
+        f"""() => {{ const g = ({_GEOM_JS})();
+          return g.clockBot <= g.viewH && g.headerTop === 0
+            && Math.abs(g.dockOffset - {before['dockOffset']}) <= 1
+            && Math.abs(g.railOffset - {before['railOffset']}) <= 1; }}""",
+        timeout=SCROLL_WAIT_MS,
+    )
     assert_no_page_errors(errors)
 
 

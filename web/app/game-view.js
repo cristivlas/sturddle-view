@@ -402,6 +402,8 @@ function positionSideRail(ctx, geom) {
   // colGap doubles as the grip thickness: the grip rides in a board-bottom gap
   // of that size, costing neither the moves list nor the docked panel height.
   const { grid, gapW, colGap, railW, leftEmpty, rem, mobile } = geom;
+  // Latest geometry, for re-placing without a recompute (grip drag, scroll).
+  ctx.railGeom = geom;
   const sideHost = grid.querySelector(".play-side-host");
   if (!sideHost) return;
   const railDock = sideHost.querySelector(".play-rail-dock");
@@ -495,7 +497,6 @@ function positionSideRail(ctx, geom) {
     grip.style.top = `${barTop - colGap}px`;
     grip.style.width = `${width}px`;
     grip.style.height = `${colGap}px`;
-    ctx.railGeom = geom;
   }
 }
 
@@ -523,9 +524,11 @@ function recomputeNow(ctx) {
   }
 
   const bottomMargin = readMainPaddingBottom() + BOTTOM_MARGIN_EXTRA_PX;
+  // Page (unscrolled) top: a recompute while the document is scrolled must
+  // not grow the board by the scroll offset.
   const availH = Math.max(
     0,
-    window.innerHeight - colRect.top - siblingsInCol - belowGameView - bottomMargin
+    window.innerHeight - (colRect.top + window.scrollY) - siblingsInCol - belowGameView - bottomMargin
   );
 
   // Layout (wide viewports): [left-filler][board][rail], where the rail
@@ -1132,6 +1135,7 @@ function buildViewApi(ctx) {
       try { ctx.ro.disconnect(); } catch {}
       window.removeEventListener("resize", ctx.onRecompute);
       window.removeEventListener(APP_EVT.LAYOUT_CHANGED, ctx.onRecompute);
+      window.removeEventListener("scroll", ctx.onScroll);
       document.removeEventListener("visibilitychange", ctx.onVisibilityChange);
       window.removeEventListener("focus", ctx.onWindowFocus);
       ctx.scheduleRecompute?.cancel();
@@ -1245,6 +1249,10 @@ export function mountGameView(container, opts = {}) {
   ctx.ro.observe(document.body);
   window.addEventListener("resize", ctx.onRecompute);
   window.addEventListener(APP_EVT.LAYOUT_CHANGED, ctx.onRecompute);
+  // The side rail is viewport-fixed: follow the board as the document scrolls.
+  // Synchronous, not rAF-deferred, so it moves in the same frame as the board.
+  ctx.onScroll = () => { if (ctx.railGeom && !ctx.railGeom.mobile) positionSideRail(ctx, ctx.railGeom); };
+  window.addEventListener("scroll", ctx.onScroll, { passive: true });
   requestAnimationFrame(ctx.onRecompute);
 
   ctx.onVisibilityChange = () => { if (!document.hidden) ctx.board.cancelAnimations(); };

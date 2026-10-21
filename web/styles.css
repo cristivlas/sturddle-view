@@ -1215,25 +1215,36 @@ main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden
   /* Non-play perspectives keep `main` as the scroller -- their inner lists
      are flex:1 + overflow-y:auto and need a bounded ancestor. */
   main { overflow-y: auto; }
-  /* Play only: one scroll context -- the document scrolls, not `main`. Unlock
-     the height:100% frame so body grows to content and main's overflow stays
-     visible (a nested scroller is the double-scrollbar bug). */
-  body:has(#play-perspective) { height: auto; min-height: 100%; }
-  /* Both axes visible: a visible/hidden mix computes the visible axis to auto,
-     re-adding main's scroller. Play mobile children are width-bounded
-     (align-items:center; width:100%) so x won't escape. */
-  #perspective-root:has(#play-perspective) { overflow: visible; }
-  /* .xgame-nav-locked locks body scroll assuming `main` is the scroller; in
-     play's document-scroll model the body IS it, so re-enable or content gets
-     clipped with no bar. */
-  body.xgame-nav-locked:has(#play-perspective) { overflow-y: visible; }
-  /* Pin the footer to the viewport bottom while content scrolls above;
-     opaque bg so that content doesn't show through. */
-  body:has(#play-perspective) #app-footer {
-    position: sticky;
-    bottom: 0;
-    background: var(--bg);
-  }
+}
+/* Play, any layout: one scroll context -- the document scrolls, not `main`,
+   so a window too short for it (mobile, or a laptop with the board at its
+   minimum) scrolls, wheel over fixed docks included. Unlock the height:100%
+   frame so body grows to content and main's overflow stays visible (a nested
+   scroller is the double-scrollbar bug). */
+body:has(#play-perspective) { height: auto; min-height: 100%; }
+/* Both axes visible: a visible/hidden mix computes the visible axis to auto,
+   re-adding main's scroller. Play children are width-bounded (desktop grid
+   columns; mobile align-items:center; width:100%) so x won't escape. */
+#perspective-root:has(#play-perspective) { overflow: visible; }
+/* .xgame-nav-locked locks body scroll assuming `main` is the scroller; in
+   play's document-scroll model the body IS it, so re-enable or content gets
+   clipped with no bar. */
+body.xgame-nav-locked:has(#play-perspective) { overflow-y: visible; }
+/* Pin the footer to the viewport bottom while content scrolls above;
+   opaque bg so that content doesn't show through. z-index ties the left dock
+   (9; later in the DOM, so it covers the dock's overflow like the header) and
+   stays under the ribbon (10). */
+body:has(#play-perspective) #app-footer {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  z-index: 9;
+}
+/* Desktop: the header stays put while the board scrolls under it (the fixed
+   docks sit below its z-index). Mobile lets it scroll away for room. */
+body:has(#play-perspective) > header { position: sticky; top: 0; }
+@media (max-width: 800px), (max-height: 680px) and (pointer: coarse) {
+  body:has(#play-perspective) > header { position: relative; }
 }
 @media (max-width: 800px) {
   .desktop-only { display: none !important; }
@@ -2086,9 +2097,10 @@ body .side-popover.popover-floating {
    Engine Eval window; play-dock-windows.js manages visibility and drop-hint
    classes. Desktop-only -- it hangs off board geometry mobile's document flow
    doesn't provide. Gated here rather than hidden in the mobile block, since an
-   unconditional base rule would win on source order at equal specificity. */
+   unconditional base rule would win on source order at equal specificity.
+   Desktop = not mobile: wide, and tall or not touch (pointer fine/none). */
 .play-rail-dock { display: none; }
-@media (min-width: 801px) and (min-height: 681px) {
+@media (min-width: 801px) and (min-height: 681px), (min-width: 801px) and (pointer: fine), (min-width: 801px) and (pointer: none) {
   .play-rail-dock {
     position: fixed;
     box-sizing: border-box;
@@ -2101,10 +2113,10 @@ body .side-popover.popover-floating {
 .play-rail-dock.dock-empty { visibility: hidden; }
 /* Resize handle between the moves list and the rail band. A fixed sibling of
    the band (geometry from positionSideRail) so it rides in the gap under the
-   board, not inside the docked panel's border. Desktop-only, same reason as
-   .play-rail-dock. */
+   board, not inside the docked panel's border. Desktop-only, same reason and
+   gate as .play-rail-dock. */
 .play-rail-grip { display: none; }
-@media (min-width: 801px) and (min-height: 681px) {
+@media (min-width: 801px) and (min-height: 681px), (min-width: 801px) and (pointer: fine), (min-width: 801px) and (pointer: none) {
   .play-rail-grip { display: block; position: fixed; z-index: 8; }
 }
 /* Auto-hide: a slot holding an empty eval strip (view mode / no evals yet)
@@ -5272,10 +5284,10 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
   }
 }
 
-/* min-height guard: below it the mobile block flips the ribbon horizontal and
-   these vertical-rail right-dock rules would fight it (collapsed underline).
-   681px = one past the mobile height clause. */
-@media (min-width: 801px) and (min-height: 681px) {
+/* Desktop guard (not mobile, see .play-rail-dock): in mobile the ribbon flips
+   horizontal and these vertical-rail right-dock rules would fight it
+   (collapsed underline). 681px = one past the mobile height clause. */
+@media (min-width: 801px) and (min-height: 681px), (min-width: 801px) and (pointer: fine), (min-width: 801px) and (pointer: none) {
   body[data-ribbon-side="right"] .play-grid {
     grid-template-columns: var(--rail-w) var(--board-col-px, minmax(320px, 1fr)) var(--left-rail-w, var(--rail-w));
     grid-template-areas:
