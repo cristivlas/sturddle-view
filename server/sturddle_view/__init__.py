@@ -6,7 +6,7 @@ from platformdirs import user_config_dir as _user_config_dir
 from platformdirs import user_data_dir as _user_data_dir
 from platformdirs import user_log_dir as _user_log_dir
 
-__version__ = "0.7.3"
+__version__ = "0.7.4"
 __author__ = "Cristian Vlasceanu"
 __copyright__ = "2026 Cristian Vlasceanu"
 APP_NAME = "sturddle-view"

@@ -78,6 +78,8 @@ const TILE_MARGIN = 0;
 const TIDY_GAP = 0;
 // Bare `sturddle-wb` is shared with Play's dock windows; this one is Arena-only.
 const ARENA_WINDOW_CLASS = "sturddle-wb-arena";
+// WinBox's resize handles.
+const WB_RESIZE_EDGES = ".wb-n, .wb-s, .wb-e, .wb-w, .wb-nw, .wb-ne, .wb-sw, .wb-se";
 // The Live Games / Engines row list.
 const SCHED_LIST_CLASS = "wb-sched-list";
 // Every system window, in open/tile order (ctx.windows key order).
@@ -490,14 +492,10 @@ function evictOldestSlotted(ctx, keep) {
 // Shared onminimize/onrestore handler for all windows. Reads ctx.activeLayout
 // at call time so layout switches never leave stale handlers.
 function onReflow(ctx, wb, isRestore) {
-  if (isRestore && ctx.pendingDragX !== null) {
-    // Drag-unmaximize: place restored window so cursor stays at the same
-    // proportional position on the title bar it occupied when maximized.
-    const x0 = ctx.pendingDragX;
-    const ratio = Math.max(0, Math.min(1, (x0 - ctx.left) / (window.innerWidth - ctx.left)));
-    const x = Math.max(ctx.left, Math.min(x0 - Math.round(ratio * wb.width), window.innerWidth - wb.width));
-    wb.move(x, wb.y);
-    ctx.pendingDragX = null;
+  if (isRestore && wb.svDragRestoring) {
+    // Drag-unmaximize (winbox-factory.js) places it under the pointer; a
+    // re-layout would yank it away mid-drag. It floats free from here.
+    setShadow(wb, true);
     return;
   }
   if (ctx.activeLayout === LAYOUT.TIDY) {
@@ -538,41 +536,35 @@ function onReflow(ctx, wb, isRestore) {
 function wireLayoutHandlers(ctx, wb) {
   wb.onminimize = () => onReflow(ctx, wb, false);
   wb.onrestore = () => onReflow(ctx, wb, true);
-  wireHeader(ctx, wb);
+  wireHeader(wb);
+  wireResizeEdges(wb);
   // Initial shadow/corner state follows the layout: free-floating (NONE)
   // means shadow + rounded; managed layouts re-assert no-shadow per reflow.
   setShadow(wb, ctx.activeLayout === LAYOUT.NONE);
 }
 
-// Wire the drag-unmaximize repositioning on a window's header.
-function wireHeader(ctx, wb) {
+// Grabbing a window's header frees it from the layout.
+function wireHeader(wb) {
   const dragEl = wb.g?.querySelector(".wb-drag");
   if (!dragEl) return;
   dragEl.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
-    if (wb.max) {
-      // Arm on first mousemove rather than mousedown: if WinBox restores
-      // via dblclick the restore fires before the 2nd mousedown, so we
-      // can't tell on mousedown alone whether a drag or dblclick follows.
-      wb._armX = e.pageX;
-      const onMove = () => {
-        if (wb._armX !== null) {
-          ctx.pendingDragX = wb._armX;
-          wb._armX = null;
-        }
-      };
-      window.addEventListener("mousemove", onMove, { once: true });
-      window.addEventListener("mouseup", () => {
-        window.removeEventListener("mousemove", onMove);
-        wb._armX = null;
-        ctx.pendingDragX = null;
-      }, { once: true });
-    } else if (!wb._justRestored) {
+    if (!wb.max && !wb._justRestored) {
       // Any header mousedown shows shadow; reapplyLayout clears it.
       setShadow(wb, true);
     }
     wb._justRestored = false;
   }, { capture: true });
+}
+
+// Grabbing an edge frees the window like a header grab, which also drops
+// the flush-right CSS width pin that would block the resize.
+function wireResizeEdges(wb) {
+  for (const el of wb.g?.querySelectorAll(WB_RESIZE_EDGES) ?? []) {
+    el.addEventListener("mousedown", (e) => {
+      if (e.button === 0 && !wb.max) setShadow(wb, true);
+    }, { capture: true });
+  }
 }
 
 function makeBox(ctx, key, title, body, { min = false, max = false } = {}) {
@@ -1424,7 +1416,7 @@ export function openTournamentWorkspace({
   // navigation). lastGeometry holds last-known position/size per key so
   // closed slots can carry geometry forward into the next snapshot.
   const restoreFromSaved = hasOpenWindows(savedState);
-  const initialLayout = restoreFromSaved ? (savedState._layout ?? LAYOUT.NONE) : LAYOUT.NONE;
+  const initialLayout = restoreFromSaved ? (savedState._layout ?? LAYOUT.NONE) : LAYOUT.TIDY;
   const lastGeometry = {};
   for (const key of SYSTEM_WINDOW_KEYS) {
     const s = savedState?.[key];
@@ -1509,7 +1501,6 @@ export function openTournamentWorkspace({
   ctx.getRightInset = () => Math.max(0, window.innerWidth - getRight());
   // Likewise below: maximize stops at the workspace bottom (the list's, in Arena).
   ctx.getBottomInset = () => Math.max(0, window.innerHeight - workspaceBottom(ctx, false));
-  ctx.pendingDragX = null;
 
   const windowSpecs = buildWindowSpecs(ctx);
   ctx.windowSpecs = windowSpecs;

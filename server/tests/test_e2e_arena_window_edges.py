@@ -22,6 +22,8 @@ pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
 from .conftest import (  # noqa: E402
+    CLEAN_WINDOWS,
+    MENU_CHECKED,
     assert_no_page_errors,
     goto_arena_tournaments,
     open_arena_engines_window,
@@ -36,22 +38,11 @@ from .conftest import (  # noqa: E402
 ENGINES = ("engine-A", "engine-B")
 VIEWPORT = {"width": 1400, "height": 900}
 DPRS = (0.75, 0.8, 0.9, 1, 1.25, 1.5)
-# Clean (tidy) layout: Engine Instances top-left, Standings top-right.
-TIDY_WINDOWS = 4
 SUBPIXEL = 0.01
+# Clean (tidy) layout: Engine Instances top-left, Standings top-right.
 LEFT_WIN = ".winbox.sturddle-wb-arena:has(.wb-engines)"
 RIGHT_WIN = ".winbox.sturddle-wb-arena.sturddle-wb-standings"
 
-# Clean applied and every window settled: WinBox animates moves/resizes, so
-# each window's rendered box must have reached its inline (target) geometry.
-_TIDY_DONE = f"""() => {{
-  const wins = [...document.querySelectorAll('.winbox.sturddle-wb-arena.no-shadow')];
-  const near = (a, b) => Math.abs(a - b) < {SUBPIXEL};
-  return wins.length === {TIDY_WINDOWS} && wins.every((w) => {{
-    const r = w.getBoundingClientRect();
-    return near(r.top, parseFloat(w.style.top)) && near(r.height, parseFloat(w.style.height));
-  }});
-}}"""
 # Device px to back off from the ribbon's right edge: clear of it, on its fill.
 RIBBON_INSET_DPX = 3
 _RIBBON_RIGHT = "() => document.querySelector('.tournaments-ribbon').getBoundingClientRect().right"
@@ -104,9 +95,6 @@ async def test_window_edges_match_list_border(server, make_page, dpr):
     await goto_arena_tournaments(page, server)
     await page.click(".tournament-row")
     await open_arena_workspace(page)
-    await page.click(".tmb-window-btn")
-    await page.click(".tmb-tidy")
-    await page.wait_for_function(_TIDY_DONE)
     # Move the pointer off the list so no row shows its hover tint.
     await page.mouse.move(VIEWPORT["width"] / 2, 0)
 
@@ -139,14 +127,8 @@ _LIST_BOTTOM_AND_OUTLINE = """() => [
   document.querySelector('.tournaments-list').getBoundingClientRect().bottom,
   parseFloat(getComputedStyle(document.querySelector('.winbox.sturddle-wb-arena')).outlineWidth),
 ]"""
-_BOARD_TIDY_DONE = f"""() => document.querySelectorAll('.winbox.sturddle-wb-arena.no-shadow').length === {TIDY_WINDOWS}
+_BOARD_TIDY_DONE = f"""() => document.querySelectorAll('.winbox.sturddle-wb-arena.no-shadow').length === {CLEAN_WINDOWS}
   && !!document.querySelector('.winbox.sturddle-wb-live.no-shadow')"""
-
-
-async def _tidy(page, done):
-    await page.click(".tmb-window-btn")
-    await page.click(".tmb-tidy")
-    await page.wait_for_function(done)
 
 
 @pytest.mark.asyncio
@@ -158,7 +140,6 @@ async def test_system_window_rows_touch(server, make_page, dpr):
     await goto_arena_tournaments(page, server)
     await page.click(".tournament-row")
     await open_arena_workspace(page)
-    await _tidy(page, _TIDY_DONE)
 
     s = await page.evaluate(_SPANS)
     assert s["wb-engines"][1] == s["wb-schedule"][0], (dpr, s)
@@ -181,24 +162,29 @@ async def test_board_row_touches_system_windows(tmp_path, monkeypatch, make_page
         errors = watch_page_errors(page)
         await open_arena_engines_window(page, base)
         await page.click(".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn")
-        await _tidy(page, _BOARD_TIDY_DONE)
+        await page.wait_for_function(_BOARD_TIDY_DONE)
 
         s = await page.evaluate(_SPANS)
         assert s["wb-livegame"][1] == s["wb-engines"][0], (dpr, s["wb-livegame"], s["wb-engines"])
         assert_no_page_errors(errors)
 
 
-# The Standings window's target CSS-px bottom (inline style; see _SPANS) and
-# whether WinBox has it maximized.
-_STANDINGS_BOTTOM = """() => {
-  const w = document.querySelector('.winbox.sturddle-wb-standings');
-  return [parseFloat(w.style.top) + parseFloat(w.style.height), w.classList.contains('max')];
+# The lowest matching window's target CSS-px bottom (inline style; see
+# _SPANS) and whether WinBox has any of them maximized.
+_LOWEST_BOTTOM = """(sel) => {
+  const wins = [...document.querySelectorAll(sel)];
+  return [
+    Math.max(...wins.map((w) => parseFloat(w.style.top) + parseFloat(w.style.height))),
+    wins.some((w) => w.classList.contains('max')),
+  ];
 }"""
 LAYOUT_ITEMS = {"snap": ".tmb-snap", "tile": ".tmb-tile"}
+ARENA_WIN = ".winbox.sturddle-wb-arena"
+STANDINGS_WIN = ".winbox.sturddle-wb-standings"
 
 
-async def _standings_ends_on_list_border(page, dpr, expect_max=False):
-    bottom, is_max = await page.evaluate(_STANDINGS_BOTTOM)
+async def _bottom_ends_on_list_border(page, dpr, sel, expect_max=False):
+    bottom, is_max = await page.evaluate(_LOWEST_BOTTOM, sel)
     list_bottom, outline = await page.evaluate(_LIST_BOTTOM_AND_OUTLINE)
     assert is_max == expect_max
     assert bottom + outline == pytest.approx(list_bottom, abs=SUBPIXEL), (dpr, bottom, list_bottom)
@@ -217,9 +203,10 @@ async def test_snap_and_tile_end_on_list_border(server, make_page, layout, dpr):
     await open_arena_workspace(page)
     await page.click(".tmb-window-btn")
     await page.click(LAYOUT_ITEMS[layout])
-    await page.wait_for_function("() => !!document.querySelector('.winbox.sturddle-wb-standings.no-shadow')")
+    # Clean already drops shadows; the checked menu item marks the switch.
+    await page.wait_for_selector(f"{LAYOUT_ITEMS[layout]}.{MENU_CHECKED}", state="attached")
 
-    await _standings_ends_on_list_border(page, dpr)
+    await _bottom_ends_on_list_border(page, dpr, ARENA_WIN)
     assert_no_page_errors(errors)
 
 
@@ -232,8 +219,8 @@ async def test_maximized_window_ends_on_list_border(server, make_page, dpr):
     await goto_arena_tournaments(page, server)
     await page.click(".tournament-row")
     await open_arena_workspace(page)
-    await page.click(".winbox.sturddle-wb-standings .wb-max")
-    await page.wait_for_function("() => !!document.querySelector('.winbox.sturddle-wb-standings.max')")
+    await page.click(f"{STANDINGS_WIN} .wb-max")
+    await page.wait_for_selector(f"{STANDINGS_WIN}.max")
 
-    await _standings_ends_on_list_border(page, dpr, expect_max=True)
+    await _bottom_ends_on_list_border(page, dpr, STANDINGS_WIN, expect_max=True)
     assert_no_page_errors(errors)

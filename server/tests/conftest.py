@@ -914,12 +914,28 @@ async def goto_arena_tournaments(page, base: str) -> None:
     await page.wait_for_selector(".tournament-row")
 
 
+# Class on a checked menu item (tournaments.js MENU_CHECK_CLASS).
+MENU_CHECKED = "tmb-active"
+# A fresh workspace opens in Clean (tidy): all four system windows.
+CLEAN_WINDOWS = 4
+_CLEAN_SUBPIXEL = 0.01
+# Clean applied and every window settled: WinBox animates moves/resizes, so
+# each window's rendered box must have reached its inline (target) geometry.
+CLEAN_SETTLED = f"""() => {{
+  const wins = [...document.querySelectorAll('.winbox.sturddle-wb-arena.no-shadow')];
+  const near = (a, b) => Math.abs(a - b) < {_CLEAN_SUBPIXEL};
+  return wins.length === {CLEAN_WINDOWS} && wins.every((w) => {{
+    const r = w.getBoundingClientRect();
+    return near(r.top, parseFloat(w.style.top)) && near(r.height, parseFloat(w.style.height));
+  }});
+}}"""
+
+
 async def open_arena_workspace(page) -> None:
-    """Open the selected tournament's workspace (enables the Window menu)."""
+    """Open the selected tournament's fresh workspace (enables the Window
+    menu) and wait for its default Clean layout to settle."""
     await page.click('.tournaments-ribbon .t-workspace')
-    await page.wait_for_function(
-        "() => document.querySelectorAll('.winbox.sturddle-wb').length >= 1",
-    )
+    await page.wait_for_function(CLEAN_SETTLED)
 
 
 # Minimal fake fastchess: stays alive so the tournament stays "running".
@@ -1006,24 +1022,9 @@ async def open_arena_engines_window(page, base: str) -> None:
     """Open the first tournament's Arena workspace plus its Engines window,
     and wait for LIVE_PROXY_ID's row there."""
     await goto_arena_tournaments(page, base)
-    # Default opens 3 windows (Standings + Live Games + Event log; the log
-    # auto-opens for running tournaments via initWorkspace).
     await page.click(".tournament-row")
-    await page.click(".tournaments-ribbon .t-workspace")
-    await page.wait_for_function(
-        "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
-    )
-    # Hovering the nested Window -> Tournament -> Engines submenu is brittle
-    # in Playwright; the API call is what the menu handler invokes anyway.
-    await page.evaluate(
-        """async () => {
-            const m = await import('/ui/app/tournament-workspace.js');
-            m.getActiveWorkspace().openSystemWindow('engines');
-        }"""
-    )
-    await page.wait_for_function(
-        "() => document.querySelectorAll('.winbox.sturddle-wb').length === 4",
-    )
+    # Clean opens Engines along with the other system windows.
+    await open_arena_workspace(page)
     # The workspace seeds from `proxies_active` on its initial refresh.
     await page.wait_for_selector(
         ".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn",

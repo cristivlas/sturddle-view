@@ -3,9 +3,12 @@
 // source of truth -- a typo in a raw key silently splits read from write.
 
 export const STORAGE_KEY = {
-  // File-picker last-directory and exe-filter state (prefix; per-purpose suffix appended).
+  // File-picker last-directory, exe-filter and table state (prefix; picker
+  // title appended).
   FS_PICKER_LAST_PREFIX: "sturddle:fs-picker:last:",
   FS_PICKER_EXE_ONLY_PREFIX: "sturddle:fs-picker:exeOnly:",
+  FS_PICKER_LAYOUT_PREFIX: "sturddle:fs-picker:layout:",
+  FS_PICKER_SORT_PREFIX: "sturddle:fs-picker:sort:",
 
   // Engines list view state.
   ENGINES_LAYOUT: "sturddle:engines:layout",
@@ -19,8 +22,6 @@ export const STORAGE_KEY = {
   IMPORT_RECENTS: "sturddle:import:recent",
   OPENINGS_LAYOUT: "sturddle:openings:layout",
   OPENINGS_SORT: "sturddle:openings:sort",
-  FS_PICKER_LAYOUT: "sturddle:fs-picker:layout",
-  FS_PICKER_SORT: "sturddle:fs-picker:sort",
 
   // Active perspective + per-view flip.
   ACTIVE_PERSPECTIVE: "sturddle:active-perspective",

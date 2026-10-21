@@ -52,7 +52,9 @@ function keepPointerOnMaxDrag(wb) {
         stop();
         // A double-click restore (WinBox's own) leaves nothing to do.
         if (!wb.max) return;
-        wb.restore();
+        // Tells onrestore handlers this restore is a drag's, not a click's.
+        wb.svDragRestoring = true;
+        try { wb.restore(); } finally { wb.svDragRestoring = false; }
         // Place the restored window so the press point sits at the same
         // fraction of its (narrower) drag span; WinBox's move handler then
         // adds the pointer travel since the press.

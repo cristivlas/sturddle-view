@@ -50,6 +50,7 @@ const COPY_TOURNAMENT_LABEL = "Copy tournament";
 const DELETE_TOURNAMENT_LABEL = "Delete tournament";
 const SEARCH_TOURNAMENTS_LABEL = "Search tournaments";
 const SEARCH_PLACEHOLDER = "Search tournaments...";
+const NAME_PLACEHOLDER = "Name required";
 const NO_MATCH_MSG = "No matching tournaments.";
 const SEARCH_MINIMIZED_MSG = "Windows minimized while searching";
 const RESTORE_WINDOWS_LABEL = "Restore windows";
@@ -903,7 +904,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
       wrap.className = "new-tournament-form";
       wrap.innerHTML = `
         <div class="nt-name-row">
-          <wa-input class="nt-name" label="Name" size="small" placeholder="my tournament"></wa-input>
+          <wa-input class="nt-name" label="Name" size="small" placeholder="${NAME_PLACEHOLDER}"></wa-input>
           <div class="nt-sprt-host"></div>
         </div>
 

@@ -10,6 +10,7 @@ pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
 from .conftest import (  # noqa: E402
+    MENU_CHECKED,
     goto_arena_tournaments,
     open_arena_workspace,
     run_uvicorn_subprocess,
@@ -43,19 +44,20 @@ async def _select_tournament(page, name):
     )
 
 
-async def _click_window_menu_tidy(page):
-    """Click the Tidy (Clean) layout button directly (no need to open dropdown)."""
-    await page.evaluate("() => document.querySelector('.tmb-tidy').click()")
+async def _click_window_menu_tile(page):
+    """Click the Tile layout button directly (no need to open dropdown)."""
+    await page.evaluate("() => document.querySelector('.tmb-tile').click()")
 
 
 async def _layout_state(page):
-    """Return which layout buttons currently have tmb-active class."""
+    """Return which layout buttons are currently checked."""
     return await page.evaluate(
-        """() => ({
-            snap: document.querySelector('.tmb-snap')?.classList.contains('tmb-active'),
-            tile: document.querySelector('.tmb-tile')?.classList.contains('tmb-active'),
-            tidy: document.querySelector('.tmb-tidy')?.classList.contains('tmb-active'),
-        })"""
+        """(checked) => ({
+            snap: document.querySelector('.tmb-snap')?.classList.contains(checked),
+            tile: document.querySelector('.tmb-tile')?.classList.contains(checked),
+            tidy: document.querySelector('.tmb-tidy')?.classList.contains(checked),
+        })""",
+        MENU_CHECKED,
     )
 
 
@@ -71,15 +73,17 @@ async def test_layout_persists_per_tournament(server, make_page):
 
     await goto_arena_tournaments(page, server)
 
-    # Open workspace for alpha and set Tidy layout.
+    # First open defaults to Clean; then set Tile.
     await _select_tournament(page, "alpha")
     await open_arena_workspace(page)
-    await _click_window_menu_tidy(page)
+    state_fresh = await _layout_state(page)
+    assert state_fresh["tidy"] is True, "first open should default to Clean"
+    await _click_window_menu_tile(page)
 
     state_alpha = await _layout_state(page)
-    assert state_alpha["tidy"] is True, "tidy button should be active after clicking Clean"
+    assert state_alpha["tile"] is True, "tile button should be active after clicking Tile"
     assert state_alpha["snap"] is False
-    assert state_alpha["tile"] is False
+    assert state_alpha["tidy"] is False
 
     # Switch to bravo -- it has no workspace yet, so Window menu may be
     # disabled/absent. Layout buttons should not show alpha's state.
@@ -94,9 +98,9 @@ async def test_layout_persists_per_tournament(server, make_page):
         }"""
     )
     state_bravo = await _layout_state(page)
-    assert state_bravo["tidy"] is False, "tidy button must not carry over to bravo"
+    assert state_bravo["tile"] is False, "tile button must not carry over to bravo"
     assert state_bravo["snap"] is False
-    assert state_bravo["tile"] is False
+    assert state_bravo["tidy"] is False
 
     # Switch back to alpha -- workspace auto-reopens; layout should restore.
     await _select_tournament(page, "alpha")
@@ -104,16 +108,17 @@ async def test_layout_persists_per_tournament(server, make_page):
         "() => document.querySelectorAll('.winbox.sturddle-wb').length >= 1",
     )
     state_alpha_back = await _layout_state(page)
-    assert state_alpha_back["tidy"] is True, "tidy layout should be restored for alpha"
+    assert state_alpha_back["tile"] is True, "tile layout should be restored for alpha"
     assert state_alpha_back["snap"] is False
-    assert state_alpha_back["tile"] is False
+    assert state_alpha_back["tidy"] is False
 
     assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)
 
 
 @pytest.mark.asyncio
 async def test_layout_cleared_after_xclose_reopen(server, make_page):
-    """X-closing all windows then reopening via ribbon must not restore the layout."""
+    """X-closing all windows then reopening via ribbon must not restore the
+    layout: the reopen is fresh, so it defaults to Clean."""
     _ctx, page = await make_page(viewport={"width": 1600, "height": 1000})
     page_errors: list[str] = []
     page.on("pageerror", lambda exc: page_errors.append(str(exc)))
@@ -125,10 +130,10 @@ async def test_layout_cleared_after_xclose_reopen(server, make_page):
 
     await _select_tournament(page, "alpha")
     await open_arena_workspace(page)
-    await _click_window_menu_tidy(page)
+    await _click_window_menu_tile(page)
 
     state = await _layout_state(page)
-    assert state["tidy"] is True, "tidy should be active before X-close"
+    assert state["tile"] is True, "tile should be active before X-close"
 
     # X-close all windows (simulates user closing via the WinBox X button).
     await page.evaluate(
@@ -140,14 +145,11 @@ async def test_layout_cleared_after_xclose_reopen(server, make_page):
     )
 
     # Reopen via ribbon -- restoreFromSaved is false (no open windows in snapshot).
-    await page.click('.tournaments-ribbon .t-workspace')
-    await page.wait_for_function(
-        "() => document.querySelectorAll('.winbox.sturddle-wb').length >= 1",
-    )
+    await open_arena_workspace(page)
 
     state_after = await _layout_state(page)
-    assert state_after["tidy"] is False, "tidy must not reapply after X-close reopen"
+    assert state_after["tile"] is False, "tile must not reapply after X-close reopen"
     assert state_after["snap"] is False
-    assert state_after["tile"] is False
+    assert state_after["tidy"] is True, "fresh reopen should default to Clean"
 
     assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)

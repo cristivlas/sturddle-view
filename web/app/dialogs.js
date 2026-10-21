@@ -23,10 +23,12 @@ const FS_ICON_FILE = "file-lines";
 // Typing pause after which jump-to-prefix starts a fresh prefix.
 const FS_JUMP_RESET_MS = 600;
 const FS_MIN_COL_PCT = 8;
-// Sort keys aligned to the three columns, in header order.
+// Sort keys of the three columns.
 const FS_COL_NAME = "name";
 const FS_COL_DATE = "mtime";
 const FS_COL_SIZE = "size";
+// Size cells and header: right-aligned (styles.css).
+const FS_SIZE_CLASS = "fs-size";
 
 // Folders always group before files (a fixed partition, never flipped);
 // within a group the active column orders, with name as the fixed final
@@ -37,12 +39,12 @@ const fsIcon = (e) => (e.is_dir ? FS_ICON_DIR : e.is_executable ? FS_ICON_EXE : 
 
 // Rows are the /fs listing entries themselves.
 const FS_COLUMNS = [
-  { key: FS_COL_NAME, label: "Name", width: 55, firstDir: SORT_DIR.ASC, tiebreak: true, tdClass: "fs-name-cell",
+  { key: FS_COL_NAME, label: "Name", width: 55, alwaysOn: true, firstDir: SORT_DIR.ASC, tiebreak: true, tdClass: "fs-name-cell",
     cell: (e) => `<wa-icon name="${fsIcon(e)}"></wa-icon><span class="${FS_NAME_CLASS}">${escapeHtml(e.name)}</span>` },
   { key: FS_COL_DATE, label: "Date modified", width: 30, numeric: true, firstDir: SORT_DIR.DESC,
     tdClass: "fs-date", cell: (e) => escapeHtml(fmtDate(e.mtime)) },
   { key: FS_COL_SIZE, label: "Size", width: 15, numeric: true, firstDir: SORT_DIR.DESC,
-    tdClass: "fs-size", cell: (e) => (e.is_dir ? "" : escapeHtml(fmtSize(e.size))) },
+    tdClass: FS_SIZE_CLASS, thClass: FS_SIZE_CLASS, cell: (e) => (e.is_dir ? "" : escapeHtml(fmtSize(e.size))) },
 ];
 
 function ensureContainer() {
@@ -287,19 +289,20 @@ function buildExeOnlyToggle(storageKey, onChange) {
   return { btn, isOn: () => on };
 }
 
-// The listing table (data-table.js: resize, single-column sort with folders
-// first, row navigation). isSelected/isDim(entry) drive the row classes; the
-// rowNav arrows select through the row's click (see selectFsRow).
-function buildFsTable({ isSelected, isDim, onRender }) {
+// The listing table (data-table.js: resize, reorder, hide, fit, single-column
+// sort with folders first, row navigation), its layout and sort kept per
+// recallKey. isSelected/isDim(entry) drive the row classes; the rowNav arrows
+// select through the row's click (see selectFsRow).
+function buildFsTable({ recallKey, isSelected, isDim, onRender }) {
   const table = createTable({
     cls: "fs-picker",
     tableClass: "fs-picker-table",
     columns: FS_COLUMNS,
-    layoutKey: STORAGE_KEY.FS_PICKER_LAYOUT,
+    layoutKey: STORAGE_KEY.FS_PICKER_LAYOUT_PREFIX + recallKey,
     minPct: FS_MIN_COL_PCT,
     traits: {
-      sort: { single: true, sortKey: STORAGE_KEY.FS_PICKER_SORT, group: dirsFirst },
-      resize: true,
+      sort: { single: true, sortKey: STORAGE_KEY.FS_PICKER_SORT_PREFIX + recallKey, group: dirsFirst },
+      resize: true, reorder: true, hide: true, fit: true,
       rowNav: { isSelected, onSelect: (tr) => tr.click() },
     },
     rowAttrs: (e) => ({
@@ -390,7 +393,7 @@ export function pickFile({
   };
   // Open at currentPath's parent with it preselected. An empty or bare-name
   // value falls back to recall, keyed by dialog title (same-titled pickers,
-  // e.g. the two opening-book rows, share one).
+  // e.g. the two opening-book rows, share one), as are exe-only and table state.
   const recallKey = title;
   const { dir: currentDir, name: currentName } = splitPath((currentPath || "").trim());
   const initialPath = currentDir || recallLastDir(recallKey);
@@ -412,6 +415,7 @@ export function pickFile({
       // only files are eligible); null = none.
       let highlighted = null;
       const fsTable = buildFsTable({
+        recallKey,
         isSelected: (e) => e.path === highlighted,
         isDim: (e) => !e.is_dir && !eligible(e),
         // A sort only reorders rows: keep the highlight in view.
