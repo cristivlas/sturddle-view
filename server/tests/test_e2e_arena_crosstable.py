@@ -18,6 +18,7 @@ pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
 from .conftest import (  # noqa: E402
+    MENU_CHECKED,
     assert_no_page_errors,
     goto_arena_tournaments,
     open_arena_workspace,
@@ -40,7 +41,6 @@ VIEWPORT = {"width": 1400, "height": 900}
 TITLE = ".winbox.sturddle-wb-standings .wb-title"
 XT_ROWS = ".xt-body-tbl tbody tr"
 TOGGLE = ".wb-view-toggle-ctrl"
-CHECKED = "tmb-active"
 # Grid column index of Ordo (G hidden): name, one per engine, Pts, then Ordo.
 ORDO_COL = 1 + len(ENGINES) + 1
 
@@ -86,7 +86,7 @@ async def _menu_crosstable(page):
 
 
 async def _checked(page, sel):
-    return await page.locator(sel).evaluate(f"(el) => el.classList.contains('{CHECKED}')")
+    return await page.locator(sel).evaluate(f"(el) => el.classList.contains('{MENU_CHECKED}')")
 
 
 @pytest.mark.asyncio

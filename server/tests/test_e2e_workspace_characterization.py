@@ -29,9 +29,9 @@ from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 from .conftest import (  # noqa: E402
     REGISTRY_FILE,
     e2e_env,
-    pin_arena_tournament_ux,
+    goto_arena_tournaments,
+    open_arena_workspace,
     run_uvicorn_subprocess,
-    wait_perspective_ready,
 )
 
 # Title text WinBox renders for each system window; the only stable way
@@ -76,17 +76,9 @@ def server(tmp_path):
 
 
 async def _goto_and_open(page, base):
-    await pin_arena_tournament_ux(page)
-    await page.goto(base + "/")
-    await page.wait_for_selector("#play-perspective")
-    await wait_perspective_ready(page)
-    await page.click('button[data-perspective="engines"]')
-    await page.wait_for_selector(".tournament-row")
+    await goto_arena_tournaments(page, base)
     await page.click(".tournament-row")
-    await page.click(".tournaments-ribbon .t-workspace")
-    await page.wait_for_function(
-        "() => document.querySelectorAll('.winbox.sturddle-wb').length >= 1",
-    )
+    await open_arena_workspace(page)
 
 
 async def _call_layout(page, method):
@@ -164,8 +156,6 @@ async def test_snap_perfect_tiling_and_idempotent(server, make_page):
             if m.type == "error" else None)
 
     await _goto_and_open(page, server)
-    # Open all four panels so snap has a non-trivial set to partition.
-    await _call_layout(page, "tidy")
     await _call_layout(page, "snap")
 
     first = await _rects(page)
@@ -208,7 +198,6 @@ async def test_tile_grid_in_bounds_no_overlap(server, make_page):
             if m.type == "error" else None)
 
     await _goto_and_open(page, server)
-    await _call_layout(page, "tidy")   # open all four
     await _call_layout(page, "tile")
 
     rects = await _rects(page)
@@ -226,10 +215,10 @@ async def test_tile_grid_in_bounds_no_overlap(server, make_page):
 
 
 @pytest.mark.asyncio
-async def test_tidy_opens_four_panels_and_places_them(server, make_page):
-    """tidy() auto-opens all four system panels and assigns each its
-    quadrant: engines top-left, standings top-right, schedule bottom-left,
-    log bottom-right (the placements contract)."""
+async def test_default_tidy_places_four_panels(server, make_page):
+    """A fresh workspace's default tidy opens all four system panels and
+    assigns each its quadrant: engines top-left, standings top-right,
+    schedule bottom-left, log bottom-right (the placements contract)."""
     _ctx, page = await make_page(viewport={"width": 1600, "height": 1000})
     errs: list[str] = []
     page.on("pageerror", lambda e: errs.append(str(e)))
@@ -237,7 +226,6 @@ async def test_tidy_opens_four_panels_and_places_them(server, make_page):
             if m.type == "error" else None)
 
     await _goto_and_open(page, server)
-    await _call_layout(page, "tidy")
 
     rects = await _rects(page)
     assert set(rects) == {"engines", "standings", "schedule", "log"}, (

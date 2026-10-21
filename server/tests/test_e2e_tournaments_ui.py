@@ -17,6 +17,7 @@ from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 from .conftest import (  # noqa: E402
     REGISTRY_FILE,
     e2e_env,
+    open_arena_workspace,
     pin_arena_tournament_ux,
     run_uvicorn_subprocess,
     wait_for_async_predicate,
@@ -172,9 +173,9 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, make_p
 
 
 @pytest.mark.asyncio
-async def test_tournament_workspace_opens_three_windows(tmp_path, make_page):
-    """Clicking 'Open workspace' on an idle tournament spawns two WinBox
-    windows (Standings / Schedule); event log is deferred."""
+async def test_tournament_workspace_opens_four_windows(tmp_path, make_page):
+    """Clicking 'Open workspace' on an idle tournament opens the default
+    Clean layout: all four system windows."""
     env = _server_env(tmp_path, fastchess_path=sys.executable)
     TournamentStore(tmp_path / "tournaments").create(
         name="ws-smoke",
@@ -197,13 +198,8 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, make_page):
         await page.wait_for_selector(".tournament-row")
 
         await page.click('.tournament-row')
-        await page.click('.tournaments-ribbon .t-workspace')
-
-        # Idle tournament: only Standings auto-opens. Live Games
-        # opens lazily when the tournament is running.
-        await page.wait_for_function(
-            "() => document.querySelectorAll('.winbox.sturddle-wb').length === 1",
-        )
+        # Fresh workspace: Clean opens all four system windows.
+        await open_arena_workspace(page)
         titles = await page.evaluate(
             """() => [...document.querySelectorAll('.winbox.sturddle-wb .wb-title')]
                         .map(t => t.textContent)"""
@@ -229,9 +225,6 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, make_page):
             "() => document.querySelectorAll('.winbox.sturddle-wb').length === 0",
         )
         await page.click('.tournament-row')
-        await page.click('.tournaments-ribbon .t-workspace')
-        await page.wait_for_function(
-            "() => document.querySelectorAll('.winbox.sturddle-wb').length === 1",
-        )
+        await open_arena_workspace(page)
 
         assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)

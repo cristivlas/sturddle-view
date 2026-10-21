@@ -87,7 +87,6 @@ async def test_drag_from_maximized_keeps_pointer_on_title_bar(server, make_page,
     await goto_arena_tournaments(page, server)
     await page.click(".tournament-row")
     await open_arena_workspace(page)
-    await page.wait_for_selector(WIN)
 
     # Shrink the restored window by dragging its right edge in.
     edge = await _rect(page, f"{WIN} .wb-e")
