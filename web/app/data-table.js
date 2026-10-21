@@ -205,19 +205,28 @@ function menuHtml(layout, byKey, traits, visibleCount) {
     (traits.fit ? action(MENU_ACTION.FIT, FIT_LABEL) : "") + action(MENU_ACTION.RESET, RESET_LABEL);
 }
 
-// Below the button unless it only fits (or fits better) above; capped to
-// the chosen side's room so a tall menu scrolls inside. Clamped inside the
-// viewport horizontally.
+// Below the button, else above; fitting neither side, it takes the whole
+// viewport height (covering the button) and only then scrolls inside.
+// Clamped inside the viewport horizontally.
 function positionMenu(menu, btn) {
   const r = btn.getBoundingClientRect();
   menu.style.maxHeight = "";
   const h = menu.offsetHeight;
   const roomBelow = window.innerHeight - r.bottom - MENU_GAP_PX - MENU_EDGE_PX;
   const roomAbove = r.top - MENU_GAP_PX - MENU_EDGE_PX;
-  const below = h <= roomBelow || roomBelow >= roomAbove;
-  const room = Math.max(0, below ? roomBelow : roomAbove);
+  let room, top;
+  if (h <= roomBelow) {
+    room = roomBelow;
+    top = r.bottom + MENU_GAP_PX;
+  } else if (h <= roomAbove) {
+    room = roomAbove;
+    top = r.top - MENU_GAP_PX - h;
+  } else {
+    room = Math.max(0, window.innerHeight - 2 * MENU_EDGE_PX);
+    top = window.innerHeight - MENU_EDGE_PX - Math.min(h, room);
+  }
   menu.style.maxHeight = room + "px";
-  menu.style.top = (below ? r.bottom + MENU_GAP_PX : r.top - MENU_GAP_PX - Math.min(h, room)) + "px";
+  menu.style.top = top + "px";
   const maxLeft = window.innerWidth - menu.offsetWidth - MENU_EDGE_PX;
   menu.style.left = Math.max(MENU_EDGE_PX, Math.min(r.left, maxLeft)) + "px";
 }
