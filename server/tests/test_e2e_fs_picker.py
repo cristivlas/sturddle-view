@@ -37,6 +37,16 @@ SELECT_DIR_LABEL = "Select directory"
 PGN_DIR_NAME = "pgn"
 STRAY_FILE = "stray.txt"
 
+SELECT_LABEL = "Select"
+PICKER = ".fs-picker"
+PICKER_FOOTER_BTN = f"wa-dialog:has({PICKER}) wa-button[slot=footer]"
+COLUMNS_BTN = ".fs-picker-head-tbl .dt-menu-btn"
+DATE_TOGGLE = '.dt-menu:popover-open .dt-menu-col[data-key="mtime"] .dt-menu-toggle'
+DATE_LABEL = "Date modified"
+HEAD_LABELS_JS = (
+    "() => Array.from(document.querySelectorAll('.fs-picker-head-tbl .th-label'), (e) => e.textContent)"
+)
+
 LISTED_NAMES_JS = (
     "() => Array.from(document.querySelectorAll('.fs-entry .fs-name'), (e) => e.textContent)"
 )
@@ -60,6 +70,11 @@ async def _open_picker(page, browse_sel):
 
 async def _picker_path(page):
     return await page.eval_on_selector(PICKER_PATH, "(el) => el.value")
+
+
+async def _select_and_close(page, label):
+    await page.locator(PICKER_FOOTER_BTN, has_text=label).click()
+    await page.wait_for_selector(PICKER, state="detached")
 
 
 @pytest.mark.asyncio
@@ -104,6 +119,33 @@ async def test_file_picker_opens_at_parent_with_value_preselected(tmp_path, make
 
 
 @pytest.mark.asyncio
+async def test_table_layout_is_per_picker_title(tmp_path, make_page):
+    """Column layout is remembered per picker title: hiding a column in one
+    picker leaves a differently titled picker at its defaults."""
+    (tmp_path / PGN_DIR_NAME).mkdir()
+    env = {**e2e_env(tmp_path), "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable}
+    with run_uvicorn_subprocess(env_overrides=env) as base:
+        page, errors = await _open_settings(make_page, base)
+        await page.click(PLAY_TAB)
+        await _open_picker(page, PGN_BROWSE)
+        await page.click(COLUMNS_BTN)
+        await page.click(DATE_TOGGLE)
+        await page.click(COLUMNS_BTN)
+        assert DATE_LABEL not in await page.evaluate(HEAD_LABELS_JS)
+        await _select_and_close(page, SELECT_DIR_LABEL)
+
+        await page.click(TOURNAMENT_TAB)
+        await _open_picker(page, FASTCHESS_BROWSE)
+        assert DATE_LABEL in await page.evaluate(HEAD_LABELS_JS), "layout leaked across picker titles"
+        await _select_and_close(page, SELECT_LABEL)
+
+        await page.click(PLAY_TAB)
+        await _open_picker(page, PGN_BROWSE)
+        assert DATE_LABEL not in await page.evaluate(HEAD_LABELS_JS), "layout not kept for its title"
+        assert not errors, errors
+
+
+@pytest.mark.asyncio
 async def test_sort_keeps_folders_first(tmp_path, make_page):
     """Sorting by Size (either direction) reorders files but never moves a
     folder below a file: folders-first is a fixed partition."""
@@ -125,7 +167,7 @@ async def test_sort_keeps_folders_first(tmp_path, make_page):
         await page.click(".fs-exe-only-btn")
         await page.wait_for_function("() => document.querySelectorAll('.fs-entry').length === 5")
 
-        size_label = ".fs-picker-head-tbl th:last-child .th-label"
+        size_label = ".fs-picker-head-tbl th.fs-size .th-label"
         for _direction in ("desc", "asc"):
             await page.click(size_label)
             names = await page.evaluate(LISTED_NAMES_JS)

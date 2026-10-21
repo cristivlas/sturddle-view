@@ -3,7 +3,7 @@
 // fit -- so a table declares its columns instead of re-wiring each helper.
 //
 // Column descriptor: { key, label, width (default %), cell(row) => html,
-// tdClass?, tdTitle?(row) => text, alwaysOn?, defaultHidden?, plus the sort-stack.js fields
+// tdClass?, thClass?, tdTitle?(row) => text, alwaysOn?, defaultHidden?, plus the sort-stack.js fields
 // (field, numeric, firstDir, tiebreak, sortable) }.
 
 import { loadJson, saveJson } from "./storage.js";
@@ -484,7 +484,8 @@ export function createTable({
       ? `<button class="${MENU_BTN_CLASS}" title="${MENU_BTN_LABEL}" aria-label="${MENU_BTN_LABEL}"><wa-icon name="${MENU_ICON}"></wa-icon></button>`
       : "";
     const grip = traits.resize && i < cols.length - 1 ? `<span class="${GRIP_CLASS}"></span>` : "";
-    return `<th>${btn}<span class="${TH_LABEL_CLASS}">${escapeHtml(col.label)}</span>${grip}</th>`;
+    const thCls = col.thClass ? ` class="${col.thClass}"` : "";
+    return `<th${thCls}>${btn}<span class="${TH_LABEL_CLASS}">${escapeHtml(col.label)}</span>${grip}</th>`;
   }
 
   // Rebuild header + colgroups for the current order/visibility, re-attach

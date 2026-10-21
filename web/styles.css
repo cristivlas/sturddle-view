@@ -3277,7 +3277,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   background: #252830;
 }
 /* Size header sits over right-aligned values. */
-.fs-picker-head-tbl th:last-child { text-align: right; }
+.fs-picker-head-tbl th.fs-size { text-align: right; }
 .th-sortable { cursor: pointer; }
 /* A focused .th-label (the tab stop when present) rings its whole th. */
 .th-sortable:focus-visible,
