@@ -4679,6 +4679,20 @@ wa-dialog.tournament-info-dialog::part(body) {
 .winbox.sturddle-wb.min,
 .winbox.sturddle-wb.min .wb-header,
 .winbox.sturddle-wb.min .wb-body { border-radius: 0; }
+/* ...and above every other window there (WinBox's inline focus z-index would
+   bury it), but under the menubar dropdowns (.tmb-dropdown, 9000). WinBox
+   overlaps neighboring bars by 1px to share one seam; an outside outline
+   would double up there (brighter where the translucent edges cross), so the
+   edge goes inside the box, over the header, where the next bar covers it. */
+.winbox.sturddle-wb.min { z-index: 8999 !important; outline: none; }
+.winbox.sturddle-wb.min::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: var(--wb-outline-w) solid var(--wb-outline);
+  pointer-events: none;
+  z-index: var(--wb-overlay-z);
+}
 /* Floating controls window: always straight corners, whatever the shared
    .sturddle-wb radius rules decide for other windows. */
 .winbox.sturddle-wb-ribbon,
