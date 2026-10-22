@@ -68,10 +68,23 @@ function keepPointerOnMaxDrag(wb) {
   }
 }
 
+// Bottom fence fix: WinBox reads one `bottom` inset both as maximize's bottom
+// edge and as the line minimized bars stack on. The caller's `bottom` fences
+// maximize only; minimized bars dock at the viewport bottom, in the strip the
+// layouts reserve (--wb-min-footer-h). Swapped on the way into each state.
+function fenceMaximizeOnly(wb, bottom) {
+  const { minimize, maximize } = wb;
+  wb.minimize = function (state) { this.bottom = 0; return minimize.call(this, state); };
+  wb.maximize = function (state) { this.bottom = bottom; return maximize.call(this, state); };
+}
+
 // `new WinBox(opts)` plus the app's behavior fixes. WinBox is the global the
 // vendored script defines.
 export function createWinBox(opts) {
-  const wb = new WinBox(opts);
+  // Born minimized: dock in the strip from the start (the wrappers below
+  // aren't installed until after construction).
+  const wb = new WinBox(opts.bottom && opts.min ? { ...opts, bottom: 0 } : opts);
   keepPointerOnMaxDrag(wb);
+  if (opts.bottom) fenceMaximizeOnly(wb, opts.bottom);
   return wb;
 }
