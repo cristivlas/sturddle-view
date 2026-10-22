@@ -52,6 +52,9 @@ import { attachRibbonOverflow } from "../ribbon-overflow.js";
 // board mirrors `input.fen` while a call with this name is in flight.
 const ANALYZE_TOOL_NAME = "analyze";
 
+// GET rehydrates the AI panel; DELETE acks a shown failed-turn error.
+const AI_REPLAY_PATH = "/game/analysis/replay";
+
 // Module-scope mirror of "user has a live human-vs-engine game running",
 // persisting across perspective remounts. Updated from the perspective's
 // board_update / game_result handlers below. Cross-module consumers
@@ -431,7 +434,7 @@ function configureBtn(btn, {
 // Apply one AI analysis event to the panel/board. `aiCtx` holds view, api,
 // refreshButtons, aiShared. Returns true if the event was an ai_* kind.
 function dispatchAiEvent(aiCtx, evt) {
-  const { view, refreshButtons, aiShared } = aiCtx;
+  const { view, api, refreshButtons, aiShared } = aiCtx;
   switch (evt.kind) {
     case KIND.AI_INFO: {
       const p = evt.payload || {};
@@ -458,6 +461,9 @@ function dispatchAiEvent(aiCtx, evt) {
           // a quota/outage failure stays until the user reads it. Failures we
           // recognize by class name also carry the action that fixes them.
           _dismissAiErrorToast = reportAiError(p.error, p.error_detail);
+          // The server replays a failed turn until a client shows its error
+          // (one away from Play gets it on return); ack so it shows once.
+          api("DELETE", AI_REPLAY_PATH).catch(() => {});
         }
         // End the AI turn on completion AND error (clears the pulse + toast).
         // Cancel is excluded: it self-resolves via stopAnalysisFromUi ->
@@ -573,7 +579,7 @@ function dispatchAiEventOrdered(ai, aiCtx, evt) {
 async function rehydrateAiPanel(ai, aiCtx, { adopt = false } = {}) {
   let replayedThrough = 0;
   try {
-    const r = await aiCtx.api("GET", "/game/analysis/replay");
+    const r = await aiCtx.api("GET", AI_REPLAY_PATH);
     // Unmounted mid-GET (nav away): unmount already closed the panel and
     // dropped its hosts -- opening now would float it over the next
     // perspective.

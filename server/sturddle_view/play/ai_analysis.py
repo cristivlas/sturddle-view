@@ -159,6 +159,27 @@ _USAGE_TOTAL_KEYS = tuple(f.name for f in fields(ProviderUsage))
 ERROR_DETAIL_MAX_LEN = 500
 _ERROR_DETAIL_KEY = "error_detail"
 
+
+def _exc_detail(exc: BaseException) -> str:
+    """str(exc), or for a bare exception (httpx.ConnectError may carry no
+    message) the first cause in its chain that has one, type-prefixed."""
+    link, seen = exc, set()
+    while link is not None and id(link) not in seen:
+        seen.add(id(link))
+        if str(link):
+            return str(link) if link is exc else f"{type(link).__name__}: {link}"
+        link = link.__cause__ or link.__context__
+    return ""
+
+
+def _error_fields(exc: BaseException) -> dict[str, str]:
+    """A failed run's error name and capped detail, for its done payload."""
+    return {
+        ERROR_KEY: type(exc).__name__,
+        _ERROR_DETAIL_KEY: _exc_detail(exc)[:ERROR_DETAIL_MAX_LEN],
+    }
+
+
 _QUESTION_ARG_KEY = "question"
 
 # Per-round prose check against the live board. On a hit the model gets a
@@ -1163,8 +1184,8 @@ class AIAnalysisCoordinator:
         # True if any delegate's verifier sub-run capped out this turn.
         self._verifier_round_cap_hit: bool = False
         # In-mem buffer of events emitted by the current/most-recent
-        # turn. Reset on run() start, cleared on analysis stop. Lets a
-        # client reconnecting mid-analysis rehydrate the panel.
+        # turn. Reset on run() start, cleared on analysis stop or a failed
+        # turn's ack. Lets a reconnecting client rehydrate the panel.
         self._replay_buffer: list[dict] = []
         # Per-turn token totals (narrator + verifier sub-runs combined).
         # None until the provider reports usage -- providers without
@@ -1311,11 +1332,13 @@ class AIAnalysisCoordinator:
                     done_payload["cancelled"] = True
                     raise
                 except Exception as exc:
-                    # log.error (not exception): trace is noise for
-                    # provider rejections; full detail is in transcript.
-                    log.error("AI agent loop failed: %s: %s", type(exc).__name__, exc)
-                    done_payload[ERROR_KEY] = type(exc).__name__
-                    done_payload[_ERROR_DETAIL_KEY] = str(exc)[:ERROR_DETAIL_MAX_LEN]
+                    # Trace only for a bare exception (its cause chain is the
+                    # detail); for provider rejections it is noise.
+                    log.error(
+                        "AI agent loop failed: %s: %s", type(exc).__name__, exc,
+                        exc_info=not str(exc),
+                    )
+                    done_payload.update(_error_fields(exc))
                     raise
                 finally:
                     if (
@@ -1359,11 +1382,6 @@ class AIAnalysisCoordinator:
                             payload=done_payload,
                         )
                     )
-                    # An errored turn tears its panel down client-side; the
-                    # buffered done event would only re-fire its error toast
-                    # on rehydrate. Drop it.
-                    if done_payload.get(ERROR_KEY):
-                        self.clear_replay()
                     self._task = None
                     self._cancel_token = None
                     self._active_provider = None
@@ -2229,8 +2247,7 @@ class AIAnalysisCoordinator:
                     )
                 return VerifierResult(result.final_text, result.round_cap_hit)
             except Exception as exc:
-                done_payload[ERROR_KEY] = type(exc).__name__
-                done_payload[_ERROR_DETAIL_KEY] = str(exc)[:ERROR_DETAIL_MAX_LEN]
+                done_payload.update(_error_fields(exc))
                 raise
             finally:
                 await transcript.turn_end(done_payload)
@@ -2300,6 +2317,12 @@ class AIAnalysisCoordinator:
         # Rebind (not .clear()) so an in-flight replay() iteration on
         # the old list stays consistent.
         self._replay_buffer = []
+
+    def clear_failed_replay(self) -> None:
+        # A client showed the failed turn's error. Only a failed turn ends on
+        # an error, so a late ack can't wipe a newer turn's buffer.
+        if self._replay_buffer and self._replay_buffer[-1][ENVELOPE_PAYLOAD].get(ERROR_KEY):
+            self.clear_replay()
 
     def seed_replay(self, events: list[dict]) -> None:
         # Test-support: prime the buffer so a page load rehydrates the panel

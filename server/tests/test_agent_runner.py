@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
 import pytest
 
 from sturddle_view.events import EVT_AI_USAGE, EventBus
@@ -626,6 +627,32 @@ async def test_error_detail_truncated_to_cap():
     assert len(detail) == ERROR_DETAIL_MAX_LEN
 
 
+@pytest.mark.asyncio
+async def test_bare_provider_error_detail_falls_back_to_cause(caplog):
+    """httpx.ConnectError can carry no message, leaving the toast and the log
+    line blank. The detail falls back to the first cause that has one, and
+    the log line carries the traceback so the whole chain is on record."""
+    cause = OSError("connection refused")
+
+    class _BareBoom(ScriptedProvider):
+        async def stream(self, system, messages, tools=None, *, transcript=None, round_index=0, thinking=None, force_tool_call=False):
+            raise httpx.ConnectError("") from cause
+            yield  # pragma: no cover
+
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, _BareBoom(rounds=[]))
+
+    with pytest.raises(httpx.ConnectError):
+        await coord.run(game_id="g")
+
+    terminal = (await _drain_until_done(queue))[-1].payload
+    assert terminal["error"] == "ConnectError"
+    assert terminal["error_detail"] == "OSError: connection refused"
+    failed = [r for r in caplog.records if r.getMessage().startswith("AI agent loop failed")]
+    assert len(failed) == 1 and failed[0].exc_info is not None
+
+
 # ---------- Tool cards (lazy per-tool guidance) ------------------------
 # See docs/ai-analysis-spec.md section Skills layer. A tool's card is appended as a
 # text content block inside the tool_result user message, on the first
@@ -943,6 +970,41 @@ async def test_clear_replay_empties_buffer():
     await coord.run(game_id="g")
     assert len(coord.replay()) > 0
     coord.clear_replay()
+    assert coord.replay() == []
+
+
+@pytest.mark.asyncio
+async def test_errored_turn_keeps_done_in_replay():
+    # A client away when the turn failed (on another perspective) learns of
+    # the error only from the replay on its return.
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, ScriptedProvider(rounds=[]), registry=ToolRegistry())
+
+    with pytest.raises(RuntimeError):
+        await coord.run(game_id="g")
+    terminal = coord.replay()[-1]["payload"]
+    assert terminal["done"] is True
+    assert terminal["error"] == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_clear_failed_replay_drops_only_an_errored_turn():
+    # The client's ack of a shown error. A late ack must not wipe a newer,
+    # healthy turn's buffer.
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, ScriptedProvider(rounds=[[ProviderChunk(kind="text", text="x")]]),
+        registry=ToolRegistry(),
+    )
+    await coord.run(game_id="g")
+    coord.clear_failed_replay()
+    assert len(coord.replay()) > 0
+
+    with pytest.raises(RuntimeError):
+        await coord.run(game_id="g", provider=ScriptedProvider(rounds=[]))
+    coord.clear_failed_replay()
     assert coord.replay() == []
 
 
