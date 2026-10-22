@@ -535,7 +535,7 @@ function openWorkspace(ctx, t) {
     const r = ctx.listEl.getBoundingClientRect();
     return r.height ? r.bottom - outlineW() : Infinity;
   };
-  openTournamentWorkspace({ api: ctx.api, events: ctx.events, log: ctx.log, tournament: t, top, left, getRight, getBottom });
+  openTournamentWorkspace({ api: ctx.api, events: ctx.events, log: ctx.log, tournament: t, top, left, getRight, getBottom, boundsEl: ctx.listEl });
   // Seed the workspace's view of the other-active tournament so the
   // banner Restart button reflects busy state on open, not just after
   // the next loadList tick.

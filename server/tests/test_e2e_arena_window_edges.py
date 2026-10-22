@@ -314,6 +314,12 @@ _ROW_COLORS = """async ([b64, ys, x0, x1]) => {
   });
 }"""
 MINIMIZE_ORDER = (STANDINGS_WIN, LEFT_WIN, ".winbox.sturddle-wb-arena:has(.wb-eventlog)")
+# WinBox slides minimized bars into place: settled once each one's rendered
+# box sits at its target (inline style) left/top.
+_MIN_BARS_SETTLED = f"""() => [...document.querySelectorAll('.winbox.min')].every((w) => {{
+  const r = w.getBoundingClientRect();
+  return Math.abs(r.left - parseFloat(w.style.left)) < {SUBPIXEL} && Math.abs(r.top - parseFloat(w.style.top)) < {SUBPIXEL};
+}})"""
 # Integer DPRs only: a fractional one blends every edge across device pixels
 # (a seam's as much as any other), so its rows aren't one color either way.
 CRISP_DPRS = (1, 2)
@@ -334,8 +340,7 @@ async def test_minimized_bars_share_one_seam(server, make_page, dpr):
         await page.click(f"{sel}:not(.min) .wb-min")
         await page.wait_for_selector(f"{sel}.min")
     await page.mouse.move(VIEWPORT["width"] / 2, 0)
-    # WinBox slides the bars into place.
-    await page.wait_for_timeout(500)
+    await page.wait_for_function(_MIN_BARS_SETTLED)
 
     left, right, top = await page.evaluate(_MIN_STRIP)
     shot = await page.screenshot()
@@ -345,4 +350,111 @@ async def test_minimized_bars_share_one_seam(server, make_page, dpr):
         _ROW_COLORS, [base64.b64encode(shot).decode(), ys, round(left * dpr) + 2, round(right * dpr) - 2],
     )
     assert all(len(colors) == 1 for colors in rows), (dpr, rows)
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("height", (700, 1100))
+async def test_maximized_window_ends_on_list_border_after_resize(server, make_page, height):
+    """The maximize fence follows the list: after a viewport resize, a
+    window created before it still stops at the list's bottom border."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await goto_arena_tournaments(page, server)
+    await page.click(".tournament-row")
+    await open_arena_workspace(page)
+    await page.set_viewport_size({"width": VIEWPORT["width"], "height": height})
+    await page.click(f"{STANDINGS_WIN} .wb-max")
+    await page.wait_for_selector(f"{STANDINGS_WIN}.max")
+
+    await _bottom_ends_on_list_border(page, 1, STANDINGS_WIN, expect_max=True)
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_maximized_window_ends_on_list_border_when_built_unlaid(server, make_page):
+    """The maximize fence is read at maximize, not at creation: windows built
+    while the list has no box (no bound to measure) still stop at its
+    bottom border once it's laid out."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await goto_arena_tournaments(page, server)
+    await page.click(".tournament-row")
+    await page.evaluate("() => { document.querySelector('.tournaments-list').style.display = 'none'; }")
+    await open_arena_workspace(page)
+    await page.evaluate("() => { document.querySelector('.tournaments-list').style.display = ''; }")
+    await page.click(f"{STANDINGS_WIN} .wb-max")
+    await page.wait_for_selector(f"{STANDINGS_WIN}.max")
+
+    await _bottom_ends_on_list_border(page, 1, STANDINGS_WIN, expect_max=True)
+    assert_no_page_errors(errors)
+
+
+# Hides the list from page load on (style id HIDE_LIST_ID) so a workspace
+# restored at startup is built before the list has a box.
+HIDE_LIST_ID = "test-hide-list"
+_HIDE_LIST_AT_LOAD = f"""document.addEventListener('DOMContentLoaded', () => {{
+  const s = document.createElement('style');
+  s.id = '{HIDE_LIST_ID}';
+  s.textContent = '.tournaments-list {{ display: none !important; }}';
+  document.head.append(s);
+}});"""
+_ENDS_ON_LIST_BORDER = f"""(sel) => {{
+  const w = document.querySelector(sel);
+  const list = document.querySelector('.tournaments-list').getBoundingClientRect().bottom;
+  const outline = parseFloat(getComputedStyle(w).outlineWidth);
+  return Math.abs(w.getBoundingClientRect().bottom + outline - list) < {SUBPIXEL};
+}}"""
+
+
+@pytest.mark.asyncio
+async def test_restored_maximized_window_refits_once_list_is_laid_out(server, make_page):
+    """A window restored already maximized, before the list had a box,
+    refits to the list's bottom border once the list lays out. Snap, as
+    Clean re-tiles a restored maximized window."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await goto_arena_tournaments(page, server)
+    await page.click(".tournament-row")
+    await open_arena_workspace(page)
+    await page.click(".tmb-window-btn")
+    await page.click(LAYOUT_ITEMS["snap"])
+    await page.wait_for_selector(f"{LAYOUT_ITEMS['snap']}.{MENU_CHECKED}", state="attached")
+    await page.click(f"{STANDINGS_WIN} .wb-max")
+    await page.wait_for_selector(f"{STANDINGS_WIN}.max")
+    await page.add_init_script(_HIDE_LIST_AT_LOAD)
+    await page.reload()
+    await page.wait_for_selector(f"{STANDINGS_WIN}.max")
+    await page.evaluate(f"() => document.getElementById('{HIDE_LIST_ID}').remove()")
+
+    await page.wait_for_function(_ENDS_ON_LIST_BORDER, arg=STANDINGS_WIN)
+    assert_no_page_errors(errors)
+
+
+# Maximized window's target right edge (inline style: WinBox's own math,
+# whatever CSS stretches it to) and the workspace's right edge, from the
+# ribbon's current width.
+_MAX_RIGHT_VS_WORKSPACE = """(sel) => {
+  const w = document.querySelector(sel);
+  const ribbonW = document.querySelector('.tournaments-ribbon').getBoundingClientRect().width;
+  const outline = parseFloat(getComputedStyle(w).outlineWidth);
+  return [parseFloat(w.style.left) + parseFloat(w.style.width), Math.floor(window.innerWidth) - Math.ceil(ribbonW) - outline];
+}"""
+
+
+@pytest.mark.asyncio
+async def test_maximize_right_fence_follows_ribbon_width(server, make_page):
+    """The right maximize fence is read at maximize: after the ribbon
+    widens, a maximized window still stops at its reserve."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await goto_arena_tournaments(page, server)
+    await page.click(".tournament-row")
+    await open_arena_workspace(page)
+    await page.evaluate("() => { document.querySelector('.tournaments-ribbon').style.width = '80px'; }")
+    await page.click(f"{STANDINGS_WIN} .wb-max")
+    await page.wait_for_selector(f"{STANDINGS_WIN}.max")
+
+    right, workspace_right = await page.evaluate(_MAX_RIGHT_VS_WORKSPACE, STANDINGS_WIN)
+    assert right == pytest.approx(workspace_right, abs=SUBPIXEL), (right, workspace_right)
     assert_no_page_errors(errors)
