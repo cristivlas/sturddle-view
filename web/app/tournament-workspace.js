@@ -573,7 +573,7 @@ function makeBox(ctx, key, title, body, { min = false, max = false } = {}) {
   const extra = extraClass ? ` ${extraClass}` : "";
   const sizes = getMinSizes()[key];
   const wb = createWinBox({
-    title, mount: body, top: ctx.top, left: ctx.left, right: ctx.getRightInset(), bottom: ctx.getBottomInset(), min, max,
+    title, mount: body, top: ctx.top, left: ctx.left, right: ctx.getRightInset, bottom: ctx.getBottomInset, min, max,
     ...(cfg ? { x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height } : {}),
     class: `sturddle-wb ${ARENA_WINDOW_CLASS} no-full${extra}`,
     ...sizes,
@@ -627,7 +627,7 @@ function attachWatch(ctx, btn, attachKey, openOpts) {
   try {
     result = openLiveGameWindow({
       ...openOpts, tournamentId: ctx.tournament.id,
-      top: ctx.top, left: ctx.left, right: ctx.getRightInset(), bottom: ctx.getBottomInset(),
+      top: ctx.top, left: ctx.left, right: ctx.getRightInset, bottom: ctx.getBottomInset,
       boardStyle: ctx.boardStyleCached,
       initialRect: claim ? { x: claim.x, y: claim.y, w: claim.w, h: claim.h } : (openOpts.initialRect ?? null),
     });
@@ -829,12 +829,25 @@ function onResize(ctx) {
 function attachResizeListeners(ctx) {
   window.addEventListener("resize", ctx.onResize);
   document.addEventListener("fullscreenchange", ctx.onResize);
+  ctx.boundsBottom = ctx.getBottom();
+  if (ctx.boundsEl) ctx.boundsObserver.observe(ctx.boundsEl);
 }
 
 function detachResizeListeners(ctx) {
   window.removeEventListener("resize", ctx.onResize);
   document.removeEventListener("fullscreenchange", ctx.onResize);
+  ctx.boundsObserver?.disconnect();
   clearTimeout(ctx.resizeTimer);
+}
+
+// boundsEl resized: refit as for a viewport resize, but only when the bottom
+// edge moved (observe() reports once up front). Catches the bound appearing
+// after windows were built -- e.g. restored maximized before it laid out.
+function onBoundsResize(ctx) {
+  const b = ctx.getBottom();
+  if (b === ctx.boundsBottom) return;
+  ctx.boundsBottom = b;
+  ctx.onResize();
 }
 
 function onLiveGameClosed(ctx) {
@@ -997,7 +1010,7 @@ async function initWorkspace(ctx) {
           gameN: resolved.gameN,
           result: resolved.result,
           termination: resolved.termination,
-          top: ctx.top, left: ctx.left, right: ctx.getRightInset(), bottom: ctx.getBottomInset(),
+          top: ctx.top, left: ctx.left, right: ctx.getRightInset, bottom: ctx.getBottomInset,
           boardStyle: ctx.boardStyleCached,
           initialRect: rect, min: !!s.min, max: !!s.max, flash: false,
         });
@@ -1396,9 +1409,10 @@ function setLayout(ctx, mode) {
 // windows, registers listeners, and returns the workspace control API.
 // The behavior lives in the module-level helpers that take `ctx`.
 // getBottom: the managed layouts' and maximize's bottom edge (workspaceBottom).
+// boundsEl: the element getBottom measures; its resizes refit the windows.
 export function openTournamentWorkspace({
   api, events, log, tournament, top = 0, left = 0,
-  getRight = () => window.innerWidth, getBottom = () => window.innerHeight,
+  getRight = () => window.innerWidth, getBottom = () => window.innerHeight, boundsEl = null,
 }) {
   // Single-active model. Re-clicking the workspace icon for the
   // already-open tournament is a no-op (just focus its windows) so
@@ -1453,7 +1467,7 @@ export function openTournamentWorkspace({
   // scalars (detail, body refs, lifecycle guards), and the bound listener
   // thunks (added/removed by the same reference).
   const ctx = {
-    api, events, log, tournament, top, left, getRight, getBottom,
+    api, events, log, tournament, top, left, getRight, getBottom, boundsEl,
     savedState, restoreFromSaved, slotGrid, lastGeometry,
     live,
     eventLog: live.eventLog, seenSeqs: live.seenSeqs,
@@ -1499,7 +1513,8 @@ export function openTournamentWorkspace({
   // area -- ribbon width when docked right, 0 when docked left. WinBox's
   // maximize() respects this so a maximized window stops at the ribbon.
   ctx.getRightInset = () => Math.max(0, window.innerWidth - getRight());
-  // Likewise below: maximize stops at the workspace bottom (the list's, in Arena).
+  // Likewise below: maximize stops at the workspace bottom (the list's, in
+  // Arena). Windows get the function itself, read at each maximize.
   ctx.getBottomInset = () => Math.max(0, window.innerHeight - workspaceBottom(ctx, false));
 
   const windowSpecs = buildWindowSpecs(ctx);
@@ -1539,6 +1554,7 @@ export function openTournamentWorkspace({
   ctx.onRefreshWatchButtons = () => refreshWatchButtons(ctx);
   ctx.onLiveGameClosedReapply = () => onLiveGameClosedReapply(ctx);
   ctx.onResize = () => onResize(ctx);
+  ctx.boundsObserver = boundsEl ? new ResizeObserver(() => onBoundsResize(ctx)) : null;
   ctx.onLiveGameClosed = () => onLiveGameClosed(ctx);
 
   initWorkspace(ctx);

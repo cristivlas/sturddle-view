@@ -72,19 +72,26 @@ function keepPointerOnMaxDrag(wb) {
 // edge and as the line minimized bars stack on. The caller's `bottom` fences
 // maximize only; minimized bars dock at the viewport bottom, in the strip the
 // layouts reserve (--wb-min-footer-h). Swapped on the way into each state.
-function fenceMaximizeOnly(wb, bottom) {
+// `bottom` and `right` may be functions, read afresh on the way into each
+// state: insets measured at creation go stale (none at all if the layout
+// wasn't up yet).
+function fenceMaximizeOnly(wb, bottom, right) {
   const { minimize, maximize } = wb;
-  wb.minimize = function (state) { this.bottom = 0; return minimize.call(this, state); };
-  wb.maximize = function (state) { this.bottom = bottom; return maximize.call(this, state); };
+  wb.minimize = function (state) { this.bottom = 0; this.right = right(); return minimize.call(this, state); };
+  wb.maximize = function (state) { this.bottom = bottom(); this.right = right(); return maximize.call(this, state); };
 }
 
+const reader = (v) => (typeof v === "function" ? v : () => v ?? 0);
+
 // `new WinBox(opts)` plus the app's behavior fixes. WinBox is the global the
-// vendored script defines.
+// vendored script defines. `bottom`/`right` may be functions (see
+// fenceMaximizeOnly).
 export function createWinBox(opts) {
+  const bottom = reader(opts.bottom), right = reader(opts.right);
   // Born minimized: dock in the strip from the start (the wrappers below
   // aren't installed until after construction).
-  const wb = new WinBox(opts.bottom && opts.min ? { ...opts, bottom: 0 } : opts);
+  const wb = new WinBox({ ...opts, bottom: opts.min ? 0 : bottom(), right: right() });
   keepPointerOnMaxDrag(wb);
-  if (opts.bottom) fenceMaximizeOnly(wb, opts.bottom);
+  if (opts.bottom || opts.right) fenceMaximizeOnly(wb, bottom, right);
   return wb;
 }
