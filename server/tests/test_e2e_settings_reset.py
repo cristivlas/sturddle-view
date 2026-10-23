@@ -23,6 +23,10 @@ PLAYER_NAME = "Alyssa P. Hacker"
 # Wire value of an unset (default) player name.
 PLAYER_NAME_DEFAULT = ""
 SETTINGS_BTN = "#settings-btn"
+# Phone portrait folds Settings into the header's ellipsis menu.
+HEADER_MORE_BTN = "#header-more-btn"
+HEADER_MENU_ITEM = "#header-more-menu .tmb-dd-item"
+SETTINGS_LABEL = "Settings"
 SETTINGS_TABS = "wa-dialog .settings-tabs"
 RESET_BTN = "wa-dialog > .settings-reset-row > wa-button.settings-reset-btn"
 CONFIRM_DIALOG = "wa-dialog[no-header]"
@@ -59,12 +63,17 @@ async def _new_page(make_page, viewport):
     return page, errors
 
 
-async def _open_settings(page, base):
+async def _open_settings(page, base, via_menu=False):
     """Load the app, open Settings (Common is the start tab) and wait for
-    the dialog to show, which the footer Reset button proves."""
+    the dialog to show, which the footer Reset button proves. `via_menu`:
+    through the phone-portrait header menu instead of the gear."""
     await page.goto(base + "/")
     await wait_perspective_ready(page)
-    await page.click(SETTINGS_BTN)
+    if via_menu:
+        await page.click(HEADER_MORE_BTN)
+        await page.locator(HEADER_MENU_ITEM, has_text=SETTINGS_LABEL).click()
+    else:
+        await page.click(SETTINGS_BTN)
     await page.locator(RESET_BTN).wait_for(state="visible")
 
 
@@ -116,14 +125,14 @@ async def test_reset_restores_defaults_and_reloads(server, make_page):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("viewport", "placement"),
-    [(WIDE_VIEWPORT, PLACEMENT_SIDE), (MID_VIEWPORT, PLACEMENT_TOP)],
+    ("viewport", "placement", "via_menu"),
+    [(WIDE_VIEWPORT, PLACEMENT_SIDE, False), (MID_VIEWPORT, PLACEMENT_TOP, True)],
 )
-async def test_tab_layout_never_scrolls_sideways(server, make_page, viewport, placement):
+async def test_tab_layout_never_scrolls_sideways(server, make_page, viewport, placement, via_menu):
     """The side rail only fits a full-width dialog; narrower windows get top
     tabs so the body never needs a horizontal scrollbar."""
     page, errors = await _new_page(make_page, viewport)
-    await _open_settings(page, server)
+    await _open_settings(page, server, via_menu)
     assert await page.locator(SETTINGS_TABS).evaluate("(el) => el.placement") == placement
     widths = await page.evaluate(BODY_WIDTHS_JS)
     assert widths["client"] > 0, widths
