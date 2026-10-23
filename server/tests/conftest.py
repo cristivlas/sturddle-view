@@ -395,6 +395,21 @@ async def drag_piece_one_rank_up(page, square: str) -> None:
     await page.mouse.up()
 
 
+# cm-chessboard resizes, redrawing every piece node, in a task deferred from
+# its ResizeObserver: until then its container's width lags its host's.
+_BOARD_SETTLED_JS = (
+    "(sel) => { const c = document.querySelector(sel)?.parentElement;"
+    " return !!c && c.style.width === `${c.parentElement.clientWidth}px`; }"
+)
+
+
+async def wait_board_settled(page) -> None:
+    """Block until the board has redrawn at its host's current width, so a
+    piece located next isn't replaced by a pending resize redraw. Call once
+    the app has applied the layout change (e.g. a dock opening)."""
+    await page.wait_for_function(_BOARD_SETTLED_JS, arg=BOARD_SVG)
+
+
 def free_port() -> int:
     """Allocate an ephemeral TCP port on localhost."""
     with socket.socket() as s:

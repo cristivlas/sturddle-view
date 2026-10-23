@@ -26,6 +26,7 @@ from .conftest import (  # noqa: E402
     make_searching_fake_uci,
     posted,
     run_uvicorn_subprocess,
+    wait_board_settled,
     wait_perspective_ready,
     watch_page_errors,
 )
@@ -326,6 +327,9 @@ async def test_pieces_move_in_edit_from_play(server, make_page):
 
     await page.click(PLAY_EDIT_BTN)
     await obs.wait_board_update(_editing)
+    # The badge shows in the same apply that docks Commentary (view mode).
+    await page.locator(EDITING_BADGE).wait_for(state="visible")
+    await wait_board_settled(page)
     await drag_piece_one_rank_up(page, DRAG_FROM)
     await page.locator(PIECE_ON.format(DRAG_TO)).wait_for(state="attached")
     await page.click(EDIT_CONFIRM_BTN)
@@ -355,6 +359,9 @@ async def test_board_takes_moves_after_note_from_play(server, make_page):
     await page.click(DIALOG_OK)
     await page.click(EDIT_CONFIRM_BTN)
     await obs.wait_board_update(_live)
+    # The badge hides in the same apply that undocks Commentary.
+    await page.locator(EDITING_BADGE).wait_for(state="hidden")
+    await wait_board_settled(page)
     await page.click(PAUSE_BTN)
     async with page.expect_response(posted(MOVE_PATH)):
         await drag_piece_one_rank_up(page, DRAG_FROM)
