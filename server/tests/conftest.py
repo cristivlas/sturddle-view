@@ -1073,9 +1073,9 @@ def seed_tournament(tmp_path: Path, name: str, engines, games, template=None):
     return t
 
 
-async def open_studio_tab(page, base: str, panel: str) -> None:
-    """Mount Studio, switch to the engines perspective, open a bottom-right
-    tab (`panel` = its wa-tab-panel name)."""
+async def open_studio_tab(page, base: str, panel: str, side: str = "right") -> None:
+    """Mount Studio, switch to the engines perspective, open a bottom tab
+    (`panel` = its wa-tab-panel name; `side` = "left" or "right" group)."""
     await page.add_init_script(
         f"localStorage.setItem('{TOURNAMENT_UX_KEY}', '{TOURNAMENT_UX_STUDIO}')"
     )
@@ -1084,7 +1084,7 @@ async def open_studio_tab(page, base: str, panel: str) -> None:
     await wait_perspective_ready(page)
     await page.click('button[data-perspective="engines"]')
     await page.wait_for_selector(".studio-panel")
-    await page.click(f'.studio-bottom-right wa-tab[panel="{panel}"]')
+    await page.click(f'.studio-bottom-{side} wa-tab[panel="{panel}"]')
 
 
 @pytest.fixture(autouse=True)
