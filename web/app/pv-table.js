@@ -324,15 +324,16 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
       }
     } else {
       tbody.textContent = "";
-      // A new search's lines land before any layout could clamp the old
-      // offset, so reset it explicitly.
-      scrollEl.scrollLeft = 0;
-      scrollEl.scrollTop = 0;
+      // Reset the old offset before the new search's lines lay out, in the
+      // frame: a scroll write forces a style update, which in a hidden window
+      // leaves transitions Chrome never runs or frees.
+      scrollResetPending = true;
     }
     rowMap.clear();
     maxDepth = 0;
     // Drop the width the removed lines grew the table to.
     fitTableToPvContent();
+    fit();
   }
 
   // PV cell uses overflow:visible so long lines extend past the cell's
@@ -349,7 +350,15 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
   }
   // Coalesced: scrollWidth is a layout probe; per-info-event sync reads
   // would force a reflow on every engine info line.
-  const fit = rafCoalesce(fitTableToPvContent);
+  let scrollResetPending = false;
+  const fit = rafCoalesce(() => {
+    if (scrollResetPending) {
+      scrollResetPending = false;
+      scrollEl.scrollLeft = 0;
+      scrollEl.scrollTop = 0;
+    }
+    fitTableToPvContent();
+  });
 
   function update(info, pvText) {
     const { depth, seldepth, score, nodes, nps, pv_uci } = info;

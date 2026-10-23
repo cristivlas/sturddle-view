@@ -57,6 +57,8 @@ function _evalRowRefs(body, edge) {
 // tints "ahead", the other "behind". Near-ties or a missing side stay untinted.
 const SCORE_AHEAD_CLASS = "lg-score-ahead";
 const SCORE_BEHIND_CLASS = "lg-score-behind";
+// Clock row of the side to move.
+const CLOCK_ACTIVE_CLASS = "active";
 const SCORE_TINT_DEADZONE_CP = 10;
 // Mate outranks any cp score; a shorter mate outranks a longer one.
 const MATE_RANK_CP = 1e6;
@@ -605,6 +607,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   wb.onclose = () => {
     wbClosed = true;
     clearTimer();
+    scheduleClockPaint.cancel();
     schedulePositionPaint.cancel();
     pendingPosition = null;
     pvSideWhite.dispose();
@@ -619,10 +622,23 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
   }
 
+  // The on-move highlight runs CSS transitions. Flipped in a hidden window (no
+  // frames), each flip leaves transitions Chrome never runs or frees, so flip
+  // in the frame instead, latest state only.
+  let activeClockEl = null;
+  const scheduleClockPaint = rafCoalesce(() => {
+    clockTopEl.classList.toggle(CLOCK_ACTIVE_CLASS, activeClockEl === clockTopEl);
+    clockBottomEl.classList.toggle(CLOCK_ACTIVE_CLASS, activeClockEl === clockBottomEl);
+  });
+
+  function setActiveClock(el) {
+    activeClockEl = el;
+    scheduleClockPaint();
+  }
+
   function stopTimer() {
     clearTimer();
-    clockTopEl.classList.remove("active");
-    clockBottomEl.classList.remove("active");
+    setActiveClock(null);
   }
 
   // `side`'s clock (ms) from a wtime/btime pair, or null when either is unknown.
@@ -631,10 +647,9 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   // Hand the running clock to `runEl` and count `ms` down into `timeEl`;
   // with no engine color or no `ms`, just restyle and leave it stopped.
-  function startCountdown(runEl, idleEl, timeEl, ms) {
+  function startCountdown(runEl, timeEl, ms) {
     clearTimer();
-    idleEl.classList.remove("active");
-    runEl.classList.toggle("active", !!engineColor);
+    setActiveClock(engineColor ? runEl : null);
     if (!engineColor || ms == null) return;
     activeDeadline = Date.now() + ms;
     const tick = () => {
@@ -837,7 +852,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         lastBtime = p.btime ?? lastBtime;
         updateClocks(p.wtime, p.btime);
         if (snapshot) break;
-        startCountdown(clockBottomEl, clockTopEl, bottomTimeEl, clockMs(p.wtime, p.btime, engineColor));
+        startCountdown(clockBottomEl, bottomTimeEl, clockMs(p.wtime, p.btime, engineColor));
         break;
       case "bestmove":
         // Opponent thinks next; its panel restarts (heuristic depth-reset
@@ -850,7 +865,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         }
         if (currentFen && p.move) applyBestMove(p.move);
         if (snapshot) break;
-        startCountdown(clockTopEl, clockBottomEl, topTimeEl,
+        startCountdown(clockTopEl, topTimeEl,
           clockMs(lastWtime, lastBtime, engineColor === SIDE.WHITE ? SIDE.BLACK : SIDE.WHITE));
         break;
     }

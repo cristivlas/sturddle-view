@@ -33,7 +33,7 @@ import { formatDraw, formatResign, formatStamp, formatType } from "./tournament-
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace, STANDINGS_VIEW } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
 import { applyListClick, createMultiSelect, selectionTargets } from "./multi-select.js";
-import { basename, cooldown, cssVarPx, debounce, guard, isCtrlA, markSelectable, ribbonWidthPx, suppressModifierClickSelect, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
+import { basename, cooldown, cssVarPx, debounce, guard, isCtrlA, markSelectable, rafCoalesce, ribbonWidthPx, suppressModifierClickSelect, suppressMultiClickSelect, wireArrowKeyNav } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
@@ -188,7 +188,8 @@ const PANEL_HTML = `
 // Returns an async function that drops its result if a newer call
 // has been initiated. Always resolves with undefined --
 // await is fire-and-forget; do not read state immediately after.
-// `fetch` returns data; `commit` writes it; `onError` handles fetch errors.
+// `fetch` returns data; `commit` writes it (also given the call's args);
+// `onError` handles fetch errors.
 function lastWriteWins(fetch, commit, onError) {
   let gen = 0;
   return async (...args) => {
@@ -196,7 +197,7 @@ function lastWriteWins(fetch, commit, onError) {
     let data;
     try { data = await fetch(...args); } catch (e) { onError(e); return; }
     if (v !== gen) return;
-    commit(data);
+    commit(data, ...args);
   };
 }
 
@@ -1338,6 +1339,11 @@ function syncStandingsViewItems(ctx) {
 
 // ---- Live updates from WS -----------------------------------------------
 
+// Event-driven list renders wait for a frame: a running row's pulse animation,
+// started by a style update in a hidden window (no frames), is never run or
+// freed, and keeps its replaced row alive.
+const DEFER_RENDER = Object.freeze({ deferRender: true });
+
 function onWsEvent(ctx, evt) {
   if (evt.kind !== EVT.STATUS && evt.kind !== EVT.UPDATE) return;
   // Surface runner crashes as a toast -- the user may not have a
@@ -1374,7 +1380,7 @@ function onWsEvent(ctx, evt) {
     ctx.stoppingId = null;
   }
   // Re-render with the optimistic state; debouncedLoadList canonicalizes.
-  renderList(ctx);
+  ctx.scheduleRenderList();
   syncWorkspaceOtherActive(ctx);
   ctx.debouncedLoadList();
 }
@@ -1399,7 +1405,9 @@ async function pollTick(ctx) {
   // fields stay out of tournaments[] to avoid stale-field confusion.
   t.status = fresh.status;
   t.standings = fresh.standings;
-  updateProgressInPlace(ctx, t);
+  // In the frame: the fill's width transition, like the pulse (DEFER_RENDER).
+  ctx.progressPending = t;
+  ctx.scheduleProgress();
   const ws = getActiveWorkspace();
   if (ws && ws.tournamentId === t.id) ws.applyDetail(fresh);
 }
@@ -1640,6 +1648,8 @@ export function mountTournaments({ container, api, events, log }) {
     sortToastHiddenWbs: [],
 
     tournamentsTabActive: false,
+    // Polled tournament whose progress awaits the next frame.
+    progressPending: null,
   };
   markSelectable(ctx.listEl, { rows: ".tournament-row" });
   suppressMultiClickSelect(ctx.listEl);
@@ -1656,17 +1666,20 @@ export function mountTournaments({ container, api, events, log }) {
     (data) => { ctx.settings = data; renderList(ctx); },
     (e) => reportError({ log }, "Loading tournament settings failed", e),
   );
+  ctx.scheduleRenderList = rafCoalesce(() => renderList(ctx));
+  ctx.scheduleProgress = rafCoalesce(() => updateProgressInPlace(ctx, ctx.progressPending));
   ctx.loadList = lastWriteWins(
     () => ctx.api("GET", "/api/tournaments"),
-    (body) => {
+    (body, opts) => {
       ctx.tournaments = body.tournaments;
       ctx.activeId = body.active_id;
-      renderList(ctx);
+      if (opts?.deferRender) ctx.scheduleRenderList();
+      else renderList(ctx);
       syncWorkspaceOtherActive(ctx);
     },
     (e) => reportError({ log }, "Loading tournaments failed", e),
   );
-  ctx.debouncedLoadList = debounce(ctx.loadList, 150);
+  ctx.debouncedLoadList = debounce(() => ctx.loadList(DEFER_RENDER), 150);
   ctx.actions = guardedVerbs(ctx);
 
   wireRibbon(ctx);
@@ -1735,6 +1748,8 @@ export function mountTournaments({ container, api, events, log }) {
     unmount() {
       offEvents();
       window.clearInterval(pollIntervalId);
+      ctx.scheduleRenderList.cancel();
+      ctx.scheduleProgress.cancel();
       window.removeEventListener(APP_EVT.SETTINGS_CHANGED, ctx.onSettingsChanged);
       window.removeEventListener(APP_EVT.WORKSPACE_CLOSED, ctx.onWorkspaceClosed);
       window.removeEventListener(APP_EVT.TOURNAMENTS_ROOT_CHANGED, ctx.loadList);
