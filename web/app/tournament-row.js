@@ -41,12 +41,13 @@ export function markEngineRow(li, playing) {
   );
 }
 
-// Engine rows as [proxyId, label], ordered by label per `dir` (NONE keeps
-// arrival order). Shared by Arena's Engine Instances window and Studio.
+// Engine rows as [proxyId, label], ordered by label then proxy id per `dir`
+// (NONE keeps arrival order). Shared by Arena's Engine Instances window and Studio.
 export function engineRowEntries(proxies, dir) {
   const entries = Array.from(proxies, ([pid, p]) => [pid, p.engineName || pid]);
-  if (dir === SORT_DIR.ASC) entries.sort(([, a], [, b]) => baseCompare(a, b));
-  else if (dir === SORT_DIR.DESC) entries.sort(([, a], [, b]) => baseCompare(b, a));
+  const cmp = ([pa, a], [pb, b]) => baseCompare(a, b) || baseCompare(pa, pb);
+  if (dir === SORT_DIR.ASC) entries.sort(cmp);
+  else if (dir === SORT_DIR.DESC) entries.sort((x, y) => cmp(y, x));
   return entries;
 }
 

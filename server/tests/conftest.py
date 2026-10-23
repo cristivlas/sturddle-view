@@ -395,6 +395,21 @@ async def drag_piece_one_rank_up(page, square: str) -> None:
     await page.mouse.up()
 
 
+# cm-chessboard resizes, redrawing every piece node, in a task deferred from
+# its ResizeObserver: until then its container's width lags its host's.
+_BOARD_SETTLED_JS = (
+    "(sel) => { const c = document.querySelector(sel)?.parentElement;"
+    " return !!c && c.style.width === `${c.parentElement.clientWidth}px`; }"
+)
+
+
+async def wait_board_settled(page) -> None:
+    """Block until the board has redrawn at its host's current width, so a
+    piece located next isn't replaced by a pending resize redraw. Call once
+    the app has applied the layout change (e.g. a dock opening)."""
+    await page.wait_for_function(_BOARD_SETTLED_JS, arg=BOARD_SVG)
+
+
 def free_port() -> int:
     """Allocate an ephemeral TCP port on localhost."""
     with socket.socket() as s:
@@ -1073,9 +1088,9 @@ def seed_tournament(tmp_path: Path, name: str, engines, games, template=None):
     return t
 
 
-async def open_studio_tab(page, base: str, panel: str) -> None:
-    """Mount Studio, switch to the engines perspective, open a bottom-right
-    tab (`panel` = its wa-tab-panel name)."""
+async def open_studio_tab(page, base: str, panel: str, side: str = "right") -> None:
+    """Mount Studio, switch to the engines perspective, open a bottom tab
+    (`panel` = its wa-tab-panel name; `side` = "left" or "right" group)."""
     await page.add_init_script(
         f"localStorage.setItem('{TOURNAMENT_UX_KEY}', '{TOURNAMENT_UX_STUDIO}')"
     )
@@ -1084,7 +1099,7 @@ async def open_studio_tab(page, base: str, panel: str) -> None:
     await wait_perspective_ready(page)
     await page.click('button[data-perspective="engines"]')
     await page.wait_for_selector(".studio-panel")
-    await page.click(f'.studio-bottom-right wa-tab[panel="{panel}"]')
+    await page.click(f'.studio-bottom-{side} wa-tab[panel="{panel}"]')
 
 
 @pytest.fixture(autouse=True)

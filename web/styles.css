@@ -1098,6 +1098,8 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
 }
 .icon-btn:hover { color: var(--accent); border-color: #444; }
 .icon-btn wa-icon { font-size: 1.125rem; }
+/* Phone portrait header only: About and Settings fold into it. */
+#header-more-btn { display: none; }
 
 /* Disconnected: disable the Settings gear and Engines nav. Play stays usable
    for last-known state inspection. */
@@ -1277,7 +1279,16 @@ body:has(#play-perspective) > header { position: sticky; top: 0; }
   #editing-badge,
   #finished-badge,
   #about-btn,
-  #settings-btn { flex: 0 0 auto; }
+  #settings-btn,
+  #header-more-btn { flex: 0 0 auto; }
+}
+/* Phone portrait: About and Settings fold into the ellipsis menu
+   (header-menu.js); landscape has room for both. Query mirrored by
+   breakpoints.js mqMobilePortrait. */
+@media (max-width: 800px) and (orientation: portrait) {
+  #about-btn,
+  #settings-btn { display: none; }
+  #header-more-btn { display: inline-flex; }
 }
 
 .import-pos-form { display: flex; flex-direction: column; gap: 12px; }
@@ -3387,26 +3398,28 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   margin: 4px 0;
 }
 
-/* data-table.js columns menu and ribbon-overflow.js ellipsis menu: top-layer
-   popovers reusing the .tmb-dropdown look. Must follow .tmb-dropdown: same
-   specificity, fixed placement (JS sets top/left) overrides its absolute one. */
-.dt-menu, .ribbon-more-menu {
+/* data-table.js columns menu, ribbon-overflow.js and header-menu.js ellipsis
+   menus: top-layer popovers reusing the .tmb-dropdown look. Must follow
+   .tmb-dropdown: same specificity, fixed placement (JS sets top/left)
+   overrides its absolute one. */
+.dt-menu, .ribbon-more-menu, .header-more-menu {
   position: fixed; inset: auto; color: var(--fg);
   /* JS max-height (viewport room) includes padding/border; tall menus scroll. */
   box-sizing: border-box; overflow-y: auto;
 }
-.dt-menu:popover-open, .ribbon-more-menu:popover-open { display: block; }
+.dt-menu:popover-open, .ribbon-more-menu:popover-open, .header-more-menu:popover-open { display: block; }
 /* Vertical ribbon overflow (ribbon-overflow.js): items keep their size, so a
    short rail overflows into the ellipsis menu instead of squashing them. */
 .ribbon-overflow-managed > * { flex-shrink: 0; }
 .ribbon-overflowed { display: none !important; }
 /* flex-start: a flex <button> otherwise centers its content in Chromium. */
-.ribbon-more-menu .tmb-dd-item {
+.ribbon-more-menu .tmb-dd-item, .header-more-menu .tmb-dd-item {
   display: flex; align-items: center; justify-content: flex-start; gap: 8px; white-space: nowrap;
 }
 .dt-menu-col { display: flex; align-items: center; padding-right: 6px; }
 .dt-menu-col .dt-menu-toggle { flex: 1 1 auto; width: auto; }
-.dt-menu .tmb-dd-item:disabled, .ribbon-more-menu .tmb-dd-item:disabled { opacity: 0.5; cursor: default; }
+.dt-menu .tmb-dd-item:disabled, .ribbon-more-menu .tmb-dd-item:disabled,
+.header-more-menu .tmb-dd-item:disabled { opacity: 0.5; cursor: default; }
 .dt-menu-move {
   background: none; border: none; border-radius: 0; color: inherit;
   padding: 4px 6px; cursor: pointer;

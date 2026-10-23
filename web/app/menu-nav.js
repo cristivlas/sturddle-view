@@ -7,14 +7,20 @@
 // whole menu through the caller's close(), which refocuses the opener (Tab
 // then continues to the next tab stop).
 // Callers focusFirstItem() on open, so keys land here from the start.
+// Also the popover menus' shared opener, placement and mirrored-button rows.
 
-import { nextNavIndex } from "./wb-utils.js";
+import { escapeHtml, nextNavIndex } from "./wb-utils.js";
 import { ACTIVATE_KEYS } from "./keys.js";
 
 // Marks an open (sub)menu's <li>; callers' CSS shows its nested list.
 export const MENU_OPEN_CLASS = "open";
 
 const ROW_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
+const MENU_GAP_PX = 4;
+const MENU_EDGE_PX = 8;
+// A mirrored button's toggled-on state, and the menu's checkmark for it.
+const BTN_ACTIVE_CLASS = "is-active";
+const ITEM_CHECKED_CLASS = "tmb-active";
 const DIR = Object.freeze({ ArrowRight: 1, ArrowLeft: -1 });
 
 const rowButtons = (li) => Array.from(li.querySelectorAll(":scope > button"));
@@ -126,4 +132,58 @@ export function attachMenuNav(menu, { close }) {
     if (handled === HANDLED.YES) ev.preventDefault();
     ev.stopPropagation();
   });
+}
+
+// Popover menu placement: below the button, else above; fitting neither
+// side, it takes the whole viewport height (covering the button) and only
+// then scrolls inside. Clamped inside the viewport horizontally.
+export function positionMenu(menu, btn) {
+  const r = btn.getBoundingClientRect();
+  menu.style.maxHeight = "";
+  const h = menu.offsetHeight;
+  const roomBelow = window.innerHeight - r.bottom - MENU_GAP_PX - MENU_EDGE_PX;
+  const roomAbove = r.top - MENU_GAP_PX - MENU_EDGE_PX;
+  let room, top;
+  if (h <= roomBelow) {
+    room = roomBelow;
+    top = r.bottom + MENU_GAP_PX;
+  } else if (h <= roomAbove) {
+    room = roomAbove;
+    top = r.top - MENU_GAP_PX - h;
+  } else {
+    room = Math.max(0, window.innerHeight - 2 * MENU_EDGE_PX);
+    top = window.innerHeight - MENU_EDGE_PX - Math.min(h, room);
+  }
+  menu.style.maxHeight = room + "px";
+  menu.style.top = top + "px";
+  const maxLeft = window.innerWidth - menu.offsetWidth - MENU_EDGE_PX;
+  menu.style.left = Math.max(MENU_EDGE_PX, Math.min(r.left, maxLeft)) + "px";
+}
+
+// Opener for a top-layer popover menu. Light dismiss closes the menu on
+// pointerup, before the click: pointerdown records whether it was open so a
+// second click closes it, not reopens. open(ev) renders, shows and places it.
+export function wireMenuToggle(btn, menu, open) {
+  const isOpen = () => menu.matches(":popover-open");
+  let wasOpen = false;
+  btn.addEventListener("pointerdown", () => { wasOpen = isOpen(); });
+  btn.addEventListener("click", (ev) => {
+    const close = wasOpen || isOpen();
+    wasOpen = false;
+    if (!close) open(ev);
+    else if (isOpen()) menu.hidePopover();
+  });
+}
+
+// Menu rows mirroring real buttons (icon + aria-label or title), by index in
+// data-i; a toggled-on button's row is checked. disabled(btn) defaults to
+// the button's own state.
+export function mirrorItemsHtml(buttons, disabled = (btn) => btn.disabled) {
+  return buttons.map((btn, i) => {
+    const icon = btn.querySelector("wa-icon")?.getAttribute("name");
+    const label = btn.getAttribute("aria-label") || btn.title;
+    const cls = btn.classList.contains(BTN_ACTIVE_CLASS) ? ` ${ITEM_CHECKED_CLASS}` : "";
+    return `<li><button type="button" class="tmb-dd-item${cls}" data-i="${i}"${disabled(btn) ? " disabled" : ""}>`
+      + `${icon ? `<wa-icon name="${escapeHtml(icon)}"></wa-icon>` : ""}${escapeHtml(label)}</button></li>`;
+  }).join("");
 }

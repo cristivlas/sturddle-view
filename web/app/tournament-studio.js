@@ -17,7 +17,7 @@ import { createTable, RENDER_REASON } from "./data-table.js";
 import { ACTIVATE_KEYS } from "./keys.js";
 import { formatStamp } from "./tournament-format.js";
 import { reportError, toast } from "./dialogs.js";
-import { debounce, escapeHtml, flashWindow, markSelectable, roveTabStop, suppressModifierClickSelect, syncRovingTabStop, WB_EDGE_RIGHT_CLASS, WB_NO_SHADOW_CLASS, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
+import { debounce, escapeHtml, flashWindow, markSelectable, rafCoalesce, roveTabStop, suppressModifierClickSelect, syncRovingTabStop, WB_EDGE_RIGHT_CLASS, WB_NO_SHADOW_CLASS, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
 import { createMultiSelect, selectionTargets } from "./multi-select.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS, STATUS_RANK } from "./tournament-events.js";
 import { newTournamentCta, removeSelected, ribbonHtml, setStartVerb, tournamentActions } from "./tournaments.js";
@@ -411,7 +411,7 @@ function syncRibbon(ctx) {
 
 // Fetch the tournament list; a generation guard drops out-of-order
 // responses so a slow reload can't clobber a newer one.
-async function studioLoadList(ctx) {
+async function studioLoadList(ctx, { deferRender = false } = {}) {
   const gen = ++ctx.listGen;
   let body;
   try {
@@ -423,7 +423,14 @@ async function studioLoadList(ctx) {
   if (gen !== ctx.listGen || !ctx.tourneysPaneEl) return;
   ctx.tournaments = body.tournaments || [];
   ctx.activeId = body.active_id ?? null;
-  renderTourneys(ctx);
+  if (deferRender) {
+    // In the frame: a running row's pulse animation, started by a style
+    // update in a hidden window, is never run or freed.
+    ensureSelection(ctx);
+    ctx.scheduleRenderTourneys();
+  } else {
+    renderTourneys(ctx);
+  }
   syncLive(ctx);
 }
 
@@ -1399,7 +1406,8 @@ export function mountTournamentStudio({ container, api, events, log }) {
   mqMobile.addEventListener("change", ctx.onMqMobile);
 
   // Reload the list on any tournament event (coalesced); initial load now.
-  ctx.reload = debounce(() => studioLoadList(ctx), LIST_RELOAD_DEBOUNCE_MS);
+  ctx.scheduleRenderTourneys = rafCoalesce(() => renderTourneys(ctx));
+  ctx.reload = debounce(() => studioLoadList(ctx, { deferRender: true }), LIST_RELOAD_DEBOUNCE_MS);
   ctx.offEvents = ctx.events.on((evt) => { toastRunnerCrash(ctx, evt); ctx.reload(); });
   window.addEventListener(APP_EVT.TOURNAMENTS_ROOT_CHANGED, ctx.reload);
 
@@ -1420,6 +1428,7 @@ export function mountTournamentStudio({ container, api, events, log }) {
 
 function unmountStudio(ctx) {
   ctx.offEvents?.();
+  ctx.scheduleRenderTourneys?.cancel();
   window.removeEventListener(APP_EVT.TOURNAMENTS_ROOT_CHANGED, ctx.reload);
   // Kill the pending-dim timer before the panes go away, so a late fire
   // can't touch detached nodes.

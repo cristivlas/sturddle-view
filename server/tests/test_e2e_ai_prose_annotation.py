@@ -37,6 +37,7 @@ from .conftest import (  # noqa: E402
     make_searching_fake_uci,
     posted,
     run_uvicorn_subprocess,
+    wait_board_settled,
     wait_perspective_ready,
     watch_page_errors,
 )
@@ -274,6 +275,8 @@ async def test_play_pencil_ok_then_confirm_returns_to_play_paused(server, make_p
     await page.click(EDIT_CONFIRM_BTN)
     # The clone sat on the last ply: the commit returns to the live game.
     await page.wait_for_function(RIBBON_SHOWN_JS, arg=PLAY_RIBBON)
+    # Leaving view mode undocked Commentary: let the board redraw first.
+    await wait_board_settled(page)
     state = httpx.get(f"{server}/_test/hve/state").json()
     assert state["viewing"] is False
     assert state["paused"] is True

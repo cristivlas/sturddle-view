@@ -30,6 +30,8 @@ export const BP = {
 export const mqNarrowDialog = matchMedia(`(max-width: ${BP.narrowDialog})`);
 export const mqSettingsTopTabs = matchMedia(`(max-width: ${BP.settingsTopTabs})`);
 export const mqMobile       = matchMedia(`(max-width: ${BP.mobile})`);
+// Phone portrait header (styles.css repeats it): About/Settings fold into a menu.
+export const mqMobilePortrait = matchMedia(`(max-width: ${BP.mobile}) and (orientation: portrait)`);
 export const mqMobileH      = matchMedia(`(max-height: ${BP.mobileH})`);
 // Touch only: short-but-wide mouse viewports are laptops (1366x768), not phones.
 // Source of truth; styles.css height-gate @media rules repeat it (drift-checked).

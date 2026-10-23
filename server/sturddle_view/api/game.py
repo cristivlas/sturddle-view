@@ -97,6 +97,7 @@ _NOT_FOUND = "not found"
 _OK = {"ok": True}
 _PGN_MEDIA_TYPE = "application/x-chess-pgn; charset=utf-8"
 _RECENT_IMPORT_PATH = "/recent-imports/{h}"
+_ANALYSIS_REPLAY_PATH = "/analysis/replay"
 
 router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_token)])
 
@@ -803,7 +804,7 @@ async def analysis_start(request: Request) -> dict:
     return _OK
 
 
-@router.get("/analysis/replay")
+@router.get(_ANALYSIS_REPLAY_PATH)
 async def analysis_replay(request: Request) -> dict:
     """Return the buffered AI events for the in-flight analysis turn.
     Lets a client reconnecting mid-analysis rebuild the panel from the
@@ -812,6 +813,17 @@ async def analysis_replay(request: Request) -> dict:
     if coord is None:
         return {_EVENTS_KEY: []}
     return {_EVENTS_KEY: coord.replay()}
+
+
+@router.delete(_ANALYSIS_REPLAY_PATH)
+async def analysis_replay_ack(request: Request) -> dict:
+    """Ack a failed turn's error once a client has shown it. Until then the
+    replay keeps it, so a client away when the turn failed still gets the
+    toast on return. No-op unless the buffered turn failed."""
+    coord = ai_coordinator(request.app.state)
+    if coord is not None:
+        coord.clear_failed_replay()
+    return _OK
 
 
 @router.post("/analysis/stop")
