@@ -4,6 +4,7 @@ import { playPerspective } from "./perspectives/play.js";
 import { enginesPerspective } from "./perspectives/engines.js";
 import { openSettingsDialog, migrateLegacyPlayerName } from "./settings-dialog.js";
 import { openAboutDialog } from "./about-dialog.js";
+import { wireHeaderMenu } from "./header-menu.js";
 import { openRibbonWindow, closeRibbonWindow, mountRibbonElement, isRibbonFloating, nudgeRibbonToViewport, RIBBON_SIDE_KEY } from "./ribbon-window.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import { mqMobile } from "./breakpoints.js";
@@ -256,15 +257,18 @@ api("GET", "/settings").then(s => {
   migrateLegacyPlayerName(api, s);
 }).catch(() => {});
 
-document.getElementById("about-btn").addEventListener("click", () => {
+const aboutBtn = document.getElementById("about-btn");
+aboutBtn.addEventListener("click", () => {
   openAboutDialog({ api, events });
 });
 // Remount of whatever is current, not a tab pick -- must not claim the
 // startup slot, which during a disconnect window still holds the pre-drop tab.
 const reloadPerspective = () => router.activate(router.activeId(), { force: true, persist: false });
-document.getElementById("settings-btn").addEventListener("click", () => {
+const settingsBtn = document.getElementById("settings-btn");
+settingsBtn.addEventListener("click", () => {
   openSettingsDialog({ api, reloadPerspective });
 });
+wireHeaderMenu([aboutBtn, settingsBtn]);
 // Allow any module to deep-link into the Settings dialog without
 // threading the `api` reference through call chains. detail.tab opens
 // the named tab (e.g. "engines"); detail.focus names a control within it

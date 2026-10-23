@@ -3,8 +3,8 @@
 // vertical-ellipsis button in its last slot, whose menu clicks the real ones.
 // Horizontal ribbons (the mobile flip) are left alone.
 
-import { attachMenuNav, focusFirstItem } from "./menu-nav.js";
-import { escapeHtml, headerBottomPx } from "./wb-utils.js";
+import { attachMenuNav, focusFirstItem, mirrorItemsHtml, wireMenuToggle } from "./menu-nav.js";
+import { headerBottomPx } from "./wb-utils.js";
 
 // On the ribbon while vertical: its items keep their size (styles.css), so
 // a short rail overflows instead of squashing the buttons.
@@ -15,9 +15,6 @@ const BTN_CLASS = "ribbon-btn";
 const SEP_CLASS = "ribbon-sep";
 const MORE_CLASS = "ribbon-more";
 const MENU_CLASS = "ribbon-more-menu";
-// A ribbon button's toggled-on state, and the menu's checkmark for it.
-const BTN_ACTIVE_CLASS = "is-active";
-const ITEM_CHECKED_CLASS = "tmb-active";
 const MORE_LABEL = "More actions";
 const MORE_ICON = "ellipsis-vertical";
 const COLUMN = "column";
@@ -102,13 +99,7 @@ export function attachRibbonOverflow(ribbon) {
   // Rebuilt on every open, so labels / icons / disabled and on states are current.
   function renderMenu() {
     const hidden = [...ribbon.querySelectorAll(`:scope > .${BTN_CLASS}.${OVERFLOWED_CLASS}`)];
-    menu.innerHTML = hidden.map((btn, i) => {
-      const icon = btn.querySelector("wa-icon")?.getAttribute("name");
-      const label = btn.getAttribute("aria-label") || btn.title;
-      const cls = btn.classList.contains(BTN_ACTIVE_CLASS) ? ` ${ITEM_CHECKED_CLASS}` : "";
-      return `<li><button type="button" class="tmb-dd-item${cls}" data-i="${i}"${btn.disabled ? " disabled" : ""}>`
-        + `${icon ? `<wa-icon name="${escapeHtml(icon)}"></wa-icon>` : ""}${escapeHtml(label)}</button></li>`;
-    }).join("");
+    menu.innerHTML = mirrorItemsHtml(hidden);
     targets = hidden;
   }
 
@@ -127,17 +118,7 @@ export function attachRibbonOverflow(ribbon) {
 
   const closeMenu = () => { if (menu.matches(":popover-open")) menu.hidePopover(); };
 
-  // Light dismiss closes the menu on the ellipsis' own press, before its
-  // click: remember it was open so the click closes rather than reopens.
-  let wasOpen = false;
-  more.addEventListener("pointerdown", () => { wasOpen = menu.matches(":popover-open"); });
-  more.addEventListener("click", () => {
-    const close = wasOpen || menu.matches(":popover-open");
-    wasOpen = false;
-    if (close) {
-      closeMenu();
-      return;
-    }
+  wireMenuToggle(more, menu, () => {
     renderMenu();
     menu.showPopover();
     placeMenu();

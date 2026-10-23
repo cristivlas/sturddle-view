@@ -11,7 +11,7 @@ import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { ARROW_CLASS, ARROW_DESC, attachColumnSort, TH_LABEL_CLASS, TH_SORTABLE_CLASS } from "./col-sort.js";
 import { ESCAPE_KEY } from "./keys.js";
-import { attachMenuNav, focusFirstItem } from "./menu-nav.js";
+import { attachMenuNav, focusFirstItem, positionMenu, wireMenuToggle } from "./menu-nav.js";
 import { wireSplitScroll } from "./split-table.js";
 import { escapeHtml, LIST_NAV_KEYS, wireArrowKeyNav } from "./wb-utils.js";
 
@@ -59,8 +59,6 @@ const MOUSE_POINTER = "mouse";
 // Sideways travel before a header press becomes a drag (a shorter one stays
 // a click, which sorts).
 const DRAG_THRESHOLD_PX = 5;
-const MENU_GAP_PX = 4;
-const MENU_EDGE_PX = 8;
 const FULL_PCT = 100;
 
 // Why the body was rebuilt (createTable's onRender argument).
@@ -203,32 +201,6 @@ function menuHtml(layout, byKey, traits, visibleCount) {
     `<li>${menuBtnHtml(name, "tmb-dd-item", label, { attrs: ` data-action="${name}"` })}</li>`;
   return items + `<li class="tmb-separator"></li>` +
     (traits.fit ? action(MENU_ACTION.FIT, FIT_LABEL) : "") + action(MENU_ACTION.RESET, RESET_LABEL);
-}
-
-// Below the button, else above; fitting neither side, it takes the whole
-// viewport height (covering the button) and only then scrolls inside.
-// Clamped inside the viewport horizontally.
-function positionMenu(menu, btn) {
-  const r = btn.getBoundingClientRect();
-  menu.style.maxHeight = "";
-  const h = menu.offsetHeight;
-  const roomBelow = window.innerHeight - r.bottom - MENU_GAP_PX - MENU_EDGE_PX;
-  const roomAbove = r.top - MENU_GAP_PX - MENU_EDGE_PX;
-  let room, top;
-  if (h <= roomBelow) {
-    room = roomBelow;
-    top = r.bottom + MENU_GAP_PX;
-  } else if (h <= roomAbove) {
-    room = roomAbove;
-    top = r.top - MENU_GAP_PX - h;
-  } else {
-    room = Math.max(0, window.innerHeight - 2 * MENU_EDGE_PX);
-    top = window.innerHeight - MENU_EDGE_PX - Math.min(h, room);
-  }
-  menu.style.maxHeight = room + "px";
-  menu.style.top = top + "px";
-  const maxLeft = window.innerWidth - menu.offsetWidth - MENU_EDGE_PX;
-  menu.style.left = Math.max(MENU_EDGE_PX, Math.min(r.left, maxLeft)) + "px";
 }
 
 // rowNav trait: the body table is one Tab stop and the arrows move the
@@ -587,21 +559,11 @@ export function createTable({
     else focusFirstItem(menu);
   }
 
-  // Opened and placed synchronously (no unpositioned first paint). Light
-  // dismiss closes the menu on pointerup, before this click: pointerdown
-  // records whether it was open so a second click closes, not reopens.
-  // The click bubbles on (col-sort skips th controls), so document-level
+  // Opened and placed synchronously (no unpositioned first paint). The
+  // click bubbles on (col-sort skips th controls), so document-level
   // listeners such as other menus' close-on-click still see it.
   function wireMenuButton(btn) {
-    let wasOpen = false;
-    btn.addEventListener("pointerdown", () => { wasOpen = isMenuOpen(); });
-    btn.addEventListener("click", () => {
-      const close = wasOpen || isMenuOpen();
-      wasOpen = false;
-      if (close) {
-        closeMenu();
-        return;
-      }
+    wireMenuToggle(btn, menu, () => {
       renderMenu();
       menu.showPopover();
       positionMenu(menu, btn);
