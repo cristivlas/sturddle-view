@@ -49,11 +49,12 @@ UCI_OPT_HASH = "Hash"
 UCI_OPT_SYZYGY_PATH = "SyzygyPath"
 UCI_OPT_PONDER = "Ponder"
 UCI_OPT_OWNBOOK = "OwnBook"
+UCI_OPT_MULTIPV = "MultiPV"
 
 # UCI options the engine manages itself; rendering them in our dialog is
 # either pointless or actively harmful. Lower-case for case-insensitive match.
 _HIDDEN_OPTIONS = {
-    "multipv", UCI_OPT_PONDER.lower(), "uci_chess960", "uci_variant", "uci_analysemode",
+    UCI_OPT_MULTIPV.lower(), UCI_OPT_PONDER.lower(), "uci_chess960", "uci_variant", "uci_analysemode",
 }
 
 _DEFAULT_PROBE_TIMEOUT_SEC = 3.0

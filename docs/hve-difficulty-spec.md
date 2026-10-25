@@ -26,15 +26,21 @@ Below max, per engine move:
    These scores only gate visibility -- they never choose the played
    move, so their shallowness cannot produce a dud move directly.
 
-   MultiPV engines: when the engine declares a `MultiPV` option, the
-   sweep is instead ONE search with MultiPV = legal moves (capped at
-   the option's max) and movetime `max(budget, floor * lines)` -- the
-   same total as the per-move sweep, but one shared tree and hash, so
-   deeper scores for the time. Each line's first PV move takes that
-   line's score. Moves left unscored (max below the move count, short
-   output) fall back to their own `searchmoves` search. The turn
-   stopwatch is re-zeroed every 50ms while it runs, so the engine's
-   clock neither visibly counts down nor flags. python-chess sets
+   MultiPV engines: when the engine declares a `MultiPV` option with
+   no max or max > 1 and `SV_HVE_SWEEP_MULTIPV` is on, the sweep is instead ONE
+   search with MultiPV = legal moves (capped at the option's max) and
+   movetime = lines x the per-move movetime -- each line costs what its
+   own per-move search would, but one shared tree and hash, so deeper
+   scores for the time. Each FINAL line's first PV move takes that
+   line's score; bound (fail-high/low) lines are skipped, and a move on
+   several lines keeps the deepest (a stopped search can repeat a move
+   on a stale previous-depth line). Moves left unscored (capped out,
+   short output, bound only) fall back to their own `searchmoves`
+   search. The turn stopwatch is re-zeroed
+   every `SV_HVE_SWEEP_CLOCK_HOLD_S` while it runs, so the engine's
+   clock neither visibly counts down nor flags; a takeback or new game
+   stops the search at once, and if that stop was lost ahead of the
+   search's `go`, the next poll stops it. python-chess sets
    MultiPV per search and resets it to 1 for the real move, so no
    option override is needed.
 2. Pool admission, two gates per move:
@@ -99,7 +105,8 @@ nothing (the panel clears at search start as usual).
 
 ## searchmoves detection
 
-Both the sweep and the restricted search need `go searchmoves`.
+The restricted search and the per-move sweep (including the MultiPV
+sweep's fallback moves) need `go searchmoves`.
 Detect lazily -- once per engine process, on its first
 difficulty-limited move (self-healing across respawns): probe
 restricted to a single deliberately bad legal move in a mate-in-1
@@ -137,6 +144,7 @@ configured value again.
 | `SV_HVE_SWEEP_MOVETIME_SECONDS` | 0.07 | sweep movetime floor per candidate |
 | `SV_HVE_SWEEP_BUDGET_SECONDS` | 1.0 | sweep budget spread over the legal moves |
 | `SV_HVE_SWEEP_MULTIPV` | true | single MultiPV sweep search when the engine declares MultiPV |
+| `SV_HVE_SWEEP_CLOCK_HOLD_S` | 0.05 | MultiPV sweep poll: re-zero the turn stopwatch, re-stop if stale |
 | `SV_HVE_REMOVAL_STEP` | 0.10 | qmax per level below max |
 | `SV_HVE_SCORE_CLAMP_CP` | 1000 | mate folding / cp clipping before ranging |
 | `SV_HVE_WINPROB_SCALE_CP` | 180 | logistic scale for cp -> win prob |

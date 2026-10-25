@@ -60,7 +60,7 @@ from ..config import (
     _DEFAULT_HVE_WINPROB_DROP_CAP,
     _DEFAULT_HVE_WINPROB_SCALE_CP,
 )
-from ..engines import UCI_OPT_OWNBOOK
+from ..engines import UCI_OPT_MULTIPV, UCI_OPT_OWNBOOK
 from ..env_utils import env_float
 from ..error_detail import ERROR_KEY
 from ..events import (
@@ -109,7 +109,15 @@ log = logging.getLogger(__name__)
 
 CLOCK_TICK_INTERVAL = 0.25  # seconds
 # How often a long off-clock sweep search re-zeroes the engine's turn stopwatch.
-_SWEEP_CLOCK_HOLD_SECONDS = 0.05
+_MIN_SWEEP_CLOCK_HOLD_SECONDS = 0.01
+_SWEEP_CLOCK_HOLD_SECONDS = env_float(
+    "SV_HVE_SWEEP_CLOCK_HOLD_S", 0.05, min_value=_MIN_SWEEP_CLOCK_HOLD_SECONDS,
+)
+_INFO_PV = "pv"
+_INFO_SCORE = "score"
+_INFO_DEPTH = "depth"
+_INFO_MULTIPV = "multipv"
+_INFO_BOUNDS = ("lowerbound", "upperbound")
 # How long a stopped analysis may take to wind down before its task is cancelled.
 _ANALYSIS_STOP_GRACE_SECONDS = env_float("SV_ANALYSIS_STOP_GRACE_S", 2.0, min_value=0.0)
 # A takeback on the human's turn undoes the engine's reply and the human's move.
@@ -349,11 +357,19 @@ def _pgn_headers(event: str, white: str, black: str) -> dict[str, str]:
 
 
 def _own_book_off(engine) -> dict:
-    """Per-search options disabling the engine's own book below max
-    difficulty: a book reply skips the search, ignores searchmoves and
-    reports no score. python-chess restores the configured value on the
-    next search sent without it."""
-    return {UCI_OPT_OWNBOOK: False} if UCI_OPT_OWNBOOK in engine.options else {}
+    """Per-search OwnBook off (book replies ignore searchmoves, carry no
+    score), keyed by the engine's own spelling so the configured value
+    cannot shadow it; python-chess restores that value afterwards."""
+    opt = engine.options.get(UCI_OPT_OWNBOOK)
+    return {} if opt is None else {opt.name: False}
+
+
+async def _final_lines(analysis) -> dict[int, dict]:
+    final: dict[int, dict] = {}
+    async for info in analysis:
+        if info.get(_INFO_PV) and info.get(_INFO_SCORE) is not None:
+            final[info.get(_INFO_MULTIPV, 1)] = info
+    return final
 
 
 def _safe_name(name: str) -> str:
@@ -2175,13 +2191,14 @@ class HumanVsEngine:
         game_id: str,
         root_moves: list[chess.Move] | None = None,
         capture_score: dict | None = None,
-        options: dict | None = None,
+        *,
+        options: dict,
     ) -> chess.Move | None:
         """One engine search with live info pumped to the bus, optionally
         restricted to `root_moves` (the difficulty pool). Returns the
         bestmove (None when the search was stopped before one)."""
         with await engine.analysis(
-            board, limit=limit, root_moves=root_moves, options=options or {},
+            board, limit=limit, root_moves=root_moves, options=options,
         ) as analysis:
             self._analysis = analysis
             try:
@@ -2229,10 +2246,9 @@ class HumanVsEngine:
     async def _visible_pool(
         self, engine, board: chess.Board, level: int, game_id: str, gen: int,
     ) -> list[chess.Move] | None:
-        """Shallow off-clock sweep + blinding pass (spec steps 1-3).
-        Scores every legal move at the sweep movetime, then builds the
-        auto-ranged, level-blinded pool the real search may see.
-        Returns None when the game/generation changed mid-sweep."""
+        """Shallow off-clock sweep + blinding pass (spec steps 1-3): the
+        level-blinded pool the real search may see. None when the
+        game/generation changed mid-sweep."""
         # Sweep on a copy: the live board must not have stale state sent
         # mid-sweep while takeback/new-game can run concurrently.
         root = board.copy()
@@ -2267,10 +2283,9 @@ class HumanVsEngine:
     async def _sweep_scores(
         self, engine, root: chess.Board, moves: list[chess.Move], game_id: str, gen: int,
     ) -> list[float] | None:
-        """Mover-POV cp per move in `moves` (spec step 1). One MultiPV
-        search when the engine declares it; any move it leaves unscored
-        (MultiPV max below the move count, short output) falls back to
-        its own `searchmoves` search. None when cancelled mid-sweep."""
+        """Mover-POV cp per move in `moves` (spec step 1): one MultiPV
+        search if supported, `searchmoves` per move for any it leaves
+        unscored. None when cancelled mid-sweep."""
         clamp = getattr(self._settings, "hve_score_clamp_cp", _DEFAULT_HVE_SCORE_CLAMP_CP)
         floor_s = getattr(
             self._settings, "hve_sweep_movetime_seconds",
@@ -2281,27 +2296,16 @@ class HumanVsEngine:
             _DEFAULT_HVE_SWEEP_BUDGET_SECONDS,
         )
         book_off = _own_book_off(engine)
+        per_move_s = max(floor_s, budget_s / len(moves))
         scores: dict[chess.Move, float] = {}
         lines = self._sweep_multipv_lines(engine, len(moves))
         if lines > 1:
-            limit = chess.engine.Limit(time=max(budget_s, floor_s * lines))
-            infos = await self._off_clock(
-                engine.analyse(root, limit, multipv=lines, options=book_off), game_id, gen,
+            scores = await self._multipv_scores(
+                engine, root, lines, chess.engine.Limit(time=per_move_s * lines),
+                book_off, clamp, game_id, gen,
             )
-            # Lines are a mid-iteration snapshot: a move can sit on two
-            # lines, one stale from the previous depth. Keep the deepest.
-            legal = set(moves)
-            depths: dict[chess.Move, int] = {}
-            for info in infos:
-                pv, score = info.get("pv"), info.get("score")
-                if not pv or pv[0] not in legal or score is None:
-                    continue
-                depth = info.get("depth", 0)
-                if depth > depths.get(pv[0], -1):
-                    depths[pv[0]] = depth
-                    scores[pv[0]] = mover_cp(score.pov(chess.WHITE), root.turn, clamp)
             log.info("sweep: MultiPV %d scored %d of %d legal moves", lines, len(scores), len(moves))
-        limit = chess.engine.Limit(time=max(floor_s, budget_s / len(moves)))
+        limit = chess.engine.Limit(time=per_move_s)
         for mv in moves:
             if not self._search_is_current(game_id, gen):
                 return None
@@ -2312,7 +2316,7 @@ class HumanVsEngine:
             # during the sweep.
             self._clock.start_turn()
             info = await engine.analyse(root, limit, root_moves=[mv], options=book_off)
-            score = info.get("score")
+            score = info.get(_INFO_SCORE)
             if score is None:
                 log.warning("sweep: no score for %s; treating as 0cp", mv.uci())
                 scores[mv] = 0.0
@@ -2320,26 +2324,49 @@ class HumanVsEngine:
             scores[mv] = mover_cp(score.pov(chess.WHITE), root.turn, clamp)
         return [scores[mv] for mv in moves]
 
+    async def _multipv_scores(
+        self, engine, root: chess.Board, lines: int, limit: chess.engine.Limit,
+        options: dict, clamp: float, game_id: str, gen: int,
+    ) -> dict[chess.Move, float]:
+        """Mover-POV cp per root move from the final exact MultiPV lines;
+        a move on two lines (one stale from a stopped depth) keeps the deeper."""
+        with await engine.analysis(root, limit, multipv=lines, options=options) as analysis:
+            self._analysis = analysis
+            try:
+                final = await self._off_clock(_final_lines(analysis), analysis, game_id, gen)
+            finally:
+                self._analysis = None
+        best: dict[chess.Move, tuple[int, float]] = {}
+        for info in final.values():
+            if any(info.get(key) for key in _INFO_BOUNDS):
+                continue
+            mv, depth = info[_INFO_PV][0], info.get(_INFO_DEPTH, 0)
+            prev = best.get(mv)
+            if prev is None or depth > prev[0]:
+                score = info[_INFO_SCORE].pov(chess.WHITE)
+                best[mv] = (depth, mover_cp(score, root.turn, clamp))
+        return {mv: cp for mv, (_, cp) in best.items()}
+
     def _sweep_multipv_lines(self, engine, n_moves: int) -> int:
-        """MultiPV line count for the sweep: every legal move, capped by
-        the engine's declared max. 0 (per-move sweep) when the engine has
-        no MultiPV option, it caps at one line, or the knob is off."""
+        """0 = per-move sweep."""
         if not getattr(self._settings, "hve_sweep_multipv", _DEFAULT_HVE_SWEEP_MULTIPV):
             return 0
-        opt = engine.options.get("MultiPV")
+        opt = engine.options.get(UCI_OPT_MULTIPV)
         if opt is None:
             return 0
         lines = n_moves if opt.max is None else min(n_moves, opt.max)
         return lines if lines > 1 else 0
 
-    async def _off_clock(self, coro, game_id: str, gen: int):
-        """Await `coro` with the engine's turn stopwatch held at zero, so
-        one long sweep search neither shows a countdown nor flags."""
-        task = asyncio.ensure_future(coro)
+    async def _off_clock(self, coro, analysis, game_id: str, gen: int):
+        """Await `coro` with the turn stopwatch held at zero. Once stale,
+        stop `analysis`: a raw `stop` that raced ahead of its `go` is lost."""
+        task = asyncio.create_task(coro)
         try:
             while not task.done():
                 if self._search_is_current(game_id, gen):
                     self._clock.start_turn()
+                else:
+                    analysis.stop()
                 await asyncio.wait({task}, timeout=_SWEEP_CLOCK_HOLD_SECONDS)
             return task.result()
         finally:
@@ -2441,7 +2468,7 @@ class HumanVsEngine:
                 engine, board, limit, game_id,
                 root_moves=pool,
                 capture_score=captured,
-                options=None if pool is None else _own_book_off(engine),
+                options={} if pool is None else _own_book_off(engine),
             )
             if best is None:
                 return
