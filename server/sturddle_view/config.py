@@ -66,6 +66,8 @@ _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS = 0.07
 _DEFAULT_HVE_SWEEP_BUDGET_SECONDS = 1.0
 _DEFAULT_HVE_REMOVAL_STEP = 0.10
 _DEFAULT_HVE_SCORE_CLAMP_CP = 1000.0
+# Engines declaring MultiPV sweep in one search instead of per move.
+_DEFAULT_HVE_SWEEP_MULTIPV = True
 
 # Win-prob admission cap (all levels). Sweep cp maps to win probability
 # via a logistic with this scale (empirical engine fit); a move is
@@ -336,6 +338,7 @@ class Settings(BaseSettings):
     hve_difficulty: int = HVE_DIFFICULTY_MAX
     hve_sweep_movetime_seconds: float = _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS
     hve_sweep_budget_seconds: float = _DEFAULT_HVE_SWEEP_BUDGET_SECONDS
+    hve_sweep_multipv: bool = _DEFAULT_HVE_SWEEP_MULTIPV
     hve_removal_step: float = _DEFAULT_HVE_REMOVAL_STEP
     hve_score_clamp_cp: float = _DEFAULT_HVE_SCORE_CLAMP_CP
     hve_winprob_scale_cp: float = _DEFAULT_HVE_WINPROB_SCALE_CP

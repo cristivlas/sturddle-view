@@ -25,6 +25,18 @@ Below max, per engine move:
    spreads over big move lists, the floor keeps each score sane.
    These scores only gate visibility -- they never choose the played
    move, so their shallowness cannot produce a dud move directly.
+
+   MultiPV engines: when the engine declares a `MultiPV` option, the
+   sweep is instead ONE search with MultiPV = legal moves (capped at
+   the option's max) and movetime `max(budget, floor * lines)` -- the
+   same total as the per-move sweep, but one shared tree and hash, so
+   deeper scores for the time. Each line's first PV move takes that
+   line's score. Moves left unscored (max below the move count, short
+   output) fall back to their own `searchmoves` search. The turn
+   stopwatch is re-zeroed every 50ms while it runs, so the engine's
+   clock neither visibly counts down nor flags. python-chess sets
+   MultiPV per search and resets it to 1 for the real move, so no
+   option override is needed.
 2. Pool admission, two gates per move:
 
    Auto-range: normalize each gap by the position's own score spread,
@@ -111,12 +123,20 @@ controls exposure via book depth/off. At low levels a deep book can
 make the opening feel disproportionately sharp; the remedy is
 shortening book plies, not weakening the book.
 
+The engine's OWN book (UCI `OwnBook`) is turned off below max for the
+probe, sweep, and restricted search: a book reply skips the search,
+ignores `searchmoves`, and reports no score, so the pool would rest
+on missing scores and not even bind. It is passed as a per-search
+option, so the next full-strength search runs with the engine's own
+configured value again.
+
 ## Knobs (SV_ env)
 
 | Knob | Default | Role |
 |---|---|---|
 | `SV_HVE_SWEEP_MOVETIME_SECONDS` | 0.07 | sweep movetime floor per candidate |
 | `SV_HVE_SWEEP_BUDGET_SECONDS` | 1.0 | sweep budget spread over the legal moves |
+| `SV_HVE_SWEEP_MULTIPV` | true | single MultiPV sweep search when the engine declares MultiPV |
 | `SV_HVE_REMOVAL_STEP` | 0.10 | qmax per level below max |
 | `SV_HVE_SCORE_CLAMP_CP` | 1000 | mate folding / cp clipping before ranging |
 | `SV_HVE_WINPROB_SCALE_CP` | 180 | logistic scale for cp -> win prob |

@@ -9,6 +9,7 @@ where determinism matters; no waits anywhere.
 """
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import chess
@@ -76,16 +77,25 @@ class BlindableEngine:
     play() = the searchmoves probe.
     """
 
-    def __init__(self, scores, *, honors_searchmoves=True):
+    def __init__(self, scores, *, honors_searchmoves=True, multipv_max=None, own_book=False):
         self.scores = dict(scores)
         self.honors = honors_searchmoves
+        # No MultiPV option unless asked: the per-move sweep path.
+        self.options = (
+            {} if multipv_max is None else {"MultiPV": SimpleNamespace(max=multipv_max)}
+        )
+        if own_book:
+            self.options["OwnBook"] = SimpleNamespace(max=None)
+        self.call_options: list[tuple[str, dict]] = []  # (call, options) per call
         self.play_calls = 0
         self.sweep_calls: list[str] = []
         self.sweep_limits: list[float] = []
+        self.multipv_calls: list[tuple[int, float]] = []
         self.search_pools: list[list[str] | None] = []
         self.on_sweep = None  # hook fired per analyse() call
 
-    async def play(self, board, limit, *, root_moves=None, **kw):
+    async def play(self, board, limit, *, root_moves=None, options=None, **kw):
+        self.call_options.append(("play", options or {}))
         self.play_calls += 1
         assert root_moves, "probe must restrict the search"
         if self.honors:
@@ -93,19 +103,36 @@ class BlindableEngine:
         other = next(m for m in board.legal_moves if m != root_moves[0])
         return chess.engine.PlayResult(other, None)
 
-    async def analyse(self, board, limit, *, root_moves=None, **kw):
+    async def analyse(self, board, limit, *, root_moves=None, multipv=None, options=None, **kw):
+        self.call_options.append(("analyse", options or {}))
+        if self.on_sweep is not None:
+            self.on_sweep()
+        if multipv is not None:
+            # Top `multipv` lines, best first, like a real engine.
+            assert root_moves is None
+            self.multipv_calls.append((multipv, limit.time))
+            ranked = sorted(board.legal_moves, key=lambda m: -self.scores[m.uci()])
+            return [
+                {
+                    "score": chess.engine.PovScore(
+                        chess.engine.Cp(self.scores[m.uci()]), board.turn,
+                    ),
+                    "pv": [m],
+                    "multipv": i + 1,
+                }
+                for i, m in enumerate(ranked[:multipv])
+            ]
         assert root_moves is not None and len(root_moves) == 1
         mv = root_moves[0]
         self.sweep_calls.append(mv.uci())
         self.sweep_limits.append(limit.time)
-        if self.on_sweep is not None:
-            self.on_sweep()
         score = chess.engine.PovScore(
             chess.engine.Cp(self.scores[mv.uci()]), board.turn,
         )
         return {"score": score, "depth": 5}
 
-    async def analysis(self, board, limit=None, *, root_moves=None, **kw):
+    async def analysis(self, board, limit=None, *, root_moves=None, options=None, **kw):
+        self.call_options.append(("analysis", options or {}))
         self.search_pools.append(
             None if root_moves is None else [m.uci() for m in root_moves]
         )
@@ -121,10 +148,14 @@ class BlindableEngine:
         return FakeAnalysis([info], mv)
 
 
-def _make(scores=SCORES, *, level=5, honors=True, clock=None):
+def _make(
+    scores=SCORES, *, level=5, honors=True, clock=None, multipv_max=None, own_book=False,
+):
     settings = SimpleNamespace(hve_difficulty=level)
     hve = HumanVsEngine(engine_path="/fake/engine", bus=EventBus(), settings=settings)
-    engine = BlindableEngine(scores, honors_searchmoves=honors)
+    engine = BlindableEngine(
+        scores, honors_searchmoves=honors, multipv_max=multipv_max, own_book=own_book,
+    )
     hve._supervisor.engine = engine
     hve._board = chess.Board(FOUR_MOVE_FEN)
     hve._game_id = "g1"
@@ -204,6 +235,135 @@ async def test_sweep_time_spreads_budget_over_moves(monkeypatch):
         _DEFAULT_HVE_SWEEP_BUDGET_SECONDS / 4,
     )
     assert engine.sweep_limits == [expected] * 4
+
+
+def _sweep_args(monkeypatch):
+    """Capture the per-move scores candidate_pool receives."""
+    seen = []
+    monkeypatch.setattr(
+        hve_mod, "candidate_pool",
+        lambda scores, *a, **kw: (seen.append(list(scores)), ([0], 0.0))[1],
+    )
+    return seen
+
+
+def _legal_scores():
+    return [SCORES[m.uci()] for m in chess.Board(FOUR_MOVE_FEN).legal_moves]
+
+
+async def test_multipv_sweep_is_one_search(monkeypatch):
+    """MultiPV engine: one search scores every legal move, no per-move
+    sweeps; total time matches the per-move sweep's budget."""
+    hve, engine = _make(multipv_max=500)
+    seen = _sweep_args(monkeypatch)
+    _capture_commit(hve, monkeypatch)
+    await hve._think_and_play()
+    expected = max(
+        _DEFAULT_HVE_SWEEP_BUDGET_SECONDS, _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS * 4,
+    )
+    assert engine.multipv_calls == [(4, expected)]
+    assert engine.sweep_calls == []
+    assert seen == [_legal_scores()]  # scores realigned to legal-move order
+
+
+async def test_multipv_max_below_moves_sweeps_the_rest(monkeypatch):
+    """MultiPV capped at 2: the top two come from it, the other two get
+    per-move searches."""
+    hve, engine = _make(multipv_max=2)
+    seen = _sweep_args(monkeypatch)
+    _capture_commit(hve, monkeypatch)
+    await hve._think_and_play()
+    assert [n for n, _ in engine.multipv_calls] == [2]
+    assert sorted(engine.sweep_calls) == ["a2a3", "a2a4"]
+    assert seen == [_legal_scores()]
+
+
+async def test_multipv_knob_off_sweeps_per_move(monkeypatch):
+    hve, engine = _make(multipv_max=500)
+    hve._settings.hve_sweep_multipv = False
+    _fix_pool(monkeypatch, [0])
+    _capture_commit(hve, monkeypatch)
+    await hve._think_and_play()
+    assert engine.multipv_calls == []
+    assert len(engine.sweep_calls) == 4
+
+
+async def test_multipv_sweep_holds_clock(monkeypatch):
+    """Fake time passing inside the single MultiPV search never shows on
+    the engine's clock while it runs."""
+    fake = SimpleNamespace(t=0.0)
+    clock = ChessClock(TimeControl(initial_seconds=60), monotonic=lambda: fake.t)
+    hve, engine = _make(clock=clock, multipv_max=500)
+    monkeypatch.setattr(hve_mod, "_SWEEP_CLOCK_HOLD_SECONDS", 0)
+    _fix_pool(monkeypatch, [0])
+    _capture_commit(hve, monkeypatch)
+    seen = []
+    inner = engine.analyse
+
+    async def slow_analyse(*a, **kw):
+        fake.t += 5
+        for _ in range(3):
+            await asyncio.sleep(0)
+        seen.append(hve._remaining(chess.WHITE))
+        return await inner(*a, **kw)
+
+    engine.analyse = slow_analyse
+    clock.start_turn()
+    await hve._think_and_play()
+    assert seen == [60.0]
+
+
+async def test_own_book_off_below_max(monkeypatch):
+    """Probe, sweep (MultiPV and per-move) and the restricted search all
+    run with the engine's own book off: book replies carry no score and
+    ignore searchmoves."""
+    hve, engine = _make(multipv_max=2, own_book=True)
+    _fix_pool(monkeypatch, [0])
+    _capture_commit(hve, monkeypatch)
+    await hve._think_and_play()
+    assert {c for c, _ in engine.call_options} == {"play", "analyse", "analysis"}
+    assert all(opts == {"OwnBook": False} for _, opts in engine.call_options)
+
+
+async def test_multipv_duplicate_line_keeps_deepest(monkeypatch):
+    """A move on two lines (one stale from the previous depth) takes the
+    deeper line's score; the move it displaced is swept per move."""
+    hve, engine = _make(multipv_max=500)
+    seen = _sweep_args(monkeypatch)
+    _capture_commit(hve, monkeypatch)
+    def pov(cp):
+        return chess.engine.PovScore(chess.engine.Cp(cp), chess.WHITE)
+
+    b1, b2, a3 = (chess.Move.from_uci(u) for u in ("a1b1", "a1b2", "a2a3"))
+
+    async def analyse(board, limit, *, multipv=None, root_moves=None, **kw):
+        if multipv is None:
+            return {"score": pov(SCORES[root_moves[0].uci()])}
+        return [
+            {"pv": [b1], "score": pov(-999), "depth": 5},  # stale, ranked first
+            {"pv": [b2], "score": pov(-30), "depth": 6},
+            {"pv": [a3], "score": pov(-100), "depth": 6},
+            {"pv": [b1], "score": pov(0), "depth": 6},
+        ]
+
+    engine.analyse = analyse
+    await hve._think_and_play()
+    assert seen == [_legal_scores()]
+
+
+async def test_own_book_untouched_on_degrade(monkeypatch):
+    """searchmoves ignored: full strength, engine's own book stays on."""
+    hve, engine = _make(honors=False, own_book=True)
+    _capture_commit(hve, monkeypatch)
+    await hve._think_and_play()
+    assert engine.call_options[-1] == ("analysis", {})
+
+
+async def test_own_book_untouched_at_max(monkeypatch):
+    hve, engine = _make(level=10, own_book=True)
+    _capture_commit(hve, monkeypatch)
+    await hve._think_and_play()
+    assert engine.call_options == [("analysis", {})]
 
 
 async def test_relief_knobs_reach_candidate_pool(monkeypatch):
