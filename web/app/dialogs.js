@@ -39,11 +39,11 @@ const fsIcon = (e) => (e.is_dir ? FS_ICON_DIR : e.is_executable ? FS_ICON_EXE : 
 
 // Rows are the /fs listing entries themselves.
 const FS_COLUMNS = [
-  { key: FS_COL_NAME, label: "Name", width: 55, alwaysOn: true, firstDir: SORT_DIR.ASC, tiebreak: true, tdClass: "fs-name-cell",
+  { key: FS_COL_NAME, label: "Name", width: 50, alwaysOn: true, firstDir: SORT_DIR.ASC, tiebreak: true, tdClass: "fs-name-cell",
     cell: (e) => `<wa-icon name="${fsIcon(e)}"></wa-icon><span class="${FS_NAME_CLASS}">${escapeHtml(e.name)}</span>` },
-  { key: FS_COL_DATE, label: "Date modified", width: 30, numeric: true, firstDir: SORT_DIR.DESC,
+  { key: FS_COL_DATE, label: "Date modified", width: 32, numeric: true, firstDir: SORT_DIR.DESC,
     tdClass: "fs-date", cell: (e) => escapeHtml(fmtDate(e.mtime)) },
-  { key: FS_COL_SIZE, label: "Size", width: 15, numeric: true, firstDir: SORT_DIR.DESC,
+  { key: FS_COL_SIZE, label: "Size", width: 18, numeric: true, firstDir: SORT_DIR.DESC,
     tdClass: FS_SIZE_CLASS, thClass: FS_SIZE_CLASS, cell: (e) => (e.is_dir ? "" : escapeHtml(fmtSize(e.size))) },
 ];
 

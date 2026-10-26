@@ -113,13 +113,13 @@ function renderAll(ctx) {
 // numeric Active column orders it first/last). Name is the fixed final
 // tiebreaker so order is deterministic.
 const ENGINE_COLUMNS = [
-  { key: COL_NAME, label: "Name", width: 20, firstDir: SORT_DIR.ASC, tiebreak: true,
+  { key: COL_NAME, label: "Name", width: 24, firstDir: SORT_DIR.ASC, tiebreak: true,
     tdClass: "engines-list-name", tdTitle: (r) => r.name,
     cell: (r) => `<span class="engines-list-name-text">${escapeHtml(r.name)}</span>` },
-  { key: COL_ACTIVE, label: "Active", width: 14, numeric: true, firstDir: SORT_DIR.DESC,
+  { key: COL_ACTIVE, label: "Active", width: 16, numeric: true, firstDir: SORT_DIR.DESC,
     tdClass: "engines-list-active-cell",
     cell: (r) => (r.active ? `<wa-icon name="check" class="engines-list-active-badge"></wa-icon>` : "") },
-  { key: COL_PATH, label: "Path", width: 66, firstDir: SORT_DIR.ASC,
+  { key: COL_PATH, label: "Path", width: 60, firstDir: SORT_DIR.ASC,
     tdClass: "engines-list-path", tdTitle: (r) => r.path, cell: (r) => escapeHtml(r.path) },
 ];
 

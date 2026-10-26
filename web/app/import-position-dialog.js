@@ -278,9 +278,9 @@ function wireOpeningsSearch(el, { setFilter, renderList, clearSelection, scrollS
 // which column is active. Rows are the shared opening records (load() gives
 // each a stable `_id`).
 const OPENINGS_COLUMNS = [
-  { key: OPENINGS_COL_ECO, label: "ECO", width: 12, firstDir: SORT_DIR.ASC,
+  { key: OPENINGS_COL_ECO, label: "ECO", width: 15, firstDir: SORT_DIR.ASC,
     tdClass: "openings-list-eco", cell: (r) => escapeHtml(r.eco) },
-  { key: OPENINGS_COL_NAME, label: "Name", width: 50, firstDir: SORT_DIR.ASC, tiebreak: true,
+  { key: OPENINGS_COL_NAME, label: "Name", width: 47, firstDir: SORT_DIR.ASC, tiebreak: true,
     tdClass: "openings-list-name", tdTitle: (r) => r.name, cell: (r) => escapeHtml(r.name) },
   { key: OPENINGS_COL_MOVES, label: "Moves", width: 38, firstDir: SORT_DIR.ASC, field: "pgn",
     tdClass: "openings-list-moves", tdTitle: (r) => r.pgn, cell: (r) => escapeHtml(r.pgn) },
