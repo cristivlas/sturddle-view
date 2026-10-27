@@ -43,7 +43,7 @@ isolated instances). Each falls back to the platform default when unset.
 | `SV_IMPORTS_DIR` | platform data dir | Directory for the imported PGN/FEN history store. |
 | `SV_INSTANCE_LOCK_PATH` | platform config dir | Override the single-instance lock-file location (chiefly tests and isolated instances). |
 | `SV_ENGINE_TMP_ROOT` | platform data dir | Root for per-spawn engine temp dirs (TMP/TEMP/TMPDIR injection; see [engine-temp-cleanup-spec.md](engine-temp-cleanup-spec.md)). |
-| `SV_ENGINE_PROBE_TIMEOUT_SEC` | `3.0` | Timeout for the engine UCI handshake probe; values below `0.05` fall back to the default. |
+| `SV_ENGINE_PROBE_TIMEOUT_SEC` | `10.0` | Timeout for the engine UCI handshake probe; values below `0.05` fall back to the default. |
 | `SV_MAX_IMPORT_BYTES` | `2097152` | Cap on `/game/import` payload size (2 MiB). |
 | `SV_MAX_ANNOTATION_LENGTH` | `10000` | Cap on individual move-annotation text length. |
 | `SV_BOOK_INDEX_MAX_PLIES` | `40` | Plies tokenized per line when indexing an HVE opening book; also the hard cap on book depth (the plies setting is clamped to it). |
