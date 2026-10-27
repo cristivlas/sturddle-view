@@ -7,7 +7,7 @@ import {
 import { PositionAnimationsQueue, PositionsAnimation } from "../vendor/cm-chessboard/src/view/PositionAnimationsQueue.js";
 import { Svg } from "../vendor/cm-chessboard/src/lib/Svg.js";
 import { MARKER_TYPE, Markers } from "../vendor/cm-chessboard/src/extensions/markers/Markers.js";
-import { ARROW_TYPE, Arrows } from "../vendor/cm-chessboard/src/extensions/arrows/Arrows.js";
+import { ARROW_TYPE } from "../vendor/cm-chessboard/src/extensions/arrows/Arrows.js";
 import {
   PROMOTION_DIALOG_RESULT_TYPE,
   PromotionDialog,
@@ -16,6 +16,7 @@ import { PositionEditor } from "../vendor/cm-chessboard-position-editor/src/Posi
 import { resolveBoardStyle } from "./board-styles.js";
 import { SIDE, uciSquares } from "./chess-consts.js";
 import { createLineShow } from "./line-show.js";
+import { NumberedArrows } from "./numbered-arrows.js";
 
 // Pinned cm-chessboard version this patch was verified against. On upgrade,
 // re-verify the queue methods still match the expected shape (see
@@ -113,6 +114,11 @@ function _patchAnimationsQueue(board) {
 })();
 
 const ASSETS_URL = "./vendor/cm-chessboard/assets/";
+// MultiPV lines that get an arrow: the best-line color, numbered by rank.
+const MAX_ARROW_RANK = 3;
+const RANK_ARROW_TYPES = Object.fromEntries(Array.from({ length: MAX_ARROW_RANK }, (_, i) => (
+  [i + 1, { class: ARROW_TYPE.default.class, label: i + 1 }]
+)));
 
 // cm-chessboard (assetsCache=true) caches the first-mounted board's piece
 // sprite into this fixed-id body div and never refreshes it on style change,
@@ -184,7 +190,7 @@ export function mountBoard({ element, onMove, styleId }) {
     position: FEN.start,
     assetsUrl: ASSETS_URL,
     style: { cssClass: s.cssClass, showCoordinates: true, pieces: { file: s.piecesFile } },
-    extensions: [{ class: Markers }, { class: Arrows }, { class: PromotionDialog }],
+    extensions: [{ class: Markers }, { class: NumberedArrows }, { class: PromotionDialog }],
   });
   const spriteReady = _installLocalSprite(board, s.piecesFile);
   _patchAnimationsQueue(board);
@@ -298,53 +304,37 @@ export function mountBoard({ element, onMove, styleId }) {
     }
   }
 
+  // Replaces the single arrow of `type`; a missing square just removes it.
+  function setTypedArrow(type, fromUci, toUci) {
+    if (lineShow.shouldRedirectArrows()) {
+      lineShow.onOutsideArrows(type, fromUci && toUci ? [{ from: fromUci, to: toUci }] : []);
+      return;
+    }
+    if (typeof board.removeArrows === "function") {
+      board.removeArrows(type);
+    }
+    if (!fromUci || !toUci) return;
+    if (typeof board.addArrow === "function") {
+      board.addArrow(type, fromUci, toUci);
+    }
+  }
+
   // Two arrow types share one visual style (default) but differ by class
   // tag so each can be replaced independently — own thinker vs opponent
   // (paired). Same color: arrows already differ by origin square; a
   // distinct color (esp. danger/red) would falsely read as an error.
-  function setArrow(fromUci, toUci) {
-    if (lineShow.shouldRedirectArrows()) {
-      lineShow.onOutsideArrows(ARROW_TYPE.default, fromUci && toUci ? [{ from: fromUci, to: toUci }] : []);
-      return;
-    }
-    if (typeof board.removeArrows === "function") {
-      board.removeArrows(ARROW_TYPE.default);
-    }
-    if (!fromUci || !toUci) return;
-    if (typeof board.addArrow === "function") {
-      board.addArrow(ARROW_TYPE.default, fromUci, toUci);
-    }
-  }
-
-  function setOpponentArrow(fromUci, toUci) {
-    if (lineShow.shouldRedirectArrows()) {
-      lineShow.onOutsideArrows(ARROW_TYPE.success, fromUci && toUci ? [{ from: fromUci, to: toUci }] : []);
-      return;
-    }
-    if (typeof board.removeArrows === "function") {
-      board.removeArrows(ARROW_TYPE.success);
-    }
-    if (!fromUci || !toUci) return;
-    if (typeof board.addArrow === "function") {
-      board.addArrow(ARROW_TYPE.success, fromUci, toUci);
-    }
-  }
+  const setArrow = (fromUci, toUci) => setTypedArrow(ARROW_TYPE.default, fromUci, toUci);
+  const setOpponentArrow = (fromUci, toUci) => setTypedArrow(ARROW_TYPE.success, fromUci, toUci);
 
   // AI agent's declared move; uses ARROW_TYPE.secondary paired with a
   // local purple override in styles.css so it reads distinctly from
   // the navy default/PV arrow.
-  function setRecommendArrow(fromUci, toUci) {
-    if (lineShow.shouldRedirectArrows()) {
-      lineShow.onOutsideArrows(ARROW_TYPE.secondary, fromUci && toUci ? [{ from: fromUci, to: toUci }] : []);
-      return;
-    }
-    if (typeof board.removeArrows === "function") {
-      board.removeArrows(ARROW_TYPE.secondary);
-    }
-    if (!fromUci || !toUci) return;
-    if (typeof board.addArrow === "function") {
-      board.addArrow(ARROW_TYPE.secondary, fromUci, toUci);
-    }
+  const setRecommendArrow = (fromUci, toUci) => setTypedArrow(ARROW_TYPE.secondary, fromUci, toUci);
+
+  // Numbered MultiPV line arrow; ranks past MAX_ARROW_RANK get none.
+  function setRankArrow(rank, fromUci, toUci) {
+    const type = RANK_ARROW_TYPES[rank];
+    if (type) setTypedArrow(type, fromUci, toUci);
   }
 
   // Equally standard book alternatives beside the AI's pick; the vendored
@@ -514,7 +504,7 @@ export function mountBoard({ element, onMove, styleId }) {
   return {
     ready,
     setSide, setPosition, enableInput, isInputEnabled, forceResize, cancelAnimations, destroy,
-    setArrow, setOpponentArrow, setRecommendArrow, setAlternativeArrows, clearArrows,
+    setArrow, setOpponentArrow, setRecommendArrow, setRankArrow, setAlternativeArrows, clearArrows,
     enterEditMode, exitEditMode, toggleCastlingRight, getCastlingRights, getPiecePlacement,
     currentPlacement: getPiecePlacement, playLine, cancelLine,
   };

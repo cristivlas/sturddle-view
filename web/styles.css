@@ -2325,6 +2325,10 @@ body .side-popover.popover-floating {
 /* AI recommendation arrow: purple. */
 .cm-chessboard .arrow-secondary .arrow-head { fill: #7c3aed; }
 .cm-chessboard .arrow-secondary .arrow-line { stroke: #7c3aed; opacity: 0.55; }
+/* MultiPV line number on its arrow (numbered-arrows.js). */
+.cm-chessboard .arrow-badge { pointer-events: none; }
+.cm-chessboard .arrow-badge circle { fill: #111; }
+.cm-chessboard .arrow-badge text { fill: #fff; font-weight: 600; text-anchor: middle; dominant-baseline: central; }
 /* Sturddle board themes (Staunty, Wine, ...): each carries `sturddle-board`
    plus its own variant class, which sets the --sb-* palette the rules below
    paint from. cm-chessboard only applies the cssClass to the SVG, so these
@@ -5284,6 +5288,13 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-pvtable-col-pv { min-width: 200px; }
 .wb-pvtable-pv { white-space: nowrap; }
 .wb-pv-movenum { color: var(--muted, #888); font-weight: 600; }
+/* MultiPV line number ahead of the PV; light on the dark table, mirroring
+   the board's numbered arrows. Sized under the line height (no row growth). */
+.wb-pv-rank {
+  display: inline-block; width: 1.3em; height: 1.3em; line-height: 1.3em;
+  margin-right: 0.4em; border-radius: 50%; font-size: 0.85em; font-weight: 600;
+  text-align: center; vertical-align: middle; background: #e8e8e8; color: #111; user-select: none;
+}
 .wb-pvtable-tbl tr.wb-pv-showable:hover { cursor: pointer; background: var(--wa-color-surface-raised); }
 .wb-pvtable-tbl tr.wb-pv-row-playing { background: var(--wa-color-surface-raised); }
 .wb-pvtable-tbl .wb-pv-move-current { background: var(--wa-color-focus, var(--wa-color-brand-60)); border-radius: 2px; }

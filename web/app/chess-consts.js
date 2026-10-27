@@ -21,6 +21,9 @@ export const RESULT = {
   DRAW: "1/2-1/2",
 };
 
+// MultiPV rank of the best line; engine_info without `multipv` is single-PV.
+export const BEST_RANK = 1;
+
 // UCI long-algebraic move: from-square, to-square, optional promotion piece.
 const SQUARE_LEN = 2;
 

@@ -68,6 +68,8 @@ _DEFAULT_HVE_REMOVAL_STEP = 0.10
 _DEFAULT_HVE_SCORE_CLAMP_CP = 1000.0
 # Engines declaring MultiPV sweep in one search instead of per move.
 _DEFAULT_HVE_SWEEP_MULTIPV = True
+# Engine-only analysis lines, capped by the engine's MultiPV max; 1 = single.
+_DEFAULT_ANALYSIS_MULTIPV = 3
 
 # Win-prob admission cap (all levels). Sweep cp maps to win probability
 # via a logistic with this scale (empirical engine fit); a move is
@@ -376,6 +378,7 @@ class Settings(BaseSettings):
     # Engine pinned for analysis (both engine-only and AI-driven tool calls).
     # Empty string means "use the active HvE engine".
     analysis_engine_id: str = ""
+    analysis_multipv: int = _DEFAULT_ANALYSIS_MULTIPV
 
     @property
     def ai_model(self) -> str:

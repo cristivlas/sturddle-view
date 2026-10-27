@@ -1,5 +1,6 @@
-// Search Lines (PV) table: one row per depth iteration, newest depth on
-// top, resizable columns. Shared by the play-perspective Search Lines
+// Search Lines (PV) table: one row per depth iteration (per depth and
+// MultiPV line once the engine reports several), newest depth on top,
+// resizable columns. Shared by the play-perspective Search Lines
 // window and the tournament live-game side panels.
 //
 // Feed-agnostic: callers subscribe to their own event source and push
@@ -14,9 +15,12 @@
 import { attachColumnResize } from "./col-resize.js";
 import { fmtCount, fmtScore, markSelectable, rafCoalesce } from "./wb-utils.js";
 import { pvFrames } from "./pv-walk.js";
+import { BEST_RANK } from "./chess-consts.js";
 import { applySplitColWidths, wireSplitScroll } from "./split-table.js";
 
 const COL_MIN_PX = 30;
+// Cell index per column; every column before the auto-width PV is fixed px.
+const COL = { DEPTH: 0, EVAL: 1, NODES: 2, NPS: 3, PV: 4 };
 const DEFAULT_COL_WIDTHS = [50, 50, 55, 45];
 
 // Whole-token match for SAN move-number tokens ("12." / "12...") emitted by
@@ -29,6 +33,7 @@ const PLAYING_ROW_CLASS = "wb-pv-row-playing";
 const MOVE_SPAN_CLASS = "wb-pv-move";
 const MOVE_CURRENT_CLASS = "wb-pv-move-current";
 const MOVE_NUM_CLASS = "wb-pv-movenum";
+const RANK_CLASS = "wb-pv-rank";
 export const SHOWABLE_TOOLTIP = "Double-click to play line";
 // Fewer than two frames (searched position + at least one ply) has nothing
 // to show: no hover, no tooltip, double-click inert.
@@ -70,22 +75,34 @@ function renderPvInto(cell, pvText) {
   }
 }
 
+// MultiPV line number, a circle ahead of the PV moves (renderPvInto wipes it).
+function setRankBadge(tr, rank) {
+  const cell = tr.cells[COL.PV];
+  let badge = cell.querySelector(`.${RANK_CLASS}`);
+  if (!badge) {
+    badge = document.createElement("span");
+    badge.className = RANK_CLASS;
+    cell.prepend(badge);
+  }
+  badge.textContent = rank;
+}
+
 function clearPlyHighlight(tr) {
-  const cur = tr.cells[4].querySelector(`.${MOVE_CURRENT_CLASS}`);
+  const cur = tr.cells[COL.PV].querySelector(`.${MOVE_CURRENT_CLASS}`);
   cur?.classList.remove(MOVE_CURRENT_CLASS);
 }
 
 function highlightPly(tr, ply) {
   clearPlyHighlight(tr);
-  const el = tr.cells[4].querySelector(`.${MOVE_SPAN_CLASS}[data-ply="${ply}"]`);
+  const el = tr.cells[COL.PV].querySelector(`.${MOVE_SPAN_CLASS}[data-ply="${ply}"]`);
   if (!el) return;
   el.classList.add(MOVE_CURRENT_CLASS);
   el.scrollIntoView({ inline: "nearest", block: "nearest" });
 }
 
-// Per-row state (the {placement, pv_uci, frames} snapshot and the show
-// generation counter used to detect a superseded same-row retarget) kept off
-// the DOM node itself.
+// Per-row state (depth, MultiPV rank, the {placement, pv_uci, frames}
+// snapshot and the show generation counter used to detect a superseded
+// same-row retarget) kept off the DOM node itself.
 const rowState = new WeakMap();
 
 function hasPlayableFrames(tr) {
@@ -202,9 +219,9 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
         sizes[gripIdx + 1] = b;
       }
     }
-    // First 4 cols are fixed px; last col (PV) is auto to fill remaining space.
-    applySplitColWidths([headColEls.slice(0, 4), colEls.slice(0, 4)], sizes, "px");
-    headColEls[4].style.width = colEls[4].style.width = "auto";
+    // Fixed cols are px; last col (PV) is auto to fill remaining space.
+    applySplitColWidths([headColEls.slice(0, COL.PV), colEls.slice(0, COL.PV)], sizes, "px");
+    headColEls[COL.PV].style.width = colEls[COL.PV].style.width = "auto";
     const fixedW = sizes.reduce((s, w) => s + w, 0);
     headTableEl.style.width = tableEl.style.width = "100%";
     headTableEl.style.minWidth = tableEl.style.minWidth = fixedW + "px";
@@ -241,15 +258,17 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
     },
   });
 
-  const rowMap = new Map();
+  const rowMap = new Map(); // rowKey(depth, rank) -> tr
   let maxDepth = 0;
+  // A line below the best showed up this search: rows show their line
+  // number (none until then, so single-PV searches show none).
+  let ranked = false;
   // The row currently playing a show, or null. Engine-info conflicts and
   // table clears pin this row instead of touching it (see update()/clear()).
   let playingRow = null;
 
   function activateRow(tr) {
     if (!onActivate || !isShowable(tr)) return;
-    const depth = Number(tr.dataset.depth);
     const st = rowState.get(tr);
     const myShowGen = (st.showGen || 0) + 1;
     st.showGen = myShowGen;
@@ -268,7 +287,7 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
         tr.classList.remove(PLAYING_ROW_CLASS);
         clearPlyHighlight(tr);
         if (playingRow === tr) playingRow = null;
-        if (rowMap.get(depth) !== tr && tr.parentElement === tbody) {
+        if (rowMap.get(rowKey(st.depth, st.rank)) !== tr && tr.parentElement === tbody) {
           tbody.removeChild(tr);
         }
       },
@@ -331,6 +350,7 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
     }
     rowMap.clear();
     maxDepth = 0;
+    ranked = false;
     // Drop the width the removed lines grew the table to.
     fitTableToPvContent();
     fit();
@@ -342,7 +362,7 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
   function fitTableToPvContent() {
     let pvMax = 0;
     for (const row of tbody.rows) {
-      const cell = row.cells[4];
+      const cell = row.cells[COL.PV];
       if (cell && cell.scrollWidth > pvMax) pvMax = cell.scrollWidth;
     }
     const fixedW = colWidths.reduce((s, w) => s + w, 0);
@@ -360,32 +380,47 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
     fitTableToPvContent();
   });
 
+  const rowKey = (depth, rank) => `${depth}:${rank}`;
+
+  // Sort order: deeper first, then best line first within a depth.
+  function sortsBefore(st, other) {
+    return st.depth > other.depth || (st.depth === other.depth && st.rank < other.rank);
+  }
+
+  // First line below the best: rank the rows written before it.
+  function showRanks() {
+    ranked = true;
+    for (const tr of tbody.rows) setRankBadge(tr, rowState.get(tr).rank);
+  }
+
   function update(info, pvText) {
     const { depth, seldepth, score, nodes, nps, pv_uci } = info;
     if (depth == null) return;
-    // depth === 1 after maxDepth > 1 signals a new search (single-PV assumption;
-    // MultiPV > 1 can emit low-depth lines mid-search and would false-trigger).
-    if (depth === 1 && maxDepth > 1) clear();
-    if (playingRow && rowMap.get(depth) === playingRow) {
+    const rank = info.multipv ?? BEST_RANK;
+    // A best-line depth 1 after maxDepth > 1 signals a new search; lines
+    // below the best can trail a depth behind mid-search.
+    if (depth === 1 && maxDepth > 1 && rank === BEST_RANK) clear();
+    if (!ranked && rank !== BEST_RANK) showRanks();
+    const key = rowKey(depth, rank);
+    if (playingRow && rowMap.get(key) === playingRow) {
       // The playing row is frozen whole: infos without a PV are dropped;
       // one carrying a PV is a conflict -- unkey and pin, a fresh row
       // follows below.
       if (!pv_uci || !pv_uci.length) return;
-      rowMap.delete(depth);
+      rowMap.delete(key);
     }
     if (depth > maxDepth) maxDepth = depth;
-    let tr = rowMap.get(depth);
+    let tr = rowMap.get(key);
     if (!tr) {
       tr = document.createElement("tr");
-      tr.dataset.depth = String(depth);
-      tr.innerHTML = `<td></td><td></td><td></td><td></td><td class="wb-pvtable-pv"></td>`;
-      rowState.set(tr, {});
+      tr.innerHTML = "<td></td>".repeat(COL.PV) + `<td class="wb-pvtable-pv"></td>`;
+      const st = { depth, rank };
+      rowState.set(tr, st);
       attachRowActivation(tr);
-      rowMap.set(depth, tr);
-      // Insert sorted by depth descending (highest at top).
+      rowMap.set(key, tr);
       let inserted = false;
       for (const row of tbody.rows) {
-        if (Number(row.dataset.depth) < depth) {
+        if (sortsBefore(st, rowState.get(row))) {
           tbody.insertBefore(tr, row);
           inserted = true;
           break;
@@ -393,11 +428,12 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
       }
       if (!inserted) tbody.appendChild(tr);
     }
-    tr.cells[0].textContent = seldepth != null ? `${depth}/${seldepth}` : depth;
-    if (score) tr.cells[1].textContent = fmtScore(score);
-    if (nodes != null) tr.cells[2].textContent = fmtCount(nodes);
-    if (nps != null) tr.cells[3].textContent = fmtCount(nps);
-    if (pvText) renderPvInto(tr.cells[4], pvText);
+    tr.cells[COL.DEPTH].textContent = seldepth != null ? `${depth}/${seldepth}` : depth;
+    if (score) tr.cells[COL.EVAL].textContent = fmtScore(score);
+    if (nodes != null) tr.cells[COL.NODES].textContent = fmtCount(nodes);
+    if (nps != null) tr.cells[COL.NPS].textContent = fmtCount(nps);
+    if (pvText) renderPvInto(tr.cells[COL.PV], pvText);
+    if (ranked) setRankBadge(tr, rank);
     // A row's {placement, pv_uci, frames} is written as one unit, and only by
     // an info that carries pv_uci -- infos without one update depth/score/
     // nodes/nps only, so the triple never disagrees with itself.

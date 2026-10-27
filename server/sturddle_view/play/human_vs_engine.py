@@ -50,6 +50,7 @@ from ..config import (
     HVE_DIFFICULTY_MAX,
     PGN_AUTOSAVE_KEY,
     PGN_DIR_KEY,
+    _DEFAULT_ANALYSIS_MULTIPV,
     _DEFAULT_HVE_DEFICIT_RELIEF_CAP,
     _DEFAULT_HVE_DEFICIT_RELIEF_GAIN,
     _DEFAULT_HVE_REMOVAL_STEP,
@@ -117,6 +118,8 @@ _INFO_PV = "pv"
 _INFO_SCORE = "score"
 _INFO_DEPTH = "depth"
 _INFO_MULTIPV = "multipv"
+# MultiPV rank of the best line; infos without a rank are single-PV.
+_BEST_RANK = 1
 _INFO_BOUNDS = ("lowerbound", "upperbound")
 # How long a stopped analysis may take to wind down before its task is cancelled.
 _ANALYSIS_STOP_GRACE_SECONDS = env_float("SV_ANALYSIS_STOP_GRACE_S", 2.0, min_value=0.0)
@@ -368,8 +371,18 @@ async def _final_lines(analysis) -> dict[int, dict]:
     final: dict[int, dict] = {}
     async for info in analysis:
         if info.get(_INFO_PV) and info.get(_INFO_SCORE) is not None:
-            final[info.get(_INFO_MULTIPV, 1)] = info
+            final[info.get(_INFO_MULTIPV, _BEST_RANK)] = info
     return final
+
+
+def _multipv_cap(engine, want: int) -> int:
+    """`want` lines capped by the engine's MultiPV max; 0 when it has no
+    MultiPV option or the cap leaves a single line."""
+    opt = engine.options.get(UCI_OPT_MULTIPV)
+    if opt is None:
+        return 0
+    lines = want if opt.max is None else min(want, opt.max)
+    return lines if lines > 1 else 0
 
 
 def _safe_name(name: str) -> str:
@@ -446,12 +459,12 @@ class HumanVsEngine:
         self._think_gen: int = 0  # search generation; bumped on cancel
         self._tick_task: asyncio.Task | None = None
         self._analysis_task: asyncio.Task | None = None
-        # Most recent engine_info payload published during analysis. Kept
-        # so /game/sync can re-emit it after a client remount (e.g. user
-        # navigated away and back); without this the board arrow stays
-        # gone until the engine ships its next info line, which can take
-        # seconds at higher depths.
-        self._last_analysis_info: dict | None = None
+        # Most recent engine_info payload per MultiPV rank published during
+        # analysis. Kept so /game/sync can re-emit them after a client
+        # remount (e.g. user navigated away and back); without this the
+        # board arrows stay gone until the engine ships its next info lines,
+        # which can take seconds at higher depths.
+        self._last_analysis_info: dict[int, dict] = {}
         # Set inside the game-end / Leaving lock by _stash_recents_payload();
         # drained after the lock by _flush_recents_save(). Carries (text,
         # summary, game_id, fork_link) so the async write happens outside the
@@ -1030,19 +1043,21 @@ class HumanVsEngine:
             )
 
     async def _republish_last_analysis_info(self) -> None:
-        """Re-emit the most recent analysis info payload so a freshly
-        mounted client can restore the board arrow without waiting for
-        the engine's next info line. No-op when not analyzing or when
-        no info has been captured yet (engine hasn't produced one)."""
-        if not self._analysis_mode or self._last_analysis_info is None:
+        """Re-emit the most recent analysis info payload per rank, best
+        first, so a freshly mounted client can restore the board arrows
+        without waiting for the engine's next info lines. No-op when not
+        analyzing or when no info has been captured yet."""
+        if not self._analysis_mode:
             return
-        await self._bus.publish(
-            Event(
-                kind=EVT_ENGINE_INFO,
-                game_id=self._game_id,
-                payload=self._last_analysis_info,
+        # Snapshot: stop_analysis clears the cache outside the lock.
+        for _rank, payload in sorted(self._last_analysis_info.items()):
+            await self._bus.publish(
+                Event(
+                    kind=EVT_ENGINE_INFO,
+                    game_id=self._game_id,
+                    payload=payload,
+                )
             )
-        )
 
     def snapshot_events(self) -> list[Event]:
         if not self._has_game:
@@ -2063,7 +2078,7 @@ class HumanVsEngine:
                 pass
         self._analysis_task = None
         self._analysis = None
-        self._last_analysis_info = None
+        self._last_analysis_info.clear()
 
     async def _cancel_tick(self) -> None:
         if self._tick_task and not self._tick_task.done():
@@ -2155,7 +2170,7 @@ class HumanVsEngine:
         (last_info, cancelled).
         """
         def _cache(payload: dict) -> None:
-            self._last_analysis_info = payload
+            self._last_analysis_info[payload.get(_INFO_MULTIPV, _BEST_RANK)] = payload
         return await pump_engine_info(
             analysis,
             bus=self._bus,
@@ -2351,11 +2366,7 @@ class HumanVsEngine:
         """0 = per-move sweep."""
         if not getattr(self._settings, "hve_sweep_multipv", _DEFAULT_HVE_SWEEP_MULTIPV):
             return 0
-        opt = engine.options.get(UCI_OPT_MULTIPV)
-        if opt is None:
-            return 0
-        lines = n_moves if opt.max is None else min(n_moves, opt.max)
-        return lines if lines > 1 else 0
+        return _multipv_cap(engine, n_moves)
 
     async def _off_clock(self, coro, analysis, game_id: str, gen: int):
         """Await `coro` with the turn stopwatch held at zero. Once stale,
@@ -2538,8 +2549,9 @@ class HumanVsEngine:
             await self._fail_analysis_start(game_id, str(exc))
             return
         await self._publish_search_start(game_id)
+        want = getattr(self._settings, "analysis_multipv", _DEFAULT_ANALYSIS_MULTIPV)
         try:
-            with await engine.analysis(board) as analysis:
+            with await engine.analysis(board, multipv=_multipv_cap(engine, want) or None) as analysis:
                 self._analysis = analysis
                 await self._pump_engine_info(analysis, game_id, board, cache_payload=True)
                 best = await analysis.wait()

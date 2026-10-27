@@ -14,7 +14,7 @@ import {
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
-import { SIDE, FEN_STM, uciSquares } from "./chess-consts.js";
+import { BEST_RANK, SIDE, FEN_STM, uciSquares } from "./chess-consts.js";
 import { fmtClock, fmtCount, fmtMoveNo, fmtScore, markSelectable, rafCoalesce } from "./wb-utils.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
@@ -634,7 +634,7 @@ function applyBoardUpdate(ctx, evt) {
   if (typeof evt.payload.editing === "boolean") {
     const wasEditing = ctx.editing;
     ctx.editing = evt.payload.editing;
-    if (ctx.editing && !wasEditing) board.clearArrows();
+    if (ctx.editing && !wasEditing) clearArrows(ctx);
   }
   if (typeof evt.payload.analyzing === "boolean") {
     ctx.analyzing = evt.payload.analyzing;
@@ -696,7 +696,7 @@ function applyBoardUpdate(ctx, evt) {
     ctx.resolveReady();
   }
   setFen(ctx, evt.payload.fen);
-  if (!ctx.editing) board.clearArrows();
+  if (!ctx.editing) clearArrows(ctx);
   if (ctx.showMoves && ctx.moveListEl) {
     // View mode highlights the cursor's ply (cursor-1 = last played move;
     // cursor=0 means initial position -> no highlight) and lets the user
@@ -762,7 +762,29 @@ function applyViewEval(ctx, evt) {
   }
 }
 
+// Clears every arrow, and the MultiPV numbering state with them.
+function clearArrows(ctx) {
+  ctx.board.clearArrows();
+  ctx.numberedArrows = false;
+  ctx.bestSquares = null;
+}
+
 function applyEngineInfo(ctx, evt) {
+  const squares = ctx.editing ? null : uciSquares(evt.payload.pv_uci?.[0]);
+  const rank = evt.payload.multipv ?? BEST_RANK;
+  // First line below the best: renumber the plain best arrow as line 1.
+  if (rank !== BEST_RANK && !ctx.numberedArrows) {
+    ctx.numberedArrows = true;
+    ctx.board.setArrow(null, null);
+    if (ctx.bestSquares) ctx.board.setRankArrow(BEST_RANK, ...ctx.bestSquares);
+  }
+  if (squares) {
+    if (ctx.numberedArrows) ctx.board.setRankArrow(rank, ...squares);
+    else ctx.board.setArrow(...squares);
+  }
+  // The summary fields track the best line only.
+  if (rank !== BEST_RANK) return;
+  if (squares) ctx.bestSquares = squares;
   setEngineSectionEmpty(ctx, false);
   if (ctx.engineDepth && evt.payload.depth != null) {
     ctx.engineDepth.textContent = evt.payload.depth;
@@ -788,8 +810,6 @@ function applyEngineInfo(ctx, evt) {
     ctx.enginePv.setAttribute("title", full);
   }
   syncPvVisibility(ctx);
-  const squares = ctx.editing ? null : uciSquares(evt.payload.pv_uci?.[0]);
-  if (squares) ctx.board.setArrow(...squares);
 }
 
 function applyEvent(ctx, evt) {
@@ -1068,7 +1088,7 @@ function buildViewApi(ctx) {
         ctx.board.setPosition(pending.fen, pending.lastMove, true);
       }
     },
-    clearArrows() { ctx.board.clearArrows(); },
+    clearArrows() { clearArrows(ctx); },
     // Both handed out as bare function references (setPvLineBoard), so they
     // close over ctx via canPlayLineNow rather than using `this`.
     canPlayLine() { return canPlayLineNow(ctx); },
@@ -1200,6 +1220,10 @@ export function mountGameView(container, opts = {}) {
     analyzing: false,
     // Analysis session on but its AI turn finished: no search in flight.
     analysisIdle: false,
+    // MultiPV arrows numbered (a line below the best showed up since the
+    // last clear), and the best line's [from, to] to renumber it then.
+    numberedArrows: false,
+    bestSquares: null,
     // Last announced canPlayLineNow() value; see announcePlayLineGate.
     playLineGate: null,
     // The game's opening, and the line show borrowing its label (if any).
