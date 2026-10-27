@@ -19,6 +19,9 @@ import { saveRaw } from "./storage.js";
 import { createTable, RENDER_REASON } from "./data-table.js";
 import { wireInlineSearch } from "./inline-search.js";
 
+// Engine listing without the lazy probes, for name/selection lookups.
+export const ENGINES_NO_PROBE_PATH = "/engines?probe=false";
+
 const COL_NAME = "name";
 const COL_ACTIVE = "active";
 const COL_PATH = "path";

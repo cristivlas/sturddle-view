@@ -339,6 +339,12 @@ function buildLaunchTab(engine, launchState) {
   return wrap;
 }
 
+// Same args + env (key order ignored).
+function sameLaunch(a, b) {
+  const key = ({ args, env }) => JSON.stringify([args || [], Object.entries(env || {}).sort()]);
+  return key(a) === key(b);
+}
+
 /** Open the Engine Settings dialog; resolves to the saved engine, or null on
  *  cancel. `presetName`/`presetDerived`: name carried across reopens (+ was it
  *  Reset-derived); `takenNames`: other engines' lowercased names for dedup. */
@@ -347,6 +353,9 @@ export function showEngineOptionsDialog({
   takenNames = null,
 }) {
   const schema = engine.option_schema || {};
+  // Launch profile the schema, uci_name and probed MultiPV describe: the
+  // saved one until a Refresh probes in-progress edits.
+  const probedLaunch = engine.probed_launch || { args: engine.args || [], env: engine.env || {} };
   const startValues = {};
   for (const [name, entry] of Object.entries(schema)) {
     if (entry.type === "button") continue;
@@ -513,6 +522,10 @@ export function showEngineOptionsDialog({
               // Trust a clean probe outright ("" = announced no name);
               // keep the stale value only when the probe failed.
               uci_name: probed.probe_error ? engine.uci_name : probed.uci_name,
+              probed_multipv_max: probed.probe_error ? engine.probed_multipv_max : probed.multipv_max,
+              probed_launch: probed.probe_error
+                ? probedLaunch
+                : { args: launchState.args, env: launchState.env },
               // Carry in-flight option edits (as diff) into the reopen.
               options: diffFromDefaults(ctx.values, schema),
               args: launchState.args,
@@ -544,6 +557,7 @@ export function showEngineOptionsDialog({
           engine: {
             ...engine,
             options: {},
+            probed_launch: probedLaunch,
             args: launchState.args,
             env: launchState.env,
             rating: currentRating,
@@ -567,16 +581,18 @@ export function showEngineOptionsDialog({
         const trimmed = (currentName || "").trim();
         const body = {
           options: diff,
-          // Persist the rendered schema and uci_name -- after a Refresh
-          // these are fresher than what the registry holds.
-          option_schema: schema,
           args: launchState.args,
           env: launchState.env,
           // Always sent: null clears (server treats omitted as untouched).
           rating: currentRating,
         };
-        if (engine.uci_name != null) {
-          body.uci_name = engine.uci_name;
+        // Probe results (fresher than the registry after a Refresh) hold
+        // only for the launch profile they came from; for any other, the
+        // server forgets MultiPV and its next list probe re-captures all.
+        if (sameLaunch(probedLaunch, launchState)) {
+          body.option_schema = schema;
+          if (engine.uci_name != null) body.uci_name = engine.uci_name;
+          if (engine.probed_multipv_max != null) body.multipv_max = engine.probed_multipv_max;
         }
         if (trimmed && trimmed !== startName) {
           body.name = trimmed;

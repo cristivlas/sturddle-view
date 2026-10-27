@@ -17,6 +17,7 @@ from ..engines import (
     EngineNotFoundError,
     EngineRegistry,
     InvalidLaunchProfileError,
+    pop_multipv_max,
     probe_engine,
     resolve_selected,
     validate_launch_profile,
@@ -82,6 +83,8 @@ class EngineUpdate(BaseModel):
     # with in-progress args/env) is persisted with the rest of the edits.
     option_schema: dict[str, Any] | None = None
     uci_name: str | None = None
+    # From the dialog's Refresh probe; omitted = unknown for an edited launch.
+    multipv_max: int | None = None
     # True when `name` was derived (Reset restore): collide -> suffix, not 409.
     auto_suffix: bool = False
     args: list[str] | None = None
@@ -148,22 +151,31 @@ def _serialize(e: Engine) -> dict:
     return asdict(e)
 
 
-async def _ensure_schema(reg: EngineRegistry, e: Engine) -> Engine:
-    """Lazily capture option schema + uci_name for entries that predate them.
+async def _probe(path: str, args, env) -> tuple[str | None, dict, int, dict | None]:
+    """probe_engine with MultiPV split off the schema:
+    (uci_name, option_schema, multipv_max, error)."""
+    uci_name, schema, err = await probe_engine(path, args=list(args or []), env=dict(env or {}))
+    return uci_name, schema, pop_multipv_max(schema), err
 
-    Skips engines already probed (non-empty schema, or uci_name set --
-    optionless engines would otherwise re-spawn on every GET). Best-effort:
-    a failed probe changes nothing and is retried next call.
+
+async def _ensure_schema(reg: EngineRegistry, e: Engine) -> Engine:
+    """Lazily capture option schema, uci_name and MultiPV support for
+    entries that predate them.
+
+    Skips engines already probed (non-empty schema or uci_name set, so
+    optionless engines don't re-spawn on every GET, and MultiPV known), and
+    launch profiles whose probe failed this run: a hung engine would stall
+    every listing by the probe timeout. Refresh or an edited profile retries.
     """
-    if e.option_schema or e.uci_name is not None:
+    probed = bool(e.option_schema) or e.uci_name is not None
+    if (probed and e.multipv_max is not None) or reg.probe_failed(e):
         return e
-    uci_name, schema, err = await probe_engine(
-        e.path, args=list(e.args or []), env=dict(e.env or {}),
-    )
+    uci_name, schema, multipv_max, err = await _probe(e.path, e.args, e.env)
     if err:
+        reg.mark_probe_failed(e)
         return e
     try:
-        return reg.update(e.id, option_schema=schema, uci_name=uci_name)
+        return reg.update(e.id, option_schema=schema, uci_name=uci_name, multipv_max=multipv_max)
     except EngineNotFoundError:
         return e
 
@@ -190,8 +202,8 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
     reg = _registry(request)
     resolved_path = _validate_engine_path(payload.path)
     _validate_launch(payload.args, payload.env)
-    uci_name, schema, probe_error = await probe_engine(
-        resolved_path, args=list(payload.args), env=dict(payload.env),
+    uci_name, schema, multipv_max, probe_error = await _probe(
+        resolved_path, payload.args, payload.env,
     )
     if probe_error:
         # Reject unprobeable engines outright -- a half-broken registry
@@ -210,6 +222,7 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
             auto_suffix=not user_supplied,
             uci_name=uci_name,
             rating=payload.rating,
+            multipv_max=multipv_max,
         )
     except DuplicateEngineError as exc:
         raise conflict(str(exc)) from exc
@@ -252,6 +265,7 @@ async def update_engine(engine_id: str, payload: EngineUpdate, request: Request)
             args=payload.args,
             env=payload.env,
             rating=payload.rating if "rating" in payload.model_fields_set else UNSET,
+            multipv_max=payload.multipv_max if "multipv_max" in payload.model_fields_set else UNSET,
         )
     except EngineNotFoundError as exc:
         raise not_found(_ENGINE_NOT_FOUND) from exc
@@ -308,16 +322,14 @@ async def refresh_engine_schema(engine_id: str, request: Request) -> dict:
         e = reg.get(engine_id)
     except EngineNotFoundError as exc:
         raise not_found(_ENGINE_NOT_FOUND) from exc
-    uci_name, schema, probe_error = await probe_engine(
-        e.path, args=list(e.args or []), env=dict(e.env or {}),
-    )
+    uci_name, schema, multipv_max, probe_error = await _probe(e.path, e.args, e.env)
     if probe_error:
         detail = f"could not capture options from engine: {probe_error[MESSAGE_KEY]}"
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
     # An empty schema on a clean probe is legitimate (optionless engine):
     # persist it plus uci_name so the entry stops re-probing.
     try:
-        e = reg.update(engine_id, option_schema=schema, uci_name=uci_name)
+        e = reg.update(engine_id, option_schema=schema, uci_name=uci_name, multipv_max=multipv_max)
     except EngineNotFoundError as exc:
         raise not_found(_ENGINE_NOT_FOUND) from exc
     return _serialize(e)
@@ -332,11 +344,12 @@ async def probe(payload: EngineProbe) -> dict:
     """
     resolved_path = _validate_engine_path(payload.path)
     _validate_launch(payload.args, payload.env)
-    uci_name, schema, probe_error = await probe_engine(
-        resolved_path, args=list(payload.args), env=dict(payload.env),
+    uci_name, schema, multipv_max, probe_error = await _probe(
+        resolved_path, payload.args, payload.env,
     )
     return {
         "uci_name": uci_name,
         "option_schema": schema,
+        "multipv_max": multipv_max,
         "probe_error": probe_error,
     }

@@ -22,8 +22,10 @@ const AI_DEPTH_MIN = 1;
 const ANALYSIS_ENGINE_KEY = "analysis_engine_id";
 const ANALYSIS_MULTIPV_KEY = "analysis_multipv";
 const ANALYSIS_LINES_MIN = 1;
+// An engine supports MultiPV when its max exceeds a single line.
+const MULTIPV_SINGLE_LINE = 1;
 const ANALYSIS_LINES_MAX = 256;
-const ANALYSIS_LINES_TOOLTIP = "Analysis lines (MultiPV); engines without MultiPV show one line";
+const ANALYSIS_LINES_TOOLTIP = "Analysis lines (MultiPV)";
 
 // Sentinel provider value: not a real LLM. Selecting it means
 // ai_enabled=false (plain engine analysis); the other entries are real LLM
@@ -127,7 +129,7 @@ function makeIntInput({ initial, debounce, putSettings }, key, label, { min, max
 //    free-text input takes over on fetch failure.
 //  - "Engine only": relabeled "Engine", populated from registered engines;
 //    selection persists as analysis_engine_id; the Lines input beside it
-//    (analysis_multipv) shows only in this mode.
+//    (analysis_multipv) shows only in this mode, for a MultiPV engine.
 // The hint row below it carries fetch-failure text.
 function buildAiModelRow({ initial, putSettings, putSettingsDebounced, debounce, isAiOn }) {
   const row = document.createElement("div");
@@ -419,6 +421,15 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
     syncThinkingOptions();
   }
 
+  // Lines: engine mode only, and only for an engine whose probe found
+  // MultiPV (multipv_max from the engines listing). Takes the engine id:
+  // a wa-select reads back null while the dialog is still detached.
+  function syncLinesVisibility(engineId = null) {
+    const engine = !isAiOn() && engineList.find((e) => e.id === engineId);
+    aiLinesInput.style.display = engine?.multipv_max > MULTIPV_SINGLE_LINE ? "" : "none";
+  }
+  aiModelSelect.addEventListener("change", () => syncLinesVisibility(aiModelSelect.value));
+
   function showModelInput(reason) {
     // Fall back to free-text input when the provider can't be queried or
     // returns nothing. Hint slot is always reserved (CSS min-height); we
@@ -426,7 +437,7 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
     aiModelLabel.textContent = "Model";
     aiModelSelect.style.display = "none";
     aiModelInput.style.display = "";
-    aiLinesInput.style.display = "none";
+    syncLinesVisibility();
     aiModelHintText.textContent = reason || "";
     syncThinkingOptions();
   }
@@ -446,7 +457,7 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
     aiModelSelect.value = current || (list[0] || "");
     aiModelSelect.style.display = "";
     aiModelInput.style.display = "none";
-    aiLinesInput.style.display = "none";
+    syncLinesVisibility();
     aiModelHintText.textContent = "";
     syncThinkingOptions();
   }
@@ -467,12 +478,13 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
     // exists or wa-select drops the value and renders blank.
     const has = (id) => engineList.some((e) => e.id === id);
     const pinnedId = initial[ANALYSIS_ENGINE_KEY] || "";
-    aiModelSelect.value = (has(pinnedId) && pinnedId)
+    const engineId = (has(pinnedId) && pinnedId)
       || (has(activeEngineId) && activeEngineId)
       || (engineList[0]?.id || "");
+    aiModelSelect.value = engineId;
     aiModelSelect.style.display = "";
     aiModelInput.style.display = "none";
-    aiLinesInput.style.display = "";
+    syncLinesVisibility(engineId);
     aiModelHintText.textContent = "";
   }
 

@@ -47,6 +47,7 @@ import { terminationLabel } from "../format-termination.js";
 import { editAnnotation } from "../annotation-dialog.js";
 import { collapseWhitespace } from "../text-utils.js";
 import { attachRibbonOverflow } from "../ribbon-overflow.js";
+import { ENGINES_NO_PROBE_PATH } from "../engines.js";
 
 // Tool name the AI uses to inspect hypothetical positions; the live
 // board mirrors `input.fen` while a call with this name is in flight.
@@ -1776,7 +1777,7 @@ function showAnalysisToastImpl(state) {
 async function resolveAnalysisEngineName(state) {
   const [s, e] = await Promise.all([
     state.ctx.api("GET", "/settings"),
-    state.ctx.api("GET", "/engines"),
+    state.ctx.api("GET", ENGINES_NO_PROBE_PATH),
   ]);
   const engines = e.engines || [];
   const id = s.analysis_engine_id || e.selected_id;
@@ -2353,7 +2354,7 @@ export const playPerspective = {
     }
     async function checkEngines() {
       try {
-        const r = await ctx.api("GET", "/engines");
+        const r = await ctx.api("GET", ENGINES_NO_PROBE_PATH);
         setNoEngine(!r.selected_id);
       } catch {
         // Network/auth failure: leave banner hidden -- a hidden banner
