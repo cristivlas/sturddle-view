@@ -53,6 +53,9 @@
   --nav-btn-bg: #2a2d33;
   --nav-btn-bg-hover: #32353c;
   --nav-btn-bg-active: #3a3d44;
+  /* Watch/unwatch (eye) buttons: lighter than nav buttons to stand off the pane. */
+  --watch-btn-bg: #474c56;
+  --watch-btn-bg-hover: #525862;
   --row-bg: #32353c;
   --row-bg-hover: #4a4e58;
   --row-bg-selected: #2a3a4a;
@@ -5166,8 +5169,8 @@ wa-dialog.tournament-info-dialog::part(body) {
   display: inline-flex; gap: 4px;
 }
 .wb-sched-attach-btn, .wb-sched-unwatch-btn {
-  background: var(--nav-btn-bg); color: var(--fg);
-  border: 1px solid var(--border-subtle); border-radius: 3px;
+  background: var(--watch-btn-bg); color: var(--fg);
+  border: 1px solid var(--border-subtle); border-radius: 6px;
   padding: 2px 6px; cursor: pointer; font-size: 0.6875rem;
 }
 /* Icon-only now: line-height 0 keeps the glyph vertically centred in the
@@ -5177,7 +5180,7 @@ wa-dialog.tournament-info-dialog::part(body) {
 }
 .wb-sched-unwatch-btn { margin-right: 4px; }
 .wb-sched-attach-btn:hover:not(:disabled),
-.wb-sched-unwatch-btn:hover:not(:disabled) { background: var(--nav-btn-bg-hover); border-color: var(--accent); }
+.wb-sched-unwatch-btn:hover:not(:disabled) { background: var(--watch-btn-bg-hover); border-color: var(--accent); }
 .wb-sched-attach-btn:disabled, .wb-sched-unwatch-btn:disabled {
   opacity: 0.35; cursor: default;
 }
