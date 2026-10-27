@@ -29,6 +29,7 @@ from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 from .conftest import (  # noqa: E402
     REGISTRY_FILE,
     e2e_env,
+    make_fake_uci,
     pin_arena_tournament_ux,
     run_uvicorn_subprocess,
     wait_for_async_predicate,
@@ -51,8 +52,8 @@ def _seed(tmp_path, *, engine_options=None, ref_options=None):
     mirror the registry exactly, except ``engine_options`` (applied to the
     first registry entry) and ``ref_options`` (frozen into its ref)."""
     registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
-    a = registry.add(name="engine-A", path=sys.executable, options=engine_options)
-    b = registry.add(name="engine-B", path=sys.executable)
+    a = registry.add(name="engine-A", path=make_fake_uci(tmp_path, "engine-A"), options=engine_options)
+    b = registry.add(name="engine-B", path=make_fake_uci(tmp_path, "engine-B"))
     ref_a = {"id": a.id, "name": a.name, "cmd": a.path}
     if ref_options:
         ref_a["options"] = dict(ref_options)

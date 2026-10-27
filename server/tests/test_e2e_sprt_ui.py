@@ -18,6 +18,7 @@ from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 from .conftest import (  # noqa: E402
     REGISTRY_FILE,
     e2e_env,
+    make_fake_uci,
     pin_arena_tournament_ux,
     run_uvicorn_subprocess,
     wait_perspective_ready,
@@ -29,8 +30,8 @@ def _server_env(tmp_path, *, sprt_defaults=None):
     out-of-process server. tournament_fastchess_path is sys.executable (a
     real file detect_binary echoes back); fastchess is never spawned."""
     registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
-    registry.add(name="engine-A", path=sys.executable)
-    registry.add(name="engine-B", path=sys.executable)
+    for name in ("engine-A", "engine-B"):
+        registry.add(name=name, path=make_fake_uci(tmp_path, name))
     env = {
         **e2e_env(tmp_path),
         "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,

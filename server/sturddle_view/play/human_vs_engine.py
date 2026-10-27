@@ -41,6 +41,7 @@ from ..chess.results import (
 )
 from ..config import (
     AI_ENABLED_KEY,
+    ANALYSIS_MULTIPV_KEY,
     AUTO_CLAIM_DRAWS_KEY,
     DEFAULT_TC_INCREMENT_SECONDS,
     DEFAULT_TC_INITIAL_SECONDS,
@@ -2549,7 +2550,7 @@ class HumanVsEngine:
             await self._fail_analysis_start(game_id, str(exc))
             return
         await self._publish_search_start(game_id)
-        want = getattr(self._settings, "analysis_multipv", _DEFAULT_ANALYSIS_MULTIPV)
+        want = getattr(self._settings, ANALYSIS_MULTIPV_KEY, _DEFAULT_ANALYSIS_MULTIPV)
         try:
             with await engine.analysis(board, multipv=_multipv_cap(engine, want) or None) as analysis:
                 self._analysis = analysis

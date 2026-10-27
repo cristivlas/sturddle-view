@@ -30,6 +30,7 @@ from .conftest import (  # noqa: E402
     REGISTRY_FILE,
     e2e_env,
     goto_arena_tournaments,
+    make_fake_uci,
     open_arena_workspace,
     run_uvicorn_subprocess,
 )
@@ -56,12 +57,8 @@ def server(tmp_path):
     # echoes back), but fastchess is never spawned -- this test only opens
     # and lays out workspace windows.
     registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
-    # Seed a non-empty option_schema so listing engines doesn't lazily
-    # probe sys.executable (not a real UCI engine) and log a handshake
-    # timeout. The schema content is irrelevant -- layout never reads it.
-    stub_schema = {"options": []}
-    registry.add(name="engine-A", path=sys.executable, option_schema=stub_schema)
-    registry.add(name="engine-B", path=sys.executable, option_schema=stub_schema)
+    for name in ("engine-A", "engine-B"):
+        registry.add(name=name, path=make_fake_uci(tmp_path, name))
     TournamentStore(tmp_path / "tournaments").create(
         name="alpha",
         template={"tc": "10+0.1"},

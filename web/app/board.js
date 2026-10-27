@@ -114,11 +114,17 @@ function _patchAnimationsQueue(board) {
 })();
 
 const ASSETS_URL = "./vendor/cm-chessboard/assets/";
-// MultiPV lines that get an arrow: the best-line color, numbered by rank.
-const MAX_ARROW_RANK = 3;
-const RANK_ARROW_TYPES = Object.fromEntries(Array.from({ length: MAX_ARROW_RANK }, (_, i) => (
-  [i + 1, { class: ARROW_TYPE.default.class, label: i + 1 }]
-)));
+// Numbered MultiPV line arrows in the best-line color: one stable type per
+// rank, since removeArrows and line-show key on type identity.
+const rankArrowTypes = new Map();
+function rankArrowType(rank) {
+  let type = rankArrowTypes.get(rank);
+  if (!type) {
+    type = { class: ARROW_TYPE.default.class, label: rank };
+    rankArrowTypes.set(rank, type);
+  }
+  return type;
+}
 
 // cm-chessboard (assetsCache=true) caches the first-mounted board's piece
 // sprite into this fixed-id body div and never refreshes it on style change,
@@ -331,11 +337,7 @@ export function mountBoard({ element, onMove, styleId }) {
   // the navy default/PV arrow.
   const setRecommendArrow = (fromUci, toUci) => setTypedArrow(ARROW_TYPE.secondary, fromUci, toUci);
 
-  // Numbered MultiPV line arrow; ranks past MAX_ARROW_RANK get none.
-  function setRankArrow(rank, fromUci, toUci) {
-    const type = RANK_ARROW_TYPES[rank];
-    if (type) setTypedArrow(type, fromUci, toUci);
-  }
+  const setRankArrow = (rank, fromUci, toUci) => setTypedArrow(rankArrowType(rank), fromUci, toUci);
 
   // Equally standard book alternatives beside the AI's pick; the vendored
   // ARROW_TYPE.info style (blue, translucent) as shipped.

@@ -20,6 +20,10 @@ const AI_VERIFICATION_DEPTH_KEY = "ai_verification_depth";
 const AI_ROUNDS_MIN = 1;
 const AI_DEPTH_MIN = 1;
 const ANALYSIS_ENGINE_KEY = "analysis_engine_id";
+const ANALYSIS_MULTIPV_KEY = "analysis_multipv";
+const ANALYSIS_LINES_MIN = 1;
+const ANALYSIS_LINES_MAX = 256;
+const ANALYSIS_LINES_TOOLTIP = "Analysis lines (MultiPV); engines without MultiPV show one line";
 
 // Sentinel provider value: not a real LLM. Selecting it means
 // ai_enabled=false (plain engine analysis); the other entries are real LLM
@@ -97,15 +101,39 @@ function buildAiProviderRow(initial) {
   return { row, select, isAiOn };
 }
 
+// Integer setting input (label above). Persists, debounced, only whole
+// values within [min, max]; anything else waits for a valid edit.
+function makeIntInput({ initial, debounce, putSettings }, key, label, { min, max = null }) {
+  const input = document.createElement("wa-input");
+  input.type = "number";
+  input.size = "small";
+  input.setAttribute("label", label);
+  input.setAttribute("autocomplete", "off");
+  input.min = String(min);
+  if (max != null) input.max = String(max);
+  input.step = "1";
+  input.value = String(initial[key] || min);
+  const persist = debounce(() => {
+    const n = Number(input.value);
+    if (!Number.isInteger(n) || n < min || (max != null && n > max)) return;
+    putSettings({ [key]: n });
+  }, SETTINGS_PUT_DEBOUNCE_MS);
+  input.addEventListener("input", persist);
+  return input;
+}
+
 // Model row, dual-purpose by provider:
 //  - LLM provider: a dropdown from the provider's list_models API; the
 //    free-text input takes over on fetch failure.
 //  - "Engine only": relabeled "Engine", populated from registered engines;
-//    selection persists as analysis_engine_id.
+//    selection persists as analysis_engine_id; the Lines input beside it
+//    (analysis_multipv) shows only in this mode.
 // The hint row below it carries fetch-failure text.
-function buildAiModelRow({ initial, putSettings, putSettingsDebounced, isAiOn }) {
+function buildAiModelRow({ initial, putSettings, putSettingsDebounced, debounce, isAiOn }) {
   const row = document.createElement("div");
-  row.className = "settings-row ai-row";
+  row.className = "settings-row ai-row ai-model-row";
+  const field = document.createElement("div");
+  field.className = "ai-model-field";
   const label = document.createElement("label");
   label.textContent = "Model";
   const select = document.createElement("wa-select");
@@ -125,13 +153,21 @@ function buildAiModelRow({ initial, putSettings, putSettingsDebounced, isAiOn })
     if (isAiOn()) putSettings({ [AI_MODEL_KEY]: select.value });
     else putSettings({ [ANALYSIS_ENGINE_KEY]: select.value });
   });
-  row.append(label, select, input);
+  field.append(label, select, input);
+
+  const lines = makeIntInput(
+    { initial, debounce, putSettings }, ANALYSIS_MULTIPV_KEY, "Lines",
+    { min: ANALYSIS_LINES_MIN, max: ANALYSIS_LINES_MAX },
+  );
+  lines.className = "ai-analysis-lines";
+  lines.title = ANALYSIS_LINES_TOOLTIP;
+  row.append(field, lines);
 
   const hint = document.createElement("div");
   hint.className = "settings-row settings-row-hint";
   const hintText = document.createElement("small");
   hint.append(hintText);
-  return { row, label, select, input, hint, hintText };
+  return { row, label, select, input, lines, hint, hintText };
 }
 
 // API-key row with a masking eye-toggle + deferred commit. Self-contained:
@@ -288,36 +324,20 @@ function buildAiThinkingRow({ initial, putSettings, debounce, getProvider, getAd
 // (depth row). Fully self-contained -- no forward refs. Returns both rows
 // and the four inputs (for the lockout set).
 function buildAiCapRows({ initial, debounce, putSettings }) {
-  const makeIntInput = (key, label, min) => {
-    const input = document.createElement("wa-input");
-    input.type = "number";
-    input.size = "small";
-    input.setAttribute("label", label);
-    input.setAttribute("autocomplete", "off");
-    input.min = String(min);
-    input.step = "1";
-    input.value = String(initial[key] || min);
-    const persist = debounce(() => {
-      const n = Number(input.value);
-      if (!Number.isFinite(n) || n < min) return;
-      putSettings({ [key]: n });
-    }, SETTINGS_PUT_DEBOUNCE_MS);
-    input.addEventListener("input", persist);
-    return input;
-  };
+  const deps = { initial, debounce, putSettings };
   const roundsRow = document.createElement("div");
   roundsRow.className = "settings-row ai-row ai-rounds-row";
-  const maxToolRounds = makeIntInput(AI_MAX_TOOL_ROUNDS_KEY, "Max rounds", AI_ROUNDS_MIN);
+  const maxToolRounds = makeIntInput(deps, AI_MAX_TOOL_ROUNDS_KEY, "Max rounds", { min: AI_ROUNDS_MIN });
   maxToolRounds.className = "ai-max-tool-rounds";
-  const verifierMaxRounds = makeIntInput(AI_VERIFIER_MAX_ROUNDS_KEY, "Max subagent rounds", AI_ROUNDS_MIN);
+  const verifierMaxRounds = makeIntInput(deps, AI_VERIFIER_MAX_ROUNDS_KEY, "Max subagent rounds", { min: AI_ROUNDS_MIN });
   verifierMaxRounds.className = "ai-verifier-max-rounds";
   roundsRow.append(maxToolRounds, verifierMaxRounds);
 
   const depthRow = document.createElement("div");
   depthRow.className = "settings-row ai-row ai-depth-row";
-  const analyzeMaxDepth = makeIntInput(AI_ANALYZE_MAX_DEPTH_KEY, "Max search depth", AI_DEPTH_MIN);
+  const analyzeMaxDepth = makeIntInput(deps, AI_ANALYZE_MAX_DEPTH_KEY, "Max search depth", { min: AI_DEPTH_MIN });
   analyzeMaxDepth.className = "ai-analyze-max-depth";
-  const verificationDepth = makeIntInput(AI_VERIFICATION_DEPTH_KEY, "Min verify depth", AI_DEPTH_MIN);
+  const verificationDepth = makeIntInput(deps, AI_VERIFICATION_DEPTH_KEY, "Min verify depth", { min: AI_DEPTH_MIN });
   verificationDepth.className = "ai-verification-depth";
   depthRow.append(analyzeMaxDepth, verificationDepth);
 
@@ -347,8 +367,8 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
   const { row: aiProviderRow, select: aiProvider, isAiOn } = buildAiProviderRow(initial);
   const {
     row: aiModelRow, label: aiModelLabel, select: aiModelSelect, input: aiModelInput,
-    hint: aiModelHint, hintText: aiModelHintText,
-  } = buildAiModelRow({ initial, putSettings, putSettingsDebounced, isAiOn });
+    lines: aiLinesInput, hint: aiModelHint, hintText: aiModelHintText,
+  } = buildAiModelRow({ initial, putSettings, putSettingsDebounced, debounce, isAiOn });
 
   // model id -> "adaptive" | "extended" | "none" (/settings/ai/models).
   // Unknown ids read as non-adaptive; cosmetic only -- the server
@@ -406,6 +426,7 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
     aiModelLabel.textContent = "Model";
     aiModelSelect.style.display = "none";
     aiModelInput.style.display = "";
+    aiLinesInput.style.display = "none";
     aiModelHintText.textContent = reason || "";
     syncThinkingOptions();
   }
@@ -425,6 +446,7 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
     aiModelSelect.value = current || (list[0] || "");
     aiModelSelect.style.display = "";
     aiModelInput.style.display = "none";
+    aiLinesInput.style.display = "none";
     aiModelHintText.textContent = "";
     syncThinkingOptions();
   }
@@ -450,6 +472,7 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
       || (engineList[0]?.id || "");
     aiModelSelect.style.display = "";
     aiModelInput.style.display = "none";
+    aiLinesInput.style.display = "";
     aiModelHintText.textContent = "";
   }
 

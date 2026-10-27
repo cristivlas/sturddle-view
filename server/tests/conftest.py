@@ -991,8 +991,9 @@ async def running_tournament(tmp_path, monkeypatch):
     s.tournament_fastchess_path = sys.executable
     registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     engines = (LIVE_ENGINE_A, LIVE_ENGINE_B)
-    for name in engines:
-        registry.add(name=name, path=sys.executable)
+    paths = {name: make_fake_uci(tmp_path, name) for name in engines}
+    for name, path in paths.items():
+        registry.add(name=name, path=path)
     app = create_app(settings=s, engine_registry=registry)
 
     with run_uvicorn(app, port=port) as (base, _s):
@@ -1000,7 +1001,7 @@ async def running_tournament(tmp_path, monkeypatch):
         t = store.create(
             name="live-e2e",
             template={"tc": "5+0.1", "rounds": 1, "games_in_parallel": 1},
-            engines=[{"name": name, "cmd": sys.executable} for name in engines],
+            engines=[{"name": name, "cmd": path} for name, path in paths.items()],
         )
         await app.state.tournament_orch.start(t.id)
         try:
@@ -1051,7 +1052,7 @@ def tournament_server_env(tmp_path: Path, engine_names) -> dict[str, str]:
     never spawned -- tests seed the PGN directly)."""
     registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     for name in engine_names:
-        registry.add(name=name, path=sys.executable)
+        registry.add(name=name, path=make_fake_uci(tmp_path, name))
     return {
         **e2e_env(tmp_path),
         "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,

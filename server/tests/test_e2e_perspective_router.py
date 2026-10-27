@@ -22,8 +22,6 @@ Skipped if Playwright/Chromium isn't installed.
 """
 from __future__ import annotations
 
-import sys
-
 import pytest
 
 pytest.importorskip("playwright.async_api")
@@ -34,6 +32,7 @@ from sturddle_view.engines import EngineRegistry  # noqa: E402
 from .conftest import (  # noqa: E402
     REGISTRY_FILE,
     e2e_env,
+    make_fake_uci,
     run_uvicorn_subprocess,
     wait_perspective_ready,
     watch_page_errors,
@@ -42,7 +41,7 @@ from .conftest import (  # noqa: E402
 
 def _server_env(tmp_path):
     registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
-    registry.add(name="engine-A", path=sys.executable)
+    registry.add(name="engine-A", path=make_fake_uci(tmp_path, "engine-A"))
     return e2e_env(tmp_path)
 
 

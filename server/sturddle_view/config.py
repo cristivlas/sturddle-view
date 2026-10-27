@@ -194,6 +194,7 @@ AI_VERIFIER_MAX_ROUNDS_KEY = "ai_verifier_max_rounds"
 AI_ANALYZE_MAX_DEPTH_KEY = "ai_analyze_max_depth"
 AI_VERIFICATION_DEPTH_KEY = "ai_verification_depth"
 ANALYSIS_ENGINE_KEY = "analysis_engine_id"
+ANALYSIS_MULTIPV_KEY = "analysis_multipv"
 
 # Fields persisted to disk. Excludes secrets (token), bind config (host/port),
 # auth_disabled (CLI flag), and web_dir (deployment).
@@ -238,6 +239,7 @@ PERSISTED_FIELDS = (
     AI_ANALYZE_MAX_DEPTH_KEY,
     AI_VERIFICATION_DEPTH_KEY,
     ANALYSIS_ENGINE_KEY,
+    ANALYSIS_MULTIPV_KEY,
     # ai_api_key intentionally NOT persisted: it lives in the OS keyring
     # (SV_AI_API_KEY as fallback). The JSON settings file must never hold
     # the plaintext key.
