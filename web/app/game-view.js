@@ -14,9 +14,10 @@ import {
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
-import { BEST_RANK, SIDE, FEN_STM, uciSquares } from "./chess-consts.js";
+import { BEST_RANK, SIDE, FEN_STM, fenSide, stmSide, uciSquares } from "./chess-consts.js";
 import { fmtClock, fmtCount, fmtMoveNo, fmtScore, markSelectable, rafCoalesce } from "./wb-utils.js";
 import { STORAGE_KEY } from "./storage-keys.js";
+import { EVAL_GAUGE_HTML, setEvalGauge, setEvalGaugeFlipped } from "./eval-gauge.js";
 import { loadRaw, saveRaw } from "./storage.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -234,9 +235,19 @@ function setNames(ctx, { top, bottom } = {}) {
   }
 }
 
+// Orient the board and the eval gauge's White end from ctx.humanWhite.
+function applyBoardSide(ctx) {
+  ctx.board.setSide(ctx.humanWhite ? SIDE.WHITE : SIDE.BLACK);
+  setEvalGaugeFlipped(ctx.evalGauge, !ctx.humanWhite);
+}
+
+function isWhiteToMove(ctx) {
+  return fenSide(ctx.currentFen) === SIDE.WHITE;
+}
+
 function setHumanWhite(ctx, value) {
   ctx.humanWhite = !!value;
-  ctx.board.setSide(ctx.humanWhite ? SIDE.WHITE : SIDE.BLACK);
+  applyBoardSide(ctx);
   // In interactive (Play) mode, bottom = human, top = engine. In view
   // mode, re-swap cached PGN names to match the new orientation.
   if (ctx.interactive && !ctx.viewing) {
@@ -250,7 +261,7 @@ function setHumanWhite(ctx, value) {
   if (ctx.showClocks) {
     applyClockColors(ctx);
     if (ctx.editing) {
-      applyClockActive(ctx, ctx.editStm === FEN_STM.BLACK ? SIDE.BLACK : SIDE.WHITE, true);
+      applyClockActive(ctx, stmSide(ctx.editStm), true);
     } else {
       applyClockActive(ctx, ctx.lastTurn, ctx.lastClockRunning);
     }
@@ -509,7 +520,7 @@ function recomputeNow(ctx) {
 
   let siblingsInCol = 0;
   for (const child of boardCol.children) {
-    if (child === boardEl) continue;
+    if (child === ctx.boardFrame) continue;
     if (child.offsetParent === null) continue;
     siblingsInCol += child.getBoundingClientRect().height + colGap;
   }
@@ -650,7 +661,7 @@ function applyBoardUpdate(ctx, evt) {
   }
   if (typeof evt.payload.human_white === "boolean") {
     ctx.humanWhite = evt.payload.human_white;
-    board.setSide(ctx.humanWhite ? SIDE.WHITE : SIDE.BLACK);
+    applyBoardSide(ctx);
     if (ctx.interactive) setNames(ctx, { bottom: ctx.playerName, top: ctx.engineName });
   }
   // View mode: surface the PGN's player names instead of Human/engine.
@@ -745,12 +756,14 @@ function applyViewEval(ctx, evt) {
     setEngineSectionEmpty(ctx, false);
     clearEngineInfoFields(ctx);
     if (ctx.engineScore) ctx.engineScore.textContent = fmtScore(ev, { signed: true });
+    setEvalGauge(ctx.evalGauge, ev, { whiteToMove: isWhiteToMove(ctx) });
     if (ctx.engineDepth) ctx.engineDepth.textContent = ev.depth ?? "";
   } else if (!hasAnyEval) {
     // PGN has no eval anywhere -- hide the panel so subsequent imports of
     // bare PGNs don't inherit visibility from a prior import that had evals.
     if (ctx.engineScore) ctx.engineScore.textContent = "";
     if (ctx.engineDepth) ctx.engineDepth.textContent = "";
+    setEvalGauge(ctx.evalGauge, null);
     setEngineSectionEmpty(ctx, true);
   } else {
     // PGN has evals elsewhere but this specific ply doesn't (e.g. last
@@ -759,6 +772,7 @@ function applyViewEval(ctx, evt) {
     // blank the per-ply fields so stale values don't leak through.
     setEngineSectionEmpty(ctx, false);
     clearEngineInfoFields(ctx);
+    setEvalGauge(ctx.evalGauge, null);
   }
 }
 
@@ -791,6 +805,10 @@ function applyEngineInfo(ctx, evt) {
   }
   if (ctx.engineScore && evt.payload.score) {
     ctx.engineScore.textContent = fmtScore(evt.payload.score, { signed: true });
+  }
+  if (evt.payload.score) {
+    setEvalGauge(ctx.evalGauge, evt.payload.score,
+      { pov: evt.payload.pov, whiteToMove: isWhiteToMove(ctx) });
   }
   if (ctx.engineNodes && evt.payload.nodes != null) {
     ctx.engineNodes.textContent = fmtCount(evt.payload.nodes);
@@ -870,7 +888,10 @@ function boardHTML(showClocks) {
         <span class="clock-time" data-time="top">—</span>
       </div>` : ""}
 
-      <div class="board" aria-label="chess board"></div>
+      <div class="board-frame">
+        <div class="board" aria-label="chess board"></div>
+        ${EVAL_GAUGE_HTML}
+      </div>
 
       <div class="game-view-meta">
         <div class="fen-line">
@@ -925,6 +946,8 @@ function sideHTML(showEngineInfo, showMoves) {
 
 function queryRefs(ctx, container, sideHost) {
   ctx.boardEl = container.querySelector(".board");
+  ctx.boardFrame = container.querySelector(".board-frame");
+  ctx.evalGauge = container.querySelector(".eval-gauge");
   ctx.clockTopName = container.querySelector('[data-side="top"]');
   ctx.clockTopTime = container.querySelector('[data-time="top"]');
   ctx.clockBottomName = container.querySelector('[data-side="bottom"]');
@@ -1103,6 +1126,7 @@ function buildViewApi(ctx) {
     currentPlacement() { return ctx.board.currentPlacement(); },
     clearEngineInfo() {
       clearEngineInfoFields(ctx);
+      setEvalGauge(ctx.evalGauge, null);
       setEngineSectionEmpty(ctx, true);
     },
     setEnabled(enabled) { ctx.board.enableInput(ctx.interactive && enabled); },
@@ -1116,6 +1140,7 @@ function buildViewApi(ctx) {
       if (ctx.moveListEl) ctx.moveListEl.innerHTML = "";
       syncMovesEmpty(ctx);
       clearEngineInfoFields(ctx);
+      setEvalGauge(ctx.evalGauge, null);
       setEngineSectionEmpty(ctx, true);
       setOpening(ctx, null);
       setTablebase(ctx, null);
@@ -1130,7 +1155,7 @@ function buildViewApi(ctx) {
       // styling immediately since the server isn't ticking during edit.
       ctx.editStm = stm === FEN_STM.BLACK ? FEN_STM.BLACK : FEN_STM.WHITE;
       if (ctx.showClocks) {
-        applyClockActive(ctx, ctx.editStm === FEN_STM.BLACK ? SIDE.BLACK : SIDE.WHITE, true);
+        applyClockActive(ctx, stmSide(ctx.editStm), true);
       }
     },
     getEditSide() { return ctx.editStm; },

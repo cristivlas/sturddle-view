@@ -5,7 +5,8 @@ import chess
 import chess.engine
 import pytest
 
-from sturddle_view.chess.engine_info import parse_info_tokens, serialize_info
+from sturddle_view.chess.engine_info import INFO_POV, parse_info_tokens, serialize_info
+from sturddle_view.chess.results import SIDE_BLACK, SIDE_WHITE
 
 
 def _typed_info() -> chess.engine.InfoDict:
@@ -61,7 +62,7 @@ def test_both_paths_produce_same_keys_for_score_and_depth():
         board=None, pov=chess.WHITE,
     )
     raw = parse_info_tokens("depth 8 score cp 15")
-    assert typed.keys() == raw.keys()
+    assert typed.keys() - {INFO_POV} == raw.keys()
     assert typed["score"] == raw["score"] == {"cp": 15}
 
 
@@ -91,19 +92,21 @@ def test_parse_info_mate_score():
 
 
 @pytest.mark.parametrize(
-    "white_cp,pov,expected_cp",
+    "white_cp,pov,expected_cp,pov_name",
     [
-        (50, chess.WHITE, 50),
-        (50, chess.BLACK, -50),
+        (50, chess.WHITE, 50, SIDE_WHITE),
+        (50, chess.BLACK, -50, SIDE_BLACK),
     ],
 )
-def test_serialize_info_score_pov_flips_for_black(white_cp, pov, expected_cp):
-    """``pov`` controls whose perspective the score is reported from."""
+def test_serialize_info_score_pov_flips_for_black(white_cp, pov, expected_cp, pov_name):
+    """``pov`` controls whose perspective the score is reported from, and
+    is named in the payload."""
     info: chess.engine.InfoDict = {
         "score": chess.engine.PovScore(chess.engine.Cp(white_cp), chess.WHITE),
     }
     out = serialize_info(info, board=None, pov=pov)
     assert out["score"] == {"cp": expected_cp}
+    assert out[INFO_POV] == pov_name
 
 
 def test_serialize_info_falls_back_to_uci_pv_when_san_rejects():

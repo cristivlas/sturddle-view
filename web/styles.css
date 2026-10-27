@@ -56,6 +56,10 @@
   /* Watch/unwatch (eye) buttons: lighter than nav buttons to stand off the pane. */
   --watch-btn-bg: #474c56;
   --watch-btn-bg-hover: #525862;
+  /* Board-side eval gauge (eval-gauge.js). */
+  --eval-gauge-w: 10px;
+  --eval-gauge-white: #e8e8e8;
+  --eval-gauge-black: #5c6370;
   --row-bg: #32353c;
   --row-bg-hover: #4a4e58;
   --row-bg-selected: #2a3a4a;
@@ -1932,6 +1936,34 @@ body .side-popover.popover-floating {
   pointer-events: none;
   filter: grayscale(0.4);
 }
+/* Desktop: the gauge hangs off the board's dock side, in room the dock
+   column gives up (play-dock-windows.js applyDockBounds). White's end
+   follows White's pieces: bottom, or top when flipped. */
+.board-frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--play-gap);
+  max-width: 100%;
+}
+.eval-gauge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: calc(100% + var(--grid-gap));
+  width: var(--eval-gauge-w);
+  display: flex;
+  flex-direction: column-reverse;
+  background: var(--eval-gauge-black);
+  border-radius: var(--wb-radius);
+  overflow: hidden;
+}
+.eval-gauge.flipped { flex-direction: column; }
+.eval-gauge-fill {
+  flex: 0 0 var(--white-share, 50%);
+  background: var(--eval-gauge-white);
+}
+.eval-gauge.is-empty { opacity: 0.4; }
 /* 800px = --bp-mobile, 680px = --bp-mobile-h-play. Media queries can't read
    custom props; keep these literals in sync with :root. Height gate is
    touch-only so short laptops keep the desktop layout. */
@@ -1949,6 +1981,15 @@ body .side-popover.popover-floating {
   }
   .no-engine-banner { margin-bottom: 0; }
   .play-board-host { display: block; }
+  /* Gauge goes horizontal under the board, White's end left (right when
+     flipped). */
+  .eval-gauge {
+    position: static;
+    width: auto;
+    height: var(--eval-gauge-w);
+    flex-direction: row;
+  }
+  .eval-gauge.flipped { flex-direction: row-reverse; }
   /* Inline AI panel: visible in the stacked layout, below the board. The
      base .inline-empty rule handles empty-state hiding. */
   .play-ai-inline { display: block; }
@@ -5345,6 +5386,10 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
     grid-column: 3;
     left: auto;
     right: var(--ribbon-w);
+  }
+  body[data-ribbon-side="right"] .eval-gauge {
+    right: auto;
+    left: calc(100% + var(--grid-gap));
   }
   body[data-ribbon-side="right"] .board-ribbon,
   body[data-ribbon-side="right"] .tournaments-ribbon,

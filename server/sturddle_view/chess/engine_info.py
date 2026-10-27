@@ -9,11 +9,13 @@ Two producers, one shape:
 Both return the same dict shape:
     {depth, seldepth, time, nodes, nps, hashfull, tbhits, multipv,
      score: {cp|mate: int} | absent,
+     pov: "white"|"black" | absent,
      pv_uci: [str, ...] | absent,
      pv: [str] | absent}
 Keys are absent when the source lacks them. ``pv`` (single-element SAN list)
 is only present when a board is supplied to ``serialize_info``; tournament
-has no board context, so its output carries ``pv_uci`` only.
+has no board context, so its output carries ``pv_uci`` only. ``pov`` (the
+side ``score`` is from) is ``serialize_info``-only, present with ``score``.
 """
 from __future__ import annotations
 
@@ -22,8 +24,10 @@ from typing import Any
 import chess
 import chess.engine
 
+from .results import SIDE_BLACK, SIDE_WHITE
 from .score import SCORE_CP, SCORE_MATE
 
+INFO_POV = "pov"
 _INT_FIELDS = ("depth", "seldepth", "time", "nodes", "nps",
                "hashfull", "tbhits", "multipv")
 
@@ -46,6 +50,7 @@ def serialize_info(
             out["score"] = {SCORE_MATE: side.mate()}
         else:
             out["score"] = {SCORE_CP: side.score()}
+        out[INFO_POV] = SIDE_WHITE if pov == chess.WHITE else SIDE_BLACK
     pv = info.get("pv")
     if pv:
         uci = [m.uci() for m in pv]

@@ -133,7 +133,11 @@ function applyDockBounds(el) {
   // Board's distance from the ribbon-side viewport edge.
   const side = document.body.dataset.ribbonSide === "right"
     ? window.innerWidth - Math.round(rect.right) : Math.round(rect.left);
-  el.style.width = (side - ribbonWidthPx(PLAY_GRID_SEL) - gridGapPx(el.parentElement)) + "px";
+  // The eval gauge hangs in this gap, so the dock yields its width + a gap.
+  const gap = gridGapPx(el.parentElement);
+  const gaugeW = document.querySelector(".eval-gauge")?.offsetWidth ?? 0;
+  const gaugeRoom = gaugeW ? gaugeW + gap : 0;
+  el.style.width = (side - ribbonWidthPx(PLAY_GRID_SEL) - gap - gaugeRoom) + "px";
 
   const clockTop = document.querySelector(".clock-row.clock-top");
   const clockBot = document.querySelector(".clock-row.clock-bottom");

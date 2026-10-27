@@ -126,6 +126,15 @@ export function fmtScore(score, { empty = "", matePrefix = "#", signed = false }
   return empty;
 }
 
+// A score between White's POV and `white`'s side: as-is for White, negated
+// for Black. Symmetric, so it converts in either direction.
+export function sidePovScore(ev, white) {
+  if (white) return ev;
+  if (ev.mate != null) return { mate: -ev.mate };
+  if (ev.cp != null) return { cp: -ev.cp };
+  return ev;
+}
+
 // Move-number prefix for a 0-based ply: "12." for white, "12..." for black.
 export function fmtMoveNo(ply, isWhite) {
   return `${Math.floor(ply / 2) + 1}${isWhite ? "." : "..."}`;
