@@ -78,12 +78,16 @@ def _isolate_keyring(monkeypatch):
     yield
 
 
-def _write_uci_stub(root: Path, name: str, extra_body: str = "", *, pre_loop: str = "") -> str:
+def _write_uci_stub(
+    root: Path, name: str, extra_body: str = "", *, pre_loop: str = "", uci_options: str = "",
+) -> str:
     """Shared writer for Python-based fake UCI engines.
 
     `extra_body`: indented elif branches in the read loop.
     `pre_loop`: module-level statements before the read loop (e.g. state
     vars like `last_position = ''` for the position-aware fake).
+    `uci_options`: `option name ...` lines announced before `uciok`, each
+    ending in an escaped newline.
     """
     py = root / f"{name}.py"
     body = (
@@ -99,7 +103,8 @@ def _write_uci_stub(root: Path, name: str, extra_body: str = "", *, pre_loop: st
         "    line = sys.stdin.readline()\n"
         "    if not line: break\n"
         "    line = line.strip()\n"
-        f"    if line == 'uci': sys.stdout.write('id name {name}\\nuciok\\n'); sys.stdout.flush()\n"
+        f"    if line == 'uci': sys.stdout.write('id name {name}\\n{uci_options}uciok\\n')"
+        "; sys.stdout.flush()\n"
         "    elif line == 'isready': sys.stdout.write('readyok\\n'); sys.stdout.flush()\n"
         f"{extra_body}"
         "    elif line == 'quit': break\n"

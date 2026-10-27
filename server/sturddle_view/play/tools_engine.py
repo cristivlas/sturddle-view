@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import replace
 from typing import Any, Awaitable, Callable
 
 import chess
@@ -26,9 +27,12 @@ from ..chess.score import SCORE_MATE
 from ..config import (
     AI_ANALYZE_MAX_DEPTH_KEY,
     AI_VERIFICATION_DEPTH_KEY,
+    ANALYSIS_MULTIPV_KEY,
     _DEFAULT_AI_ANALYZE_MAX_DEPTH,
     _DEFAULT_AI_VERIFICATION_DEPTH,
+    _DEFAULT_ANALYSIS_MULTIPV,
 )
+from ..engines import UCI_OPT_MULTIPV
 from ..env_utils import env_int
 from ..error_detail import REASON_KEY
 from ..events import EVT_ENGINE_SEARCH_START, Event, EventBus
@@ -108,6 +112,10 @@ TOP_MOVES_MAX_N = env_int("SV_AI_TOP_MOVES_MAX_N", _DEFAULT_TOP_MOVES_MAX_N)
 # bounded and shallower defaults were producing weak candidate ranking.
 _DEFAULT_TOP_MOVES_DEPTH = _DEFAULT_DEPTH
 
+# MultiPV: analyze's optional `lines` arg and top_moves' one-search batch
+# only make sense from two lines up; fewer is a plain best-line search.
+_MIN_LINES = 2
+
 # report_line: hard cap on the reported continuation length. A line is
 # replayed move-by-move (no engine); the cap just bounds payload size.
 _DEFAULT_REPORT_LINE_MAX_PLIES = 40
@@ -121,6 +129,8 @@ BoardProvider = Callable[[], chess.Board | None]
 # the throwaway analysis engine inherit Threads/Hash/Syzygy/etc. from
 # the same source HVE's analysis path uses.
 SettingsProvider = Callable[[], Any]
+# The analysis engine's probed MultiPV max (Engine.multipv_max semantics).
+MultipvMaxProvider = Callable[[], int | None]
 # The current AI turn's book move (UCI), or None when the turn has none.
 BookMoveProvider = Callable[[], str | None]
 # Live-position Situation (play/playbook.py) for the plan-aware gate.
@@ -158,6 +168,20 @@ def _max_depth(settings_provider: SettingsProvider | None) -> int:
 
 def _verification_depth(settings_provider: SettingsProvider | None) -> int:
     return _settings_int(settings_provider, AI_VERIFICATION_DEPTH_KEY, VERIFICATION_DEPTH)
+
+
+def _multipv_max(multipv_max_provider: MultipvMaxProvider | None) -> int:
+    return (multipv_max_provider() if multipv_max_provider else None) or 0
+
+
+def analyze_lines_cap(
+    settings_provider: SettingsProvider | None,
+    multipv_max_provider: MultipvMaxProvider | None,
+) -> int:
+    """Most lines `analyze` may return: the Lines setting capped by the
+    analysis engine's MultiPV max. Below _MIN_LINES the arg isn't offered."""
+    lines = _settings_int(settings_provider, ANALYSIS_MULTIPV_KEY, _DEFAULT_ANALYSIS_MULTIPV)
+    return min(lines, _multipv_max(multipv_max_provider))
 
 # Default fallback game_id when the tool runs outside a live HVE
 # session (e.g. unit tests, future post-game path). engine_info events
@@ -209,6 +233,7 @@ _MOVES_KEY = "moves"
 _SQUARE_KEY = "square"
 _DEPTH_KEY = "depth"
 _PV_KEY = "pv"
+_LINES_KEY = "lines"
 _NODES_KEY = "nodes"
 _SCORE_KEY = "score"
 _UCI_KEY = "uci"
@@ -346,6 +371,24 @@ ANALYZE_TOOL_SPEC = ToolSpec(
 )
 
 
+def analyze_tool_spec(
+    settings_provider: SettingsProvider | None,
+    multipv_max_provider: MultipvMaxProvider | None,
+) -> ToolSpec:
+    """ANALYZE_TOOL_SPEC plus the `lines` arg, offered only while the Lines
+    setting and the analysis engine's MultiPV allow two or more."""
+    def extra() -> dict[str, Any]:
+        cap = analyze_lines_cap(settings_provider, multipv_max_provider)
+        if cap < _MIN_LINES:
+            return {}
+        return {_LINES_KEY: integer_prop(
+            f"Return the best {_MIN_LINES}-{cap} lines, ranked, under `lines`. "
+            "Ask when comparing alternatives or at a critical moment (only "
+            "move vs several good options); omit for just the best line."
+        )}
+    return replace(ANALYZE_TOOL_SPEC, extra_properties=extra)
+
+
 # material and tactics take just a FEN.
 _FEN_ONLY_SCHEMA = object_schema(
     {FEN_KEY: string_prop(_FEN_ARG_DESCRIPTION)}, required=[FEN_KEY],
@@ -464,6 +507,40 @@ def _score_to_cp(score: chess.engine.PovScore | None) -> dict:
     return out
 
 
+def _requested_lines(input_: dict, cap: int) -> int:
+    """analyze's `lines` arg clamped to [_MIN_LINES, cap]; 0 = best line
+    only (absent, unusable, or lines unavailable)."""
+    raw = input_.get(_LINES_KEY)
+    if raw is None or cap < _MIN_LINES:
+        return 0
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    return min(n, cap) if n >= _MIN_LINES else 0
+
+
+def _eval_fields(board: chess.Board, info: chess.engine.InfoDict) -> dict:
+    """A searched line's eval, depth and pv (shared by analyze and top_moves)."""
+    out = _score_to_cp(info.get(_SCORE_KEY))
+    if info.get(_DEPTH_KEY) is not None:
+        out[_DEPTH_KEY] = info[_DEPTH_KEY]
+    pv = _pv_to_uci(board, info.get(_PV_KEY))
+    if pv:
+        out[_PV_KEY] = pv
+    return out
+
+
+def _line_fields(board: chess.Board, info: chess.engine.InfoDict) -> dict:
+    """analyze's per-line result: _eval_fields plus nodes and the pv's first move."""
+    out = _eval_fields(board, info)
+    if info.get(_NODES_KEY) is not None:
+        out[_NODES_KEY] = info[_NODES_KEY]
+    if _PV_KEY in out:
+        out["bestmove"] = out[_PV_KEY][0]
+    return out
+
+
 def _pv_to_uci(board: chess.Board, pv: list[chess.Move] | None) -> list[str]:
     if not pv:
         return []
@@ -519,9 +596,12 @@ class SearchCache:
 
     def __init__(self) -> None:
         self._entries: dict[_SearchKey, tuple[int, chess.engine.InfoDict]] = {}
+        # MultiPV searches: the search key plus the line count -> ranked lines.
+        self._lines: dict[tuple[_SearchKey, int], tuple[int, list[chess.engine.InfoDict]]] = {}
 
     def clear(self) -> None:
         self._entries = {}
+        self._lines = {}
 
     @staticmethod
     def _key(board: chess.Board, root_moves: list[chess.Move] | None) -> _SearchKey:
@@ -548,29 +628,71 @@ class SearchCache:
         requested depth; otherwise run the search and cache it if deeper than
         what's stored. Same return shape as _run_one_search. A reuse hit
         reports (info, cancelled=False)."""
+        return await self._get_or_run(
+            self._entries, self._key(board, root_moves), limit,
+            lambda: _run_one_search(
+                engine_launcher, board, limit,
+                bus=bus, game_id=game_id, cancel_token=cancel_token,
+                root_moves=root_moves, settings_provider=settings_provider,
+            ),
+            lambda info: [info],
+            board=board, bus=bus, game_id=game_id, settings_provider=settings_provider,
+        )
+
+    async def get_or_search_lines(
+        self,
+        engine_launcher: EngineLauncher,
+        board: chess.Board,
+        limit: chess.engine.Limit,
+        multipv: int,
+        *,
+        bus: EventBus,
+        game_id: str,
+        cancel_token: CancelToken,
+        root_moves: list[chess.Move] | None = None,
+        settings_provider: SettingsProvider | None = None,
+    ) -> tuple[list[chess.engine.InfoDict], bool]:
+        """get_or_search for a `multipv`-line search; returns the ranked
+        lines, best first (see _run_lines_search)."""
+        return await self._get_or_run(
+            self._lines, (self._key(board, root_moves), multipv), limit,
+            lambda: _run_lines_search(
+                engine_launcher, board, limit, multipv,
+                bus=bus, game_id=game_id, cancel_token=cancel_token,
+                root_moves=root_moves, settings_provider=settings_provider,
+            ),
+            lambda lines: lines,
+            board=board, bus=bus, game_id=game_id, settings_provider=settings_provider,
+        )
+
+    @staticmethod
+    async def _get_or_run(
+        store: dict, key, limit: chess.engine.Limit,
+        run: Callable[[], Awaitable[tuple[Any, bool]]],
+        infos: Callable[[Any], list[chess.engine.InfoDict]],
+        *, board: chess.Board, bus: EventBus, game_id: str,
+        settings_provider: SettingsProvider | None,
+    ) -> tuple[Any, bool]:
+        """Shared hit/miss: `run()` searches; `infos(result)` lists its
+        InfoDicts, best line first, whose depth is the result's."""
         requested = limit.depth or 0
-        key = self._key(board, root_moves)
-        cached = self._entries.get(key)
+        cached = store.get(key)
         if cached is not None and cached[0] >= requested:
             log.info("search cache hit: depth %d >= %d, key=%s", cached[0], requested, key)
-            info = cached[1]
             # Show the reused result like a live search's final chunk, so the
             # arrow and Search Lines follow the move now under consideration.
-            if is_interesting_info(info):
-                pov = _search_pov(settings_provider, board)
-                payload = serialize_info(info, board=board, pov=pov)
-                await publish_engine_info(payload, bus=bus, game_id=game_id)
-            return info, False
-        last_info, cancelled = await _run_one_search(
-            engine_launcher, board, limit,
-            bus=bus, game_id=game_id, cancel_token=cancel_token,
-            root_moves=root_moves, settings_provider=settings_provider,
-        )
+            pov = _search_pov(settings_provider, board)
+            for info in infos(cached[1]):
+                if is_interesting_info(info):
+                    payload = serialize_info(info, board=board, pov=pov)
+                    await publish_engine_info(payload, bus=bus, game_id=game_id)
+            return cached[1], False
+        result, cancelled = await run()
         if not cancelled:
-            reached = last_info.get(_DEPTH_KEY) or 0
+            reached = infos(result)[0].get(_DEPTH_KEY) or 0
             if cached is None or reached > cached[0]:
-                self._entries[key] = (reached, last_info)
-        return last_info, cancelled
+                store[key] = (reached, result)
+        return result, cancelled
 
 
 async def _run_one_search(
@@ -584,11 +706,56 @@ async def _run_one_search(
     root_moves: list[chess.Move] | None = None,
     settings_provider: SettingsProvider | None = None,
 ) -> tuple[chess.engine.InfoDict, bool]:
-    """Spawn a throwaway engine, run one search, return (last_info, cancelled).
-    Raises _SearchError on spawn/mid-search engine death -> error envelope.
+    """One best-line search: (last_info, cancelled). See _run_search."""
+    last_info, _lines, cancelled = await _run_search(
+        engine_launcher, board, limit,
+        bus=bus, game_id=game_id, cancel_token=cancel_token,
+        root_moves=root_moves, settings_provider=settings_provider,
+    )
+    return last_info, cancelled
+
+
+async def _run_lines_search(
+    engine_launcher: EngineLauncher,
+    board: chess.Board,
+    limit: chess.engine.Limit,
+    multipv: int,
+    *,
+    bus: EventBus,
+    game_id: str,
+    cancel_token: CancelToken,
+    root_moves: list[chess.Move] | None = None,
+    settings_provider: SettingsProvider | None = None,
+) -> tuple[list[chess.engine.InfoDict], bool]:
+    """One `multipv`-line search: (ranked lines, cancelled). Each line is
+    python-chess's per-rank aggregate, best first. See _run_search."""
+    _last_info, lines, cancelled = await _run_search(
+        engine_launcher, board, limit,
+        bus=bus, game_id=game_id, cancel_token=cancel_token,
+        root_moves=root_moves, multipv=multipv, settings_provider=settings_provider,
+    )
+    return lines, cancelled
+
+
+async def _run_search(
+    engine_launcher: EngineLauncher,
+    board: chess.Board,
+    limit: chess.engine.Limit,
+    *,
+    bus: EventBus,
+    game_id: str,
+    cancel_token: CancelToken,
+    root_moves: list[chess.Move] | None = None,
+    multipv: int | None = None,
+    settings_provider: SettingsProvider | None = None,
+) -> tuple[chess.engine.InfoDict, list[chess.engine.InfoDict], bool]:
+    """Spawn a throwaway engine, run one search, return (last_info, lines,
+    cancelled). Raises _SearchError on spawn/mid-search engine death ->
+    error envelope.
 
     `root_moves`: restricts the engine to these moves at the root (UCI
     `searchmoves`); top_moves uses it to score one candidate without push/pop.
+    `multipv`: lines to search; `lines` holds them ranked (one when None).
     `settings_provider`: live settings so the engine inherits Threads/Hash/
     SyzygyPath; None falls back to no overrides (test doubles).
 
@@ -608,6 +775,10 @@ async def _run_one_search(
         analysis_kwargs: dict = {"limit": limit}
         if root_moves:
             analysis_kwargs["root_moves"] = root_moves
+        # The registry's MultiPV support can be stale (binary swapped since
+        # the probe): without the option, search the best line only.
+        if multipv and UCI_OPT_MULTIPV in engine.options:
+            analysis_kwargs["multipv"] = multipv
         with await engine.analysis(board, **analysis_kwargs) as analysis:
             last_info, cancelled = await pump_engine_info(
                 analysis,
@@ -617,7 +788,8 @@ async def _run_one_search(
                 pov=_search_pov(settings_provider, board),
                 cancel_token=cancel_token,
             )
-        return last_info, cancelled
+            lines = [dict(info) for info in analysis.multipv]
+        return last_info, lines, cancelled
     except chess.engine.EngineTerminatedError as exc:
         log.error("search: engine terminated mid-search")
         raise _SearchError("engine_terminated", str(exc)) from exc
@@ -632,6 +804,7 @@ def make_analyze_tool(
     game_id_provider: GameIdProvider | None = None,
     settings_provider: SettingsProvider | None = None,
     search_cache: SearchCache | None = None,
+    multipv_max_provider: MultipvMaxProvider | None = None,
 ) -> AnalyzeTool:
     """Build the `analyze` async tool.
 
@@ -641,7 +814,8 @@ def make_analyze_tool(
     up the PV window and board arrow during a tool-call search.
     `game_id_provider()`: live game id (fallback id when None, so events still
     mux). `settings_provider()`: settings for Threads/Hash/SyzygyPath; None ok
-    (tests)."""
+    (tests). `multipv_max_provider()`: with the Lines setting, caps the
+    optional `lines` arg (see analyze_tool_spec)."""
     cache = search_cache or SearchCache()
 
     async def analyze(input_: dict, *, cancel_token: CancelToken) -> dict:
@@ -654,31 +828,35 @@ def make_analyze_tool(
         )
 
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
-        await bus.publish(Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={}))
+        await _publish_search_start(bus, game_id)
 
+        lines_wanted = _requested_lines(
+            input_, analyze_lines_cap(settings_provider, multipv_max_provider),
+        )
+        search_kw = dict(
+            bus=bus, game_id=game_id, cancel_token=cancel_token,
+            settings_provider=settings_provider,
+        )
+        lines: list[chess.engine.InfoDict] = []
         try:
-            last_info, cancelled = await cache.get_or_search(
-                engine_launcher, board, limit,
-                bus=bus, game_id=game_id, cancel_token=cancel_token,
-                settings_provider=settings_provider,
-            )
+            if lines_wanted:
+                lines, cancelled = await cache.get_or_search_lines(
+                    engine_launcher, board, limit, lines_wanted, **search_kw,
+                )
+                best_info = lines[0]
+            else:
+                best_info, cancelled = await cache.get_or_search(
+                    engine_launcher, board, limit, **search_kw,
+                )
         except _SearchError as err:
             return tool_error(err.kind, err.detail)
 
         out: dict = {_LIMITS_USED_KEY: limits_used}
         if cancelled:
             out[_CANCELLED_KEY] = True
-        out.update(_score_to_cp(last_info.get(_SCORE_KEY)))
-        depth = last_info.get(_DEPTH_KEY)
-        if depth is not None:
-            out[_DEPTH_KEY] = depth
-        nodes = last_info.get(_NODES_KEY)
-        if nodes is not None:
-            out[_NODES_KEY] = nodes
-        pv = _pv_to_uci(board, last_info.get(_PV_KEY))
-        if pv:
-            out[_PV_KEY] = pv
-            out["bestmove"] = pv[0]
+        out.update(_line_fields(board, best_info))
+        if lines:
+            out[_LINES_KEY] = [_line_fields(board, info) for info in lines]
         return out
 
     return analyze
@@ -781,6 +959,20 @@ def parse_move_reporting(
     return _parse_move_or_error(board, _strip_move_prefix(raw))
 
 
+async def _publish_search_start(bus: EventBus, game_id: str) -> None:
+    """Fresh search: the client clears the engine panel and its arrows."""
+    await bus.publish(Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={}))
+
+
+def _candidate_entry(board: chess.Board, move: chess.Move, info: chess.engine.InfoDict) -> dict:
+    """top_moves' result for one candidate, plus the private sort key."""
+    return {
+        MOVE_UCI_KEY: move.uci(), "move_san": board.san(move),
+        **_eval_fields(board, info),
+        _SORT_KEY: _stm_pov_sort_key(info.get(_SCORE_KEY), board.turn),
+    }
+
+
 def make_top_moves_tool(
     engine_launcher: EngineLauncher,
     bus: EventBus,
@@ -788,12 +980,14 @@ def make_top_moves_tool(
     game_id_provider: GameIdProvider | None = None,
     settings_provider: SettingsProvider | None = None,
     search_cache: SearchCache | None = None,
+    multipv_max_provider: MultipvMaxProvider | None = None,
 ) -> AnalyzeTool:
-    """Deep-evaluate a model-supplied list of candidate moves. Each
-    legal move runs a root-restricted search; illegal or unparseable
-    moves come back as per-entry errors. Publishes one
-    `engine_search_start` for the batch, then per-candidate
-    engine_info events. `search_cache`: see make_analyze_tool."""
+    """Deep-evaluate a model-supplied list of candidate moves. A MultiPV
+    engine scores them in one root-restricted search; any candidate it
+    leaves out (or every one, without MultiPV) gets its own. Illegal or
+    unparseable moves come back as per-entry errors. Publishes one
+    `engine_search_start` for the batch, then engine_info events.
+    `search_cache`: see make_analyze_tool."""
     cache = search_cache or SearchCache()
 
     async def top_moves(input_: dict, *, cancel_token: CancelToken) -> dict:
@@ -826,35 +1020,43 @@ def make_top_moves_tool(
             input_, _DEFAULT_TOP_MOVES_DEPTH, _max_depth(settings_provider)
         )
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
-        await bus.publish(Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={}))
+        await _publish_search_start(bus, game_id)
 
         stm_is_white = board.turn == chess.WHITE
+        search_kw = dict(
+            bus=bus, game_id=game_id, cancel_token=cancel_token,
+            settings_provider=settings_provider,
+        )
         cancelled_any = False
-        entries: list[dict] = []
-        for move in parsed:
-            if cancel_token.cancelled:
-                cancelled_any = True
-                break
+        batched: dict[chess.Move, chess.engine.InfoDict] = {}
+        n_lines = min(len(parsed), _multipv_max(multipv_max_provider))
+        if n_lines >= _MIN_LINES:
             try:
-                last_info, cancelled = await cache.get_or_search(
-                    engine_launcher, board, limit,
-                    bus=bus, game_id=game_id, cancel_token=cancel_token,
-                    root_moves=[move],
-                    settings_provider=settings_provider,
+                lines, cancelled_any = await cache.get_or_search_lines(
+                    engine_launcher, board, limit, n_lines, root_moves=parsed, **search_kw,
                 )
             except _SearchError as err:
                 return tool_error(err.kind, err.detail)
-            entry: dict = {MOVE_UCI_KEY: move.uci(), "move_san": board.san(move)}
-            score = last_info.get(_SCORE_KEY)
-            entry.update(_score_to_cp(score))
-            depth = last_info.get(_DEPTH_KEY)
-            if depth is not None:
-                entry[_DEPTH_KEY] = depth
-            pv = _pv_to_uci(board, last_info.get(_PV_KEY))
-            if pv:
-                entry[_PV_KEY] = pv
-            entry[_SORT_KEY] = _stm_pov_sort_key(score, board.turn)
-            entries.append(entry)
+            batched = {info[_PV_KEY][0]: info for info in lines if info.get(_PV_KEY)}
+        # Kept even when the batch was cancelled, like per-move results.
+        entries = [_candidate_entry(board, m, batched[m]) for m in parsed if m in batched]
+        fresh_panel = bool(batched)
+        for move in [m for m in parsed if m not in batched]:
+            if cancelled_any or cancel_token.cancelled:
+                cancelled_any = True
+                break
+            if fresh_panel:
+                # Per-move searches after a batch start a fresh panel, so a
+                # candidate it left out never shows as its numbered line 1.
+                await _publish_search_start(bus, game_id)
+                fresh_panel = False
+            try:
+                info, cancelled = await cache.get_or_search(
+                    engine_launcher, board, limit, root_moves=[move], **search_kw,
+                )
+            except _SearchError as err:
+                return tool_error(err.kind, err.detail)
+            entries.append(_candidate_entry(board, move, info))
             if cancelled:
                 cancelled_any = True
                 break

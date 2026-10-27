@@ -45,7 +45,7 @@ from .config import (
     Settings,
 )
 from .engine_tmp import sweep_orphans
-from .engines import EngineRegistry, resolve_selected
+from .engines import EngineRegistry, resolve_analysis, resolve_selected
 from .env_utils import env_bool, env_int
 from .events import EVT_REMOTE_CONNECTED, Event, EventBus
 from .llm import CannedProvider, LLMProvider, ToolRegistry
@@ -64,7 +64,6 @@ from .play.engine_supervisor import EngineSupervisor
 from .play.game_store import GameStore
 from .play.human_vs_engine import HumanVsEngine, live_hve
 from .play.tools_engine import (
-    ANALYZE_TOOL_SPEC,
     MATERIAL_TOOL_SPEC,
     PIECE_AT_TOOL_SPEC,
     RECOMMEND_MOVE_TOOL_SPEC,
@@ -73,6 +72,7 @@ from .play.tools_engine import (
     TOP_MOVES_TOOL_SPEC,
     VALIDATE_MOVE_TOOL_SPEC,
     SearchCache,
+    analyze_tool_spec,
     make_analyze_tool,
     make_material_tool,
     make_piece_at_tool,
@@ -491,6 +491,9 @@ def _setup_ai(app: FastAPI) -> None:
     def _ai_settings_provider():
         return app.state.settings
 
+    def _ai_multipv_max() -> int | None:
+        return resolve_analysis(app.state.engines, app.state.settings).multipv_max
+
     def _ai_book_move_provider():
         coord = ai_coordinator(app.state)
         return coord.turn_book_move() if coord is not None else None
@@ -521,13 +524,14 @@ def _setup_ai(app: FastAPI) -> None:
     # and the verifier's searches off the UI.
     ai_verifier_registry = ToolRegistry()
     ai_verifier_registry.register(
-        ANALYZE_TOOL_SPEC,
+        analyze_tool_spec(_ai_settings_provider, _ai_multipv_max),
         make_analyze_tool(
             _ai_engine_launcher,
             bus=app.state.event_bus,
             game_id_provider=_ai_game_id_provider,
             settings_provider=_ai_settings_provider,
             search_cache=ai_search_cache,
+            multipv_max_provider=_ai_multipv_max,
         ),
     )
     ai_verifier_registry.register(
@@ -555,6 +559,7 @@ def _setup_ai(app: FastAPI) -> None:
             game_id_provider=_ai_game_id_provider,
             settings_provider=_ai_settings_provider,
             search_cache=ai_search_cache,
+            multipv_max_provider=_ai_multipv_max,
         ),
     )
 
@@ -586,6 +591,7 @@ def _setup_ai(app: FastAPI) -> None:
             game_id_provider=_ai_game_id_provider,
             settings_provider=_ai_settings_provider,
             search_cache=ai_search_cache,
+            multipv_max_provider=_ai_multipv_max,
         ),
     )
     # report_line: structured grounding for the narrator -- pure legality

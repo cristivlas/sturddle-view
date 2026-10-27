@@ -580,6 +580,8 @@ class ResolvedLaunch:
     options: dict | None
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+    # Registry entry's probed MultiPV max (Engine.multipv_max semantics).
+    multipv_max: int | None = None
 
 
 def _launch_for(e: Engine) -> ResolvedLaunch:
@@ -589,6 +591,7 @@ def _launch_for(e: Engine) -> ResolvedLaunch:
         options=dict(e.options or {}),
         args=list(e.args or []),
         env=dict(e.env or {}),
+        multipv_max=e.multipv_max,
     )
 
 

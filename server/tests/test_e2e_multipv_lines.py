@@ -101,3 +101,24 @@ async def test_single_pv_infos_stay_unnumbered(server, make_page):
     assert s["rows"] == [{"depth": "2", "rank": None}, {"depth": "1", "rank": None}], s
     assert s["arrows"] == 1 and s["badges"] == [], s
     assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_new_search_clears_previous_numbered_arrows(server, make_page):
+    """AI tools search the same position repeatedly: a search start drops the
+    last search's lines, so a single-line search leaves one plain arrow."""
+    base = server
+    game_id = _install(base, human_white=True)["game_id"]
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_search_lines(page, base)
+
+    _publish_line(base, game_id, depth=1, move=BEST_MOVE, rank=1)
+    _publish_line(base, game_id, depth=1, move=SECOND_MOVE, rank=2)
+    await _wait_state(page, "s.badges.length === 2")
+
+    _publish(base, "engine_search_start", game_id=game_id, payload={})
+    _publish_line(base, game_id, depth=1, move=SECOND_MOVE)
+    s = await _wait_state(page, "s.arrows === 1 && s.badges.length === 0")
+    assert s["arrows"] == 1, s
+    assert_no_page_errors(errors)

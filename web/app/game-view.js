@@ -776,11 +776,15 @@ function applyViewEval(ctx, evt) {
   }
 }
 
+function resetArrowNumbering(ctx) {
+  ctx.numberedArrows = false;
+  ctx.bestSquares = null;
+}
+
 // Clears every arrow, and the MultiPV numbering state with them.
 function clearArrows(ctx) {
   ctx.board.clearArrows();
-  ctx.numberedArrows = false;
-  ctx.bestSquares = null;
+  resetArrowNumbering(ctx);
 }
 
 function applyEngineInfo(ctx, evt) {
@@ -842,7 +846,13 @@ function applyEvent(ctx, evt) {
       announcePlayLineGate(ctx);
       break;
     case KIND.ENGINE_SEARCH_START:
-      if (ctx.showEngineInfo) clearEngineInfoFields(ctx);
+      if (ctx.showEngineInfo) {
+        clearEngineInfoFields(ctx);
+        // A new search on the same position (AI tool calls) must not keep
+        // the previous search's lines on the board.
+        ctx.board.clearAnalysisArrows();
+        resetArrowNumbering(ctx);
+      }
       break;
     case KIND.ENGINE_INFO:
       if (ctx.showEngineInfo) applyEngineInfo(ctx, evt);

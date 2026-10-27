@@ -254,21 +254,23 @@ engine's own pick.
 
 ### Tools (v1)
 
-- `analyze(fen, depth=None)` - engine search; spawns throwaway engine
+- `analyze(fen, depth=None, lines=None)` - engine search; spawns throwaway engine
   via existing `_spawn_engine()` pattern. Depth-only (no time limit):
   a timer firing before the depth completes makes the bestmove
-  non-deterministic on near-equal candidates. SHIPPED.
+  non-deterministic on near-equal candidates. `lines`: ranked MultiPV
+  lines, capped by Lines and the engine's MultiPV max; offered only when
+  the cap >= 2. SHIPPED.
 - `validate_move(move)` - legality check for UCI or SAN move strings
   against the live position. Tool card asks the model to pre-check
   before naming a move as playable. SHIPPED.
 - `piece_at(square)` - report the piece occupying a square in the
   live position (or null when empty). Tool card asks the model to
   pre-check before naming a piece on a specific square. SHIPPED.
-- `top_moves(n=None, depth=None)` - rank top-N candidate
-  moves in the live position (workaround for engines without native
-  MultiPV). Operates on the live board via `board_provider` (no FEN
-  input). Uses UCI `searchmoves` (python-chess `root_moves` kwarg).
-  SHIPPED.
+- `top_moves(moves, depth=None)` - rank the model's 2..`SV_AI_TOP_MOVES_MAX_N`
+  candidate moves in the live position. Operates on the live board via
+  `board_provider` (no FEN input). Uses UCI `searchmoves` (python-chess
+  `root_moves` kwarg). MultiPV engine: one search for all candidates
+  (ignores Lines); otherwise one search each. SHIPPED.
 - `report_line(moves)` - pure legality replay of a SAN/UCI continuation
   (no engine); grounds any line the narrator names before naming it.
   Capped at `SV_AI_REPORT_LINE_MAX_PLIES`. SHIPPED.
@@ -677,6 +679,8 @@ Flat layout (the master toggle is described in §Ribbon buttons above):
 - Tunables surfaced as they prove necessary (tool call cap, analyze
   max depth, temperature, etc.). No collapsible / Advanced grouping;
   each lives flat in the panel.
+- Lines (`analysis_multipv`): engine mode, MultiPV engines only; also
+  caps `analyze`'s `lines`.
 
 ## Guardrails
 

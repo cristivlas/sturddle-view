@@ -339,6 +339,13 @@ export function mountBoard({ element, onMove, styleId }) {
 
   const setRankArrow = (rank, fromUci, toUci) => setTypedArrow(rankArrowType(rank), fromUci, toUci);
 
+  // Engine-line arrows only (best line + numbered lines); the AI's
+  // recommendation, alternatives and the opponent arrow stay.
+  function clearAnalysisArrows() {
+    setArrow(null, null);
+    for (const type of rankArrowTypes.values()) setTypedArrow(type, null, null);
+  }
+
   // Equally standard book alternatives beside the AI's pick; the vendored
   // ARROW_TYPE.info style (blue, translucent) as shipped.
   function setAlternativeArrows(ucis) {
@@ -507,6 +514,7 @@ export function mountBoard({ element, onMove, styleId }) {
     ready,
     setSide, setPosition, enableInput, isInputEnabled, forceResize, cancelAnimations, destroy,
     setArrow, setOpponentArrow, setRecommendArrow, setRankArrow, setAlternativeArrows, clearArrows,
+    clearAnalysisArrows,
     enterEditMode, exitEditMode, toggleCastlingRight, getCastlingRights, getPiecePlacement,
     currentPlacement: getPiecePlacement, playLine, cancelLine,
   };
