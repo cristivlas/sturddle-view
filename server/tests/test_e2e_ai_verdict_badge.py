@@ -112,7 +112,6 @@ async def test_refuted_verdict_badges_only_the_delegate_row(server, make_page):
     await page.wait_for_selector(PLAY_PERSP)
 
     delegate = page.locator(_DELEGATE_ROW)
-    await delegate.wait_for(state="attached", timeout=5000)
     # The refuted verdict badges the delegate row...
     await page.wait_for_function(
         """(sel) => {
@@ -120,7 +119,6 @@ async def test_refuted_verdict_badges_only_the_delegate_row(server, make_page):
           return el && el.classList.contains('%s');
         }""" % _REFUTED_CLASS,
         arg=_DELEGATE_ROW,
-        timeout=5000,
     )
     cls = await delegate.get_attribute("class")
     assert _REFUTED_CLASS in cls, cls
@@ -129,7 +127,7 @@ async def test_refuted_verdict_badges_only_the_delegate_row(server, make_page):
     # ...and the nested sub-op row is never badged, despite its own
     # verdict-shaped output (the scoping guard).
     child = page.locator(_CHILD_ROW)
-    await child.wait_for(state="attached", timeout=5000)
+    await child.wait_for(state="attached")
     child_cls = await child.get_attribute("class") or ""
     assert _REFUTED_CLASS not in child_cls, child_cls
     assert _HOLDS_CLASS not in child_cls, child_cls

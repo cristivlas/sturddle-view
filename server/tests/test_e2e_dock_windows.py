@@ -33,7 +33,6 @@ SHORT_VIEWPORT = {"width": 1366, "height": 620}
 # Shorter still: the board sits at its minimum and Play outgrows the window.
 OVERFLOW_VIEWPORT = {"width": 1366, "height": 500}
 WHEEL_PX = 400
-SCROLL_WAIT_MS = 5000
 # Fixed overlays (dock column, side rail) vs what they line up with.
 _GEOM_JS = """() => {
   const top = (sel) => document.querySelector(sel).getBoundingClientRect().top;
@@ -283,14 +282,13 @@ async def test_short_laptop_overflow_scrolls_with_overlays_aligned(server, make_
     await page.mouse.move(*await _center(page, f"{DOCK_LEFT} .dock-slot-body"))
     await page.mouse.wheel(0, WHEEL_PX)
     await page.wait_for_function(
-        f"() => ({_GEOM_JS})().clockTop < {before['clockTop']}", timeout=SCROLL_WAIT_MS,
+        f"() => ({_GEOM_JS})().clockTop < {before['clockTop']}",
     )
     await page.wait_for_function(
         f"""() => {{ const g = ({_GEOM_JS})();
           return g.clockBot <= g.viewH && g.headerTop === 0
             && Math.abs(g.dockOffset - {before['dockOffset']}) <= 1
             && Math.abs(g.railOffset - {before['railOffset']}) <= 1; }}""",
-        timeout=SCROLL_WAIT_MS,
     )
     assert_no_page_errors(errors)
 

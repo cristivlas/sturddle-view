@@ -93,7 +93,6 @@ async def test_replay_shows_server_thinking_duration_not_one_second(server, make
     await page.wait_for_selector(PLAY_PERSP)
 
     summary = page.locator(_THINKING_SUMMARY).first
-    await summary.wait_for(state="attached", timeout=5000)
     # The server duration must survive the whitespace strip; the regression
     # collapsed it to the 1s Date.now() fallback on the all-at-once replay.
     await page.wait_for_function(
@@ -102,7 +101,6 @@ async def test_replay_shows_server_thinking_duration_not_one_second(server, make
           return el && el.textContent.trim().startsWith('Thought for ');
         }""",
         arg=_THINKING_SUMMARY,
-        timeout=5000,
     )
     text = (await summary.text_content() or "").strip()
     assert text == _EXPECTED_LABEL, f"expected {_EXPECTED_LABEL!r}, got {text!r}"

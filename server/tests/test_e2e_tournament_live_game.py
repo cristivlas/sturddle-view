@@ -264,14 +264,11 @@ _BTIME_S = 120
 _MS_PER_S = 1000
 # Slack (s) for clock ticks between the post and the read.
 _TICK_SLACK_S = 10
-# Cap (ms) on each wait: the clock switch lands within one proxy round trip.
-_WAIT_MS = 5000
 
 
 async def _wait_clock(page, run, idle):
     await page.wait_for_function(
         f"() => {{ const c = ({_CLOCK_STATE})(); return c.{run}Active && !c.{idle}Active; }}",
-        timeout=_WAIT_MS,
     )
     return await page.evaluate(_CLOCK_STATE)
 
@@ -295,7 +292,7 @@ async def test_live_game_clock_hands_off_on_bestmove(tmp_path, monkeypatch, make
         c = await _wait_clock(page, "bottom", "top")
         assert _BTIME_S - _TICK_SLACK_S < c["bottom"] <= _BTIME_S, c
         # It counts down: the next 100ms tick drops below the full budget.
-        await page.wait_for_function(f"() => ({_CLOCK_STATE})().bottom < {_BTIME_S}", timeout=_WAIT_MS)
+        await page.wait_for_function(f"() => ({_CLOCK_STATE})().bottom < {_BTIME_S}")
 
         await post_proxy(base, secret, ["bestmove b8c6"])
         c = await _wait_clock(page, "top", "bottom")

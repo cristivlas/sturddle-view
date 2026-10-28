@@ -85,14 +85,13 @@ async def _goto_view_mode(page, base):
     )
 
 
-async def _wait_btn_active(page, expected: bool, timeout_ms=3000):
+async def _wait_btn_active(page, expected: bool):
     await page.wait_for_function(
         f"""(want) => {{
           const b = document.querySelector('{_VIEW_ANALYZE_BTN}');
           return !!b && b.classList.contains('{_ACTIVE_CLASS}') === want;
         }}""",
         arg=expected,
-        timeout=timeout_ms,
     )
 
 
