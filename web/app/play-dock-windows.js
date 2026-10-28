@@ -134,8 +134,9 @@ function applyDockBounds(el) {
   const side = document.body.dataset.ribbonSide === "right"
     ? window.innerWidth - Math.round(rect.right) : Math.round(rect.left);
   // The eval gauge hangs in this gap, so the dock yields its width + a gap.
-  const gap = gridGapPx(el.parentElement);
-  const gaugeW = document.querySelector(".eval-gauge")?.offsetWidth ?? 0;
+  const gauge = document.querySelector(".eval-gauge");
+  const gap = gauge ? parseFloat(getComputedStyle(gauge).getPropertyValue("--eval-gauge-gap")) : gridGapPx(el.parentElement);
+  const gaugeW = gauge?.offsetWidth ?? 0;
   const gaugeRoom = gaugeW ? gaugeW + gap : 0;
   el.style.width = (side - ribbonWidthPx(PLAY_GRID_SEL) - gap - gaugeRoom) + "px";
 

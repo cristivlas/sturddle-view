@@ -58,6 +58,7 @@
   --watch-btn-bg-hover: #525862;
   /* Board-side eval gauge (eval-gauge.js). */
   --eval-gauge-w: 10px;
+  --eval-gauge-gap: 3px;
   --eval-gauge-white: #e8e8e8;
   --eval-gauge-black: #5c6370;
   --row-bg: #32353c;
@@ -1950,7 +1951,7 @@ body .side-popover.popover-floating {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: calc(100% + var(--grid-gap));
+  right: calc(100% + var(--eval-gauge-gap));
   width: var(--eval-gauge-w);
   display: flex;
   flex-direction: column-reverse;
@@ -5391,7 +5392,7 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
   }
   body[data-ribbon-side="right"] .eval-gauge {
     right: auto;
-    left: calc(100% + var(--grid-gap));
+    left: calc(100% + var(--eval-gauge-gap));
   }
   body[data-ribbon-side="right"] .board-ribbon,
   body[data-ribbon-side="right"] .tournaments-ribbon,
