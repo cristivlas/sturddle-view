@@ -1580,10 +1580,10 @@ body[data-ribbon-float] .studio-ribbon {
   transition: background 0.12s;
 }
 .ribbon-btn:hover:not(:disabled) {
-  color: var(--wa-color-brand-fill-loud, #b45309);
+  color: var(--wa-color-brand-80);
 }
 .ribbon-btn:hover:not(:disabled)::before {
-  background: var(--wa-color-brand-fill-loud, #b45309);
+  background: var(--wa-color-brand-80);
 }
 .ribbon-btn:disabled { opacity: 0.3; cursor: default; }
 .ribbon-btn:focus-visible {
@@ -1607,10 +1607,10 @@ body[data-ribbon-float] .studio-ribbon {
 }
 .ribbon-btn wa-icon { font-size: 1rem; }
 .ribbon-btn--danger:hover:not(:disabled) {
-  color: var(--wa-color-danger-fill-loud, #d65a5a);
+  color: var(--wa-color-red-50);
 }
 .ribbon-btn--danger:hover:not(:disabled)::before {
-  background: var(--wa-color-danger-fill-loud, #d65a5a);
+  background: var(--wa-color-red-50);
 }
 .castle-popover-wrap,
 .side-popover-wrap { position: relative; display: inline-flex; align-items: center; }
