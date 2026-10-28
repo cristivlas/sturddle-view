@@ -132,7 +132,7 @@ function applyDockBounds(el) {
   const rect = board.getBoundingClientRect();
   // Board's distance from the ribbon-side viewport edge.
   const side = document.body.dataset.ribbonSide === "right"
-    ? window.innerWidth - Math.round(rect.right) : Math.round(rect.left);
+    ? window.innerWidth - rect.right : rect.left;
   // The eval gauge hangs in this gap, so the dock yields its width + a gap.
   const gauge = document.querySelector(".eval-gauge");
   const gap = gauge ? parseFloat(getComputedStyle(gauge).getPropertyValue("--eval-gauge-gap")) : gridGapPx(el.parentElement);
