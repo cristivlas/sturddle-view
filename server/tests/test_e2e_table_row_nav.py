@@ -10,8 +10,6 @@ Skipped if Playwright/Chromium isn't installed.
 """
 from __future__ import annotations
 
-import sys
-
 import pytest
 
 pytest.importorskip("playwright.async_api")
@@ -23,6 +21,7 @@ from .conftest import (  # noqa: E402
     REGISTRY_FILE,
     assert_no_page_errors,
     e2e_env,
+    make_fake_uci,
     open_studio_tab,
     run_uvicorn_subprocess,
     seed_tournament,
@@ -68,7 +67,7 @@ async def test_engines_selection_row_ring(tmp_path, make_page):
     rings, and ArrowDown moves the selection (and the ring)."""
     reg = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     for n in ("eng-one", "eng-two", "eng-three"):
-        reg.add(name=n, path=sys.executable)
+        reg.add(name=n, path=make_fake_uci(tmp_path, n))
     with run_uvicorn_subprocess(env_overrides=e2e_env(tmp_path)) as base:
         _ctx, page = await make_page(viewport=VIEWPORT)
         errors = watch_page_errors(page)

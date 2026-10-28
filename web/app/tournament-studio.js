@@ -276,15 +276,15 @@ function gamesCell(t) {
 // Rows are the tournament objects themselves; the created column is the
 // deterministic tiebreak.
 const TOURNEY_COLUMNS = [
-  { key: "status", label: "Status", width: 24, firstDir: SORT_DIR.ASC, rank: STATUS_RANK,
+  { key: "status", label: "Status", width: 17, firstDir: SORT_DIR.ASC, rank: STATUS_RANK,
     tdClass: "studio-tourney-status", cell: (t) => statusBadgeHtml(t.status) + sprtBadgeHtml(t) },
-  { key: "created", label: "Created", width: 22, firstDir: SORT_DIR.DESC, field: "created_at", tiebreak: true,
+  { key: "created", label: "Created", width: 20, firstDir: SORT_DIR.DESC, field: "created_at", tiebreak: true,
     tdClass: "studio-tourney-created", cell: (t) => escapeHtml(formatStamp(t.created_at)) },
-  { key: "started", label: "Started", width: 22, firstDir: SORT_DIR.DESC, field: "started_at",
+  { key: "started", label: "Started", width: 20, firstDir: SORT_DIR.DESC, field: "started_at",
     tdClass: "studio-tourney-started", cell: (t) => escapeHtml(formatStamp(t.started_at)) },
-  { key: "name", label: "Name", width: 16, alwaysOn: true, firstDir: SORT_DIR.ASC,
+  { key: "name", label: "Name", width: 14, alwaysOn: true, firstDir: SORT_DIR.ASC,
     tdClass: "studio-tourney-name", tdTitle: (t) => t.name, cell: (t) => escapeHtml(t.name) },
-  { key: "games", label: "Completed", width: 50, sortable: false,
+  { key: "games", label: "Completed", width: 29, sortable: false,
     tdClass: "studio-tourney-games", cell: gamesCell },
 ];
 
@@ -619,15 +619,15 @@ const RESULT_RANK = Object.freeze({
 // and always shown (it names the game); white/black/opening sort as text,
 // result by RESULT_RANK.
 const HISTORY_COLUMNS = [
-  { key: HK.NUM, label: "#", width: 5, alwaysOn: true, firstDir: SORT_DIR.ASC, numeric: true, tiebreak: true,
+  { key: HK.NUM, label: "#", width: 12, alwaysOn: true, firstDir: SORT_DIR.ASC, numeric: true, tiebreak: true,
     tdClass: "studio-history-num", cell: (r) => r[HK.NUM] },
   { key: SIDE.WHITE, label: "White", width: 20, firstDir: SORT_DIR.ASC,
     tdTitle: (r) => r[SIDE.WHITE], cell: (r) => escapeHtml(r[SIDE.WHITE]) },
   { key: SIDE.BLACK, label: "Black", width: 20, firstDir: SORT_DIR.ASC,
     tdTitle: (r) => r[SIDE.BLACK], cell: (r) => escapeHtml(r[SIDE.BLACK]) },
-  { key: HK.RESULT, label: "Result", width: 15, firstDir: SORT_DIR.ASC, rank: RESULT_RANK,
+  { key: HK.RESULT, label: "Result", width: 13, firstDir: SORT_DIR.ASC, rank: RESULT_RANK,
     tdClass: "studio-history-result", cell: (r) => escapeHtml(r[HK.RESULT]) },
-  { key: HK.OPENING, label: "Opening", width: 40, firstDir: SORT_DIR.ASC,
+  { key: HK.OPENING, label: "Opening", width: 35, firstDir: SORT_DIR.ASC,
     tdTitle: (r) => r[HK.OPENING], cell: (r) => escapeHtml(r[HK.OPENING]) },
 ];
 

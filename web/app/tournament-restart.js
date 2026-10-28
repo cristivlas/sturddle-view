@@ -12,6 +12,7 @@ import {
   TOAST_DURATION_MS,
 } from "./dialogs.js";
 import { STATUS } from "./tournament-events.js";
+import { ENGINES_NO_PROBE_PATH } from "./engines.js";
 
 const CONFIRM_WIPE_QS = "confirm_wipe=true";
 
@@ -258,7 +259,7 @@ export async function gatedStart({ api, log }, t) {
   // pay a lazy schema probe (engine spawn) per unprobed registry entry.
   let available = null;
   try {
-    available = (await api("GET", "/engines?probe=false")).engines || [];
+    available = (await api("GET", ENGINES_NO_PROBE_PATH)).engines || [];
   } catch (e) {
     log?.(`drift check skipped: ${e.message}`);
   }

@@ -49,14 +49,14 @@ UCI_OPT_HASH = "Hash"
 UCI_OPT_SYZYGY_PATH = "SyzygyPath"
 UCI_OPT_PONDER = "Ponder"
 UCI_OPT_OWNBOOK = "OwnBook"
+UCI_OPT_MULTIPV = "MultiPV"
 
 # UCI options the engine manages itself; rendering them in our dialog is
 # either pointless or actively harmful. Lower-case for case-insensitive match.
-_HIDDEN_OPTIONS = {
-    "multipv", UCI_OPT_PONDER.lower(), "uci_chess960", "uci_variant", "uci_analysemode",
-}
+# MultiPV is managed too, but the probe reports it for pop_multipv_max.
+_HIDDEN_OPTIONS = {UCI_OPT_PONDER.lower(), "uci_chess960", "uci_variant", "uci_analysemode"}
 
-_DEFAULT_PROBE_TIMEOUT_SEC = 3.0
+_DEFAULT_PROBE_TIMEOUT_SEC = 10.0
 _MIN_PROBE_TIMEOUT_SEC = 0.05
 _PROBE_TIMEOUT_ENV = "SV_ENGINE_PROBE_TIMEOUT_SEC"
 
@@ -130,7 +130,8 @@ async def probe_engine(
     can override or add, never wipe inherited vars).
 
     `option_schema` is a {name: {type, default, min?, max?, vars?}} dict,
-    skipping engine-managed options (multipv, ponder, etc.). `uci_id_name`
+    skipping engine-managed options (ponder, etc.) except MultiPV, which
+    callers split off with pop_multipv_max. `uci_id_name`
     is what the engine announces via UCI `id name`; "" when the handshake
     succeeded but the engine announced no name, None only on probe failure.
     `error` is None on success, or a structured ``{code, message}`` dict
@@ -213,6 +214,9 @@ class Engine:
     #   {name: {type, default, min?, max?, vars?}}
     # type: "spin" | "combo" | "check" | "string" | "button"
     option_schema: dict[str, dict] = field(default_factory=dict)
+    # Max MultiPV lines from the last probe; 0 = no MultiPV, None = not
+    # probed for it yet (entries that predate it, or a new binary).
+    multipv_max: int | None = None
     # Extra command-line argv passed to the engine on launch. One literal
     # argv element per list entry -- no shell parsing.
     args: list[str] = field(default_factory=list)
@@ -233,6 +237,7 @@ class Engine:
         env: dict[str, str] | None = None,
         uci_name: str | None = None,
         rating: int | None = None,
+        multipv_max: int | None = None,
     ) -> Engine:
         return Engine(
             id=uuid.uuid4().hex[:_ENGINE_ID_HEX_CHARS],
@@ -241,10 +246,25 @@ class Engine:
             uci_name=uci_name,
             options=options or {},
             option_schema=option_schema or {},
+            multipv_max=multipv_max,
             args=list(args or []),
             env=dict(env or {}),
             rating=rating,
         )
+
+
+# MultiPV declared without a max: no cap, as analysis treats it.
+MULTIPV_UNBOUNDED = 2**31 - 1
+
+
+def pop_multipv_max(schema: dict[str, dict]) -> int:
+    """Take the probe's MultiPV entry out of `schema` (engine-managed, so
+    never a dialog option) and return its max lines; 0 when it has none."""
+    for name in list(schema):
+        if name.lower() == UCI_OPT_MULTIPV.lower():
+            top = schema.pop(name).get("max")
+            return MULTIPV_UNBOUNDED if top is None else int(top)
+    return 0
 
 
 # Sentinel for update() kwargs where None is a meaningful value
@@ -310,6 +330,9 @@ class EngineRegistry:
         self._engines: dict[str, Engine] = {}
         self._selected_id: str | None = None
         self._loaded = False
+        # Launch profiles whose probe failed this run (never persisted): the
+        # lazy list probe skips them; an edited profile or a restart retries.
+        self._failed_probes: set[tuple] = set()
 
     @property
     def path(self) -> Path:
@@ -369,6 +392,7 @@ class EngineRegistry:
                 uci_name=entry.get("uci_name"),
                 options=entry.get("options", {}),
                 option_schema=entry.get("option_schema", {}),
+                multipv_max=entry.get("multipv_max"),
                 args=args,
                 env=env,
                 rating=entry.get("rating"),
@@ -436,6 +460,7 @@ class EngineRegistry:
         auto_suffix: bool = False,
         uci_name: str | None = None,
         rating: int | None = None,
+        multipv_max: int | None = None,
     ) -> Engine:
         self._ensure_loaded()
         validate_launch_profile(args, env)
@@ -455,6 +480,7 @@ class EngineRegistry:
             env=env,
             uci_name=uci_name,
             rating=rating,
+            multipv_max=multipv_max,
         )
         self._engines[engine.id] = engine
         self._save()
@@ -473,10 +499,16 @@ class EngineRegistry:
         uci_name: str | None = None,
         auto_suffix: bool = False,
         rating: int | None | object = UNSET,
+        multipv_max: int | None | object = UNSET,
     ) -> Engine:
         self._ensure_loaded()
         validate_launch_profile(args, env)
         engine = self.get(engine_id)
+        launch_changed = (
+            (path is not None and path != engine.path)
+            or (args is not None and list(args) != engine.args)
+            or (env is not None and dict(env) != engine.env)
+        )
         if name is not None:
             if name != engine.name and self._name_in_use(name, exclude_id=engine_id):
                 if not auto_suffix:
@@ -501,8 +533,25 @@ class EngineRegistry:
             engine.uci_name = uci_name
         if rating is not UNSET:
             engine.rating = rating
+        if multipv_max is not UNSET:
+            engine.multipv_max = multipv_max
+        elif launch_changed:
+            # A new launch profile's MultiPV support is unknown until the
+            # next list probe.
+            engine.multipv_max = None
         self._save()
         return engine
+
+    @staticmethod
+    def _launch_key(e: Engine) -> tuple:
+        return (e.path, tuple(e.args), tuple(sorted(e.env.items())))
+
+    def probe_failed(self, e: Engine) -> bool:
+        """True when `e`'s current launch profile already failed a probe."""
+        return self._launch_key(e) in self._failed_probes
+
+    def mark_probe_failed(self, e: Engine) -> None:
+        self._failed_probes.add(self._launch_key(e))
 
     def remove(self, engine_id: str) -> None:
         self._ensure_loaded()
@@ -531,6 +580,8 @@ class ResolvedLaunch:
     options: dict | None
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+    # Registry entry's probed MultiPV max (Engine.multipv_max semantics).
+    multipv_max: int | None = None
 
 
 def _launch_for(e: Engine) -> ResolvedLaunch:
@@ -540,6 +591,7 @@ def _launch_for(e: Engine) -> ResolvedLaunch:
         options=dict(e.options or {}),
         args=list(e.args or []),
         env=dict(e.env or {}),
+        multipv_max=e.multipv_max,
     )
 
 

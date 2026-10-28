@@ -4,11 +4,9 @@
 // putTournamentSettings.
 
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
-import { confirm, toast } from "./dialogs.js";
+import { confirm, SETTINGS_PUT_DEBOUNCE_MS, SETTINGS_TAB_TOURNAMENT as TOURNAMENT_TAB, toast } from "./dialogs.js";
 import { APP_EVT } from "./app-events.js";
 
-const TOURNAMENT_TAB = "tournament";
-const TEMPLATE_PUT_DEBOUNCE_MS = 400;
 // The server refuses a root change mid-run (it would lose the running
 // tournament); the UI locks the row to match.
 const ROOT_LOCKED_TITLE = "Stop the running tournament to change the folder";
@@ -113,7 +111,7 @@ export function buildTournamentTab({ tournamentInitial, putTournamentSettings, p
       return;
     }
     putTournamentSettings({ default_template: template });
-  }, TEMPLATE_PUT_DEBOUNCE_MS);
+  }, SETTINGS_PUT_DEBOUNCE_MS);
   tplHost.addEventListener("input", persistTemplate);
   tplHost.addEventListener("change", persistTemplate);
 

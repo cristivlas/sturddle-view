@@ -22,6 +22,7 @@ from ..config import (
     AI_VERIFIER_MAX_ROUNDS_KEY,
     ALLOW_TAKEBACK_KEY,
     ANALYSIS_ENGINE_KEY,
+    ANALYSIS_MULTIPV_KEY,
     AUTO_CLAIM_DRAWS_KEY,
     BOARD_STYLE_KEY,
     ENGINE_ANALYSIS_THREADS_KEY,
@@ -84,6 +85,8 @@ _ENGINE_OPTION_MIN = 1
 _AI_ROUNDS_MIN = 1
 # Depth caps must be at least one ply.
 _AI_DEPTH_MIN = 1
+# Analysis shows at least the best line.
+_ANALYSIS_MULTIPV_MIN = 1
 # Anthropic requires budget_tokens >= 1024; same floor used here for both
 # providers since 0/tiny budgets defeat the feature.
 _AI_THINKING_BUDGET_MIN = 1024
@@ -136,6 +139,7 @@ def _serialize(s) -> dict:
         AI_ANALYZE_MAX_DEPTH_KEY: s.ai_analyze_max_depth,
         AI_VERIFICATION_DEPTH_KEY: s.ai_verification_depth,
         ANALYSIS_ENGINE_KEY: s.analysis_engine_id,
+        ANALYSIS_MULTIPV_KEY: s.analysis_multipv,
         _HOST_KEY: {_LOGICAL_CORES_KEY: logical, _PHYSICAL_CORES_KEY: physical},
         _VERSION_KEY: __version__,
         _AUTHOR_KEY: __author__,
@@ -373,6 +377,7 @@ _APPLIERS = {
     AI_ANALYZE_MAX_DEPTH_KEY: _int_field(AI_ANALYZE_MAX_DEPTH_KEY, min_value=_AI_DEPTH_MIN),
     AI_VERIFICATION_DEPTH_KEY: _int_field(AI_VERIFICATION_DEPTH_KEY, min_value=_AI_DEPTH_MIN),
     ANALYSIS_ENGINE_KEY: _apply_analysis_engine,
+    ANALYSIS_MULTIPV_KEY: _int_field(ANALYSIS_MULTIPV_KEY, min_value=_ANALYSIS_MULTIPV_MIN),
     AI_API_KEY_KEY: _apply_ai_api_key,
 }
 

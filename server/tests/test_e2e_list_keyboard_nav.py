@@ -29,6 +29,7 @@ from .conftest import (  # noqa: E402
     TOURNAMENT_UX_KEY,
     TOURNAMENT_UX_STUDIO,
     e2e_env,
+    make_fake_uci,
     run_uvicorn_subprocess,
     wait_perspective_ready,
     watch_page_errors,
@@ -53,7 +54,7 @@ def _server_env(tmp_path):
     never spawned -- tournaments are seeded on disk)."""
     registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
     for name in ("engine-A", "engine-B"):
-        registry.add(name=name, path=sys.executable)
+        registry.add(name=name, path=make_fake_uci(tmp_path, name))
     return {
         **e2e_env(tmp_path),
         "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,

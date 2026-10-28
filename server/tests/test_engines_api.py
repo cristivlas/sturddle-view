@@ -12,7 +12,8 @@ from fastapi.testclient import TestClient
 
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
-from sturddle_view.engines import EngineRegistry, probe_engine
+from sturddle_view.engines import MULTIPV_UNBOUNDED, EngineRegistry, pop_multipv_max, probe_engine
+from sturddle_view.error_detail import error_detail
 from sturddle_view.tournament.store import (
     STATUS_DONE,
     STATUS_FAILED,
@@ -755,3 +756,91 @@ def test_auth_required(tmp_path):
         # No Authorization header.
         assert c.get("/engines").status_code == 401
         assert c.post("/engines", json={"name": "A", "path": "/p"}).status_code == 401
+
+
+# --- MultiPV support + failed-probe memory --------------------------------
+
+_PROBE_TARGET = "sturddle_view.api.engines.probe_engine"
+_MULTIPV_MAX = 500
+_MULTIPV_SCHEMA = {
+    "MultiPV": {"type": "spin", "default": 1, "min": 1, "max": _MULTIPV_MAX},
+    "Hash": {"type": "spin", "default": 16},
+}
+
+
+def _counting_probe(calls: list, schema=None, error=None):
+    async def probe(*_a, **_kw):
+        calls.append(1)
+        return "EngineA", dict(schema or {}), error
+    return probe
+
+
+def test_add_records_multipv_max_and_hides_it_from_schema(client, monkeypatch, exe_a):
+    monkeypatch.setattr(_PROBE_TARGET, _counting_probe([], _MULTIPV_SCHEMA))
+    e = client.post("/engines", json={"name": "A", "path": exe_a}).json()
+    assert e["multipv_max"] == _MULTIPV_MAX
+    assert "MultiPV" not in e["option_schema"] and "Hash" in e["option_schema"]
+
+
+def test_add_engine_without_multipv_records_zero(client, exe_a):
+    e = client.post("/engines", json={"name": "A", "path": exe_a}).json()
+    assert e["multipv_max"] == 0
+
+
+def test_list_probes_entry_predating_multipv_once(client, monkeypatch, exe_a):
+    eid = client.post("/engines", json={"name": "A", "path": exe_a}).json()["id"]
+    client.app.state.engines.get(eid).multipv_max = None
+    calls: list = []
+    monkeypatch.setattr(_PROBE_TARGET, _counting_probe(calls, _MULTIPV_SCHEMA))
+    first = client.get("/engines").json()["engines"][0]
+    client.get("/engines")
+    assert calls == [1]
+    assert first["multipv_max"] == _MULTIPV_MAX
+
+
+def test_list_skips_launch_profile_whose_probe_failed(client, monkeypatch, exe_a):
+    """A hung engine must not stall every listing by the probe timeout."""
+    eid = client.post("/engines", json={"name": "A", "path": exe_a}).json()["id"]
+    client.app.state.engines.get(eid).multipv_max = None
+    calls: list = []
+    failure = error_detail("engine_not_uci", "no handshake")
+    monkeypatch.setattr(_PROBE_TARGET, _counting_probe(calls, error=failure))
+    client.get("/engines")
+    client.get("/engines")
+    assert calls == [1]
+
+    # An edited launch profile is a new probe target.
+    client.patch(f"/engines/{eid}", json={"args": ["--uci"]})
+    client.get("/engines")
+    assert calls == [1, 1]
+
+
+def test_registry_persists_multipv_and_forgets_it_on_new_binary(tmp_path, exe_a, exe_b):
+    reg = EngineRegistry(path=tmp_path / REGISTRY_FILE)
+    eid = reg.add(name="A", path=exe_a, multipv_max=_MULTIPV_MAX).id
+    assert EngineRegistry(path=tmp_path / REGISTRY_FILE).get(eid).multipv_max == _MULTIPV_MAX
+    reg.update(eid, path=exe_b)
+    assert reg.get(eid).multipv_max is None
+
+
+def test_probe_endpoint_reports_multipv_max(client, monkeypatch, exe_a):
+    monkeypatch.setattr(_PROBE_TARGET, _counting_probe([], _MULTIPV_SCHEMA))
+    r = client.post("/engines/probe", json={"path": exe_a}).json()
+    assert r["multipv_max"] == _MULTIPV_MAX and "MultiPV" not in r["option_schema"]
+
+
+def test_launch_edit_forgets_multipv_unless_save_supplies_it(client, monkeypatch, exe_a):
+    monkeypatch.setattr(_PROBE_TARGET, _counting_probe([], _MULTIPV_SCHEMA))
+    eid = client.post("/engines", json={"name": "A", "path": exe_a}).json()["id"]
+    url = f"/engines/{eid}"
+    # Re-saving the same launch profile keeps it.
+    assert client.patch(url, json={"args": [], "env": {}}).json()["multipv_max"] == _MULTIPV_MAX
+    assert client.patch(url, json={"env": {"X": "1"}}).json()["multipv_max"] is None
+    # A dialog Save after Refresh supplies the probed value.
+    body = {"args": ["--uci"], "multipv_max": _MULTIPV_MAX}
+    assert client.patch(url, json=body).json()["multipv_max"] == _MULTIPV_MAX
+
+
+def test_multipv_declared_without_max_is_unbounded():
+    schema = {"MultiPV": {"type": "spin", "default": 1, "min": 1}}
+    assert pop_multipv_max(schema) == MULTIPV_UNBOUNDED and schema == {}

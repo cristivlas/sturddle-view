@@ -71,9 +71,16 @@ export const WB_NO_SHADOW_CLASS = "no-shadow";
 // A managed window whose right edge is the workspace's: CSS stretches it there.
 export const WB_EDGE_RIGHT_CLASS = "wb-edge-right";
 
+const ATTENTION_CLASS = "wb-attention";
+
+// Accent ring on a WinBox or a dock slot.
+export function flashElement(el) {
+  el.classList.add(ATTENTION_CLASS);
+  el.addEventListener("animationend", () => el.classList.remove(ATTENTION_CLASS), { once: true });
+}
+
 export function flashWindow(wb) {
-  wb.addClass("wb-attention");
-  wb.g.addEventListener("animationend", () => wb.removeClass("wb-attention"), { once: true });
+  flashElement(wb.g);
 }
 
 export function escapeHtml(s) {
@@ -124,6 +131,15 @@ export function fmtScore(score, { empty = "", matePrefix = "#", signed = false }
     return `${sign}${(score.cp / 100).toFixed(2)}`;
   }
   return empty;
+}
+
+// A score between White's POV and `white`'s side: as-is for White, negated
+// for Black. Symmetric, so it converts in either direction.
+export function sidePovScore(ev, white) {
+  if (white) return ev;
+  if (ev.mate != null) return { mate: -ev.mate };
+  if (ev.cp != null) return { cp: -ev.cp };
+  return ev;
 }
 
 // Move-number prefix for a 0-based ply: "12." for white, "12..." for black.

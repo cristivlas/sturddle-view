@@ -15,8 +15,8 @@ const XT_MIN_PCT = 2;
 // Default column weights (relative; the factory scales them to 100%).
 const NAME_WIDTH = 24;
 const SCORE_WIDTH = 6;
-const GAMES_WIDTH = 6;
-const PTS_WIDTH = 7;
+const GAMES_WIDTH = 7;
+const PTS_WIDTH = 8;
 const ORDO_WIDTH = 16;
 // Column count, read by the CSS min-width so a big field scrolls, not squeezes.
 const COLS_VAR = "--xt-cols";

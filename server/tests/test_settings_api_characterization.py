@@ -227,3 +227,21 @@ def test_analysis_engine_id_unknown_rejected(client_with_engine):
     r = _put(client, {"analysis_engine_id": "does-not-exist"})
     assert r.status_code == 400
     assert "analysis_engine_id" in r.json()["detail"]
+
+
+# --- analysis_multipv: analysis line count, floor of one line -------------
+
+ANALYSIS_LINES = 5
+
+
+def test_analysis_multipv_round_trips(client):
+    r = _put(client, {"analysis_multipv": ANALYSIS_LINES})
+    assert r.status_code == 200, r.text
+    assert _get(client)["analysis_multipv"] == ANALYSIS_LINES
+
+
+@pytest.mark.parametrize("value", [0, "many"])
+def test_analysis_multipv_invalid_rejected(client, value):
+    r = _put(client, {"analysis_multipv": value})
+    assert r.status_code == 400
+    assert "analysis_multipv" in r.json()["detail"]

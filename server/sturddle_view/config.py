@@ -66,6 +66,10 @@ _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS = 0.07
 _DEFAULT_HVE_SWEEP_BUDGET_SECONDS = 1.0
 _DEFAULT_HVE_REMOVAL_STEP = 0.10
 _DEFAULT_HVE_SCORE_CLAMP_CP = 1000.0
+# Engines declaring MultiPV sweep in one search instead of per move.
+_DEFAULT_HVE_SWEEP_MULTIPV = True
+# Engine-only analysis lines, capped by the engine's MultiPV max; 1 = single.
+_DEFAULT_ANALYSIS_MULTIPV = 3
 
 # Win-prob admission cap (all levels). Sweep cp maps to win probability
 # via a logistic with this scale (empirical engine fit); a move is
@@ -190,6 +194,7 @@ AI_VERIFIER_MAX_ROUNDS_KEY = "ai_verifier_max_rounds"
 AI_ANALYZE_MAX_DEPTH_KEY = "ai_analyze_max_depth"
 AI_VERIFICATION_DEPTH_KEY = "ai_verification_depth"
 ANALYSIS_ENGINE_KEY = "analysis_engine_id"
+ANALYSIS_MULTIPV_KEY = "analysis_multipv"
 
 # Fields persisted to disk. Excludes secrets (token), bind config (host/port),
 # auth_disabled (CLI flag), and web_dir (deployment).
@@ -234,6 +239,7 @@ PERSISTED_FIELDS = (
     AI_ANALYZE_MAX_DEPTH_KEY,
     AI_VERIFICATION_DEPTH_KEY,
     ANALYSIS_ENGINE_KEY,
+    ANALYSIS_MULTIPV_KEY,
     # ai_api_key intentionally NOT persisted: it lives in the OS keyring
     # (SV_AI_API_KEY as fallback). The JSON settings file must never hold
     # the plaintext key.
@@ -336,6 +342,7 @@ class Settings(BaseSettings):
     hve_difficulty: int = HVE_DIFFICULTY_MAX
     hve_sweep_movetime_seconds: float = _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS
     hve_sweep_budget_seconds: float = _DEFAULT_HVE_SWEEP_BUDGET_SECONDS
+    hve_sweep_multipv: bool = _DEFAULT_HVE_SWEEP_MULTIPV
     hve_removal_step: float = _DEFAULT_HVE_REMOVAL_STEP
     hve_score_clamp_cp: float = _DEFAULT_HVE_SCORE_CLAMP_CP
     hve_winprob_scale_cp: float = _DEFAULT_HVE_WINPROB_SCALE_CP
@@ -373,6 +380,7 @@ class Settings(BaseSettings):
     # Engine pinned for analysis (both engine-only and AI-driven tool calls).
     # Empty string means "use the active HvE engine".
     analysis_engine_id: str = ""
+    analysis_multipv: int = _DEFAULT_ANALYSIS_MULTIPV
 
     @property
     def ai_model(self) -> str:

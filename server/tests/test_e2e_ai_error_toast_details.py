@@ -85,7 +85,7 @@ async def test_verbose_error_toast_summary_and_details_modal(server, make_page):
     await page.wait_for_selector(PLAY_PERSP)
 
     toast = page.locator(_TOAST)
-    await toast.wait_for(state="attached", timeout=5000)
+    await toast.wait_for(state="attached")
     toast_text = await toast.text_content() or ""
     # The summary shows; the dropped remainder does not.
     assert _SUMMARY in toast_text, toast_text
@@ -93,13 +93,13 @@ async def test_verbose_error_toast_summary_and_details_modal(server, make_page):
 
     # Details is an icon button (no text label) that opens the full text.
     details = page.locator(_DETAILS_BTN)
-    await details.wait_for(state="attached", timeout=5000)
+    await details.wait_for(state="attached")
     assert await details.locator("wa-icon").count() == 1
     assert (await details.get_attribute("aria-label")) == "Error details"
     await details.click()
 
     body = page.locator(_MODAL_BODY)
-    await body.wait_for(state="visible", timeout=5000)
+    await body.wait_for(state="visible")
     full = await body.text_content() or ""
     assert _SUMMARY in full and "billing details" in full, full
 

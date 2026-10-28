@@ -12,7 +12,6 @@ Skipped if Playwright is missing.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import threading
 from http import HTTPStatus
@@ -38,8 +37,6 @@ REPLAY_PATH = "/game/analysis/replay"
 AI_INFO_KIND = "ai_info"
 # Mirrors APP_EVT.AI_REHYDRATED in web/app/app-events.js.
 AI_REHYDRATED_EVT = "sturddle:ai-rehydrated"
-WAIT_MS = 5000
-MS_PER_S = 1000
 VIEWPORT = {"width": 1600, "height": 1000}
 LOCALHOST = "127.0.0.1"
 LLM_ERROR = "model is overloaded"
@@ -108,25 +105,18 @@ async def _count_rehydrates(page) -> None:
 
 
 async def _await_rehydrates(page, n: int) -> None:
-    await page.wait_for_function(f"() => window.__aiRehydrated >= {n}", timeout=WAIT_MS)
+    await page.wait_for_function(f"() => window.__aiRehydrated >= {n}")
 
 
-def _ai_error_frame(page) -> asyncio.Future:
-    """Resolves when the failed turn's done/error event reaches the page's
-    socket -- whether or not anything on the page handles it."""
-    fut = asyncio.get_running_loop().create_future()
-
-    def on_frame(frame) -> None:
-        try:
-            ev = json.loads(frame)
-        except ValueError:
-            return
-        p = ev.get("payload") or {}
-        if ev.get("kind") == AI_INFO_KIND and p.get("done") and p.get("error") and not fut.done():
-            fut.set_result(p)
-
-    page.on("websocket", lambda ws: ws.on("framereceived", on_frame))
-    return fut
+def _is_ai_error_frame(frame) -> bool:
+    """The failed turn's done/error event on the page's socket -- whether or
+    not anything on the page handles it."""
+    try:
+        ev = json.loads(frame)
+    except ValueError:
+        return False
+    p = ev.get("payload") or {}
+    return ev.get("kind") == AI_INFO_KIND and bool(p.get("done") and p.get("error"))
 
 
 def _replay_acked(resp) -> bool:
@@ -138,14 +128,15 @@ async def test_error_while_away_toasts_on_return(server, make_page):
     base = server
     _ctx, page = await make_page(viewport=VIEWPORT)
     await _count_rehydrates(page)
-    error_frame = _ai_error_frame(page)
-    await page.goto(base + "/")
+    async with page.expect_websocket() as ws_info:
+        await page.goto(base + "/")
+    ws = await ws_info.value
     await _await_rehydrates(page, 1)
 
     await page.click(OTHER_NAV_BTN)
     await page.wait_for_selector(PLAY_PERSP, state="detached")
-    _start_analysis(base)
-    await asyncio.wait_for(error_frame, WAIT_MS / MS_PER_S)
+    async with ws.expect_event("framereceived", predicate=_is_ai_error_frame):
+        _start_analysis(base)
 
     await page.click(PLAY_NAV_BTN)
     await _await_rehydrates(page, 2)
@@ -162,7 +153,7 @@ async def test_shown_error_does_not_toast_again_on_reload(server, make_page):
     await page.goto(base + "/")
     await _await_rehydrates(page, 1)
 
-    async with page.expect_response(_replay_acked, timeout=WAIT_MS):
+    async with page.expect_response(_replay_acked):
         _start_analysis(base)
     assert await page.locator(_TOAST).count() == 1, "live error did not toast"
 

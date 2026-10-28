@@ -26,6 +26,7 @@ from .base import ToolWireSpec
 _TYPE_KEY = "type"
 _DESCRIPTION_KEY = "description"
 _REQUIRED_KEY = "required"
+_PROPERTIES_KEY = "properties"
 _STRING_TYPE = "string"
 
 # Result keys shared by every tool and the dispatcher: the tool's name
@@ -46,7 +47,7 @@ def object_schema(
 ) -> dict[str, Any]:
     """A tool's JSON Schema input: an object with these properties.
     ``required`` is left out of the schema when None."""
-    schema: dict[str, Any] = {_TYPE_KEY: "object", "properties": properties}
+    schema: dict[str, Any] = {_TYPE_KEY: "object", _PROPERTIES_KEY: properties}
     if required is not None:
         schema[_REQUIRED_KEY] = required
     return schema
@@ -90,6 +91,16 @@ class ToolSpec:
     # Post-call usage guidance, lazy-loaded on first tool call per turn.
     # See docs/ai-analysis-spec.md sec. Skills layer. None = no card injected.
     card: str | None = None
+    # Properties merged into input_schema each time schemas() is built, for
+    # args that exist only under live conditions (analyze's `lines`).
+    extra_properties: Callable[[], dict[str, Any]] | None = None
+
+    def wire_schema(self) -> dict[str, Any]:
+        extra = self.extra_properties() if self.extra_properties else None
+        if not extra:
+            return self.input_schema
+        props = {**self.input_schema[_PROPERTIES_KEY], **extra}
+        return {**self.input_schema, _PROPERTIES_KEY: props}
 
 
 # Forward reference for the cancel token; concrete class lives in
@@ -126,7 +137,7 @@ class ToolRegistry:
             {
                 TOOL_NAME_KEY: spec.name,
                 _DESCRIPTION_KEY: spec.description,
-                "input_schema": spec.input_schema,
+                "input_schema": spec.wire_schema(),
             }
             for spec, _ in self._tools.values()
         ]

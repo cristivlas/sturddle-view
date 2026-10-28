@@ -8,8 +8,7 @@
 // selected tournament. New / Sort / Window remain in the top menubar.
 
 import { mqMobile, mqMobileH, mqMobileHPlay } from "./breakpoints.js";
-import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, shakeField, showDialog, toast, TOAST_DURATION_MS } from "./dialogs.js";
-import { openSettingsDialog } from "./settings-dialog.js";
+import { apiErrorDetail, buildToastWithActions, confirm, deepLink, makeToastDismissBtn, OPEN_ENGINES_ACTION, openSettings, reportError, SETTINGS_TAB_TOURNAMENT, shakeField, showDialog, toast, TOAST_DURATION_MS } from "./dialogs.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, sprtParamErrors, STATUS, STATUS_RANK } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
 import { baseCompare, scrollSortedRowIntoView } from "./col-sort.js";
@@ -267,16 +266,11 @@ function renderList(ctx) {
   if (noFastchess) {
     ctx.emptyEl.classList.remove("hidden");
     ctx.emptyMsg.replaceChildren();
-    ctx.emptyMsg.append("fastchess not configured — open ");
-    const link = document.createElement("a");
-    link.href = "#";
-    link.className = "settings-deeplink";
-    link.textContent = "Settings → Tournament";
-    link.addEventListener("click", (e) => {
-      e.preventDefault();
-      openSettingsDialog({ api: ctx.api, initialTab: "tournament" });
-    });
-    ctx.emptyMsg.append(link, " to set the binary path.");
+    ctx.emptyMsg.append(
+      "fastchess not configured \u2014 open ",
+      deepLink("Settings \u2192 Tournament", () => openSettings(SETTINGS_TAB_TOURNAMENT)),
+      " to set the binary path.",
+    );
     ctx.newBtn.disabled = true;
     ctx.selectedId = null;
     ctx.ms.prune();

@@ -7,7 +7,7 @@ import { mountBoard } from "./board.js";
 import { reportError, toast } from "./dialogs.js";
 import { activatePlay, confirmOpenInView, GAME_STATUS_PATH, importForView, OPEN_VERDICT } from "./open-in-view.js";
 import { APP_EVT } from "./app-events.js";
-import { SIDE, FEN_STM, uciSquares } from "./chess-consts.js";
+import { SIDE, FEN_FIELD, fenSide, uciSquares } from "./chess-consts.js";
 import { createEvalGraph } from "./eval-graph.js";
 import { createPvTable } from "./pv-table.js";
 import { STORAGE_KEY } from "./storage-keys.js";
@@ -87,9 +87,8 @@ function _tintScorePair(own, opp) {
 
 // 0-based ply about to be played in `fen` (fullmove + side to move).
 function fenPly(fen) {
-  const parts = fen.split(" ");
-  const fullmove = parseInt(parts[5], 10) || 1;
-  return (fullmove - 1) * 2 + (parts[1] === FEN_STM.BLACK ? 1 : 0);
+  const fullmove = parseInt(fen.split(" ")[FEN_FIELD.FULLMOVE], 10) || 1;
+  return (fullmove - 1) * 2 + (fenSide(fen) === SIDE.BLACK ? 1 : 0);
 }
 
 const REVIEW_LEAVE_MSG = "Review this tournament game and leave the current one? It will be saved to Recents.";
@@ -528,8 +527,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   // re-routed when the engine's color changes); right is the eval graph.
   // Table updates are skipped while hidden (not maximized / narrow) --
   // zero per-info cost; graph samples accumulate regardless (cheap).
-  const pvSideWhite = createPvTable({ colWidthsKey: STORAGE_KEY.LIVE_PVTABLE_COL_WIDTHS });
-  const pvSideBlack = createPvTable({ colWidthsKey: STORAGE_KEY.LIVE_PVTABLE_COL_WIDTHS });
+  const pvSideWhite = createPvTable({ layoutKey: STORAGE_KEY.LIVE_PVTABLE_LAYOUT });
+  const pvSideBlack = createPvTable({ layoutKey: STORAGE_KEY.LIVE_PVTABLE_LAYOUT });
   const evalGraph = createEvalGraph();
   let pvSidesVisible = false;
 
@@ -819,8 +818,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         if (p.fen) {
           positionGen++;
           currentFen = p.fen;
-          const turn = p.fen.split(" ")[1];
-          const color = turn === FEN_STM.BLACK ? SIDE.BLACK : SIDE.WHITE;
+          const color = fenSide(p.fen);
           if (color !== engineColor) {
             setEngineColor(color);
             board.setSide(color);

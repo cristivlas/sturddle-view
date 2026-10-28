@@ -41,6 +41,8 @@ import {
   addTitleControl,
   AUTOSCROLL_SLACK_LINE_PX,
   DOCK_LABEL,
+  flashElement,
+  flashWindow,
   headerBottomPx,
   isPinnedToBottom,
   markSelectable,
@@ -132,8 +134,13 @@ function applyDockBounds(el) {
   const rect = board.getBoundingClientRect();
   // Board's distance from the ribbon-side viewport edge.
   const side = document.body.dataset.ribbonSide === "right"
-    ? window.innerWidth - Math.round(rect.right) : Math.round(rect.left);
-  el.style.width = (side - ribbonWidthPx(PLAY_GRID_SEL) - gridGapPx(el.parentElement)) + "px";
+    ? window.innerWidth - rect.right : rect.left;
+  // The eval gauge hangs in this gap, so the dock yields its width + a gap.
+  const gauge = document.querySelector(".eval-gauge");
+  const gap = gauge ? parseFloat(getComputedStyle(gauge).getPropertyValue("--eval-gauge-gap")) : gridGapPx(el.parentElement);
+  const gaugeW = gauge?.offsetWidth ?? 0;
+  const gaugeRoom = gaugeW ? gaugeW + gap : 0;
+  el.style.width = (side - ribbonWidthPx(PLAY_GRID_SEL) - gap - gaugeRoom) + "px";
 
   const clockTop = document.querySelector(".clock-row.clock-top");
   const clockBot = document.querySelector(".clock-row.clock-bottom");
@@ -1037,6 +1044,15 @@ export function createDockableWindow(config) {
     if (body || saved || openState()) toggle(events);
   }
 
+  // Open the window, or draw the eye to it where it already sits.
+  function reveal(events) {
+    if (!inst.mounted) { toggle(events); return; }
+    if (!wb) { flashElement(slot ?? inlineSlot); return; }
+    if (wb.min) wb.restore();
+    wb.focus();
+    flashWindow(wb);
+  }
+
   // Migrate an open panel between inline (mobile) and dock/float (desktop)
   // when the viewport crosses the mobile breakpoint. Preserves body +
   // listeners; only the placement chrome is rebuilt.
@@ -1095,7 +1111,7 @@ export function createDockableWindow(config) {
   }
 
   const inst = {
-    toggle, close, undock, redock, teardownSlot, closeForNav, restore, relayout, setTitle,
+    toggle, close, undock, redock, teardownSlot, closeForNav, restore, reveal, relayout, setTitle,
     setOnUserClose(fn) { onUserClose = fn; },
     get wb() { return wb; },
     get slot() { return slot; },
@@ -1268,7 +1284,7 @@ function pvTableIsExempt(target) {
 
 function buildPvTableBody(events, { setOff }) {
   const pvt = createPvTable({
-    colWidthsKey: STORAGE_KEY.PVTABLE_COL_WIDTHS,
+    layoutKey: STORAGE_KEY.PVTABLE_LAYOUT,
     onActivate(handle) {
       return !!pvLineBoard?.playLine(handle.frames, {
         pvUci: handle.pvUci,
@@ -1417,6 +1433,11 @@ const VIEW_PV_OPEN_KEY  = STORAGE_KEY.VIEW_PVTABLE_OPEN;
 // (restore() across nav reuses inst.toggle directly and must NOT clear.)
 export function toggleUciLogWindow(events) { uciLog.openedByAnalysis = false; uciLog.toggle(events); }
 export function togglePvTableWindow(events) { pvTable.openedByAnalysis = false; pvTable.toggle(events); }
+// A user open (not a re-focus) likewise takes ownership.
+export function revealPvTableWindow(events) {
+  if (!pvTable.mounted) pvTable.openedByAnalysis = false;
+  pvTable.reveal(events);
+}
 export const isUciLogOpen = () => uciLog.mounted;
 export const isPvTableOpen = () => pvTable.mounted;
 

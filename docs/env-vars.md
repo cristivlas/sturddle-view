@@ -43,7 +43,7 @@ isolated instances). Each falls back to the platform default when unset.
 | `SV_IMPORTS_DIR` | platform data dir | Directory for the imported PGN/FEN history store. |
 | `SV_INSTANCE_LOCK_PATH` | platform config dir | Override the single-instance lock-file location (chiefly tests and isolated instances). |
 | `SV_ENGINE_TMP_ROOT` | platform data dir | Root for per-spawn engine temp dirs (TMP/TEMP/TMPDIR injection; see [engine-temp-cleanup-spec.md](engine-temp-cleanup-spec.md)). |
-| `SV_ENGINE_PROBE_TIMEOUT_SEC` | `3.0` | Timeout for the engine UCI handshake probe; values below `0.05` fall back to the default. |
+| `SV_ENGINE_PROBE_TIMEOUT_SEC` | `10.0` | Timeout for the engine UCI handshake probe; values below `0.05` fall back to the default. |
 | `SV_MAX_IMPORT_BYTES` | `2097152` | Cap on `/game/import` payload size (2 MiB). |
 | `SV_MAX_ANNOTATION_LENGTH` | `10000` | Cap on individual move-annotation text length. |
 | `SV_BOOK_INDEX_MAX_PLIES` | `40` | Plies tokenized per line when indexing an HVE opening book; also the hard cap on book depth (the plies setting is clamped to it). |
@@ -106,10 +106,14 @@ constants).
 |---|---|---|---|
 | `SV_HVE_SWEEP_MOVETIME_SECONDS` | `0.07` | Floor on per-candidate sweep movetime (off-clock); actual = `max(floor, budget / legal moves)`. | `server/sturddle_view/config.py` |
 | `SV_HVE_SWEEP_BUDGET_SECONDS` | `1.0` | Sweep time budget spread over the legal moves. | `server/sturddle_view/config.py` |
+| `SV_HVE_SWEEP_MULTIPV` | `true` | Engines declaring MultiPV sweep in one MultiPV search (lines x the per-move movetime); unscored moves fall back per move. `false` forces the per-move sweep. | `server/sturddle_view/config.py` |
+| `SV_HVE_SWEEP_CLOCK_HOLD_S` | `0.05` | How often the MultiPV sweep re-zeroes the engine's turn stopwatch (so the off-clock search neither counts down nor flags) and re-stops a stale search whose stop was lost before `go`. | `server/sturddle_view/play/human_vs_engine.py` |
 | `SV_HVE_REMOVAL_STEP` | `0.10` | Peak blinding probability per level below max: `qmax = step * (10 - level)`. | `server/sturddle_view/config.py` |
 | `SV_HVE_SCORE_CLAMP_CP` | `1000.0` | Mates fold to ~+/-clamp and cp scores clip to the same range before auto-ranging. | `server/sturddle_view/config.py` |
 | `SV_HVE_WINPROB_SCALE_CP` | `180.0` | Logistic scale mapping sweep cp to win probability for pool admission. | `server/sturddle_view/config.py` |
 | `SV_HVE_WINPROB_DROP_CAP` | `0.15` | Max win-prob drop vs the best move a pool candidate may have (all levels). | `server/sturddle_view/config.py` |
+| `SV_HVE_DEFICIT_RELIEF_GAIN` | `2.0` | Blinding relief per unit of win-prob shortfall (below 0.5) when the engine is behind; see `deficit_relief`. | `server/sturddle_view/config.py` |
+| `SV_HVE_DEFICIT_RELIEF_CAP` | `0.6` | Max fraction of the way toward full strength that deficit relief may move the effective level. | `server/sturddle_view/config.py` |
 
 ## Tournament engine proxy
 

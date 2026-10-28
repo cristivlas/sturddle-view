@@ -38,7 +38,6 @@ ESCAPE = "Escape"
 NOTHING_SAVED = {"models": 1, "urlPuts": []}
 # Well past the old 400ms debounce: under the bug its persist fires here.
 DEBOUNCE_ADVANCE_MS = 1000
-WAIT_MS = 5000
 
 _FETCH_LOG_SCRIPT = """
 window.__fetchLog = [];
@@ -108,7 +107,7 @@ async def _open_and_type(server, make_page, text=TYPED_URL):
         "{ detail: { tab: 'analysis' } }))"
     )
     # Mount-time fetch is the baseline.
-    await page.wait_for_function(_MODELS_AT_LEAST_JS, arg=[MODELS_PATH, 1], timeout=WAIT_MS)
+    await page.wait_for_function(_MODELS_AT_LEAST_JS, arg=[MODELS_PATH, 1])
     url_input = _row_control(page, BASE_URL_LABEL, WA_INPUT)
     await url_input.click()
     await page.keyboard.type(text)
@@ -127,7 +126,7 @@ async def _shook(page) -> bool:
 async def test_base_url_commits_once(server, make_page, key):
     page, _url_input = await _open_and_type(server, make_page)
     await page.keyboard.press(key)
-    await page.wait_for_function(_MODELS_AT_LEAST_JS, arg=[MODELS_PATH, 2], timeout=WAIT_MS)
+    await page.wait_for_function(_MODELS_AT_LEAST_JS, arg=[MODELS_PATH, 2])
     assert await _counts(page) == {"models": 2, "urlPuts": [TYPED_URL]}
     assert not await _shook(page)
 
@@ -137,9 +136,9 @@ async def test_base_url_commits_once(server, make_page, key):
 async def test_invalid_base_url_shakes_refocuses_and_does_not_save(server, make_page, key):
     page, url_input = await _open_and_type(server, make_page, INVALID_URL)
     await page.keyboard.press(key)
-    await page.wait_for_function("() => window.__shook", timeout=WAIT_MS)
+    await page.wait_for_function("() => window.__shook")
     await page.wait_for_function("(el) => el === document.activeElement",
-                                 arg=await url_input.element_handle(), timeout=WAIT_MS)
+                                 arg=await url_input.element_handle())
     await page.clock.run_for(DEBOUNCE_ADVANCE_MS)
     assert await _counts(page) == NOTHING_SAVED
 
@@ -148,7 +147,7 @@ async def test_invalid_base_url_shakes_refocuses_and_does_not_save(server, make_
 async def test_invalid_base_url_not_saved_on_close(server, make_page):
     page, _url_input = await _open_and_type(server, make_page, INVALID_URL)
     await page.keyboard.press(ESCAPE)
-    await page.wait_for_function("() => !document.querySelector('wa-dialog[open]')", timeout=WAIT_MS)
+    await page.wait_for_function("() => !document.querySelector('wa-dialog[open]')")
     assert await _counts(page) == NOTHING_SAVED
     assert httpx.get(f"{server}{SETTINGS_PATH}").json()[BASE_URL_KEY] == ""
 

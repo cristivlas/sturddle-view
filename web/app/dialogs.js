@@ -39,11 +39,11 @@ const fsIcon = (e) => (e.is_dir ? FS_ICON_DIR : e.is_executable ? FS_ICON_EXE : 
 
 // Rows are the /fs listing entries themselves.
 const FS_COLUMNS = [
-  { key: FS_COL_NAME, label: "Name", width: 55, alwaysOn: true, firstDir: SORT_DIR.ASC, tiebreak: true, tdClass: "fs-name-cell",
+  { key: FS_COL_NAME, label: "Name", width: 50, alwaysOn: true, firstDir: SORT_DIR.ASC, tiebreak: true, tdClass: "fs-name-cell",
     cell: (e) => `<wa-icon name="${fsIcon(e)}"></wa-icon><span class="${FS_NAME_CLASS}">${escapeHtml(e.name)}</span>` },
-  { key: FS_COL_DATE, label: "Date modified", width: 30, numeric: true, firstDir: SORT_DIR.DESC,
+  { key: FS_COL_DATE, label: "Date modified", width: 32, numeric: true, firstDir: SORT_DIR.DESC,
     tdClass: "fs-date", cell: (e) => escapeHtml(fmtDate(e.mtime)) },
-  { key: FS_COL_SIZE, label: "Size", width: 15, numeric: true, firstDir: SORT_DIR.DESC,
+  { key: FS_COL_SIZE, label: "Size", width: 18, numeric: true, firstDir: SORT_DIR.DESC,
     tdClass: FS_SIZE_CLASS, thClass: FS_SIZE_CLASS, cell: (e) => (e.is_dir ? "" : escapeHtml(fmtSize(e.size))) },
 ];
 
@@ -128,7 +128,7 @@ const COPIED_TOAST_MS = 1500;
 const COPY_FAILED_MSG = "Could not copy to clipboard";
 
 /** Modal confirm. Resolves true on confirm, false otherwise.
- *  No title by design — the message itself carries the question, the
+ *  No title by design -- the message itself carries the question, the
  *  destructive button label is the verb. (iOS-style.) */
 export function confirm({
   message,
@@ -626,6 +626,9 @@ export const SETTINGS_PUT_DEBOUNCE_MS = 400;
 export const SETTINGS_TAB_ENGINES = "engines";
 export const SETTINGS_TAB_ANALYSIS = "analysis";
 export const SETTINGS_TAB_RECENTS = "recents";
+export const SETTINGS_TAB_TOURNAMENT = "tournament";
+export const SETTINGS_TAB_DISPLAY = "display";
+export const SETTINGS_TAB_PLAY = "play";
 
 // Deep-link focus target: class on the extended-thinking control, shared
 // with the tab that builds it so the selector has one source of truth.
@@ -641,6 +644,19 @@ export function openSettings(tab, focusClass, select) {
   window.dispatchEvent(new CustomEvent(APP_EVT.OPEN_SETTINGS, {
     detail: { tab, focus: focusClass, select },
   }));
+}
+
+/** Inline text link that runs `onClick` instead of navigating. */
+export function deepLink(text, onClick) {
+  const link = document.createElement("a");
+  link.href = "#";
+  link.className = "settings-deeplink";
+  link.textContent = text;
+  link.addEventListener("click", (e) => {
+    e.preventDefault();
+    onClick();
+  });
+  return link;
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";

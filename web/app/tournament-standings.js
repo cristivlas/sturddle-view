@@ -35,18 +35,18 @@ export function ordoCell(e) {
 // deterministic tiebreak. Cells read the raw engine (`row.engine`); sorting
 // reads the flattened row fields.
 const STANDINGS_COLUMNS = [
-  { key: "name", label: "Engine", width: 25, alwaysOn: true, firstDir: SORT_DIR.ASC, tiebreak: true,
+  { key: "name", label: "Engine", width: 20, alwaysOn: true, firstDir: SORT_DIR.ASC, tiebreak: true,
     tdClass: "wb-eng-name", tdTitle: (r) => r.name, cell: (r) => escapeHtml(r.name) },
-  { key: "games", label: "G", width: 7, numeric: true, firstDir: SORT_DIR.DESC, cell: (r) => r.games },
-  { key: "wins", label: "W", width: 7, numeric: true, firstDir: SORT_DIR.DESC, cell: (r) => r.wins },
-  { key: "losses", label: "L", width: 7, numeric: true, firstDir: SORT_DIR.DESC, cell: (r) => r.losses },
-  { key: "draws", label: "D", width: 7, numeric: true, firstDir: SORT_DIR.DESC, cell: (r) => r.draws },
-  { key: "points", label: "Pts", width: 7, numeric: true, firstDir: SORT_DIR.DESC, cell: (r) => r.points },
-  { key: "pct", label: "%", width: 8, numeric: true, firstDir: SORT_DIR.DESC,
+  { key: "games", label: "G", width: 8, numeric: true, firstDir: SORT_DIR.DESC, cell: (r) => r.games },
+  { key: "wins", label: "W", width: 8, numeric: true, firstDir: SORT_DIR.DESC, cell: (r) => r.wins },
+  { key: "losses", label: "L", width: 8, numeric: true, firstDir: SORT_DIR.DESC, cell: (r) => r.losses },
+  { key: "draws", label: "D", width: 8, numeric: true, firstDir: SORT_DIR.DESC, cell: (r) => r.draws },
+  { key: "points", label: "Pts", width: 10, numeric: true, firstDir: SORT_DIR.DESC, cell: (r) => r.points },
+  { key: "pct", label: "%", width: 9, numeric: true, firstDir: SORT_DIR.DESC,
     cell: (r) => `${(r.pct * 100).toFixed(1)}%` },
-  { key: "elo", label: "Elo", width: 14, numeric: true, firstDir: SORT_DIR.DESC,
+  { key: "elo", label: "Elo", width: 16, numeric: true, firstDir: SORT_DIR.DESC,
     cell: ({ engine: e }) => (e.elo == null ? "--" : signedEloCell(e.elo, e.elo_margin_95)) },
-  { key: "ordo", label: "Ordo", width: 18, numeric: true, firstDir: SORT_DIR.DESC,
+  { key: "ordo", label: "Ordo", width: 16, numeric: true, firstDir: SORT_DIR.DESC,
     cell: ({ engine: e }) => ordoCell(e) },
 ];
 

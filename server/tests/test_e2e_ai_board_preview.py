@@ -104,7 +104,7 @@ def _fen_to_pieces(fen: str) -> list[str]:
     return sorted(out)
 
 
-async def _wait_board_matches_fen(page, fen: str, timeout_ms=3000):
+async def _wait_board_matches_fen(page, fen: str):
     expected = _fen_to_pieces(fen)
     await page.wait_for_function(
         f"""(expected) => {{
@@ -116,7 +116,6 @@ async def _wait_board_matches_fen(page, fen: str, timeout_ms=3000):
           return JSON.stringify(actual) === JSON.stringify(expected);
         }}""",
         arg=expected,
-        timeout=timeout_ms,
     )
 
 
@@ -126,7 +125,7 @@ async def test_analyze_tool_call_previews_hypothetical_fen(server, make_page):
     game_id, live_fen = _seed_view_mode(base)
     _ctx, page, _errors = await _new_page(make_page)
     await _goto_view_mode(page, base)
-    await _wait_board_matches_fen(page, live_fen, timeout_ms=5000)
+    await _wait_board_matches_fen(page, live_fen)
 
     _publish(base, "ai_tool_call", game_id=game_id, payload={
         "round": 0,

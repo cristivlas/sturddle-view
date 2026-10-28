@@ -3,7 +3,7 @@
 // confirm. Fetches on mount and again on RECENTS_CHANGED while the dialog is
 // open; Settings is rebuilt per open, so each open starts fresh.
 
-import { apiErrorDetail, apiErrorObject, confirm, reportError, toast } from "./dialogs.js";
+import { apiErrorDetail, apiErrorObject, confirm, reportError, SETTINGS_TAB_RECENTS as TAB_NAME, toast } from "./dialogs.js";
 import { APP_EVT } from "./app-events.js";
 import {
   currentEntryTag, formatSummary, HASH_PREVIEW_LEN, RECENT_IMPORTS_PATH,
@@ -14,7 +14,6 @@ import {
 } from "./open-in-view.js";
 import { fmtMoveNo, makeIconButton, rafCoalesce } from "./wb-utils.js";
 
-const TAB_NAME = "recents";
 const TAB_LABEL = "Recents";
 const ROW_CLASS = "recents-row";
 const BTN_CLASS = "recents-btn";

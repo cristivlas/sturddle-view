@@ -41,6 +41,7 @@ from ..chess.results import (
 )
 from ..config import (
     AI_ENABLED_KEY,
+    ANALYSIS_MULTIPV_KEY,
     AUTO_CLAIM_DRAWS_KEY,
     DEFAULT_TC_INCREMENT_SECONDS,
     DEFAULT_TC_INITIAL_SECONDS,
@@ -50,15 +51,18 @@ from ..config import (
     HVE_DIFFICULTY_MAX,
     PGN_AUTOSAVE_KEY,
     PGN_DIR_KEY,
+    _DEFAULT_ANALYSIS_MULTIPV,
     _DEFAULT_HVE_DEFICIT_RELIEF_CAP,
     _DEFAULT_HVE_DEFICIT_RELIEF_GAIN,
     _DEFAULT_HVE_REMOVAL_STEP,
     _DEFAULT_HVE_SCORE_CLAMP_CP,
     _DEFAULT_HVE_SWEEP_BUDGET_SECONDS,
     _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS,
+    _DEFAULT_HVE_SWEEP_MULTIPV,
     _DEFAULT_HVE_WINPROB_DROP_CAP,
     _DEFAULT_HVE_WINPROB_SCALE_CP,
 )
+from ..engines import UCI_OPT_MULTIPV, UCI_OPT_OWNBOOK
 from ..env_utils import env_float
 from ..error_detail import ERROR_KEY
 from ..events import (
@@ -106,6 +110,18 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 CLOCK_TICK_INTERVAL = 0.25  # seconds
+# How often a long off-clock sweep search re-zeroes the engine's turn stopwatch.
+_MIN_SWEEP_CLOCK_HOLD_SECONDS = 0.01
+_SWEEP_CLOCK_HOLD_SECONDS = env_float(
+    "SV_HVE_SWEEP_CLOCK_HOLD_S", 0.05, min_value=_MIN_SWEEP_CLOCK_HOLD_SECONDS,
+)
+_INFO_PV = "pv"
+_INFO_SCORE = "score"
+_INFO_DEPTH = "depth"
+_INFO_MULTIPV = "multipv"
+# MultiPV rank of the best line; infos without a rank are single-PV.
+_BEST_RANK = 1
+_INFO_BOUNDS = ("lowerbound", "upperbound")
 # How long a stopped analysis may take to wind down before its task is cancelled.
 _ANALYSIS_STOP_GRACE_SECONDS = env_float("SV_ANALYSIS_STOP_GRACE_S", 2.0, min_value=0.0)
 # A takeback on the human's turn undoes the engine's reply and the human's move.
@@ -344,6 +360,32 @@ def _pgn_headers(event: str, white: str, black: str) -> dict[str, str]:
     }
 
 
+def _own_book_off(engine) -> dict:
+    """Per-search OwnBook off (book replies ignore searchmoves, carry no
+    score), keyed by the engine's own spelling so the configured value
+    cannot shadow it; python-chess restores that value afterwards."""
+    opt = engine.options.get(UCI_OPT_OWNBOOK)
+    return {} if opt is None else {opt.name: False}
+
+
+async def _final_lines(analysis) -> dict[int, dict]:
+    final: dict[int, dict] = {}
+    async for info in analysis:
+        if info.get(_INFO_PV) and info.get(_INFO_SCORE) is not None:
+            final[info.get(_INFO_MULTIPV, _BEST_RANK)] = info
+    return final
+
+
+def _multipv_cap(engine, want: int) -> int:
+    """`want` lines capped by the engine's MultiPV max; 0 when it has no
+    MultiPV option or the cap leaves a single line."""
+    opt = engine.options.get(UCI_OPT_MULTIPV)
+    if opt is None:
+        return 0
+    lines = want if opt.max is None else min(want, opt.max)
+    return lines if lines > 1 else 0
+
+
 def _safe_name(name: str) -> str:
     return "".join(c if c.isalnum() or c in _FILENAME_SAFE_CHARS else "_" for c in name)
 
@@ -418,12 +460,12 @@ class HumanVsEngine:
         self._think_gen: int = 0  # search generation; bumped on cancel
         self._tick_task: asyncio.Task | None = None
         self._analysis_task: asyncio.Task | None = None
-        # Most recent engine_info payload published during analysis. Kept
-        # so /game/sync can re-emit it after a client remount (e.g. user
-        # navigated away and back); without this the board arrow stays
-        # gone until the engine ships its next info line, which can take
-        # seconds at higher depths.
-        self._last_analysis_info: dict | None = None
+        # Most recent engine_info payload per MultiPV rank published during
+        # analysis. Kept so /game/sync can re-emit them after a client
+        # remount (e.g. user navigated away and back); without this the
+        # board arrows stay gone until the engine ships its next info lines,
+        # which can take seconds at higher depths.
+        self._last_analysis_info: dict[int, dict] = {}
         # Set inside the game-end / Leaving lock by _stash_recents_payload();
         # drained after the lock by _flush_recents_save(). Carries (text,
         # summary, game_id, fork_link) so the async write happens outside the
@@ -1002,19 +1044,21 @@ class HumanVsEngine:
             )
 
     async def _republish_last_analysis_info(self) -> None:
-        """Re-emit the most recent analysis info payload so a freshly
-        mounted client can restore the board arrow without waiting for
-        the engine's next info line. No-op when not analyzing or when
-        no info has been captured yet (engine hasn't produced one)."""
-        if not self._analysis_mode or self._last_analysis_info is None:
+        """Re-emit the most recent analysis info payload per rank, best
+        first, so a freshly mounted client can restore the board arrows
+        without waiting for the engine's next info lines. No-op when not
+        analyzing or when no info has been captured yet."""
+        if not self._analysis_mode:
             return
-        await self._bus.publish(
-            Event(
-                kind=EVT_ENGINE_INFO,
-                game_id=self._game_id,
-                payload=self._last_analysis_info,
+        # Snapshot: stop_analysis clears the cache outside the lock.
+        for _rank, payload in sorted(self._last_analysis_info.items()):
+            await self._bus.publish(
+                Event(
+                    kind=EVT_ENGINE_INFO,
+                    game_id=self._game_id,
+                    payload=payload,
+                )
             )
-        )
 
     def snapshot_events(self) -> list[Event]:
         if not self._has_game:
@@ -2035,7 +2079,7 @@ class HumanVsEngine:
                 pass
         self._analysis_task = None
         self._analysis = None
-        self._last_analysis_info = None
+        self._last_analysis_info.clear()
 
     async def _cancel_tick(self) -> None:
         if self._tick_task and not self._tick_task.done():
@@ -2127,7 +2171,7 @@ class HumanVsEngine:
         (last_info, cancelled).
         """
         def _cache(payload: dict) -> None:
-            self._last_analysis_info = payload
+            self._last_analysis_info[payload.get(_INFO_MULTIPV, _BEST_RANK)] = payload
         return await pump_engine_info(
             analysis,
             bus=self._bus,
@@ -2163,11 +2207,15 @@ class HumanVsEngine:
         game_id: str,
         root_moves: list[chess.Move] | None = None,
         capture_score: dict | None = None,
+        *,
+        options: dict,
     ) -> chess.Move | None:
         """One engine search with live info pumped to the bus, optionally
         restricted to `root_moves` (the difficulty pool). Returns the
         bestmove (None when the search was stopped before one)."""
-        with await engine.analysis(board, limit=limit, root_moves=root_moves) as analysis:
+        with await engine.analysis(
+            board, limit=limit, root_moves=root_moves, options=options,
+        ) as analysis:
             self._analysis = analysis
             try:
                 await self._pump_engine_info(
@@ -2188,7 +2236,9 @@ class HumanVsEngine:
             return cached[1]
         probe_move = chess.Move.from_uci(PROBE_MOVE_UCI)
         limit = chess.engine.Limit(depth=PROBE_DEPTH, time=PROBE_MOVETIME_SECONDS)
-        result = await engine.play(chess.Board(PROBE_FEN), limit, root_moves=[probe_move])
+        result = await engine.play(
+            chess.Board(PROBE_FEN), limit, root_moves=[probe_move], options=_own_book_off(engine),
+        )
         ok = result.move == probe_move
         if not ok:
             log.warning(
@@ -2212,39 +2262,16 @@ class HumanVsEngine:
     async def _visible_pool(
         self, engine, board: chess.Board, level: int, game_id: str, gen: int,
     ) -> list[chess.Move] | None:
-        """Shallow off-clock sweep + blinding pass (spec steps 1-3).
-        Scores every legal move at the sweep movetime, then builds the
-        auto-ranged, level-blinded pool the real search may see.
-        Returns None when the game/generation changed mid-sweep."""
-        clamp = getattr(self._settings, "hve_score_clamp_cp", _DEFAULT_HVE_SCORE_CLAMP_CP)
+        """Shallow off-clock sweep + blinding pass (spec steps 1-3): the
+        level-blinded pool the real search may see. None when the
+        game/generation changed mid-sweep."""
         # Sweep on a copy: the live board must not have stale state sent
         # mid-sweep while takeback/new-game can run concurrently.
         root = board.copy()
         moves = list(root.legal_moves)
-        floor_s = getattr(
-            self._settings, "hve_sweep_movetime_seconds",
-            _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS,
-        )
-        budget_s = getattr(
-            self._settings, "hve_sweep_budget_seconds",
-            _DEFAULT_HVE_SWEEP_BUDGET_SECONDS,
-        )
-        limit = chess.engine.Limit(time=max(floor_s, budget_s / len(moves)))
-        scores: list[float] = []
-        for mv in moves:
-            if not self._search_is_current(game_id, gen):
-                return None
-            # Keep the sweep off-clock as it runs: without this the
-            # engine clock visibly counts down (and can even flag)
-            # during the sweep.
-            self._clock.start_turn()
-            info = await engine.analyse(root, limit, root_moves=[mv])
-            score = info.get("score")
-            if score is None:
-                log.warning("sweep: no score for %s; treating as 0cp", mv.uci())
-                scores.append(0.0)
-                continue
-            scores.append(mover_cp(score.pov(chess.WHITE), root.turn, clamp))
+        scores = await self._sweep_scores(engine, root, moves, game_id, gen)
+        if scores is None:
+            return None
         step = getattr(self._settings, "hve_removal_step", _DEFAULT_HVE_REMOVAL_STEP)
         wp_scale = getattr(
             self._settings, "hve_winprob_scale_cp", _DEFAULT_HVE_WINPROB_SCALE_CP,
@@ -2268,6 +2295,94 @@ class HumanVsEngine:
             level, relief, [m.uci() for m in pool], len(moves),
         )
         return pool
+
+    async def _sweep_scores(
+        self, engine, root: chess.Board, moves: list[chess.Move], game_id: str, gen: int,
+    ) -> list[float] | None:
+        """Mover-POV cp per move in `moves` (spec step 1): one MultiPV
+        search if supported, `searchmoves` per move for any it leaves
+        unscored. None when cancelled mid-sweep."""
+        clamp = getattr(self._settings, "hve_score_clamp_cp", _DEFAULT_HVE_SCORE_CLAMP_CP)
+        floor_s = getattr(
+            self._settings, "hve_sweep_movetime_seconds",
+            _DEFAULT_HVE_SWEEP_MOVETIME_SECONDS,
+        )
+        budget_s = getattr(
+            self._settings, "hve_sweep_budget_seconds",
+            _DEFAULT_HVE_SWEEP_BUDGET_SECONDS,
+        )
+        book_off = _own_book_off(engine)
+        per_move_s = max(floor_s, budget_s / len(moves))
+        scores: dict[chess.Move, float] = {}
+        lines = self._sweep_multipv_lines(engine, len(moves))
+        if lines > 1:
+            scores = await self._multipv_scores(
+                engine, root, lines, chess.engine.Limit(time=per_move_s * lines),
+                book_off, clamp, game_id, gen,
+            )
+            log.info("sweep: MultiPV %d scored %d of %d legal moves", lines, len(scores), len(moves))
+        limit = chess.engine.Limit(time=per_move_s)
+        for mv in moves:
+            if not self._search_is_current(game_id, gen):
+                return None
+            if mv in scores:
+                continue
+            # Keep the sweep off-clock as it runs: without this the
+            # engine clock visibly counts down (and can even flag)
+            # during the sweep.
+            self._clock.start_turn()
+            info = await engine.analyse(root, limit, root_moves=[mv], options=book_off)
+            score = info.get(_INFO_SCORE)
+            if score is None:
+                log.warning("sweep: no score for %s; treating as 0cp", mv.uci())
+                scores[mv] = 0.0
+                continue
+            scores[mv] = mover_cp(score.pov(chess.WHITE), root.turn, clamp)
+        return [scores[mv] for mv in moves]
+
+    async def _multipv_scores(
+        self, engine, root: chess.Board, lines: int, limit: chess.engine.Limit,
+        options: dict, clamp: float, game_id: str, gen: int,
+    ) -> dict[chess.Move, float]:
+        """Mover-POV cp per root move from the final exact MultiPV lines;
+        a move on two lines (one stale from a stopped depth) keeps the deeper."""
+        with await engine.analysis(root, limit, multipv=lines, options=options) as analysis:
+            self._analysis = analysis
+            try:
+                final = await self._off_clock(_final_lines(analysis), analysis, game_id, gen)
+            finally:
+                self._analysis = None
+        best: dict[chess.Move, tuple[int, float]] = {}
+        for info in final.values():
+            if any(info.get(key) for key in _INFO_BOUNDS):
+                continue
+            mv, depth = info[_INFO_PV][0], info.get(_INFO_DEPTH, 0)
+            prev = best.get(mv)
+            if prev is None or depth > prev[0]:
+                score = info[_INFO_SCORE].pov(chess.WHITE)
+                best[mv] = (depth, mover_cp(score, root.turn, clamp))
+        return {mv: cp for mv, (_, cp) in best.items()}
+
+    def _sweep_multipv_lines(self, engine, n_moves: int) -> int:
+        """0 = per-move sweep."""
+        if not getattr(self._settings, "hve_sweep_multipv", _DEFAULT_HVE_SWEEP_MULTIPV):
+            return 0
+        return _multipv_cap(engine, n_moves)
+
+    async def _off_clock(self, coro, analysis, game_id: str, gen: int):
+        """Await `coro` with the turn stopwatch held at zero. Once stale,
+        stop `analysis`: a raw `stop` that raced ahead of its `go` is lost."""
+        task = asyncio.create_task(coro)
+        try:
+            while not task.done():
+                if self._search_is_current(game_id, gen):
+                    self._clock.start_turn()
+                else:
+                    analysis.stop()
+                await asyncio.wait({task}, timeout=_SWEEP_CLOCK_HOLD_SECONDS)
+            return task.result()
+        finally:
+            task.cancel()
 
     async def _handle_engine_termination(self, engine, game_id: str, gen: int) -> None:
         """Drop the dead engine reference and surface the crash unless it
@@ -2365,6 +2480,7 @@ class HumanVsEngine:
                 engine, board, limit, game_id,
                 root_moves=pool,
                 capture_score=captured,
+                options={} if pool is None else _own_book_off(engine),
             )
             if best is None:
                 return
@@ -2434,8 +2550,9 @@ class HumanVsEngine:
             await self._fail_analysis_start(game_id, str(exc))
             return
         await self._publish_search_start(game_id)
+        want = getattr(self._settings, ANALYSIS_MULTIPV_KEY, _DEFAULT_ANALYSIS_MULTIPV)
         try:
-            with await engine.analysis(board) as analysis:
+            with await engine.analysis(board, multipv=_multipv_cap(engine, want) or None) as analysis:
                 self._analysis = analysis
                 await self._pump_engine_info(analysis, game_id, board, cache_payload=True)
                 best = await analysis.wait()

@@ -7,9 +7,10 @@ import { APP_EVT } from "../app-events.js";
 import { KIND, AI_KIND_PREFIX } from "../game-events.js";
 import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
+import { sidePovScore } from "../wb-utils.js";
 import { alert as showAlert, apiErrorObject, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportAiError, reportError, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, isUciLogOpen, isPvTableOpen, UCI_LOG_TITLE, PV_TABLE_TITLE, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, clearUciLog, isMobileLayout, setPvLineBoard } from "../play-dock-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, revealPvTableWindow, isUciLogOpen, isPvTableOpen, UCI_LOG_TITLE, PV_TABLE_TITLE, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, clearUciLog, isMobileLayout, setPvLineBoard } from "../play-dock-windows.js";
 import {
   commentaryWindow,
   openCommentary,
@@ -41,12 +42,15 @@ import {
   setOnReanalyzeAi,
   setAiInlineHost,
   isAiOpen,
+  openAiEngineOnly,
+  isAiEngineOnly,
   latestVisibleAiProse,
 } from "../play-ai-window.js";
 import { terminationLabel } from "../format-termination.js";
 import { editAnnotation } from "../annotation-dialog.js";
 import { collapseWhitespace } from "../text-utils.js";
 import { attachRibbonOverflow } from "../ribbon-overflow.js";
+import { ENGINES_NO_PROBE_PATH } from "../engines.js";
 
 // Tool name the AI uses to inspect hypothetical positions; the live
 // board mirrors `input.fen` while a call with this name is in flight.
@@ -165,17 +169,9 @@ function humanToMove(state) {
   return state.humanWhite ? state.turn === SIDE.WHITE : state.turn === SIDE.BLACK;
 }
 
-// eval_history entries are white POV {cp|mate}; flip for a black engine.
-function evalToEnginePov(ev, engineWhite) {
-  if (engineWhite) return ev;
-  if (ev.mate != null) return { mate: -ev.mate };
-  if (ev.cp != null) return { cp: -ev.cp };
-  return ev;
-}
-
 // Rebuild the eval strip from the authoritative per-ply history: engine
-// plies only (human slots are null), in engine POV. Null history (view
-// mode / no game) clears it.
+// plies only (human slots are null), white POV flipped to engine POV. Null
+// history (view mode / no game) clears it.
 function feedEvalBar(state, evalHistory) {
   const bar = getEvalBarApi();
   if (!bar) return;
@@ -185,7 +181,7 @@ function feedEvalBar(state, evalHistory) {
   const items = [];
   if (Array.isArray(evalHistory)) {
     evalHistory.forEach((ev, ply) => {
-      if (ev != null) items.push({ score: evalToEnginePov(ev, engineWhite), ply });
+      if (ev != null) items.push({ score: sidePovScore(ev, engineWhite), ply });
     });
   }
   bar.setSamples(items, engineWhite);
@@ -610,9 +606,10 @@ async function rehydrateAiPanel(ai, aiCtx, { adopt = false } = {}) {
 // A streaming ai_* event with the panel closed means another client started
 // analysis. A terminal event, or a stop we are driving ourselves, must not
 // resurrect the panel -- those dispatch normally (a done payload carries the
-// ribbon latch, which is live whether or not the panel is up).
+// ribbon latch, which is live whether or not the panel is up). The
+// engine-only stand-in counts as closed.
 function shouldAdoptAiSession(state, evt) {
-  return !isAiOpen() && !evt.payload?.done && !state.analysisTransitionInFlight;
+  return (!isAiOpen() || isAiEngineOnly()) && !evt.payload?.done && !state.analysisTransitionInFlight;
 }
 
 // Adopt a session started elsewhere: open the panel and replay what we missed.
@@ -1776,7 +1773,7 @@ function showAnalysisToastImpl(state) {
 async function resolveAnalysisEngineName(state) {
   const [s, e] = await Promise.all([
     state.ctx.api("GET", "/settings"),
-    state.ctx.api("GET", "/engines"),
+    state.ctx.api("GET", ENGINES_NO_PROBE_PATH),
   ]);
   const engines = e.engines || [];
   const id = s.analysis_engine_id || e.selected_id;
@@ -1786,14 +1783,16 @@ async function resolveAnalysisEngineName(state) {
   return eng?.name || "";
 }
 
+// Engine-only stand-in panel. Its Search Lines link opens or reveals the
+// table, never hides it (unlike the toast's toggle).
+function openEngineOnlyPanel(state) {
+  openAiEngineOnly(() => revealPvTableWindow(state.ctx.events));
+}
+
 async function startAnalysisFromUiImpl(state) {
   // Unmounted while a caller (e.g. re-analyze's stop POST) awaited: building
   // the toast/panel now would orphan them -- unmount already ran.
   if (state.unmounted) return;
-  // Engine-only analysis: close any leftover AI panel from a prior AI run
-  // before starting, so the dock shows engine-only output. Done first so
-  // the close can't race the new analysis state.
-  if (!state.aiEnabled && isAiOpen()) closeAi();
   setAiTurnFinished(state.aiShared, state.view, false);
   dismissAiErrorToast();
   clearUciLog();
@@ -1808,6 +1807,8 @@ async function startAnalysisFromUiImpl(state) {
     setAiTitle(state.aiTitleModel);
     openAi();
     resetAi();
+  } else {
+    openEngineOnlyPanel(state);
   }
   await state.ctx.api("POST", "/game/analysis/start", {});
   // Unmounted mid-POST (user navigated away): unmount already dismissed the
@@ -2149,6 +2150,9 @@ function handleBusEvent(state, ai, aiCtx, evt) {
             // user can still see and dismiss it.
             showAnalysisToastImpl(state);
           }
+          // Remount, or engine-only analysis started elsewhere. An AI
+          // session's replay supersedes this (resetAi clears it).
+          if (!state.aiEnabled && !isAiOpen()) openEngineOnlyPanel(state);
         }
       }
       // Title the UCI Log with the engine whose traffic it shows. The
@@ -2353,7 +2357,7 @@ export const playPerspective = {
     }
     async function checkEngines() {
       try {
-        const r = await ctx.api("GET", "/engines");
+        const r = await ctx.api("GET", ENGINES_NO_PROBE_PATH);
         setNoEngine(!r.selected_id);
       } catch {
         // Network/auth failure: leave banner hidden -- a hidden banner

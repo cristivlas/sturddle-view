@@ -13,6 +13,20 @@ export const FEN_STM = {
   WHITE: "w",
   BLACK: "b",
 };
+// Space-separated FEN field indexes.
+export const FEN_FIELD = {
+  STM: 1,
+  FULLMOVE: 5,
+};
+
+// SIDE.* for a FEN side-to-move token.
+export function stmSide(stm) {
+  return stm === FEN_STM.BLACK ? SIDE.BLACK : SIDE.WHITE;
+}
+
+export function fenSide(fen) {
+  return stmSide(fen.split(" ")[FEN_FIELD.STM]);
+}
 
 // PGN result tags (the "Result" header / game_result payload).
 export const RESULT = {
@@ -20,6 +34,9 @@ export const RESULT = {
   BLACK_WIN: "0-1",
   DRAW: "1/2-1/2",
 };
+
+// MultiPV rank of the best line; engine_info without `multipv` is single-PV.
+export const BEST_RANK = 1;
 
 // UCI long-algebraic move: from-square, to-square, optional promotion piece.
 const SQUARE_LEN = 2;
