@@ -61,6 +61,8 @@
   --eval-gauge-gap: 3px;
   --eval-gauge-white: #e8e8e8;
   --eval-gauge-black: #5c6370;
+  /* Play/view board frame; the gauge insets by it to match the squares. */
+  --board-border-w: 1px;
   --row-bg: #32353c;
   --row-bg-hover: #4a4e58;
   --row-bg-selected: #2a3a4a;
@@ -1949,15 +1951,13 @@ body .side-popover.popover-floating {
 }
 .eval-gauge {
   position: absolute;
-  top: 0;
-  bottom: 0;
+  top: var(--board-border-w);
+  bottom: var(--board-border-w);
   right: calc(100% + var(--eval-gauge-gap));
   width: var(--eval-gauge-w);
   display: flex;
   flex-direction: column-reverse;
   background: var(--eval-gauge-black);
-  border-radius: var(--wb-radius);
-  overflow: hidden;
 }
 .eval-gauge.flipped { flex-direction: column; }
 .eval-gauge-fill {
@@ -2214,15 +2214,14 @@ body .side-popover.popover-floating {
 }
 .game-view-board .board {
   background: #2a2a2a;
-  border: 1px solid #333;
+  border: var(--board-border-w) solid #333;
   width: var(--board-max-px, 100%);
   height: auto;
   align-self: center;
   flex: 0 0 auto;
   max-width: 100%;
   box-sizing: border-box;
-  /* Clip the square-cornered board SVG to the rounded frame. */
-  border-radius: var(--wb-radius);
+  /* The board SVG takes the full frame width; clip it inside the border. */
   overflow: hidden;
 }
 .game-view-engine .engine-summary {
