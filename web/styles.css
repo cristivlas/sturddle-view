@@ -4877,7 +4877,9 @@ wa-dialog.tournament-info-dialog::part(body) {
   0%, 40% { border-color: var(--accent); }
   100%     { border-color: transparent; }
 }
-.winbox.wb-attention::after {
+.dock-slot.wb-attention { position: relative; }
+.winbox.wb-attention::after,
+.dock-slot.wb-attention::after {
   content: "";
   position: absolute;
   inset: 0;

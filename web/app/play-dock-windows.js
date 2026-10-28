@@ -41,6 +41,8 @@ import {
   addTitleControl,
   AUTOSCROLL_SLACK_LINE_PX,
   DOCK_LABEL,
+  flashElement,
+  flashWindow,
   headerBottomPx,
   isPinnedToBottom,
   markSelectable,
@@ -1042,6 +1044,15 @@ export function createDockableWindow(config) {
     if (body || saved || openState()) toggle(events);
   }
 
+  // Open the window, or draw the eye to it where it already sits.
+  function reveal(events) {
+    if (!inst.mounted) { toggle(events); return; }
+    if (!wb) { flashElement(slot ?? inlineSlot); return; }
+    if (wb.min) wb.restore();
+    wb.focus();
+    flashWindow(wb);
+  }
+
   // Migrate an open panel between inline (mobile) and dock/float (desktop)
   // when the viewport crosses the mobile breakpoint. Preserves body +
   // listeners; only the placement chrome is rebuilt.
@@ -1100,7 +1111,7 @@ export function createDockableWindow(config) {
   }
 
   const inst = {
-    toggle, close, undock, redock, teardownSlot, closeForNav, restore, relayout, setTitle,
+    toggle, close, undock, redock, teardownSlot, closeForNav, restore, reveal, relayout, setTitle,
     setOnUserClose(fn) { onUserClose = fn; },
     get wb() { return wb; },
     get slot() { return slot; },
@@ -1422,6 +1433,11 @@ const VIEW_PV_OPEN_KEY  = STORAGE_KEY.VIEW_PVTABLE_OPEN;
 // (restore() across nav reuses inst.toggle directly and must NOT clear.)
 export function toggleUciLogWindow(events) { uciLog.openedByAnalysis = false; uciLog.toggle(events); }
 export function togglePvTableWindow(events) { pvTable.openedByAnalysis = false; pvTable.toggle(events); }
+// A user open (not a re-focus) likewise takes ownership.
+export function revealPvTableWindow(events) {
+  if (!pvTable.mounted) pvTable.openedByAnalysis = false;
+  pvTable.reveal(events);
+}
 export const isUciLogOpen = () => uciLog.mounted;
 export const isPvTableOpen = () => pvTable.mounted;
 

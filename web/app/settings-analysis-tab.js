@@ -1,4 +1,4 @@
-import { AI_THINKING_MODE_CLASS, apiErrorDetail, SETTINGS_PUT_DEBOUNCE_MS, shakeField, toast } from "./dialogs.js";
+import { AI_THINKING_MODE_CLASS, apiErrorDetail, SETTINGS_PUT_DEBOUNCE_MS, SETTINGS_TAB_ANALYSIS, shakeField, toast } from "./dialogs.js";
 
 // AI/analysis wire field-name constants + provider list. Mirror of the
 // server contract in server/sturddle_view/api/settings.py.
@@ -361,10 +361,10 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
   // Flat layout per spec: master toggle + provider + model + key/url, then
   // thinking + tunables (round/depth caps) as flat fields.
   const tab = document.createElement("wa-tab");
-  tab.panel = "analysis";
+  tab.panel = SETTINGS_TAB_ANALYSIS;
   tab.textContent = "Analysis";
   const panel = document.createElement("wa-tab-panel");
-  panel.name = "analysis";
+  panel.name = SETTINGS_TAB_ANALYSIS;
 
   const { row: aiProviderRow, select: aiProvider, isAiOn } = buildAiProviderRow(initial);
   const {

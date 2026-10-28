@@ -11,6 +11,7 @@ import { APP_EVT } from "./app-events.js";
 import { SIDE } from "./chess-consts.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
 import { mqMobile } from "./breakpoints.js";
+import { SETTINGS_TAB_DISPLAY } from "./dialogs.js";
 import { makeDivider, makeSettingSwitch } from "./settings-ui-helpers.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import { STORAGE_KEY } from "./storage-keys.js";
@@ -18,10 +19,10 @@ import { getTournamentUx, TOURNAMENT_UX } from "./tournament-studio.js";
 
 export function buildDisplayTab({ initial, putSettings, initialStyle, onBoardStyleChange, signal }) {
   const displayTab = document.createElement("wa-tab");
-  displayTab.panel = "display";
+  displayTab.panel = SETTINGS_TAB_DISPLAY;
   displayTab.textContent = "Display";
   const displayPanel = document.createElement("wa-tab-panel");
-  displayPanel.name = "display";
+  displayPanel.name = SETTINGS_TAB_DISPLAY;
 
   const ribbonSide = document.createElement("wa-select");
   ribbonSide.size = "small";

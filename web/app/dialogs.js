@@ -128,7 +128,7 @@ const COPIED_TOAST_MS = 1500;
 const COPY_FAILED_MSG = "Could not copy to clipboard";
 
 /** Modal confirm. Resolves true on confirm, false otherwise.
- *  No title by design — the message itself carries the question, the
+ *  No title by design -- the message itself carries the question, the
  *  destructive button label is the verb. (iOS-style.) */
 export function confirm({
   message,
@@ -626,6 +626,9 @@ export const SETTINGS_PUT_DEBOUNCE_MS = 400;
 export const SETTINGS_TAB_ENGINES = "engines";
 export const SETTINGS_TAB_ANALYSIS = "analysis";
 export const SETTINGS_TAB_RECENTS = "recents";
+export const SETTINGS_TAB_TOURNAMENT = "tournament";
+export const SETTINGS_TAB_DISPLAY = "display";
+export const SETTINGS_TAB_PLAY = "play";
 
 // Deep-link focus target: class on the extended-thinking control, shared
 // with the tab that builds it so the selector has one source of truth.
@@ -641,6 +644,19 @@ export function openSettings(tab, focusClass, select) {
   window.dispatchEvent(new CustomEvent(APP_EVT.OPEN_SETTINGS, {
     detail: { tab, focus: focusClass, select },
   }));
+}
+
+/** Inline text link that runs `onClick` instead of navigating. */
+export function deepLink(text, onClick) {
+  const link = document.createElement("a");
+  link.href = "#";
+  link.className = "settings-deeplink";
+  link.textContent = text;
+  link.addEventListener("click", (e) => {
+    e.preventDefault();
+    onClick();
+  });
+  return link;
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";

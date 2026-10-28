@@ -71,9 +71,16 @@ export const WB_NO_SHADOW_CLASS = "no-shadow";
 // A managed window whose right edge is the workspace's: CSS stretches it there.
 export const WB_EDGE_RIGHT_CLASS = "wb-edge-right";
 
+const ATTENTION_CLASS = "wb-attention";
+
+// Accent ring on a WinBox or a dock slot.
+export function flashElement(el) {
+  el.classList.add(ATTENTION_CLASS);
+  el.addEventListener("animationend", () => el.classList.remove(ATTENTION_CLASS), { once: true });
+}
+
 export function flashWindow(wb) {
-  wb.addClass("wb-attention");
-  wb.g.addEventListener("animationend", () => wb.removeClass("wb-attention"), { once: true });
+  flashElement(wb.g);
 }
 
 export function escapeHtml(s) {

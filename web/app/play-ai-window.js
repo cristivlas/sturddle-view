@@ -8,7 +8,7 @@
 // perspective remount) is driven by play.js -- this module only owns
 // the dom inside the window.
 
-import { createDockableWindow, DOCK_ORDER, getPvLineBoard } from "./play-dock-windows.js";
+import { createDockableWindow, DOCK_ORDER, getPvLineBoard, isMobileLayout, PV_TABLE_TITLE } from "./play-dock-windows.js";
 import { APP_EVT } from "./app-events.js";
 import { SHOWABLE_TOOLTIP } from "./pv-table.js";
 import { pvFrames } from "./pv-walk.js";
@@ -23,6 +23,7 @@ import { STORAGE_KEY } from "./storage-keys.js";
 import { ACTIVATE_KEYS } from "./keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import {
+  deepLink,
   openSettings,
   SETTINGS_TAB_ANALYSIS,
   errorActionsFor,
@@ -579,6 +580,37 @@ export function isAiOpen() {
   return inst.mounted;
 }
 
+const ENGINE_ONLY_LEAD = "Engine-only analysis: see ";
+const ENGINE_ONLY_MID = " for the engine's lines. For AI analysis, choose an LLM provider in ";
+const SETTINGS_LINK = "Settings";
+
+// Stand-in body while the engine analyzes alone; resetAi() clears it.
+// Phones skip it (inline below the board, it costs scarce height), but
+// still drop a prior AI run's panel. showLines opens or reveals Search Lines.
+let engineOnly = false;
+
+export function openAiEngineOnly(showLines) {
+  if (isMobileLayout()) {
+    if (inst.mounted) inst.close();
+    return;
+  }
+  setAiTitle("");
+  openAi();
+  resetAi();
+  setAiStatus(AI_STATE.IDLE);
+  const note = document.createElement("p");
+  note.append(
+    ENGINE_ONLY_LEAD, deepLink(PV_TABLE_TITLE, showLines),
+    ENGINE_ONLY_MID, deepLink(SETTINGS_LINK, () => openSettings(SETTINGS_TAB_ANALYSIS)), ".",
+  );
+  inst.body?._rounds.append(note);
+  engineOnly = true;
+}
+
+export function isAiEngineOnly() {
+  return inst.mounted && engineOnly;
+}
+
 // The actual scroller is the inner .play-ai-scroll wrapper; the
 // host bodies (wb.body / .dock-slot-body) are overflow:hidden so the
 // status header above the wrapper stays put.
@@ -600,6 +632,7 @@ export function resetAi() {
   checkStepPairs.clear();
   inst.body._currentRound = null;
   toolLabelLastIndex.clear();
+  engineOnly = false;
   setAiStatus(AI_STATE.WAITING);
 }
 

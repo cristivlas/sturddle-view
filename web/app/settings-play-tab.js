@@ -2,7 +2,7 @@
 // end-of-game rules.
 // Each widget owns its own change -> putSettings; nothing cross-interacts.
 
-import { inlineSvgIcon } from "./dialogs.js";
+import { inlineSvgIcon, SETTINGS_TAB_PLAY } from "./dialogs.js";
 import { CHESS_CLOCK_SVG_INNER, CHESS_CLOCK_VIEW_BOX } from "./icons.js";
 import { makeDivider, makeSection, makeSettingSwitch } from "./settings-ui-helpers.js";
 import { SIDE } from "./chess-consts.js";
@@ -19,10 +19,10 @@ export function buildPlayTab({
   playerNameDefault, playerNameMaxLen,
 }) {
   const playTab = document.createElement("wa-tab");
-  playTab.panel = "play";
+  playTab.panel = SETTINGS_TAB_PLAY;
   playTab.textContent = "Gameplay";
   const playPanel = document.createElement("wa-tab-panel");
-  playPanel.name = "play";
+  playPanel.name = SETTINGS_TAB_PLAY;
 
   // PGN autosave is HVE-only: a non-empty pgn_dir enables it, Clear disables
   // it. Validated server-side, so PUT only on picker-commit/blur (ctx.typing
