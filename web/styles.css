@@ -63,6 +63,9 @@
   --eval-gauge-black: #5c6370;
   /* Play/view board frame; the gauge insets by it to match the squares. */
   --board-border-w: 1px;
+  /* Ribbon button hover: icon scale and color. */
+  --ribbon-hover-scale: 1.25;
+  --ribbon-hover-fg: #f06c0c;
   --row-bg: #32353c;
   --row-bg-hover: #4a4e58;
   --row-bg-selected: #2a3a4a;
@@ -1581,11 +1584,14 @@ body[data-ribbon-float] .studio-ribbon {
   background: transparent;
   transition: background 0.12s;
 }
-.ribbon-btn:hover:not(:disabled) {
-  color: var(--wa-color-brand-80);
-}
-.ribbon-btn:hover:not(:disabled)::before {
-  background: var(--wa-color-brand-80);
+/* hover: hover -- a tap on touch screens leaves :hover stuck on. */
+@media (hover: hover) {
+  .ribbon-btn:hover:not(:disabled) {
+    color: var(--ribbon-hover-fg);
+  }
+  .ribbon-btn:hover:not(:disabled)::before {
+    background: var(--ribbon-hover-fg);
+  }
 }
 .ribbon-btn:disabled { opacity: 0.3; cursor: default; }
 .ribbon-btn:focus-visible {
@@ -1608,11 +1614,19 @@ body[data-ribbon-float] .studio-ribbon {
   #analyze.is-active wa-icon, #view-analyze.is-active wa-icon { animation: none; }
 }
 .ribbon-btn wa-icon { font-size: 1rem; }
-.ribbon-btn--danger:hover:not(:disabled) {
-  color: var(--wa-color-red-50);
+@media (prefers-reduced-motion: no-preference) {
+  .ribbon-btn wa-icon { transition: transform 0.12s; }
 }
-.ribbon-btn--danger:hover:not(:disabled)::before {
-  background: var(--wa-color-red-50);
+@media (hover: hover) {
+  .ribbon-btn:hover:not(:disabled) wa-icon {
+    transform: scale(var(--ribbon-hover-scale));
+  }
+  .ribbon-btn--danger:hover:not(:disabled) {
+    color: var(--wa-color-red-50);
+  }
+  .ribbon-btn--danger:hover:not(:disabled)::before {
+    background: var(--wa-color-red-50);
+  }
 }
 .castle-popover-wrap,
 .side-popover-wrap { position: relative; display: inline-flex; align-items: center; }
