@@ -527,8 +527,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   // re-routed when the engine's color changes); right is the eval graph.
   // Table updates are skipped while hidden (not maximized / narrow) --
   // zero per-info cost; graph samples accumulate regardless (cheap).
-  const pvSideWhite = createPvTable({ colWidthsKey: STORAGE_KEY.LIVE_PVTABLE_COL_WIDTHS });
-  const pvSideBlack = createPvTable({ colWidthsKey: STORAGE_KEY.LIVE_PVTABLE_COL_WIDTHS });
+  const pvSideWhite = createPvTable({ layoutKey: STORAGE_KEY.LIVE_PVTABLE_LAYOUT });
+  const pvSideBlack = createPvTable({ layoutKey: STORAGE_KEY.LIVE_PVTABLE_LAYOUT });
   const evalGraph = createEvalGraph();
   let pvSidesVisible = false;
 

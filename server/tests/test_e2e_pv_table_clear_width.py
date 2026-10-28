@@ -21,7 +21,7 @@ from .conftest import e2e_env, run_uvicorn_subprocess  # noqa: E402
 VIEWPORT = {"width": 1400, "height": 900}
 # Wider than the fixed columns, far narrower than the long PV.
 HOST_PX = 500
-COL_WIDTHS_KEY = "sv-test:pvtable:colWidths"
+LAYOUT_KEY = "sv-test:pvtable:layout"
 LONG_PV = " ".join(["Nf3 Nf6 Ng1 Ng8"] * 40)
 
 # Build a table, grow it with one long line, scroll it right, then clear.
@@ -31,7 +31,7 @@ FILL_SCROLL_CLEAR = f"""async () => {{
   const host = document.createElement('div');
   host.style.cssText = 'position:fixed;top:0;left:0;width:{HOST_PX}px;height:{HOST_PX}px';
   document.body.appendChild(host);
-  const t = createPvTable({{ colWidthsKey: '{COL_WIDTHS_KEY}' }});
+  const t = createPvTable({{ layoutKey: '{LAYOUT_KEY}' }});
   host.appendChild(t.el);
   const info = {{ depth: 5, seldepth: 5, score: {{ cp: 20 }}, nodes: 1, nps: 1 }};
   t.update(info, '{LONG_PV}');

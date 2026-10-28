@@ -1,6 +1,8 @@
 // Search Lines (PV) table: one row per depth iteration (per depth and
-// MultiPV line once the engine reports several), newest depth on top,
-// resizable columns. Shared by the play-perspective Search Lines
+// MultiPV line once the engine reports several), newest depth on top.
+// Columns (column-header.js): resizable px widths, reorderable, Eval/Nodes/
+// NPS hideable, auto-fit, PV pinned last and filling the rest; layout shared live by
+// tables on one layoutKey. Shared by the play-perspective Search Lines
 // window and the tournament live-game side panels.
 //
 // Feed-agnostic: callers subscribe to their own event source and push
@@ -12,16 +14,27 @@
 // affordance; see docs/pv-play-spec.md. Tables created without it (the
 // tournament live-game panels) get no hover/tooltip/double-click.
 
-import { attachColumnResize } from "./col-resize.js";
 import { fmtCount, fmtScore, markSelectable, rafCoalesce } from "./wb-utils.js";
 import { pvFrames } from "./pv-walk.js";
 import { BEST_RANK } from "./chess-consts.js";
-import { applySplitColWidths, wireSplitScroll } from "./split-table.js";
+import { createColumnHeader, WIDTH_UNIT } from "./column-header.js";
 
-const COL_MIN_PX = 30;
-// Cell index per column; every column before the auto-width PV is fixed px.
-const COL = { DEPTH: 0, EVAL: 1, NODES: 2, NPS: 3, PV: 4 };
-const DEFAULT_COL_WIDTHS = [50, 50, 55, 45];
+const COL = Object.freeze({ DEPTH: "depth", EVAL: "eval", NODES: "nodes", NPS: "nps", PV: "pv" });
+const PV_CELL_CLASS = "wb-pvtable-pv";
+// Default px widths of the fixed columns.
+const DEFAULT_COL_WIDTHS = Object.freeze({ [COL.DEPTH]: 50, [COL.EVAL]: 50, [COL.NODES]: 55, [COL.NPS]: 45 });
+const COLUMNS = [
+  { key: COL.DEPTH, label: "Depth", width: DEFAULT_COL_WIDTHS[COL.DEPTH], alwaysOn: true },
+  { key: COL.EVAL, label: "Eval", width: DEFAULT_COL_WIDTHS[COL.EVAL] },
+  { key: COL.NODES, label: "Nodes", width: DEFAULT_COL_WIDTHS[COL.NODES] },
+  { key: COL.NPS, label: "NPS", width: DEFAULT_COL_WIDTHS[COL.NPS] },
+  { key: COL.PV, label: "PV", pinEnd: true, colClass: "wb-pvtable-col-pv" },
+];
+// Saved widths from before the column layout: a px array, in this order.
+const LEGACY_WIDTH_KEYS = [COL.DEPTH, COL.EVAL, COL.NODES, COL.NPS];
+const migrateLegacyWidths = (saved) => (Array.isArray(saved)
+  ? { unit: WIDTH_UNIT.PX, widths: Object.fromEntries(LEGACY_WIDTH_KEYS.map((k, i) => [k, saved[i]])) }
+  : saved);
 
 // Whole-token match for SAN move-number tokens ("12." / "12...") emitted by
 // python-chess's variation_san; UCI-only PV strings (tournament panels) have
@@ -75,9 +88,12 @@ function renderPvInto(cell, pvText) {
   }
 }
 
+// A row's cell for column `key`, shown or not.
+const cellOf = (tr, key) => rowState.get(tr).cells.get(key);
+
 // MultiPV line number, a circle ahead of the PV moves (renderPvInto wipes it).
 function setRankBadge(tr, rank) {
-  const cell = tr.cells[COL.PV];
+  const cell = cellOf(tr, COL.PV);
   let badge = cell.querySelector(`.${RANK_CLASS}`);
   if (!badge) {
     badge = document.createElement("span");
@@ -88,21 +104,21 @@ function setRankBadge(tr, rank) {
 }
 
 function clearPlyHighlight(tr) {
-  const cur = tr.cells[COL.PV].querySelector(`.${MOVE_CURRENT_CLASS}`);
+  const cur = cellOf(tr, COL.PV).querySelector(`.${MOVE_CURRENT_CLASS}`);
   cur?.classList.remove(MOVE_CURRENT_CLASS);
 }
 
 function highlightPly(tr, ply) {
   clearPlyHighlight(tr);
-  const el = tr.cells[COL.PV].querySelector(`.${MOVE_SPAN_CLASS}[data-ply="${ply}"]`);
+  const el = cellOf(tr, COL.PV).querySelector(`.${MOVE_SPAN_CLASS}[data-ply="${ply}"]`);
   if (!el) return;
   el.classList.add(MOVE_CURRENT_CLASS);
   el.scrollIntoView({ inline: "nearest", block: "nearest" });
 }
 
-// Per-row state (depth, MultiPV rank, the {placement, pv_uci, frames}
-// snapshot and the show generation counter used to detect a superseded
-// same-row retarget) kept off the DOM node itself.
+// Per-row state off the DOM node: depth, rank, td per column key (hidden ones
+// detached but kept current), the {placement, pv_uci, frames} snapshot, and
+// the show generation that detects a superseded same-row retarget.
 const rowState = new WeakMap();
 
 function hasPlayableFrames(tr) {
@@ -110,12 +126,7 @@ function hasPlayableFrames(tr) {
   return !!st?.pvRow && st.pvRow.frames.length >= MIN_SHOWABLE_FRAMES;
 }
 
-// Live instances per colWidthsKey: a drag-end in one table pushes the new
-// widths to every sibling sharing the key (stacked/side-by-side tables
-// would otherwise misalign until recreated).
-const syncRegistry = new Map(); // colWidthsKey -> Set<{applyExternal}>
-
-export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, currentPlacement }) {
+export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, currentPlacement }) {
   // Showable requires both a playable line AND the board currently willing
   // to play one (not analyzing, not editing) -- gating here, not just at
   // activation, means a row never becomes double-click-able (hover, tooltip)
@@ -155,110 +166,46 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
     }
   }
 
-  // Split header/body table pattern -- see split-table.js.
-  const el = document.createElement("div");
-  el.className = "wb-pvtable";
-  el.innerHTML = `
-    <div class="wb-pvtable-head-scroll">
-      <table class="wb-table wb-pvtable-head-tbl">
-        <colgroup>
-          <col class="wb-pvtable-col-depth">
-          <col class="wb-pvtable-col-score">
-          <col class="wb-pvtable-col-nodes">
-          <col class="wb-pvtable-col-nps">
-          <col class="wb-pvtable-col-pv">
-        </colgroup>
-        <thead>
-          <tr>
-            <th>Depth<span class="th-grip"></span></th>
-            <th>Eval<span class="th-grip"></span></th>
-            <th>Nodes<span class="th-grip"></span></th>
-            <th>NPS<span class="th-grip"></span></th>
-            <th>PV</th>
-          </tr>
-        </thead>
-      </table>
-    </div>
-    <div class="wb-pvtable-scroll">
-      <table class="wb-table wb-pvtable-tbl">
-        <colgroup>
-          <col class="wb-pvtable-col-depth">
-          <col class="wb-pvtable-col-score">
-          <col class="wb-pvtable-col-nodes">
-          <col class="wb-pvtable-col-nps">
-          <col class="wb-pvtable-col-pv">
-        </colgroup>
-        <tbody></tbody>
-      </table>
-    </div>
-  `;
+  const rowMap = new Map(); // rowKey(depth, rank) -> tr
+  // The shown columns, in order (set on every header rebuild).
+  let shown = [];
 
-  const tbody = el.querySelector("tbody");
-  const headScrollEl = el.querySelector(".wb-pvtable-head-scroll");
-  const headTableEl = el.querySelector(".wb-pvtable-head-tbl");
-  const tableEl = el.querySelector(".wb-pvtable-tbl");
-  const scrollEl = el.querySelector(".wb-pvtable-scroll");
-  wireSplitScroll(headScrollEl, scrollEl);
-  markSelectable(tableEl);
-  markSelectable(headTableEl);
-  const headColEls = Array.from(headTableEl.querySelectorAll("col"));
-  const colEls = Array.from(tableEl.querySelectorAll("col"));
-  const grips = Array.from(el.querySelectorAll(".th-grip"));
-  const colWidths = DEFAULT_COL_WIDTHS.slice();
-
-  function applySizes(sizes, ctx) {
-    if (ctx) {
-      const { deltaFrac, tableWidth, startSizes, gripIdx } = ctx;
-      const d = deltaFrac * tableWidth;
-      let a = startSizes[gripIdx] + d;
-      if (a < COL_MIN_PX) a = COL_MIN_PX;
-      sizes[gripIdx] = a;
-      if (gripIdx + 1 < sizes.length) {
-        let b = startSizes[gripIdx + 1] - d;
-        if (b < COL_MIN_PX) b = COL_MIN_PX;
-        sizes[gripIdx + 1] = b;
-      }
-    }
-    // Fixed cols are px; last col (PV) is auto to fill remaining space.
-    applySplitColWidths([headColEls.slice(0, COL.PV), colEls.slice(0, COL.PV)], sizes, "px");
-    headColEls[COL.PV].style.width = colEls[COL.PV].style.width = "auto";
-    const fixedW = sizes.reduce((s, w) => s + w, 0);
-    headTableEl.style.width = tableEl.style.width = "100%";
-    headTableEl.style.minWidth = tableEl.style.minWidth = fixedW + "px";
-    fitTableToPvContent();
+  // Put each row's tds in the shown order; hidden ones drop out of the DOM.
+  function layoutRow(tr) {
+    const { cells } = rowState.get(tr);
+    tr.replaceChildren(...shown.map((c) => cells.get(c.key)));
   }
 
-  const syncEntry = {
-    applyExternal(sizes) {
-      for (let i = 0; i < colWidths.length; i++) colWidths[i] = sizes[i];
-      applySizes(colWidths);
+  const header = createColumnHeader({
+    columns: COLUMNS,
+    layoutKey,
+    unit: WIDTH_UNIT.PX,
+    traits: { resize: true, reorder: true, hide: true, fit: true },
+    classes: {
+      wrap: "wb-pvtable",
+      headScroll: "wb-pvtable-head-scroll",
+      headTable: "wb-table wb-pvtable-head-tbl",
+      bodyScroll: "wb-pvtable-scroll",
+      bodyTable: "wb-table wb-pvtable-tbl",
     },
-  };
-  let siblings = syncRegistry.get(colWidthsKey);
-  if (!siblings) { siblings = new Set(); syncRegistry.set(colWidthsKey, siblings); }
-  siblings.add(syncEntry);
-
-  const colResize = attachColumnResize({
-    table: headTableEl,
-    grips,
-    overlayHost: el,
-    storageKey: colWidthsKey,
-    sizes: colWidths,
-    unit: "px",
+    sync: true,
+    migrate: migrateLegacyWidths,
     dragLineHeight: () => {
       const tr = tableEl.getBoundingClientRect();
       const br = el.getBoundingClientRect();
       return Math.max(0, tr.bottom - br.top);
     },
-    applySizes,
-    onSave(sizes) {
-      for (const entry of siblings) {
-        if (entry !== syncEntry) entry.applyExternal(sizes);
-      }
+    onSizes: () => fitTableToPvContent(),
+    onLayout(cols) {
+      shown = cols;
+      for (const tr of tbody.rows) layoutRow(tr);
+      fit();
     },
   });
+  const { wrap: el, headTable: headTableEl, bodyTable: tableEl, tbody, bodyScroll: scrollEl } = header;
+  markSelectable(tableEl);
+  markSelectable(headTableEl);
 
-  const rowMap = new Map(); // rowKey(depth, rank) -> tr
   let maxDepth = 0;
   // A line below the best showed up this search: rows show their line
   // number (none until then, so single-PV searches show none).
@@ -362,11 +309,10 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
   function fitTableToPvContent() {
     let pvMax = 0;
     for (const row of tbody.rows) {
-      const cell = row.cells[COL.PV];
-      if (cell && cell.scrollWidth > pvMax) pvMax = cell.scrollWidth;
+      const cell = cellOf(row, COL.PV);
+      if (cell.scrollWidth > pvMax) pvMax = cell.scrollWidth;
     }
-    const fixedW = colWidths.reduce((s, w) => s + w, 0);
-    tableEl.style.minWidth = headTableEl.style.minWidth = (fixedW + pvMax) + "px";
+    tableEl.style.minWidth = headTableEl.style.minWidth = (header.fixedWidth() + pvMax) + "px";
   }
   // Coalesced: scrollWidth is a layout probe; per-info-event sync reads
   // would force a reflow on every engine info line.
@@ -413,9 +359,11 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
     let tr = rowMap.get(key);
     if (!tr) {
       tr = document.createElement("tr");
-      tr.innerHTML = "<td></td>".repeat(COL.PV) + `<td class="wb-pvtable-pv"></td>`;
-      const st = { depth, rank };
+      const cells = new Map(COLUMNS.map((c) => [c.key, document.createElement("td")]));
+      cells.get(COL.PV).className = PV_CELL_CLASS;
+      const st = { depth, rank, cells };
       rowState.set(tr, st);
+      layoutRow(tr);
       attachRowActivation(tr);
       rowMap.set(key, tr);
       let inserted = false;
@@ -428,11 +376,11 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
       }
       if (!inserted) tbody.appendChild(tr);
     }
-    tr.cells[COL.DEPTH].textContent = seldepth != null ? `${depth}/${seldepth}` : depth;
-    if (score) tr.cells[COL.EVAL].textContent = fmtScore(score);
-    if (nodes != null) tr.cells[COL.NODES].textContent = fmtCount(nodes);
-    if (nps != null) tr.cells[COL.NPS].textContent = fmtCount(nps);
-    if (pvText) renderPvInto(tr.cells[COL.PV], pvText);
+    cellOf(tr, COL.DEPTH).textContent = seldepth != null ? `${depth}/${seldepth}` : depth;
+    if (score) cellOf(tr, COL.EVAL).textContent = fmtScore(score);
+    if (nodes != null) cellOf(tr, COL.NODES).textContent = fmtCount(nodes);
+    if (nps != null) cellOf(tr, COL.NPS).textContent = fmtCount(nps);
+    if (pvText) renderPvInto(cellOf(tr, COL.PV), pvText);
     if (ranked) setRankBadge(tr, rank);
     // A row's {placement, pv_uci, frames} is written as one unit, and only by
     // an info that carries pv_uci -- infos without one update depth/score/
@@ -447,11 +395,11 @@ export function createPvTable({ colWidthsKey, onActivate, cancelLine, canPlay, c
   function dispose() {
     clearPendingCancel();
     fit.cancel();
-    colResize.destroy();
-    siblings.delete(syncEntry);
-    if (!siblings.size) syncRegistry.delete(colWidthsKey);
+    header.destroy();
     cancelLine?.();
   }
+
+  header.relayout();
 
   return { el, update, clear, fit, dispose, refreshShowability };
 }

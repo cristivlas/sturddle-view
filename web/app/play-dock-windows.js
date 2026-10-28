@@ -1272,7 +1272,7 @@ function pvTableIsExempt(target) {
 
 function buildPvTableBody(events, { setOff }) {
   const pvt = createPvTable({
-    colWidthsKey: STORAGE_KEY.PVTABLE_COL_WIDTHS,
+    layoutKey: STORAGE_KEY.PVTABLE_LAYOUT,
     onActivate(handle) {
       return !!pvLineBoard?.playLine(handle.frames, {
         pvUci: handle.pvUci,

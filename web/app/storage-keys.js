@@ -65,7 +65,8 @@ export const STORAGE_KEY = {
   PVTABLE_WIN_STATE: "sturddle:pvtable:winstate",
   PVTABLE_DOCKED: "sturddle:pvtable:docked",
   PVTABLE_OPEN: "sturddle:pvtable:open",
-  PVTABLE_COL_WIDTHS: "sturddle:pvtable:colWidths",
+  // Column layout; the value predates it (saved widths migrate).
+  PVTABLE_LAYOUT: "sturddle:pvtable:colWidths",
   VIEW_UCILOG_OPEN: "sturddle:view:ucilog:open",
   VIEW_PVTABLE_OPEN: "sturddle:view:pvtable:open",
 
@@ -87,7 +88,8 @@ export const STORAGE_KEY = {
   STUDIO_H2H_LAYOUT: "sturddle:studio:h2hLayout",
   STUDIO_ENGINES_SORT: "sturddle:studio:enginesSort",
   WORKSPACE_PREFIX: "sturddle:workspace:",
-  LIVE_PVTABLE_COL_WIDTHS: "sturddle:live:pvtable:colWidths",
+  // Column layout; the value predates it (saved widths migrate).
+  LIVE_PVTABLE_LAYOUT: "sturddle:live:pvtable:colWidths",
   TOURNAMENTS_STANDINGS_LAYOUT: "sturddle:tournaments:standingsLayout",
   TOURNAMENTS_STANDINGS_SORT: "sturddle:tournaments:standingsSort",
   TOURNAMENTS_STANDINGS_STACK: "sturddle:tournaments:standingsStack",

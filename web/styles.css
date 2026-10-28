@@ -3452,7 +3452,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   margin: 4px 0;
 }
 
-/* data-table.js columns menu, ribbon-overflow.js and header-menu.js ellipsis
+/* column-header.js columns menu, ribbon-overflow.js and header-menu.js ellipsis
    menus: top-layer popovers reusing the .tmb-dropdown look. Must follow
    .tmb-dropdown: same specificity, fixed placement (JS sets top/left)
    overrides its absolute one. */
@@ -3491,7 +3491,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 /* Baseline, not middle: the taller menu button in the first cell would
    otherwise push that cell's label below the other labels. */
 .dt-head-tbl th { vertical-align: baseline; }
-/* Header drag-to-reorder (data-table.js): dimmed source cell, grabbing
+/* Header drag-to-reorder (column-header.js): dimmed source cell, grabbing
    cursor while the drag runs, the cell's floating copy, and the
    header-height drop marker. */
 .dt-th-dragging { opacity: 0.5; }
@@ -3504,7 +3504,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 /* A lifted cell: solid lighter fill, full-strength label, and an accent edge
    (the drop marker stays neutral so the two don't clash; on the cell, as its
-   fill would cover a table outline). Top-aligned so data-table.js can pad
+   fill would cover a table outline). Top-aligned so column-header.js can pad
    its label onto the header's line. Two classes outrank the per-table header
    th rules. */
 .dt-head-tbl.dt-drag-ghost th {
@@ -5333,6 +5333,8 @@ wa-dialog.tournament-info-dialog::part(body) {
    view mode), and it pops back when evals arrive. */
 .winbox.sturddle-wb-evalbar:has(.eval-empty) { display: none; }
 .wb-pvtable-col-pv { min-width: 200px; }
+/* Columns button sized to the PV header's text so the row keeps its height. */
+.wb-pvtable-head-tbl .dt-menu-btn { padding: 0; font-size: inherit; }
 .wb-pvtable-pv { white-space: nowrap; }
 .wb-pv-movenum { color: var(--muted, #888); font-weight: 600; }
 /* MultiPV line number ahead of the PV; light on the dark table, mirroring

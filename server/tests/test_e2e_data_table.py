@@ -312,7 +312,7 @@ async def test_fit_spare_is_shared_evenly(server, make_page):
     await _open_standings(page, server)
     pcts = await page.evaluate(
         """async ([natural, available, minPct]) => {
-            const { fitPcts } = await import('/ui/app/data-table.js');
+            const { fitPcts } = await import('/ui/app/column-header.js');
             return fitPcts(natural, available, minPct);
         }""",
         [FIT_NATURAL, FIT_AVAILABLE, FIT_MIN_PCT],
