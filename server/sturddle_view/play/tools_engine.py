@@ -56,6 +56,7 @@ from .engine_analysis import (
 )
 from .engine_info_pump import is_interesting_info, publish_engine_info, pump_engine_info
 from .engine_supervisor import EngineSupervisor
+from .play_out_caps import MAX_IDEAS, PLAY_OUT_MAX_MOVES
 from .playbook import AHEAD_MARGINS, Situation
 from .tactics import all_forks, all_pins, piece_label
 
@@ -96,10 +97,15 @@ _DEFAULT_AIM_HORIZON = 3
 AIM_HORIZON = env_int("SV_AI_AIM_HORIZON", _DEFAULT_AIM_HORIZON, min_value=1)
 
 # test_aim: replies one delegate may test.
-_DEFAULT_VERIFIER_MAX_REPLIES = 3
+_DEFAULT_VERIFIER_MAX_REPLIES = 2
 VERIFIER_MAX_REPLIES = env_int(
     "SV_AI_VERIFIER_MAX_REPLIES", _DEFAULT_VERIFIER_MAX_REPLIES, min_value=1,
 )
+
+# play_out / test_aim search depth: many searches per turn, so shallower
+# than the final recommend_move check, which stays the referee.
+_DEFAULT_PLAY_OUT_DEPTH = 14
+PLAY_OUT_DEPTH = env_int("SV_AI_PLAY_OUT_DEPTH", _DEFAULT_PLAY_OUT_DEPTH, min_value=1)
 
 # Centipawn stand-in for a mate score in eval-drop arithmetic.
 _MATE_SCORE_CP = 100_000
@@ -110,7 +116,7 @@ _REPEAT_AHEAD_REASON = (
     "draw. Submit a move that makes progress."
 )
 
-# Default search depth when the caller omits one (and play_out's). 20 plies
+# Default search depth when the caller omits one. 20 plies
 # gives reliable tactical resolution; lower values surface noisy bestmoves.
 # Model-supplied depth is floored at MIN_DEPTH below.
 _DEFAULT_SEARCH_DEPTH = 20
@@ -1324,8 +1330,8 @@ _RECOMMEND_MOVE_CARD = (
     "meaningfully stronger move exists the result says so without naming "
     "it -- find it by playing out another idea. An illegal move comes back with "
     "`legal_moves` for that piece -- pick one of those, never guess "
-    "another. Once the call is accepted, the analysis follows it: each "
-    "idea played with its line, then the move submitted."
+    "another. Once the call is accepted, the explanation follows it: why "
+    "that move is best and the plan it serves."
 )
 
 
@@ -1530,10 +1536,32 @@ class PlayOutRecord:
         self._lines: dict[str, _IdeaLine] = {}
         # First move -> the best eval after it (mover cp; None = scoreless).
         self._first_moves: dict[chess.Move, int | None] = {}
+        self._ideas: set[str] = set()
+        self._idea_cap = MAX_IDEAS
 
     def clear(self) -> None:
         self._lines = {}
         self._first_moves = {}
+        self._ideas = set()
+        self._idea_cap = MAX_IDEAS
+
+    @property
+    def grant_spent(self) -> bool:
+        """True once an idea past MAX_IDEAS (only a grant admits one) was
+        played out."""
+        return len(self._ideas) > MAX_IDEAS
+
+    def has_room(self, idea: str) -> bool:
+        """False when `idea` is new and the cap is reached."""
+        return idea_key(idea) in self._ideas or len(self._ideas) < self._idea_cap
+
+    def admit(self, idea: str) -> None:
+        """Count `idea` in: called once its step has searched."""
+        self._ideas.add(idea_key(idea))
+
+    def grant_idea(self) -> None:
+        """Room for one more new idea: a rejected submit must not trap."""
+        self._idea_cap = max(self._idea_cap, len(self._ideas) + 1)
 
     def line(self, idea: str, live: chess.Board) -> _IdeaLine:
         """The idea's kept line, or a fresh one at the live position."""
@@ -1588,10 +1616,11 @@ def make_recommend_move_tool(
     returns `{ok, uci, san, post_move_fen, candidate_score,
     engine_best_score, depth}`.
 
-    Fallback (`fallback_provider()` true: the turn is out of rounds): a
-    move not played out is replaced by the best one played out, the
-    repetition veto is off, and a dominated move is accepted, flagged
-    `weaker_than_best`. Any change is explained under `note`.
+    A rejection grants `play_out_record` one more idea (grant_idea).
+    Fallback (`fallback_provider()` true: the turn is out of rounds; or
+    the grant is spent): a move not played out is replaced by the best
+    one played out, the repetition veto is off, and a dominated move is
+    accepted, flagged `weaker_than_best`. Any change is explained under `note`.
     `search_cache`: see make_analyze_tool."""
     cache = search_cache or SearchCache()
 
@@ -1630,11 +1659,14 @@ def make_recommend_move_tool(
         if book_move_provider is not None and parsed.uci() == book_move_provider():
             return accepted(board, parsed, book=True)
 
-        fallback = fallback_provider is not None and fallback_provider()
+        fallback = (fallback_provider is not None and fallback_provider()) or (
+            play_out_record is not None and play_out_record.grant_spent
+        )
         notes: list[str] = []
         if play_out_record is not None and not play_out_record.played_out(parsed):
             best = play_out_record.best_first_move() if fallback else None
             if best is None:
+                play_out_record.grant_idea()
                 return rejected(board, parsed, _NOT_PLAYED_OUT_REASON)
             notes.append(_REPLACED_NOTE.format(orig=board.san(parsed), san=board.san(best)))
             parsed = best
@@ -1684,6 +1716,8 @@ def make_recommend_move_tool(
         }
         if _is_dominated(parsed, best_info, cand_info, board.turn, RECOMMEND_MARGIN_CP):
             if not fallback:
+                if play_out_record is not None:
+                    play_out_record.grant_idea()
                 return rejected(board, parsed, _STRONGER_EXISTS_REASON, **result_common)
             result_common[_WEAKER_THAN_BEST_KEY] = True
             notes.append(_WEAKER_NOTE.format(san=san))
@@ -1716,7 +1750,9 @@ PLAY_OUT_TOOL_SPEC = ToolSpec(
         "the eval before and after your move (white-POV), and drop_cp: how "
         "much your move cost you, from your side (negative: it gained). A "
         f"move that drops your eval by more than {PLAY_OUT_MARGIN_CP}cp "
-        "fails (failed=true) and is not kept."
+        f"fails (failed=true) and is not kept. At most {MAX_IDEAS} ideas "
+        f"per turn, {PLAY_OUT_MAX_MOVES} of your moves each; a rejected "
+        "submit opens room for one more idea."
     ),
     input_schema=object_schema(
         {
@@ -1734,6 +1770,14 @@ PLAY_OUT_TOOL_SPEC = ToolSpec(
 
 
 _IDEA_EMPTY_DETAIL = "idea must be a non-empty string"
+_IDEA_LIMIT_ERROR = "idea_limit"
+_IDEA_LIMIT_DETAIL = (
+    "no room for a new idea; continue one in play or submit"
+)
+_IDEA_DONE_ERROR = "idea_done"
+_IDEA_DONE_DETAIL = (
+    f"this idea has its {PLAY_OUT_MAX_MOVES} moves; play another idea or submit"
+)
 _LINE_OVER_ERROR = "line_over"
 _LINE_OVER_DETAIL = "this idea's line has ended the game; play out another idea"
 _STEP_FAILED_REASON = (
@@ -1804,9 +1848,14 @@ def make_play_out_tool(
         raw = input_.get(MOVE_KEY)
         if not isinstance(raw, str) or not raw.strip():
             return tool_error(INVALID_INPUT_ERROR, MOVE_EMPTY_DETAIL)
+        if not record.has_room(idea):
+            return tool_error(_IDEA_LIMIT_ERROR, _IDEA_LIMIT_DETAIL)
         line = record.line(idea, board)
         if line.board.is_game_over():
             return tool_error(_LINE_OVER_ERROR, _LINE_OVER_DETAIL)
+        # Kept moves alternate the model's and the reply: own moves round up.
+        if (len(line.moves) + 1) // PLIES_PER_MOVE >= PLAY_OUT_MAX_MOVES:
+            return tool_error(_IDEA_DONE_ERROR, _IDEA_DONE_DETAIL)
         move, kind, detail = parse_move_reporting(line.board, raw)
         if move is None:
             return {**tool_error(kind, detail), FEN_KEY: line.board.fen()}
@@ -1814,7 +1863,7 @@ def make_play_out_tool(
         after = line.board.copy()
         after.push(move)
 
-        limit = chess.engine.Limit(depth=min(SEARCH_DEPTH, _max_depth(settings_provider)))
+        limit = chess.engine.Limit(depth=min(PLAY_OUT_DEPTH, _max_depth(settings_provider)))
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
         await _publish_search_start(bus, game_id)
         search_kw = dict(
@@ -1833,6 +1882,7 @@ def make_play_out_tool(
             return tool_error(err.kind, err.detail)
         if cancelled:
             return {_CANCELLED_KEY: True}
+        record.admit(idea)
 
         before = before_info.get(_SCORE_KEY)
         after_score = after_info.get(_SCORE_KEY)
@@ -1900,7 +1950,7 @@ def normalize_aim(raw: str) -> str | None:
 
 _TEST_AIM_CARD = (
     "One reply per call; a reply that scores more than "
-    f"{RECOMMEND_MARGIN_CP}cp below the opponent's best comes back unsound "
+    f"{PLAY_OUT_MARGIN_CP}cp below the opponent's best comes back unsound "
     "and tests nothing. refuted=true: after this reply the aim "
     "never becomes playable along the line, or forcing it falls short of "
     "the line -- one refutation settles the verdict. untested=true: the "
@@ -2023,7 +2073,7 @@ def make_test_aim_tool(
 ) -> AnalyzeTool:
     """Build the verifier's `test_aim` async tool for the in-flight
     delegate's AimTest (`aim_provider`). Plays the move under test and the
-    reply; the reply is sound when within RECOMMEND_MARGIN_CP of the
+    reply; the reply is sound when within PLAY_OUT_MARGIN_CP of the
     opponent's best (one search, cached across replies, plus the reply's
     own). The reply's search pv past the reply is the free line; the aim
     is forced at each of the tested side's moves on it (see _aim_attempts)
@@ -2033,7 +2083,7 @@ def make_test_aim_tool(
     different depths at that node, so the tighter margin would be noise).
     Untested: the line ends short with the aim never legal. A line on
     which the tested side mates holds, whatever the aim. All at
-    verification depth. `search_cache`: see make_analyze_tool."""
+    PLAY_OUT_DEPTH. `search_cache`: see make_analyze_tool."""
     cache = search_cache or SearchCache()
 
     async def test_aim(input_: dict, *, cancel_token: CancelToken) -> dict:
@@ -2055,8 +2105,7 @@ def make_test_aim_tool(
             return {**tool_error(kind, detail), FEN_KEY: after.fen()}
         test.replies += 1
 
-        depth = min(_verification_depth(settings_provider), _max_depth(settings_provider))
-        limit = chess.engine.Limit(depth=depth)
+        limit = chess.engine.Limit(depth=min(PLAY_OUT_DEPTH, _max_depth(settings_provider)))
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
         await _publish_search_start(bus, game_id)
         search_kw = dict(
@@ -2071,7 +2120,8 @@ def make_test_aim_tool(
             if searched is None:
                 return {**out, _CANCELLED_KEY: True}
             best_info, reply_info = searched
-            if _is_dominated(reply, best_info, reply_info, after.turn, RECOMMEND_MARGIN_CP):
+            # PLAY_OUT_DEPTH is too shallow for the recommend margin.
+            if _is_dominated(reply, best_info, reply_info, after.turn, PLAY_OUT_MARGIN_CP):
                 return {**out, SOUND_KEY: False, REASON_KEY: _UNSOUND_REASON}
             node = after.copy()
             node.push(reply)

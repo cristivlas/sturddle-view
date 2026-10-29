@@ -23,7 +23,9 @@ from sturddle_view.events import EVT_ENGINE_SEARCH_START, EventBus
 from sturddle_view.llm.cancel import CancelToken
 from sturddle_view.play import tools_engine
 from sturddle_view.play.tools_engine import (
+    MAX_IDEAS,
     PLAY_OUT_MARGIN_CP,
+    PLAY_OUT_MAX_MOVES,
     PlayOutRecord,
     make_play_out_tool,
 )
@@ -190,3 +192,65 @@ def test_record_ranks_first_moves_by_eval_after():
     assert record.best_first_move() == d4
     record.clear()
     assert not record.any_played_out()
+
+
+@pytest.mark.asyncio
+async def test_new_idea_past_the_cap_is_refused(monkeypatch):
+    calls: list = []
+    script = {**_SCRIPT, (epd_after("c4"), None): (-30, ["e7e5"])}
+    tool, _bus = _tool(monkeypatch, chess.Board(), PlayOutRecord(), script=script, calls=calls)
+    for idea, move in list(zip(("a", "b", "c", "d"), ("e4", "d4", "f3", "c4")))[:MAX_IDEAS]:
+        assert "error" not in await _step(tool, idea, move)
+    searched = len(calls)
+    out = await _step(tool, "one too many", "c4")
+    assert out["error"] == "idea_limit"
+    assert len(calls) == searched
+
+
+@pytest.mark.asyncio
+async def test_errored_call_uses_no_idea_slot(monkeypatch):
+    script = {**_SCRIPT, (epd_after("c4"), None): (-30, ["e7e5"])}
+    tool, _bus = _tool(monkeypatch, chess.Board(), PlayOutRecord(), script=script)
+    assert (await _step(tool, "bad", "e5"))["error"] == "illegal_move"
+    for idea, move in list(zip(("a", "b", "c", "d"), ("e4", "d4", "f3", "c4")))[:MAX_IDEAS]:
+        assert "error" not in await _step(tool, idea, move)
+
+
+def test_grant_idea_opens_one_more_slot_without_stacking():
+    record = PlayOutRecord()
+    for n in range(MAX_IDEAS):
+        record.admit(f"idea {n}")
+    assert not record.has_room("new")
+    record.grant_idea()
+    record.grant_idea()
+    assert record.has_room("new")
+    record.admit("new")
+    assert not record.has_room("another")
+
+
+def test_grant_is_spent_only_past_the_cap():
+    record = PlayOutRecord()
+    record.admit("first")
+    record.grant_idea()
+    record.admit("second")
+    assert not record.grant_spent
+    for n in range(MAX_IDEAS - 2):
+        record.admit(f"idea {n}")
+    record.grant_idea()
+    record.admit("granted")
+    assert record.grant_spent
+
+
+@pytest.mark.asyncio
+async def test_idea_past_its_move_cap_is_refused(monkeypatch):
+    script = {
+        **_SCRIPT,
+        (epd_after("e4", "e5", "Nf3", "Nc6"), None): (25, ["f1c4"]),
+        (epd_after("e4", "e5", "Nf3", "Nc6", "Bc4"), None): (-20, ["g8f6"]),
+    }
+    tool, _bus = _tool(monkeypatch, chess.Board(), PlayOutRecord(), script=script)
+    moves = ("e4", "Nf3", "Bc4")
+    for move in moves[:PLAY_OUT_MAX_MOVES]:
+        assert "error" not in await _step(tool, "e4 idea", move)
+    out = await _step(tool, "e4 idea", moves[PLAY_OUT_MAX_MOVES])
+    assert out["error"] == "idea_done"

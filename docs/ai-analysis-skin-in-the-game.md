@@ -68,8 +68,9 @@ Prose is a by-product of the search, not the product.
 
 The model treats the position as if it had to win it. Ideas are drawn
 from analogous openings and structures, not quoted. Each idea is tried
-on this board against the engine. Prose narrates the fights: what was
-tried, where it broke, what survived, with concrete lines.
+on this board against the engine. Prose explains the result like a
+coach: why the pick is best and what the rejected tries teach, backed
+by a short concrete line, not a log of the search.
 
 Target shape (same position):
 
@@ -117,17 +118,22 @@ that fires today must still fire, with the same shape:
 Core: the model is a player, not a narrator. It plays its ideas out
 against the engine and is scored on the result.
 
-0. Reframe the prompt. Preface: "find the best move by calculation;
-   use the tools to calculate". Drop _PLAN_RULE's "decides the pick";
-   the best-scoring move that survives play_out wins. Lift "Reasoning
-   stays internal" for lines: the calculation IS the output.
-   VERIFIER_ADDENDUM rewritten per 7.
-1. Idea generation. The model must name 2-3 concrete ideas before any
-   prose, each a first move plus its aim: a move the idea works toward
-   within SV_AI_AIM_HORIZON of its own moves (e.g. 5.Bb5, aim d4). In the opening, ideas come from
+0. Reframe the prompt. Preface: still an analyst, but one who thinks
+   like a player who has to win: "find the best move by calculation;
+   use the tools to calculate", then explain it -- the reader gets the
+   chess, not the search. Drop _PLAN_RULE's "decides the pick"; the
+   best-scoring move that survives play_out wins. "Reasoning stays
+   internal" stays: a short line may back a claim, but prose explains,
+   it does not list moves. VERIFIER_ADDENDUM rewritten per 7.
+1. Idea generation. The model names up to SV_AI_MAX_IDEAS (default 3)
+   concrete ideas before any prose, each a first move plus its aim: a
+   move the idea works toward within SV_AI_AIM_HORIZON of its own
+   moves (e.g. 5.Bb5, aim d4). In the opening, ideas come from
    related_openings sibling lines (borrowed, adapted, never quoted).
-   Commentator: the move played is always one of the ideas. The 2-3
-   count is prompt-level, not enforced: a forced recapture needs one.
+   Commentator: the move played is always one of the ideas. The cap
+   is enforced by play_out (a new idea past it is refused); fewer is
+   fine: a forced recapture needs one. The prompt renders the cap from
+   the setting.
 2. Simulation tool: `play_out(idea, move)`, stepwise. Model plays one
    move for its side; engine answers for the opponent with its best
    reply (deterministic; model-chosen replies are the verifier's job,
@@ -138,10 +144,13 @@ against the engine and is scored on the result.
    the engine diverges). Server keeps one line per idea; the first call
    with a new idea starts from the live position; model ends an idea
    by stopping. A failed step (3) is not kept: the line stays where it
-   was, so the next call with that idea tries another move. Default
-   analyze depth; one search per ply (the post-move search yields the
-   reply, the post-reply search the next eval-before). Ideas are independent, so steps of different ideas
-   can share a round. This is the "skin in the game": the idea is
+   was, so the next call with that idea tries another move. At most
+   SV_AI_PLAY_OUT_MAX_MOVES (default 2) of the model's own moves per
+   idea. Searches at SV_AI_PLAY_OUT_DEPTH (default 14): many per turn,
+   so shallower than recommend_move's check, which stays the referee.
+   One search per ply (the post-move search yields the reply, the
+   post-reply search the next eval-before). Ideas are independent, so
+   steps of different ideas can share a round. This is the "skin in the game": the idea is
    played, not asserted.
 3. Scoring. A step's drop is the eval before the model's move minus
    the eval after it, from the moving side's POV, so a failure is pinned to the
@@ -172,7 +181,12 @@ against the engine and is scored on the result.
    play_out and plays nothing of its own. engine_info still carries
    the PV to the UI.
 3b. Stalls. The MAX_RECOMMEND_FAILURES nudge retargets from "rank with
-   top_moves" to "play out a new idea". Fallback: when
+   top_moves" to "play out a new idea". A rejection with every idea
+   slot used grants one idea past SV_AI_MAX_IDEAS, so the model is
+   never told to play out an idea it cannot; below the cap a rejection
+   opens nothing extra. Once that extra idea is played out the grant is
+   spent and recommend_move falls back (below) at once, the
+   red_team_first hold included: no hunt past it. Fallback also: when
    SV_AI_FALLBACK_ROUNDS_LEFT rounds remain (default: enough for the
    submit plus the prose round), the server nudges the model to submit
    now, and recommend_move accepts any played-out move unconditionally
@@ -184,10 +198,13 @@ against the engine and is scored on the result.
    gets played. Nothing played out, or the nudge ignored: the turn
    ends with no recommendation (today's round-cap behavior). The
    engine's best stays unnamed throughout.
-4. Narration from the record. Prose budget: one short paragraph per
-   idea played, concrete line each, plus the pick. Lines come from
-   play_out results so report_line is implied. The 3-5 sentence cap
-   goes; sentence-level square-naming rule goes (lines satisfy it).
+4. Explanation, not a log. Prose budget: 4 to 6 sentences explaining
+   the pick -- why it is best, the plan it serves, what the opponent
+   can try -- naming a rejected idea and why it fails when that
+   teaches something, with at most one short line as evidence. The
+   search informs the prose; it is not narrated move by move. Lines
+   from play_out results need no report_line. The sentence-level
+   square-naming rule goes.
    Coach: lines are analysis, not the opponent's intent; the rule
    becomes "never claim to know what the opponent will play".
 5. Plan: line removed from the first message. Available as a tool
@@ -205,9 +222,9 @@ against the engine and is scored on the result.
    attempt counts. Forcing it at the first
    chance only would refute sound aims that need preparation (5.Bb5
    Nge7 6.d4?? cxd4, where the aim comes after 6.exd5 exd5). Searches
-   at verification depth. A reply counts only if sound: within the
-   dominance margin (MIN) of the opponent's best reply, else the
-   result says "unsound reply". Refuted = after a sound reply, the
+   at SV_AI_PLAY_OUT_DEPTH. A reply counts only if sound: within
+   SV_AI_PLAY_OUT_MARGIN of the opponent's best reply (MIN is noise at
+   that depth), else the result says "unsound reply". Refuted = after a sound reply, the
    aim is legal at none of the full horizon's moves, or its best
    attempt falls short of the PV's eval by more than
    SV_AI_PLAY_OUT_MARGIN (the branch and the PV root search different
@@ -218,7 +235,7 @@ against the engine and is scored on the result.
    A line whose search scores mate for the tested side is never
    refuted, whatever the aim: the idea won outright. Read from the
    line's mate score, not the walk (the walk stops at the mating
-   move). Up to SV_AI_VERIFIER_MAX_REPLIES (default 3)
+   move). Up to SV_AI_VERIFIER_MAX_REPLIES (default 2)
    replies per delegate, within VERIFIER_MAX_ROUNDS; one refutation
    suffices; "holds" otherwise.
    The verdict gate's dominance confirmation is replaced: "refuted"
@@ -247,14 +264,14 @@ against the engine and is scored on the result.
 
 ## Open questions for review
 
-- Budget: ideas x plies + delegate + recommend must fit
-  SV_AI_MAX_TOOL_ROUNDS (default 32). Needs caps
-  (SV_AI_PLAY_OUT_MAX_PLIES, SV_AI_MAX_IDEAS) sized from live turns.
-  Each test_aim is up to 2 + horizon searches at verification depth:
-  the opponent's-best search (shared across replies, cached), the
-  reply's PV search (its root eval is the soundness check), one forced
-  branch per narrator move: 5 at the default horizon. x3 replies x
-  delegates per turn; measure engine time on live turns.
+- Budget: capped at SV_AI_MAX_IDEAS ideas x SV_AI_PLAY_OUT_MAX_MOVES
+  moves (2 searches each at SV_AI_PLAY_OUT_DEPTH), plus delegate and
+  recommend, within SV_AI_MAX_TOOL_ROUNDS (default 32). Each test_aim
+  is up to 2 + horizon searches at SV_AI_PLAY_OUT_DEPTH: the
+  opponent's-best search (shared across replies, cached), the reply's
+  PV search (its root eval is the soundness check), one forced branch
+  per narrator move: 5 at the default horizon, x2 replies per
+  delegate. Defaults still to be sized from engine time on live turns.
 - Does the score need teeth beyond rejection? e.g. a running record
   across turns ("2 of 3 ideas failed this game") fed back to the
   model. Cheap to add; unclear if it changes behavior.

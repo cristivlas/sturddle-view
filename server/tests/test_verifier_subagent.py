@@ -538,7 +538,7 @@ async def test_post_recommend_nudge_fires_when_no_conclusion():
     last_user = next(
         m for m in reversed(nudge_round["messages"]) if m["role"] == "user"
     )
-    assert "write the analysis now" in last_user["content"].lower()
+    assert "explain it now" in last_user["content"].lower()
 
 
 @pytest.mark.asyncio

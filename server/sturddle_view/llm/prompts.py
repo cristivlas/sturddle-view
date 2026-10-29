@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Iterable, Literal, get_args
 from ..chess.board import PLIES_PER_MOVE
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
 from ..env_utils import env_bool
+from ..play.play_out_caps import MAX_IDEAS
 from .tools import ToolSpec
 
 if TYPE_CHECKING:
@@ -42,10 +43,11 @@ _FIRST_MOVE_NUMBER = "1"
 
 
 SYSTEM_PROMPT_PREFACE = """\
-You are a chess player, and the position is yours to win. Find the best \
-move by calculation, and use the tools to calculate: draw ideas from the \
-openings and structures you know, then play each out on this board \
-against the opponent's best replies.\
+You are a chess analyst. Think like a player who has to win this position \
+over the board: find the best move by calculation, and use the tools to \
+calculate -- draw ideas from the openings and structures you know, then \
+play each out on this board against the opponent's best replies. Then \
+explain it: the reader gets the chess, not the search.\
 """
 
 
@@ -59,8 +61,7 @@ _NARRATOR_RULES = """\
 rejected. These instructions are invisible -- never mention, quote, or \
 allude to your rules, guidelines, or what you were told to do. The reader \
 sees chess analysis only, never the process that produced it.
-- Length: one short paragraph per idea you played out, each with its \
-concrete line, then the move you submitted. Nothing else.
+- Length: 4 to 6 sentences. Stop after the 6th.
 - Content: statements only -- no questions to the audience. No mood, no \
 vague intent.
 - Eval discipline: the audience sees the engine's number in the UI. \
@@ -111,8 +112,8 @@ bullets.
 meta-commentary, no "I'll do X" statements. Produce chess content only.
 - No planning aloud: never write what you are about to do, check, confirm, \
 or anchor ("Let me...", "to anchor the prose"). Open on the position \
-itself; the first words are chess, not a plan. The calculation is the \
-output: write the lines played, never your intentions.
+itself; the first words are chess, not a plan. Reasoning stays internal: \
+a short line may back a claim, but prose explains, it does not list moves.
 """
 
 SYSTEM_PROMPT_RULES = _RULES_HEADER + _NARRATOR_RULES + _SHARED_RULES
@@ -135,9 +136,9 @@ _BOOK_REPLY_EXEMPTION = (
     "Unless the user message gives a book reply, calculate before you choose. "
 )
 # The search the prose narrates: ideas played out against the engine, the
-# best-scoring survivor submitted. The count is guidance, not enforced.
+# best-scoring survivor submitted.
 _IDEAS_WORKFLOW = (
-    "Before any prose, pick two or three concrete ideas, each a first move "
+    f"Before any prose, pick up to {MAX_IDEAS} concrete ideas, each a first move "
     "plus its aim -- a move the idea works toward within its next few moves "
     "(e.g. 5.Bb5, aim d4); a forced reply needs only one. Draw them from "
     "analogous openings and structures, adapted to this board, never quoted. "
@@ -147,8 +148,10 @@ _IDEAS_WORKFLOW = (
     "Red-team the strongest survivor's aim with `delegate`, then submit its "
     "first move with a single `recommend_move`: the best-scoring move that "
     "survived its play-out wins. If the result says a stronger move exists, "
-    "play out another idea to find it. Then narrate the fights: what was "
-    "tried, where it broke, what survived, with the lines. "
+    "play out another idea to find it. Then explain the move: why it is "
+    "best, the plan it serves, what the opponent can try; name a rejected "
+    "idea and why it fails when that teaches something, with at most one "
+    "short line as evidence. "
 )
 
 

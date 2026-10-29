@@ -407,7 +407,7 @@ const TOOL_FRIENDLY_LABELS = {
   [TOOL.RELATED_OPENINGS]: ["Comparing openings", "Cross-checking openings", "Matching openings"],
   [TOOL.POSITION_JUDGE]: ["Checking position claims", "Fact-checking the position", "Verifying the claims"],
   [TOOL.PLAY_OUT]:       ["Playing out an idea", "Trying an idea", "Testing an idea"],
-  [TOOL.TEST_AIM]:       ["Testing the aim", "Probing the aim", "Attacking the aim"],
+  [TOOL.TEST_AIM]:       ["Can they stop it?", "Looking for a defense", "Challenging the plan"],
   [TOOL.PLAN]:           ["Consulting the plan", "Recalling the strategy", "Reviewing the plan"],
 };
 

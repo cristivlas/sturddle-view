@@ -261,8 +261,8 @@ _RECOMMEND_NUDGE_PROMPTS = {
 # analysis (small models treat the call as the end). One-shot. {san}
 # names the recorded move so the prose can't drift to another.
 _POST_RECOMMEND_NUDGE = (
-    "{san} is recorded. Write the analysis now: each idea you played out "
-    "with its line, where it broke or what survived, then {san}."
+    "{san} is recorded. Explain it now: why {san} is best and the plan it "
+    "serves, in a few sentences."
 )
 
 # Injected once when the closing prose describes a move other than the one
@@ -1602,9 +1602,6 @@ class AIAnalysisCoordinator:
         st.fallback = True
         self._turn_fallback = True
         st.force_tool_next = True
-        # recommend_move now rules differently: a resubmit of the last
-        # rejected move must not be served the stale dedup result.
-        st.last_call = None
         messages.append({"role": "user", "content": _FALLBACK_NUDGE})
 
     async def _stream_round(
@@ -1965,6 +1962,7 @@ class AIAnalysisCoordinator:
             and pending_tool.tool_name == RECOMMEND_MOVE_TOOL_NAME
             and config.enforce_red_team
             and not st.fallback
+            and not self._grant_spent()
             and not st.red_teamed
             and not st.red_team_nudge_sent
             and _is_accepted_recommend(tool_output)
@@ -2343,6 +2341,11 @@ class AIAnalysisCoordinator:
         book_move_provider; None between turns or off book."""
         return self._turn_book_move
 
+    def _grant_spent(self) -> bool:
+        """recommend_move falls back: the turn's idea grant is spent."""
+        record = self._play_out_record
+        return record is not None and record.grant_spent
+
     def turn_fallback(self) -> bool:
         """True once the in-flight turn fell back, for recommend_move's
         fallback_provider; False between turns."""
@@ -2588,6 +2591,10 @@ class AIAnalysisCoordinator:
         norm = normalizer(call.tool_input, board)
         if norm is None:
             return None
+        if call.tool_name == RECOMMEND_MOVE_TOOL_NAME:
+            # Fallback or a spent idea grant changes the ruling: a resubmit
+            # under it is a new call.
+            return (call.tool_name, norm, self._turn_fallback, self._grant_spent())
         return (call.tool_name, norm)
 
     async def _dispatch_tool(

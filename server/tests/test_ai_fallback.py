@@ -4,7 +4,9 @@ FALLBACK_ROUNDS_LEFT rounds before the cap, a narrator with no accepted
 pick but a played-out move is told to submit now; from then on the real
 recommend_move (wired to the coordinator's turn_fallback) takes the best
 played-out move unconditionally and the red-team hold is skipped. Nothing
-played out: no nudge, the turn ends without a recommendation.
+played out: no nudge, the turn ends without a recommendation. A rejected
+submit at the idea cap grants one more idea; once it is played out,
+submits fall back too, with no red-team hold.
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ from sturddle_view.play.ai_analysis import (
     _FALLBACK_NUDGE,
 )
 from sturddle_view.play.tools_engine import (
+    MAX_IDEAS,
     RECOMMEND_MOVE_TOOL_SPEC,
     PlayOutRecord,
     make_recommend_move_tool,
@@ -81,6 +84,7 @@ def _coordinator(monkeypatch, provider, record: PlayOutRecord, *, played: list[s
     async def play_out(input_, *, cancel_token):
         move = board.parse_san(input_["move"])
         record.note_first_move(move, 20)
+        record.admit(input_["idea"])
         played.append(input_["move"])
         return {"idea": input_["idea"], "move": input_["move"], "reply": "e5"}
 
@@ -102,11 +106,12 @@ async def _drain(queue: asyncio.Queue) -> list:
 async def test_fallback_takes_the_played_out_move_without_a_hold(monkeypatch):
     rounds = 5
     nudge_round = rounds - FALLBACK_ROUNDS_LEFT
+    # No submit before the nudge: a rejection would spend the grant first.
     provider = _RecordingProvider(rounds=[
         _call("p0", "play_out", idea="e4, aim d4", move="e4"),
-        _call("r0", "recommend_move", move="e4"),           # dominated -> rejected
-        _call("r1", "recommend_move", move="Nf3"),          # not played out -> rejected
-        _call("r2", "recommend_move", move="Nf3"),          # fallback: replaced by e4
+        _call("p1", "play_out", idea="e4, aim d4", move="d4"),
+        _call("p2", "play_out", idea="e4, aim d4", move="Nf3"),
+        _call("r2", "recommend_move", move="Nc3"),          # fallback: replaced by e4
         [ProviderChunk(kind="text", text="1.e4 e5 holds the center; e4.")],
     ])
     record = PlayOutRecord()
@@ -126,16 +131,49 @@ async def test_fallback_takes_the_played_out_move_without_a_hold(monkeypatch):
         e.payload["tool_use_id"]: e.payload["output"]
         for e in events if e.kind == "ai_tool_call_complete"
     }
-    assert outputs["r0"]["error"] == "recommendation_rejected"
     accepted = outputs["r2"]
     assert accepted["ok"] is True and accepted["uci"] == "e2e4"
     assert accepted["weaker_than_best"] is True
-    assert "Nf3 was not played out" in accepted["note"]
+    assert "Nc3 was not played out" in accepted["note"]
     # No red-team hold in fallback, though delegate is registered.
     assert not [e for e in events if e.payload.get("error") == "red_team_first"]
     done = events[-1].payload
     assert not done.get("no_recommendation") and not done.get("round_cap")
     assert coord.turn_fallback() is False
+
+
+@pytest.mark.asyncio
+async def test_submit_after_the_granted_idea_takes_the_played_out_move(monkeypatch):
+    firsts = ("e4", "d4", "Nf3", "c4", "Nc3")
+    capped = [
+        _call(f"p{i}", "play_out", idea=f"idea {i}", move=move)
+        for i, move in enumerate(firsts[:MAX_IDEAS])
+    ]
+    provider = _RecordingProvider(rounds=capped + [
+        _call("r0", "recommend_move", move="e4"),           # dominated -> rejected
+        _call("r1", "recommend_move", move="a3"),           # no new idea -> rejected
+        _call("px", "play_out", idea="granted", move=firsts[MAX_IDEAS]),
+        _call("r2", "recommend_move", move="e4"),           # grant spent: accepted
+        [ProviderChunk(kind="text", text="1.e4 e5 holds the center; e4.")],
+    ])
+    coord, bus = _coordinator(monkeypatch, provider, PlayOutRecord(), played=[])
+    queue = await bus.subscribe()
+
+    await coord.run(
+        game_id="g", mode="coach", user_message=_TURN_CONTEXT, max_tool_rounds=MAX_IDEAS + 8,
+    )
+    events = await _drain(queue)
+
+    outputs = {
+        e.payload["tool_use_id"]: e.payload["output"]
+        for e in events if e.kind == "ai_tool_call_complete"
+    }
+    assert outputs["r0"]["error"] == "recommendation_rejected"
+    assert outputs["r1"]["error"] == "recommendation_rejected"
+    assert outputs["r2"]["ok"] is True and outputs["r2"]["weaker_than_best"] is True
+    # No red-team hold once the grant is spent, though nothing was delegated.
+    assert not [e for e in events if e.payload.get("error") == "red_team_first"]
+    assert all(_FALLBACK_NUDGE not in str(c["messages"]) for c in provider.calls)
 
 
 @pytest.mark.asyncio

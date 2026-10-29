@@ -40,7 +40,7 @@ from sturddle_view.play.playbook import (
     SOURCE_EVAL,
     Situation,
 )
-from sturddle_view.play.tools_engine import PlayOutRecord, make_recommend_move_tool
+from sturddle_view.play.tools_engine import MAX_IDEAS, PlayOutRecord, make_recommend_move_tool
 
 from .conftest import _write_uci_stub
 
@@ -374,6 +374,24 @@ async def test_played_out_move_goes_to_the_dominance_check(monkeypatch):
     out = await _gated_tool(_record((_NF3, 25)))({"move": "Nf3"}, cancel_token=CancelToken())
     assert out.get("ok") is True and out["uci"] == "g1f3", out
     assert len(searches) == 2
+
+
+def _full_record(*first_moves: tuple[chess.Move, int]) -> PlayOutRecord:
+    record = _record(*first_moves)
+    for n in range(MAX_IDEAS):
+        record.admit(f"idea {n}")
+    return record
+
+
+@pytest.mark.parametrize("played", [False, True])
+@pytest.mark.asyncio
+async def test_rejection_opens_room_for_one_more_idea(monkeypatch, played):
+    # Unplayed or dominated: either way the model must play out another idea.
+    monkeypatch.setattr(tools_engine, "_run_one_search", _scripted_search("e2e4", 300, 10, []))
+    record = _full_record(*([(_NF3, 10)] if played else []))
+    out = await _gated_tool(record)({"move": "Nf3"}, cancel_token=CancelToken())
+    assert out["error"] == "recommendation_rejected", out
+    assert record.has_room("new idea")
 
 
 @pytest.mark.asyncio
