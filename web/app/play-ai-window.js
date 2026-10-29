@@ -407,7 +407,7 @@ const TOOL_FRIENDLY_LABELS = {
   [TOOL.RELATED_OPENINGS]: ["Comparing openings", "Cross-checking openings", "Matching openings"],
   [TOOL.POSITION_JUDGE]: ["Checking position claims", "Fact-checking the position", "Verifying the claims"],
   [TOOL.PLAY_OUT]:       ["Playing out an idea", "Trying an idea", "Testing an idea"],
-  [TOOL.TEST_AIM]:       ["Can they stop it?", "Looking for a defense", "Challenging the plan"],
+  [TOOL.TEST_AIM]:       ["Can they stop it?", "Looking for a defense", "Challenging the plan", "Does it hold up?", "Seeking a refutation", "Anticipating the reply"],
   [TOOL.PLAN]:           ["Consulting the plan", "Recalling the strategy", "Reviewing the plan"],
 };
 
@@ -415,10 +415,10 @@ const TOOL_FRIENDLY_LABELS = {
 // Nd3"). Maps the tool to its verb variants; the move SAN from input.move is
 // appended.
 const MOVE_TOOL_VERBS = {
-  [TOOL.RECOMMEND_MOVE]: ["Considering", "Weighing", "Contemplating", "Ratiocinating over", "Projecting"],
-  [TOOL.VALIDATE_MOVE]:  ["Validating", "Probing", "Confirming", "Vetting"],
-  [TOOL.DELEGATE]:       ["Verifying", "Double-checking", "Reviewing", "War-gaming"],
-  [TOOL.PLAY_OUT]:       ["Playing out", "Trying", "Testing"],
+  [TOOL.RECOMMEND_MOVE]: ["Considering", "Weighing", "Contemplating", "Ratiocinating over", "Projecting", "Ruminating on", "Deliberating over", "Cogitating on"],
+  [TOOL.VALIDATE_MOVE]:  ["Validating", "Probing", "Confirming", "Vetting", "Scrutinizing", "Examining", "Appraising"],
+  [TOOL.DELEGATE]:       ["Verifying", "Double-checking", "Reviewing", "War-gaming", "Gaming out", "Crystal-balling"],
+  [TOOL.PLAY_OUT]:       ["Playing out", "Trying", "Testing", "Following", "Tracing", "Unfolding", "Extending"],
 };
 
 // The dominance check's two steps share one metaphor: the baseline search
