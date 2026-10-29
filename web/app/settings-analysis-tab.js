@@ -124,6 +124,19 @@ function makeIntInput({ initial, debounce, putSettings }, key, label, { min, max
   return input;
 }
 
+// The model select's options: the provider's list, plus the saved model if
+// the list lacks it; the saved model is selected (else the first).
+function setModelOptions(select, models, current) {
+  const list = current && !models.includes(current) ? [current, ...models] : models;
+  select.replaceChildren(...list.map((m) => {
+    const opt = document.createElement("wa-option");
+    opt.value = m;
+    opt.textContent = m;
+    return opt;
+  }));
+  select.value = current || (list[0] || "");
+}
+
 // Model row, dual-purpose by provider:
 //  - LLM provider: a dropdown from the provider's list_models API; the
 //    free-text input takes over on fetch failure.
@@ -145,6 +158,10 @@ function buildAiModelRow({ initial, putSettings, putSettingsDebounced, debounce,
   input.size = "small";
   input.setAttribute("autocomplete", "off");
   input.value = initial[AI_MODEL_KEY] || "";
+  // Until the provider's list arrives, the select alone shows the saved
+  // model, so a successful fetch only adds options (no widget swap).
+  input.style.display = "none";
+  setModelOptions(select, [], input.value);
   input.addEventListener("input", () => {
     putSettingsDebounced({ [AI_MODEL_KEY]: input.value });
   });
@@ -444,17 +461,7 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
 
   function showModelSelect(models) {
     aiModelLabel.textContent = "Model";
-    aiModelSelect.replaceChildren();
-    const current = initial[AI_MODEL_KEY] || "";
-    const list = models.slice();
-    if (current && !list.includes(current)) list.unshift(current);
-    for (const m of list) {
-      const opt = document.createElement("wa-option");
-      opt.value = m;
-      opt.textContent = m;
-      aiModelSelect.append(opt);
-    }
-    aiModelSelect.value = current || (list[0] || "");
+    setModelOptions(aiModelSelect, models, initial[AI_MODEL_KEY] || "");
     aiModelSelect.style.display = "";
     aiModelInput.style.display = "none";
     syncLinesVisibility();
@@ -593,11 +600,11 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
 
   for (const { row } of AI_ROWS.values()) panel.append(row);
 
-  // Initial state: hide the select until the first fetch/populate. Lock
-  // fields by current provider. The model row (and its /models fetch when
-  // AI is on) is routed on first tab activation via the returned mount(),
-  // so opening Settings on another tab makes no provider call.
-  showModelInput("");
+  // Initial state: the select alone (buildAiModelRow), so a successful fetch
+  // swaps nothing. The model row and its /models fetch wait for mount() on
+  // first tab activation: Settings opened on another tab calls no provider.
+  syncLinesVisibility();
+  syncThinkingOptions();
   applyAiEnabledLockout();
 
   return { tab, panel, mount: refreshModelRow };
