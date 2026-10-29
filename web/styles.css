@@ -3497,6 +3497,9 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 .dt-menu-move:focus { background: var(--panel-item-hover); }
 .dt-menu-move:disabled { opacity: 0.3; cursor: default; }
+/* Pinned-last marker (column-header.js): header cell and menu row. */
+.dt-pin { color: var(--muted); font-size: 0.8em; margin-left: 4px; }
+.dt-menu-col .dt-pin { padding: 4px 6px; }
 /* Pointer devices: a row's move arrows show only while it holds focus. The
    mouse moves focus to the item under it (menu-nav.js), so focus alone
    tracks mouse and keyboard; :hover would light a second row after a key

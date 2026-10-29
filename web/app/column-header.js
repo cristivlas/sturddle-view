@@ -24,6 +24,10 @@ const FIT_LABEL = "Auto-fit";
 const RESET_LABEL = "Reset";
 const UP_ICON = "arrow-up-long";
 const DOWN_ICON = "arrow-down-long";
+const PIN_ICON = "thumbtack";
+const PIN_LABEL = "Pinned last";
+// Marks a pinEnd column, in its header and its Columns-menu row.
+const PIN_HTML = `<wa-icon class="dt-pin" name="${PIN_ICON}" label="${PIN_LABEL}" title="${PIN_LABEL}"></wa-icon>`;
 const ACTIVE_CLASS = "tmb-active";
 const MOVE = Object.freeze({ UP: -1, DOWN: 1 });
 const MOVE_LABEL = Object.freeze({ [MOVE.UP]: "Move up:", [MOVE.DOWN]: "Move down:" });
@@ -54,12 +58,16 @@ const DRAG_THRESHOLD_PX = 5;
 const FULL_PCT = 100;
 // px mode: narrowest a fixed column can be dragged.
 const MIN_COL_PX = 30;
+// px mode: room a drag must leave the pinEnd column.
+const MIN_PIN_END_PX = 120;
 const AUTO_WIDTH = "auto";
 const FULL_WIDTH = "100%";
 
 // Live instances per layoutKey (sync option): a layout change in one
 // re-lays out the others from the saved layout.
 const syncRegistry = new Map(); // layoutKey -> Set<reload fn>
+
+const sum = (sizes) => sizes.reduce((s, w) => s + w, 0);
 
 // Saved { unit, order, hidden, widths } fit to the current columns. Widths in
 // another unit (none = pct) drop; without reorder the declared order wins,
@@ -96,7 +104,7 @@ export function fitPcts(natural, available, minPct) {
   if (minPct * n >= FULL_PCT || available <= 0) return natural.map(() => FULL_PCT / n);
   const floor = (minPct / FULL_PCT) * available;
   const px = natural.map((w) => Math.max(w, floor));
-  const total = px.reduce((s, w) => s + w, 0);
+  const total = sum(px);
   if (total <= available) {
     const extra = (available - total) / n;
     return px.map((w) => ((w + extra) / available) * FULL_PCT);
@@ -178,7 +186,8 @@ function menuHtml(layout, byKey, traits, visibleCount) {
       return menuBtnHtml(`${key}:${dir}`, "dt-menu-move", `<wa-icon name="${icon}"></wa-icon>`,
         { disabled: moveTarget(layout, byKey, i, dir) < 0, attrs: ` data-dir="${dir}" aria-label="${label}" title="${label}"` });
     };
-    const moves = traits.reorder && !col.pinEnd ? move(MOVE.UP, UP_ICON) + move(MOVE.DOWN, DOWN_ICON) : "";
+    const moves = !traits.reorder ? ""
+      : col.pinEnd ? PIN_HTML : move(MOVE.UP, UP_ICON) + move(MOVE.DOWN, DOWN_ICON);
     const toggle = menuBtnHtml(`${key}:${MENU_ACTION.TOGGLE}`,
       `tmb-dd-item dt-menu-toggle${shown ? ` ${ACTIVE_CLASS}` : ""}`, escapeHtml(col.label),
       { disabled: lockToggle, attrs: ` data-action="${MENU_ACTION.TOGGLE}"` });
@@ -357,7 +366,9 @@ function makePctApplySizes(colElsLists, minAt) {
 
 // px mode: fixed columns in px, floored at minAt(i) on a drag; the pinEnd
 // column auto; both tables at least as wide as the fixed ones (`sizes`).
-function makePxApplySizes(colElsLists, tables, minAt) {
+// A drag can't grow the fixed total past the room that keeps the pinEnd
+// column MIN_PIN_END_PX wide in `availablePx()` (or the start total, if over).
+function makePxApplySizes(colElsLists, tables, minAt, availablePx) {
   return function applySizes(sizes, rctx) {
     if (rctx) {
       const { deltaFrac, tableWidth, startSizes, gripIdx } = rctx;
@@ -366,10 +377,14 @@ function makePxApplySizes(colElsLists, tables, minAt) {
       if (gripIdx + 1 < sizes.length) {
         sizes[gripIdx + 1] = Math.max(minAt(gripIdx + 1), startSizes[gripIdx + 1] - d);
       }
+      const cap = Math.max(availablePx() - MIN_PIN_END_PX, sum(startSizes));
+      const over = sum(sizes) - cap;
+      // Only the column the drag grows adds to the total: give the excess back.
+      if (over > 0) sizes[d > 0 ? gripIdx : gripIdx + 1] -= over;
     }
     applySplitColWidths(colElsLists.map((els) => els.slice(0, sizes.length)), sizes, WIDTH_UNIT.PX);
     for (const els of colElsLists) els.slice(sizes.length).forEach((c) => { c.style.width = AUTO_WIDTH; });
-    const fixedW = sizes.reduce((s, w) => s + w, 0);
+    const fixedW = sum(sizes);
     for (const t of tables) Object.assign(t.style, { width: FULL_WIDTH, minWidth: `${fixedW}px` });
   };
 }
@@ -558,7 +573,8 @@ export function createColumnHeader({
       : "";
     const grip = traits.resize && i < cols.length - 1 ? `<span class="${GRIP_CLASS}"></span>` : "";
     const thCls = col.thClass ? ` class="${col.thClass}"` : "";
-    return `<th${thCls}>${btn}<span class="${TH_LABEL_CLASS}">${escapeHtml(col.label)}</span>${grip}</th>`;
+    const pin = traits.reorder && col.pinEnd ? PIN_HTML : "";
+    return `<th${thCls}>${btn}<span class="${TH_LABEL_CLASS}">${escapeHtml(col.label)}</span>${pin}${grip}</th>`;
   }
 
   // The button room in this unit: px, or its share of the head table.
@@ -594,7 +610,7 @@ export function createColumnHeader({
     buttonRoom = stored.length ? measureButtonRoom() : 0;
     const sizes = room.show(stored, buttonRoom);
     liveSizes = sizes;
-    const apply = px ? makePxApplySizes(colEls, [headTable, bodyTable], minAt) : makePctApplySizes(colEls, minAt);
+    const apply = px ? makePxApplySizes(colEls, [headTable, bodyTable], minAt, () => bodyScroll.clientWidth) : makePctApplySizes(colEls, minAt);
     const applySizes = (s, rctx) => { apply(s, rctx); onSizes?.(); };
     applyLive = applySizes;
     resizeCtrl?.destroy();
@@ -683,7 +699,7 @@ export function createColumnHeader({
     bodyScroll,
     relayout,
     // Summed px of the shown non-pinEnd columns (px mode), live mid-drag.
-    fixedWidth: () => liveSizes.reduce((s, w) => s + w, 0),
+    fixedWidth: () => sum(liveSizes),
     destroy() {
       resizeCtrl?.destroy();
       roomObserver?.disconnect();

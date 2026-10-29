@@ -25,6 +25,7 @@ HOST_ATTR = "data-pv-host"
 # Above the app chrome (the header would take the clicks).
 HOST_Z = 1000
 MENU = ".dt-menu:popover-open"
+PIN_CLASS = "dt-pin"
 LEGACY_DEPTH_PX = 70
 PX_TOLERANCE = 1
 
@@ -115,6 +116,8 @@ async def test_depth_and_pv_locked_pv_unmovable(server, make_page):
     assert await page.is_disabled(_menu_item("depth", "dt-menu-toggle"))
     assert await page.is_disabled(_menu_item("pv", "dt-menu-toggle"))
     assert await page.locator(_menu_item("pv", "dt-menu-move")).count() == 0
+    assert await page.locator(_menu_item("pv", PIN_CLASS)).count() == 1
+    assert await page.locator(f".wb-pvtable-head-tbl th:last-child .{PIN_CLASS}").count() == 1
     # Nothing moves past PV: NPS, just ahead of it, can't move down.
     assert await page.is_disabled(f'{_menu_item("nps", "dt-menu-move")}[data-dir="1"]')
     assert_no_page_errors(errors)
