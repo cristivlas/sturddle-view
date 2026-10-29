@@ -302,6 +302,21 @@ FIT_AVAILABLE = 600
 FIT_MIN_PCT = 5
 FULL_PCT = 100
 PCT_TOL = 1e-9
+# Narrow columns under the 80px floor that the 100px extra lifts past it.
+FIT_FLOORED_NATURAL = [20, 30, 200, 150]
+FIT_FLOORED_AVAILABLE = 800
+FIT_FLOORED_MIN_PCT = 10
+
+
+async def _fit_pcts(page, natural, available, min_pct):
+    """fitPcts with no sort-arrow room: minimum = natural."""
+    return await page.evaluate(
+        """async ([natural, available, minPct]) => {
+            const { fitPcts } = await import('/ui/app/column-header.js');
+            return fitPcts(natural, natural, available, minPct);
+        }""",
+        [natural, available, min_pct],
+    )
 
 
 @pytest.mark.asyncio
@@ -310,16 +325,21 @@ async def test_fit_spare_is_shared_evenly(server, make_page):
     extra px, so the gaps between contents are even."""
     _ctx, page = await make_page(viewport=VIEWPORT)
     await _open_standings(page, server)
-    pcts = await page.evaluate(
-        """async ([natural, available, minPct]) => {
-            const { fitPcts } = await import('/ui/app/column-header.js');
-            return fitPcts(natural, available, minPct);
-        }""",
-        [FIT_NATURAL, FIT_AVAILABLE, FIT_MIN_PCT],
-    )
+    pcts = await _fit_pcts(page, FIT_NATURAL, FIT_AVAILABLE, FIT_MIN_PCT)
     extra = (FIT_AVAILABLE - sum(FIT_NATURAL)) / len(FIT_NATURAL)
     expected = [(w + extra) / FIT_AVAILABLE * FULL_PCT for w in FIT_NATURAL]
     assert pcts == pytest.approx(expected, abs=PCT_TOL)
+
+
+@pytest.mark.asyncio
+async def test_fit_floored_columns_get_no_extra_spare(server, make_page):
+    """Columns the spare lifts past the minPct floor all get the same extra
+    px; one under the floor isn't given the floor's slack on top."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    await _open_standings(page, server)
+    pcts = await _fit_pcts(page, FIT_FLOORED_NATURAL, FIT_FLOORED_AVAILABLE, FIT_FLOORED_MIN_PCT)
+    gaps = [p * FIT_FLOORED_AVAILABLE / FULL_PCT - w for p, w in zip(pcts, FIT_FLOORED_NATURAL)]
+    assert gaps == pytest.approx([gaps[0]] * len(gaps), abs=PCT_TOL)
 
 
 @pytest.mark.asyncio
@@ -331,6 +351,51 @@ async def test_fit_when_all_fits_truncates_nothing(server, make_page):
     await _open_standings(page, server)
     await _fit(page)
     assert await page.evaluate(_TRUNCATED_COLS) == []
+    assert_no_page_errors(errors)
+
+
+# Per header column after Fit: [shown px, content px, content px with sort
+# arrow room], measured on an auto-layout clone; the first column less the
+# Columns button.
+_FIT_GAPS = f"""() => {{
+  const head = document.querySelector('{HEAD}');
+  const body = document.querySelector('.wb-standings-body-tbl');
+  const btn = head.querySelector('.{MENU_BTN_CLASS}');
+  const btnPx = btn.getBoundingClientRect().width + (parseFloat(getComputedStyle(btn).marginRight) || 0);
+  const probe = document.createElement('table');
+  probe.className = `${{head.className}} ${{body.className}}`;
+  Object.assign(probe.style, {{ position: 'absolute', tableLayout: 'auto', width: 'max-content' }});
+  probe.append(head.tHead.cloneNode(true), body.tBodies[0].cloneNode(true));
+  body.parentElement.append(probe);
+  const widths = () => Array.from(probe.rows[0].cells, (c) => c.getBoundingClientRect().width);
+  const content = widths();
+  for (const th of probe.querySelectorAll('th.th-sortable:not(:has(.th-sort-arrow))')) {{
+    const arrow = document.createElement('wa-icon');
+    arrow.className = 'th-sort-arrow';
+    arrow.setAttribute('name', 'caret-down');
+    th.append(arrow);
+  }}
+  const withArrow = widths();
+  probe.remove();
+  return Array.from(head.rows[0].cells, (c, i) => [c.getBoundingClientRect().width, content[i], withArrow[i]]
+    .map((w) => (i ? w : w - btnPx)));
+}}"""
+
+
+@pytest.mark.asyncio
+async def test_fit_gaps_even_past_sort_arrow_room(server, make_page):
+    """With room to spare, Fit leaves the same empty space past every
+    column's content; only a column held at its sort-arrow room (so sorting
+    it later doesn't truncate the label) may show more."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_standings(page, server)
+    await _fit(page)
+    cols = await page.evaluate(_FIT_GAPS)
+    gap = min(shown - content for shown, content, _ in cols)
+    for shown, content, with_arrow in cols:
+        assert (shown - content == pytest.approx(gap, abs=WIDTH_TOL_PX)
+                or shown == pytest.approx(with_arrow, abs=WIDTH_TOL_PX)), cols
     assert_no_page_errors(errors)
 
 

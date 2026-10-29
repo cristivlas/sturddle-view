@@ -94,20 +94,29 @@ function reconcileLayout(columns, saved, fixedOrder, unit) {
 }
 
 // Column widths (% of the body) from each column's natural (max-content) px
-// width. All fit: every column gets its natural width plus an equal share of
-// the spare, so the gaps between contents are even. Overflow: columns no
-// wider than an even share of the space keep their natural width
-// (water-filling), and the wider ones split what's left evenly. Every
-// column gets at least minPct; too many columns for that floor: equal shares.
-export function fitPcts(natural, available, minPct) {
+// width and its minimum (natural plus room for a sort arrow), never under
+// minPct. All fit: every column gets its natural width plus an equal share
+// of the spare, so the gaps between contents are even; one the share leaves
+// under its minimum sits there and drops out of it. Overflow: columns whose
+// minimum is no wider than an even share of the space keep it
+// (water-filling), and the wider ones split what's left evenly. Too many
+// columns for the minPct floor: equal shares.
+export function fitPcts(natural, minimum, available, minPct) {
   const n = natural.length;
   if (minPct * n >= FULL_PCT || available <= 0) return natural.map(() => FULL_PCT / n);
   const floor = (minPct / FULL_PCT) * available;
-  const px = natural.map((w) => Math.max(w, floor));
-  const total = sum(px);
-  if (total <= available) {
-    const extra = (available - total) / n;
-    return px.map((w) => ((w + extra) / available) * FULL_PCT);
+  const px = minimum.map((w) => Math.max(w, floor));
+  if (sum(px) <= available) {
+    let sharing = natural.map((_, i) => i);
+    let extra;
+    for (;;) {
+      const held = sum(px.filter((_, i) => !sharing.includes(i)));
+      extra = (available - held - sum(sharing.map((i) => natural[i]))) / sharing.length;
+      const next = sharing.filter((i) => natural[i] + extra >= px[i]);
+      if (next.length === sharing.length) break;
+      sharing = next;
+    }
+    return natural.map((w, i) => (Math.max(w + extra, px[i]) / available) * FULL_PCT);
   }
   let free = px.map((_, i) => i);
   let budget = available;
@@ -398,7 +407,8 @@ function menuButtonPx(thead) {
 }
 
 // Each shown column's max-content width (header + rows), measured on an
-// offscreen auto-layout copy carrying both tables' classes.
+// offscreen auto-layout copy carrying both tables' classes: { natural,
+// minimum }, the latter with room for a sort arrow (see fitPcts).
 function naturalWidths({ wrap, headTable, bodyTable, thead, tbody }) {
   const probe = document.createElement("table");
   probe.className = `${headTable.className} ${bodyTable.className}`;
@@ -409,6 +419,9 @@ function naturalWidths({ wrap, headTable, bodyTable, thead, tbody }) {
   probe.append(thead.cloneNode(true), tbody.cloneNode(true));
   // Full-width rows would spread their text across the columns.
   for (const td of probe.querySelectorAll("tbody td[colspan]")) td.parentElement.remove();
+  wrap.append(probe);
+  const widths = () => Array.from(probe.rows[0].cells, (c) => c.getBoundingClientRect().width);
+  const natural = widths();
   // Room for a sort arrow on every sortable header, not just the one sorted
   // now, so sorting another column later doesn't truncate its label.
   for (const th of probe.querySelectorAll(`th.${TH_SORTABLE_CLASS}:not(:has(.${ARROW_CLASS}))`)) {
@@ -417,10 +430,9 @@ function naturalWidths({ wrap, headTable, bodyTable, thead, tbody }) {
     arrow.setAttribute("name", ARROW_DESC);
     th.append(arrow);
   }
-  wrap.append(probe);
-  const natural = Array.from(probe.rows[0].cells, (c) => c.getBoundingClientRect().width);
+  const minimum = widths();
   probe.remove();
-  return natural;
+  return { natural, minimum };
 }
 
 // The Columns menu: a top-layer popover (escapes the scrollers' and WinBox's
@@ -660,18 +672,19 @@ export function createColumnHeader({
 
   // Stored widths fit to content. The first column's measure includes the
   // Columns button, which its button room covers. px: each fixed column at
-  // its natural width; pct: see fitPcts.
+  // its minimum width; pct: see fitPcts.
   function fitColumns() {
     const cols = visibleCols();
     const btnPx = menuButtonPx(thead);
-    const natural = naturalWidths({ wrap, headTable, bodyTable, thead, tbody });
+    const { natural, minimum } = naturalWidths({ wrap, headTable, bodyTable, thead, tbody });
     natural[0] -= btnPx;
+    minimum[0] -= btnPx;
     if (unit === WIDTH_UNIT.PX) {
-      cols.forEach((c, i) => { if (!c.pinEnd) layout.widths[c.key] = Math.max(MIN_COL_PX, natural[i]); });
+      cols.forEach((c, i) => { if (!c.pinEnd) layout.widths[c.key] = Math.max(MIN_COL_PX, minimum[i]); });
       return;
     }
     const available = bodyTable.getBoundingClientRect().width - btnPx;
-    storeVisiblePcts(layout, cols, fitPcts(natural, available, minPct));
+    storeVisiblePcts(layout, cols, fitPcts(natural, minimum, available, minPct));
   }
 
   function applyMenuAction({ action, key, dir }) {
