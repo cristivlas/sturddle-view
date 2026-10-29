@@ -547,33 +547,8 @@ def test_split_narrator_steers_passes_through_without_steer():
     assert stripped == "Context line\n"
 
 
-_PLAYBOOK_LINE = f"{PLAYBOOK_LEAD}you are level; a plan before tactics."
-
-
-def test_playbook_line_rides_last_on_the_user_message():
-    got = build_initial_user_message(
-        fen=_STARTPOS_FEN, san_history=[], in_opening=True, playbook=_PLAYBOOK_LINE,
-    )
-    lines = got.rstrip("\n").split("\n")
-    assert lines[-1] == _PLAYBOOK_LINE
-    assert lines[-2] == OPENING_PHASE_GUIDANCE
-
-
-def test_playbook_omitted_when_not_given():
-    got = build_initial_user_message(fen=_STARTPOS_FEN, san_history=[])
+def test_user_message_never_carries_a_plan_line():
+    # The plan is the narrator's `plan` tool now: input it may ask for, not
+    # a line handed over before it looks at the board.
+    got = build_initial_user_message(fen=_STARTPOS_FEN, san_history=[], in_opening=True)
     assert PLAYBOOK_LEAD not in got
-
-
-def test_split_narrator_steers_strips_playbook_line_silently():
-    stripped, present = split_narrator_steers(f"Context line\n{_PLAYBOOK_LINE}\n")
-    assert present is False
-    assert stripped == "Context line\n"
-
-
-def test_split_narrator_steers_strips_playbook_and_opening_steer():
-    content = f"Context line\n{OPENING_PHASE_GUIDANCE}\n{_PLAYBOOK_LINE}\n"
-    stripped, present = split_narrator_steers(content)
-    assert present is True
-    assert PLAYBOOK_LEAD not in stripped
-    assert OPENING_PHASE_GUIDANCE not in stripped
-    assert "Context line" in stripped

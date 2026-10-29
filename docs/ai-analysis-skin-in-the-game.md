@@ -94,6 +94,16 @@ that fires today must still fire, with the same shape:
 - Tool searches publish `engine_info` (PV window, board arrow).
   play_out and test_aim search through the same path as `analyze`
   (search_cache + publish), so they light the UI the same way.
+  `engine_info` carries the searched FEN; the client draws the arrow,
+  moves the eval gauge and depth/score readout, and fills Search Lines
+  only when that FEN matches the position the board shows: the live
+  position, or the `analyze` preview (its `fen` arg; `startpos` maps to
+  the initial position). Match is on piece placement and side to move
+  only: python-chess may rewrite the castling and en-passant fields of
+  a model-written FEN. Off-board searches (play_out lines, test_aim,
+  the verifier's `analyze` past its preview) would otherwise paint
+  another position's move and eval on the live board. Infos with no
+  FEN (tournament feed) pass.
 - `ai_opening_links`: opening names in prose stay linked; related_openings
   stays called in opening turns.
 - Tool panel rows, verdict badges (delegate holds/refuted), struck
@@ -198,15 +208,23 @@ against the engine and is scored on the result.
    at verification depth. A reply counts only if sound: within the
    dominance margin (MIN) of the opponent's best reply, else the
    result says "unsound reply". Refuted = after a sound reply, the
-   aim is legal at none of the horizon's moves, or its best attempt
-   falls short of the PV's eval by more than SV_AI_PLAY_OUT_MARGIN
-   (the branch and the PV root search different depths at that node,
-   so MIN would be noise). Up to SV_AI_VERIFIER_MAX_REPLIES (default
-   3) replies per delegate, within VERIFIER_MAX_ROUNDS; one
-   refutation suffices; "holds" otherwise.
+   aim is legal at none of the full horizon's moves, or its best
+   attempt falls short of the PV's eval by more than
+   SV_AI_PLAY_OUT_MARGIN (the branch and the PV root search different
+   depths at that node, so MIN would be noise). A PV that ends before
+   the full horizon with the aim never legal is "untested", not
+   refuted: the missing moves say nothing about the aim. The verifier
+   tries another reply, and an untested result is not a tested reply.
+   A line whose search scores mate for the tested side is never
+   refuted, whatever the aim: the idea won outright. Read from the
+   line's mate score, not the walk (the walk stops at the mating
+   move). Up to SV_AI_VERIFIER_MAX_REPLIES (default 3)
+   replies per delegate, within VERIFIER_MAX_ROUNDS; one refutation
+   suffices; "holds" otherwise.
    The verdict gate's dominance confirmation is replaced: "refuted"
    stands only when a test_aim result in that sub-run refuted, and the
-   verdict cites that line in SAN. The verdict's board check exempts
+   verdict cites that line in SAN. A "holds" while a test_aim refuted
+   is withheld; the refuting line still reaches the narrator. The verdict's board check exempts
    moves inside that replayed line (8), or every cited line would be
    withheld as a board misstatement. The narrator must narrate the
    refutation and either justify the move from its play_out record or
@@ -217,7 +235,15 @@ against the engine and is scored on the result.
 8. Guardrails stay post-hoc (position check, tool leaks). Pre-emptive
    bans that discourage concreteness (pins only via tactics, every
    line via report_line) relax when the claim is inside a play_out
-   or test_aim line already replayed by the server.
+   or test_aim line already replayed by the server. The post-hoc
+   check honors the same exemption for both narrator prose and
+   verdicts: moves of the lines tools returned this run (play_out
+   steps, sound test_aims, a delegate's refutation) are blanked before
+   the board check (`_without_line_moves`), else the prompt promises a
+   pass the checker then strikes. Order matters: the check is cut at
+   the first future move number first, then blanked, so prose about a
+   line's end position is never checked against the live board. A move
+   in no returned line is still flagged.
 
 ## Open questions for review
 
@@ -232,6 +258,7 @@ against the engine and is scored on the result.
 - Does the score need teeth beyond rejection? e.g. a running record
   across turns ("2 of 3 ideas failed this game") fed back to the
   model. Cheap to add; unclear if it changes behavior.
-- Position check vs multi-position prose: narrating several lines
-  from one board will trip single-board flags. The judge handles
-  "other position" references today; verify it scales.
+- Position check vs multi-position prose: the line-move exemption (8)
+  covers moves; claims about squares and pieces after a line ("the d5
+  pawn is a target") still go through the judge's "other position"
+  path. Verify it scales.

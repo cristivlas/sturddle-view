@@ -153,6 +153,9 @@ const TOOL = Object.freeze({
   REPORT_LINE: "report_line",
   RELATED_OPENINGS: "related_openings",
   POSITION_JUDGE: "position_judge",
+  PLAY_OUT: "play_out",
+  TEST_AIM: "test_aim",
+  PLAN: "plan",
   // Progress steps of recommend_move's check, nested under its row: which
   // search the board arrow and Search Lines are showing right now.
   ENGINE_BEST: "engine_best",
@@ -403,6 +406,9 @@ const TOOL_FRIENDLY_LABELS = {
   [TOOL.REPORT_LINE]:    ["Checking line", "Reviewing the line", "Going over the idea", "Ascertaining"],
   [TOOL.RELATED_OPENINGS]: ["Comparing openings", "Cross-checking openings", "Matching openings"],
   [TOOL.POSITION_JUDGE]: ["Checking position claims", "Fact-checking the position", "Verifying the claims"],
+  [TOOL.PLAY_OUT]:       ["Playing out an idea", "Trying an idea", "Testing an idea"],
+  [TOOL.TEST_AIM]:       ["Testing the aim", "Probing the aim", "Attacking the aim"],
+  [TOOL.PLAN]:           ["Consulting the plan", "Recalling the strategy", "Reviewing the plan"],
 };
 
 // Tools whose label shows the actual move under consideration ("Considering
@@ -412,6 +418,7 @@ const MOVE_TOOL_VERBS = {
   [TOOL.RECOMMEND_MOVE]: ["Considering", "Weighing", "Contemplating", "Ratiocinating over", "Projecting"],
   [TOOL.VALIDATE_MOVE]:  ["Validating", "Probing", "Confirming", "Vetting"],
   [TOOL.DELEGATE]:       ["Verifying", "Double-checking", "Reviewing", "War-gaming"],
+  [TOOL.PLAY_OUT]:       ["Playing out", "Trying", "Testing"],
 };
 
 // The dominance check's two steps share one metaphor: the baseline search

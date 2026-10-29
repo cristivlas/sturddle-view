@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable
 
 import chess
 import chess.engine
 
+from ..chess.board import PLIES_PER_MOVE
 from ..chess.engine_info import serialize_info
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
 from ..chess.score import SCORE_MATE
@@ -38,7 +39,7 @@ from ..error_detail import REASON_KEY
 from ..events import EVT_ENGINE_SEARCH_START, Event, EventBus
 from ..llm import ToolSpec
 from ..llm.cancel import CancelToken
-from ..llm.tool_progress import report_progress
+from ..llm.tool_progress import report_progress, skip_progress
 from ..llm.tools import (
     INVALID_INPUT_ERROR,
     NO_LIVE_POSITION_ERROR,
@@ -55,7 +56,7 @@ from .engine_analysis import (
 )
 from .engine_info_pump import is_interesting_info, publish_engine_info, pump_engine_info
 from .engine_supervisor import EngineSupervisor
-from .playbook import AHEAD_MARGINS, BEHIND_MARGINS, Situation
+from .playbook import AHEAD_MARGINS, Situation
 from .tactics import all_forks, all_pins, piece_label
 
 
@@ -77,15 +78,31 @@ MAX_DEPTH = env_int("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_AI_ANALYZE_MAX_DEPTH)
 # (ai_verification_depth) override per call; env is the fallback.
 VERIFICATION_DEPTH = env_int("SV_AI_VERIFICATION_DEPTH", _DEFAULT_AI_VERIFICATION_DEPTH)
 
-# recommend_move dominance margin: the engine's best must beat the
-# candidate by strictly more than this many cp (STM POV) to reject. Plan-
-# aware: tight when the side to move is ahead (convert cleanly), wide when
-# behind (a practical try may score below the top line), the midpoint when
-# even or unclassified. Mate scores ignore it.
-_DEFAULT_RECOMMEND_MARGIN_MIN_CP = 20
-_DEFAULT_RECOMMEND_MARGIN_MAX_CP = 80
-RECOMMEND_MARGIN_MIN_CP = env_int("SV_AI_RECOMMEND_MARGIN_MIN", _DEFAULT_RECOMMEND_MARGIN_MIN_CP)
-RECOMMEND_MARGIN_MAX_CP = env_int("SV_AI_RECOMMEND_MARGIN_MAX", _DEFAULT_RECOMMEND_MARGIN_MAX_CP)
+# Dominance margin: the engine's best must beat a move by strictly more
+# than this many cp (STM POV) to reject it -- recommend_move's pick, and
+# test_aim's reply soundness. Mate scores ignore it.
+_DEFAULT_RECOMMEND_MARGIN_CP = 20
+RECOMMEND_MARGIN_CP = env_int("SV_AI_RECOMMEND_MARGIN", _DEFAULT_RECOMMEND_MARGIN_CP)
+
+# play_out: a step fails when the mover's eval drops by more than this
+# many cp across its move; test_aim: an aim fails when its best attempt
+# trails the line by more. Wider than the dominance margin: 20cp sits
+# inside depth-to-depth eval noise and would fail sound steps.
+_DEFAULT_PLAY_OUT_MARGIN_CP = 50
+PLAY_OUT_MARGIN_CP = env_int("SV_AI_PLAY_OUT_MARGIN", _DEFAULT_PLAY_OUT_MARGIN_CP)
+
+# test_aim: moves of the tested side read off the free line for the aim.
+_DEFAULT_AIM_HORIZON = 3
+AIM_HORIZON = env_int("SV_AI_AIM_HORIZON", _DEFAULT_AIM_HORIZON, min_value=1)
+
+# test_aim: replies one delegate may test.
+_DEFAULT_VERIFIER_MAX_REPLIES = 3
+VERIFIER_MAX_REPLIES = env_int(
+    "SV_AI_VERIFIER_MAX_REPLIES", _DEFAULT_VERIFIER_MAX_REPLIES, min_value=1,
+)
+
+# Centipawn stand-in for a mate score in eval-drop arithmetic.
+_MATE_SCORE_CP = 100_000
 
 # recommend_move rejection reason when the side ahead offers a repetition.
 _REPEAT_AHEAD_REASON = (
@@ -93,10 +110,11 @@ _REPEAT_AHEAD_REASON = (
     "draw. Submit a move that makes progress."
 )
 
-# Default search depth when the caller omits one. 20 plies gives reliable
-# tactical resolution; lower values surface noisy bestmoves. Model-supplied
-# depth is floored at MIN_DEPTH below.
-_DEFAULT_DEPTH = 20
+# Default search depth when the caller omits one (and play_out's). 20 plies
+# gives reliable tactical resolution; lower values surface noisy bestmoves.
+# Model-supplied depth is floored at MIN_DEPTH below.
+_DEFAULT_SEARCH_DEPTH = 20
+SEARCH_DEPTH = env_int("SV_AI_SEARCH_DEPTH", _DEFAULT_SEARCH_DEPTH, min_value=1)
 
 # Floor on model-supplied depth -- shallower searches rank candidates poorly.
 _DEFAULT_MIN_DEPTH = 10
@@ -110,7 +128,7 @@ TOP_MOVES_MAX_N = env_int("SV_AI_TOP_MOVES_MAX_N", _DEFAULT_TOP_MOVES_MAX_N)
 # Per-candidate default depth -- match analyze's default; with the
 # model-supplied list capped at TOP_MOVES_MAX_N, worst-case cost is
 # bounded and shallower defaults were producing weak candidate ranking.
-_DEFAULT_TOP_MOVES_DEPTH = _DEFAULT_DEPTH
+_DEFAULT_TOP_MOVES_DEPTH = SEARCH_DEPTH
 
 # MultiPV: analyze's optional `lines` arg and top_moves' one-search batch
 # only make sense from two lines up; fewer is a plain best-line search.
@@ -133,13 +151,12 @@ SettingsProvider = Callable[[], Any]
 MultipvMaxProvider = Callable[[], int | None]
 # The current AI turn's book move (UCI), or None when the turn has none.
 BookMoveProvider = Callable[[], str | None]
-# Live-position Situation (play/playbook.py) for the plan-aware gate.
+# Live-position Situation (play/playbook.py) for the repetition veto.
 SituationProvider = Callable[[], Situation | None]
+# True once the turn is out of rounds: recommend_move then takes the best
+# played-out move unconditionally.
+FallbackProvider = Callable[[], bool]
 AnalyzeTool = Callable[..., Awaitable[dict[str, Any]]]
-# Delegate's refutation check: True when the engine confirms the move is
-# dominated (recommend_move would reject it), False when it isn't, None
-# when the search failed or was cancelled.
-RefuteCheck = Callable[[chess.Move, CancelToken], Awaitable[bool | None]]
 
 
 def _settings(settings_provider: SettingsProvider | None):
@@ -212,6 +229,8 @@ PIECE_AT_TOOL_NAME = "piece_at"
 VALIDATE_MOVE_TOOL_NAME = "validate_move"
 RECOMMEND_MOVE_TOOL_NAME = "recommend_move"
 REPORT_LINE_TOOL_NAME = "report_line"
+PLAY_OUT_TOOL_NAME = "play_out"
+TEST_AIM_TOOL_NAME = "test_aim"
 
 # Progress steps of the dominance check (see tool_progress): the baseline
 # search of the engine's own best, then the candidate's. Panel labels key on
@@ -223,12 +242,17 @@ PROGRESS_SEARCH_MOVE = "search_move"
 # (analyze, material). One source so the startpos affordance stays in sync.
 _FEN_ARG_DESCRIPTION = "FEN string, or 'startpos' for the initial position."
 
+# A move number with its dots ('5.', '5...') or a bare continuation ('...').
+# Public: the delegate's verdict check reads cited lines with it too.
+MOVE_NUMBER_PATTERN = r"(?:\d+\.(?:\.\.)?|\.\.\.)"
+
 # Tool argument and result keys. depth / pv / nodes / score double as
 # python-chess InfoDict keys; the results mirror the engine's names.
-# fen / move are public: `delegate` (ai_analysis) shares them.
+# fen / move / aim are public: `delegate` (ai_analysis) shares them.
 FEN_KEY = "fen"
 _FROM_FEN_KEY = "from_fen"
 MOVE_KEY = "move"
+AIM_KEY = "aim"
 _MOVES_KEY = "moves"
 _SQUARE_KEY = "square"
 _DEPTH_KEY = "depth"
@@ -248,12 +272,24 @@ _PIECE_KEY = "piece"
 _PLY_KEY = "ply"
 _BY_KEY = "by"
 _SCORE_TEXT_KEY = "score_text"
-_ENGINE_BEST_SAN_KEY = "engine_best_san"
+_NOTE_KEY = "note"
+# Public: the loop keys play_out's one-step-per-idea round rule on it.
+PLAY_OUT_IDEA_KEY = "idea"
+_REPLY_KEY = "reply"
+_FAILED_KEY = "failed"
+_EVAL_BEFORE_KEY = "eval_before"
+_EVAL_AFTER_KEY = "eval_after"
+_DROP_KEY = "drop_cp"
 # top_moves ranks on this, then pops it before returning.
 _SORT_KEY = "_sort_key"
-# top_moves result keys; public so the verifier gate can read the ranking.
-CANDIDATES_KEY = "candidates"
+_CANDIDATES_KEY = "candidates"
+# Public: delegate echoes move_uci; the verifier gate reads test_aim's
+# line and refuted flag.
 MOVE_UCI_KEY = "move_uci"
+LINE_KEY = "line"
+REFUTED_KEY = "refuted"
+SOUND_KEY = "sound"
+UNTESTED_KEY = "untested"
 
 # Error codes and details repeated across the tools. The move-parse codes
 # and the empty-move detail are public: `delegate` (ai_analysis) shares them.
@@ -276,7 +312,7 @@ TOP_MOVES_TOOL_SPEC = ToolSpec(
         "2-5 moves; each is searched and returned sorted "
         f"best-first for the side to move (capped at {TOP_MOVES_MAX_N}). "
         "Fields per entry: move_uci, move_san, score_cp, score_text, "
-        "score_pawns, mate, depth, pv (eval fields are white-POV). "
+        "score_pawns, mate, depth (eval fields are white-POV). "
         "Illegal candidates come back as per-entry errors."
     ),
     input_schema=object_schema(
@@ -824,7 +860,7 @@ def make_analyze_tool(
             return err
 
         limit, limits_used = _depth_limit(
-            input_, _DEFAULT_DEPTH, _max_depth(settings_provider)
+            input_, SEARCH_DEPTH, _max_depth(settings_provider)
         )
 
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
@@ -965,10 +1001,14 @@ async def _publish_search_start(bus: EventBus, game_id: str) -> None:
 
 
 def _candidate_entry(board: chess.Board, move: chess.Move, info: chess.engine.InfoDict) -> dict:
-    """top_moves' result for one candidate, plus the private sort key."""
+    """top_moves' result for one candidate, plus the private sort key. No
+    pv: the model would copy the engine's continuation instead of playing
+    its own (engine_info still carries it to the UI)."""
+    fields = _eval_fields(board, info)
+    fields.pop(_PV_KEY, None)
     return {
         MOVE_UCI_KEY: move.uci(), "move_san": board.san(move),
-        **_eval_fields(board, info),
+        **fields,
         _SORT_KEY: _stm_pov_sort_key(info.get(_SCORE_KEY), board.turn),
     }
 
@@ -1073,7 +1113,7 @@ def make_top_moves_tool(
         out: dict = {
             "side_to_move": SIDE_WHITE if stm_is_white else SIDE_BLACK,
             _LIMITS_USED_KEY: limits_used,
-            CANDIDATES_KEY: entries,
+            _CANDIDATES_KEY: entries,
         }
         if errors:
             out["errors"] = errors
@@ -1276,26 +1316,27 @@ def make_report_line_tool(board_provider: BoardProvider) -> AnalyzeTool:
 
 
 # Declarative (see _DELEGATE_TOOL_CARD): the move goes via the tool, not
-# prose, and a one-to-two sentence conclusion follows the accepted call.
+# prose, and the analysis follows the accepted call.
 _RECOMMEND_MOVE_CARD = (
-    "The move goes through this tool, not in prose. It is checked against "
-    "the strongest move at the requested depth; if a meaningfully stronger "
-    "move exists, the result names it -- submit that move next, do not hunt "
-    "for others. An illegal move comes back with `legal_moves` for that "
-    "piece -- pick one of those, never guess another. Once the call is "
-    "accepted, a one-to-two sentence conclusion follows it, naming the plan "
-    "the move reflects."
+    "The move goes through this tool, not in prose, and only a move you "
+    "played out with `play_out` is taken (a book reply excepted). It is "
+    "checked against the strongest move at the requested depth; when a "
+    "meaningfully stronger move exists the result says so without naming "
+    "it -- find it by playing out another idea. An illegal move comes back with "
+    "`legal_moves` for that piece -- pick one of those, never guess "
+    "another. Once the call is accepted, the analysis follows it: each "
+    "idea played with its line, then the move submitted."
 )
 
 
 RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
     name=RECOMMEND_MOVE_TOOL_NAME,
     description=(
-        "Submit your final move at end-of-turn. Validates legality and "
-        "checks it against the strongest move at the requested depth. "
-        "Returns post-move FEN on acceptance, or "
-        "error=recommendation_rejected with a `reason` naming the stronger "
-        "move when one is meaningfully better."
+        "Submit your final move at end-of-turn: one you played out. "
+        "Validates legality and checks it against the strongest move at "
+        "the requested depth. Returns post-move FEN on acceptance, or "
+        "error=recommendation_rejected with a `reason` when the move was "
+        "not played out or a meaningfully stronger move exists."
     ),
     input_schema=object_schema(
         {
@@ -1312,15 +1353,23 @@ RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
 )
 
 
-def recommend_margin_cp(situation: Situation | None) -> int:
-    """Dominance margin for the side to move: MIN ahead, MAX behind, the
-    midpoint when even or unclassified."""
-    if situation is not None:
-        if situation.margin in AHEAD_MARGINS:
-            return RECOMMEND_MARGIN_MIN_CP
-        if situation.margin in BEHIND_MARGINS:
-            return RECOMMEND_MARGIN_MAX_CP
-    return (RECOMMEND_MARGIN_MIN_CP + RECOMMEND_MARGIN_MAX_CP) // 2
+# recommend_move rejections name the rule, never the engine's move: the
+# model keeps hunting with its own ideas.
+_NOT_PLAYED_OUT_REASON = (
+    "Only a move you played out can be submitted: play it out with "
+    "`play_out` first."
+)
+_STRONGER_EXISTS_REASON = (
+    "A stronger move exists. Play out another idea to find it, then submit "
+    "that move."
+)
+# Fallback notes on an accept (the turn is out of rounds).
+_REPLACED_NOTE = (
+    "{orig} was not played out; {san}, the best move you played out, is "
+    "recorded."
+)
+_WEAKER_NOTE = "A stronger move exists; present {san} as the practical choice."
+_WEAKER_THAN_BEST_KEY = "weaker_than_best"
 
 
 def _better_for_stm(
@@ -1359,14 +1408,16 @@ async def _dominance_searches(
     game_id: str,
     cancel_token: CancelToken,
     settings_provider: SettingsProvider | None,
+    progress: bool = True,
 ) -> tuple[dict, dict] | None:
     """(best_info, cand_info): the engine's free best on `board`, then the
     search restricted to `move` (skipped when `move` IS the free best -- the
     baseline then stands in for it). None when cancelled before both finish.
-    Raises _SearchError. Each search is reported as a progress step first,
-    so the panel names the search the board is showing, and finished with
-    its result once it lands."""
-    finish = await report_progress(PROGRESS_ENGINE_BEST, {_DEPTH_KEY: limit.depth})
+    Raises _SearchError. With `progress`, each search is reported as a
+    progress step first, so the panel names the search the board is showing,
+    and finished with its result once it lands."""
+    report = report_progress if progress else skip_progress
+    finish = await report(PROGRESS_ENGINE_BEST, {_DEPTH_KEY: limit.depth})
     best_info, _ = await cache.get_or_search(
         engine_launcher, board.copy(stack=False), limit,
         bus=bus, game_id=game_id, cancel_token=cancel_token,
@@ -1379,7 +1430,7 @@ async def _dominance_searches(
     # _is_dominated never rejects it -- a restricted repeat adds nothing.
     if _best_move(best_info) == move:
         return best_info, best_info
-    finish = await report_progress(
+    finish = await report(
         PROGRESS_SEARCH_MOVE, {MOVE_KEY: board.san(move), _DEPTH_KEY: limit.depth},
     )
     cand_info, _ = await cache.get_or_search(
@@ -1436,6 +1487,84 @@ def _is_dominated(
     return _better_for_stm(cand_score, best_info.get(_SCORE_KEY), turn, margin_cp)
 
 
+def _mover_cp(score: chess.engine.PovScore | None, mover: chess.Color) -> int | None:
+    """`score` in `mover`'s centipawns, a mate counting _MATE_SCORE_CP;
+    None when scoreless."""
+    if score is None:
+        return None
+    return score.pov(mover).score(mate_score=_MATE_SCORE_CP)
+
+
+def _numbered_san(board: chess.Board, moves: list[chess.Move]) -> str:
+    """`moves` from `board` in SAN with move numbers, prompt style:
+    '5.Bb5 Nge7 6.exd5', '5...Nge7 6.exd5'."""
+    if not moves:
+        return ""
+    return _NUMBER_GAP_RE.sub(r"\1", board.variation_san(moves))
+
+
+# python-chess writes '5. Bb5' / '5... Nge7'; the prompt notation is '5.Bb5'.
+_NUMBER_GAP_RE = re.compile(rf"({MOVE_NUMBER_PATTERN}) ")
+
+
+@dataclass(slots=True)
+class _IdeaLine:
+    """One idea's kept line: its current position, and the moves (both
+    sides) that reached it from the live position."""
+    board: chess.Board
+    moves: list[chess.Move] = field(default_factory=list)
+
+
+def idea_key(idea: str) -> str:
+    """An idea label's identity: case- and whitespace-insensitive."""
+    return " ".join(idea.lower().split())
+
+
+class PlayOutRecord:
+    """Per-turn record of the narrator's `play_out` calls: one line per idea,
+    and every first move tried with the mover's eval after it. recommend_move
+    takes only a played-out move; the coordinator clears the record at turn
+    start (the live position is stable within a turn, not across)."""
+
+    def __init__(self) -> None:
+        self._lines: dict[str, _IdeaLine] = {}
+        # First move -> the best eval after it (mover cp; None = scoreless).
+        self._first_moves: dict[chess.Move, int | None] = {}
+
+    def clear(self) -> None:
+        self._lines = {}
+        self._first_moves = {}
+
+    def line(self, idea: str, live: chess.Board) -> _IdeaLine:
+        """The idea's kept line, or a fresh one at the live position."""
+        kept = self._lines.get(idea_key(idea))
+        return kept if kept is not None else _IdeaLine(live.copy())
+
+    def keep(self, idea: str, line: _IdeaLine) -> None:
+        self._lines[idea_key(idea)] = line
+
+    def note_first_move(self, move: chess.Move, mover_cp: int | None) -> None:
+        if move not in self._first_moves or _rank(mover_cp) > _rank(self._first_moves[move]):
+            self._first_moves[move] = mover_cp
+
+    def played_out(self, move: chess.Move) -> bool:
+        return move in self._first_moves
+
+    def any_played_out(self) -> bool:
+        return bool(self._first_moves)
+
+    def best_first_move(self) -> chess.Move | None:
+        """The played-out first move with the best eval after its first step."""
+        if not self._first_moves:
+            return None
+        return max(self._first_moves, key=lambda m: _rank(self._first_moves[m]))
+
+
+def _rank(cp: int | None) -> int:
+    # Scoreless sorts below every scored eval, a mate against included.
+    return cp if cp is not None else -_MATE_SCORE_CP - 1
+
+
 def make_recommend_move_tool(
     engine_launcher: EngineLauncher,
     bus: EventBus,
@@ -1445,20 +1574,40 @@ def make_recommend_move_tool(
     search_cache: SearchCache | None = None,
     book_move_provider: BookMoveProvider | None = None,
     situation_provider: SituationProvider | None = None,
+    play_out_record: PlayOutRecord | None = None,
+    fallback_provider: FallbackProvider | None = None,
 ) -> AnalyzeTool:
-    """Build the `recommend_move` async tool. Parses UCI/SAN, then runs
-    two engine searches (candidate-restricted + free) at the requested
-    depth on the live position; if the engine's bestmove scores better
-    for the side to move by more than the plan-aware margin
-    (`recommend_margin_cp` of the `situation_provider`'s Situation),
-    returns a structured error so the model can pivot. A side ahead
-    that submits a repeating move is rejected before any search. On
-    acceptance returns `{ok, uci, san, post_move_fen, candidate_score,
-    engine_best_move, engine_best_score, depth}`.
-    The turn's book move (`book_move_provider`) is accepted as-is, no
-    search: `{ok, uci, san, post_move_fen, book: True}`.
+    """Build the `recommend_move` async tool. Parses UCI/SAN. The turn's
+    book move (`book_move_provider`) is accepted as-is, no search: `{ok,
+    uci, san, post_move_fen, book: True}`. Any other move must have been
+    played out (`play_out_record`; None skips the rule), and a side ahead
+    that submits a repeating move is rejected before any search. Then two
+    engine searches (free + candidate-restricted) at the requested depth;
+    if the engine's best scores better for the side to move by more than
+    RECOMMEND_MARGIN_CP, a rejection that never names it. On acceptance
+    returns `{ok, uci, san, post_move_fen, candidate_score,
+    engine_best_score, depth}`.
+
+    Fallback (`fallback_provider()` true: the turn is out of rounds): a
+    move not played out is replaced by the best one played out, the
+    repetition veto is off, and a dominated move is accepted, flagged
+    `weaker_than_best`. Any change is explained under `note`.
     `search_cache`: see make_analyze_tool."""
     cache = search_cache or SearchCache()
+
+    def accepted(board: chess.Board, move: chess.Move, **fields) -> dict:
+        scratch = board.copy(stack=False)
+        scratch.push(move)
+        return {
+            _OK_KEY: True, _UCI_KEY: move.uci(), _SAN_KEY: board.san(move),
+            _POST_MOVE_FEN_KEY: scratch.fen(), **fields,
+        }
+
+    def rejected(board: chess.Board, move: chess.Move, reason: str, **fields) -> dict:
+        return {
+            **tool_error(_RECOMMENDATION_REJECTED), REASON_KEY: reason,
+            _UCI_KEY: move.uci(), _SAN_KEY: board.san(move), **fields,
+        }
 
     async def recommend_move(input_: dict, *, cancel_token: CancelToken) -> dict:
         board = board_provider()
@@ -1477,29 +1626,28 @@ def make_recommend_move_tool(
                 if piece_type is not None:
                     err["legal_moves"] = _legal_moves_for_piece(board, piece_type)
             return err
-        san = board.san(parsed)
-        uci = parsed.uci()
-        scratch = board.copy(stack=False)
-        scratch.push(parsed)
         # Theory needs no dominance check: the book move ships unsearched.
-        if book_move_provider is not None and uci == book_move_provider():
-            return {
-                _OK_KEY: True, _UCI_KEY: uci, _SAN_KEY: san,
-                _POST_MOVE_FEN_KEY: scratch.fen(), "book": True,
-            }
+        if book_move_provider is not None and parsed.uci() == book_move_provider():
+            return accepted(board, parsed, book=True)
+
+        fallback = fallback_provider is not None and fallback_provider()
+        notes: list[str] = []
+        if play_out_record is not None and not play_out_record.played_out(parsed):
+            best = play_out_record.best_first_move() if fallback else None
+            if best is None:
+                return rejected(board, parsed, _NOT_PLAYED_OUT_REASON)
+            notes.append(_REPLACED_NOTE.format(orig=board.san(parsed), san=board.san(best)))
+            parsed = best
+        san = board.san(parsed)
 
         situation = situation_provider() if situation_provider is not None else None
         if (
-            situation is not None
+            not fallback
+            and situation is not None
             and situation.margin in AHEAD_MARGINS
             and san in situation.repeats
         ):
-            return {
-                **tool_error(_RECOMMENDATION_REJECTED),
-                REASON_KEY: _REPEAT_AHEAD_REASON.format(san=san),
-                _UCI_KEY: uci, _SAN_KEY: san,
-            }
-        margin_cp = recommend_margin_cp(situation)
+            return rejected(board, parsed, _REPEAT_AHEAD_REASON.format(san=san))
 
         # Floor recommend_move's two searches at the verification depth so
         # the dominance check can't confirm a move at a shallow depth the
@@ -1508,9 +1656,9 @@ def make_recommend_move_tool(
         floor = min(_verification_depth(settings_provider), max_depth)
         raw_depth = input_.get(_DEPTH_KEY)
         try:
-            depth = min(int(raw_depth), max_depth) if raw_depth is not None else _DEFAULT_DEPTH
+            depth = min(int(raw_depth), max_depth) if raw_depth is not None else SEARCH_DEPTH
         except (TypeError, ValueError):
-            depth = _DEFAULT_DEPTH
+            depth = SEARCH_DEPTH
         depth = max(depth, floor)
         limit = chess.engine.Limit(depth=depth)
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
@@ -1525,80 +1673,450 @@ def make_recommend_move_tool(
             return tool_error(err.kind, err.detail)
         if searched is None:
             # Accept as-is; we couldn't finish verification.
-            return {
-                _OK_KEY: True, _UCI_KEY: uci, _SAN_KEY: san,
-                _POST_MOVE_FEN_KEY: scratch.fen(), _CANCELLED_KEY: True,
-            }
+            return accepted(board, parsed, **{_CANCELLED_KEY: True})
         best_info, cand_info = searched
-        best_score = best_info.get(_SCORE_KEY)
-        cand_score = cand_info.get(_SCORE_KEY)
-        best_move = _best_move(best_info)
-
+        # The engine's best move stays out of the result (its score doesn't):
+        # naming it would hand the model the answer instead of a search.
         result_common: dict = {
-            _UCI_KEY: uci,
-            _SAN_KEY: san,
             _DEPTH_KEY: depth,
-            "candidate_score": _score_to_cp(cand_score),
-            "engine_best_score": _score_to_cp(best_score),
+            "candidate_score": _score_to_cp(cand_info.get(_SCORE_KEY)),
+            "engine_best_score": _score_to_cp(best_info.get(_SCORE_KEY)),
         }
-        if best_move is not None:
-            result_common["engine_best_move"] = best_move.uci()
-            result_common[_ENGINE_BEST_SAN_KEY] = board.san(best_move)
-
-        if _is_dominated(parsed, best_info, cand_info, board.turn, margin_cp):
-            best_san = result_common.get(_ENGINE_BEST_SAN_KEY) or "a stronger move"
-            return {
-                **tool_error(_RECOMMENDATION_REJECTED),
-                REASON_KEY: (
-                    f"A stronger move is available: {best_san}. Submit "
-                    f"{best_san} unless you can show it is worse."
-                ),
-                **result_common,
-            }
-
-        return {_OK_KEY: True, _POST_MOVE_FEN_KEY: scratch.fen(), **result_common}
+        if _is_dominated(parsed, best_info, cand_info, board.turn, RECOMMEND_MARGIN_CP):
+            if not fallback:
+                return rejected(board, parsed, _STRONGER_EXISTS_REASON, **result_common)
+            result_common[_WEAKER_THAN_BEST_KEY] = True
+            notes.append(_WEAKER_NOTE.format(san=san))
+        if notes:
+            result_common[_NOTE_KEY] = " ".join(notes)
+        return accepted(board, parsed, **result_common)
 
     return recommend_move
 
 
-def make_refute_check(
+_PLAY_OUT_CARD = (
+    "One move per call, yours: the opponent's best reply comes back with "
+    "the line so far. Read the reply before choosing the next move; stop "
+    "an idea by not calling it again. A failed move is not kept -- the "
+    "line stays where it was, so the next call with that idea tries "
+    "another move. Steps of different ideas may go out together as parallel "
+    "calls, one step per idea. Every move of a returned line may be named "
+    "in prose without `report_line`."
+)
+
+
+PLAY_OUT_TOOL_SPEC = ToolSpec(
+    name=PLAY_OUT_TOOL_NAME,
+    description=(
+        "Play an idea out against the opponent, one move at a time. Pass "
+        "the idea (a short label: its first move and aim, e.g. 'Bb5, aim "
+        "d4') and your next move in it; the first call with a new idea "
+        "starts from the live position. The opponent answers with its "
+        "best reply. Returns the reply, the idea's line in SAN, its FEN, "
+        "the eval before and after your move (white-POV), and drop_cp: how "
+        "much your move cost you, from your side (negative: it gained). A "
+        f"move that drops your eval by more than {PLAY_OUT_MARGIN_CP}cp "
+        "fails (failed=true) and is not kept."
+    ),
+    input_schema=object_schema(
+        {
+            PLAY_OUT_IDEA_KEY: string_prop(
+                "The idea's label; the same label continues its line."
+            ),
+            MOVE_KEY: string_prop(
+                "Your next move in the idea, UCI or SAN." + _MOVE_NOTATION_CONSTRAINT
+            ),
+        },
+        required=[PLAY_OUT_IDEA_KEY, MOVE_KEY],
+    ),
+    card=_PLAY_OUT_CARD,
+)
+
+
+_IDEA_EMPTY_DETAIL = "idea must be a non-empty string"
+_LINE_OVER_ERROR = "line_over"
+_LINE_OVER_DETAIL = "this idea's line has ended the game; play out another idea"
+_STEP_FAILED_REASON = (
+    "{san} drops the eval and is not kept; the line stays where it was. "
+    "Replace {san} or drop the idea."
+)
+# A finished game's mate, which _score_to_cp would render as mate 0.
+_CHECKMATE_TEXT = "checkmate"
+
+
+def _outcome_score(outcome: chess.Outcome) -> chess.engine.PovScore:
+    """A finished game's settled score: mate given by the winner, else even."""
+    if outcome.winner is None:
+        return chess.engine.PovScore(chess.engine.Cp(0), chess.WHITE)
+    return chess.engine.PovScore(chess.engine.MateGiven, outcome.winner)
+
+
+def _step_eval(score: chess.engine.PovScore | None) -> dict:
+    """play_out's eval fields: _score_to_cp, a delivered mate shown as such."""
+    if score is not None and score.white().mate() == 0:
+        return {_SCORE_TEXT_KEY: _CHECKMATE_TEXT}
+    return _score_to_cp(score)
+
+
+async def _position_search(
+    cache: SearchCache,
+    engine_launcher: EngineLauncher,
+    board: chess.Board,
+    limit: chess.engine.Limit,
+    **search_kw,
+) -> tuple[chess.engine.InfoDict, bool]:
+    """cache.get_or_search of `board`; a finished game needs no engine and
+    returns its settled score with no pv."""
+    outcome = board.outcome()
+    if outcome is not None:
+        return {_SCORE_KEY: _outcome_score(outcome)}, False
+    return await cache.get_or_search(
+        engine_launcher, board.copy(stack=False), limit, **search_kw,
+    )
+
+
+def make_play_out_tool(
     engine_launcher: EngineLauncher,
     bus: EventBus,
     board_provider: BoardProvider,
+    record: PlayOutRecord,
     game_id_provider: GameIdProvider | None = None,
     settings_provider: SettingsProvider | None = None,
     search_cache: SearchCache | None = None,
-    situation_provider: SituationProvider | None = None,
-) -> RefuteCheck:
-    """Build the delegate's refutation check: the same dominance test
-    recommend_move applies (plan-aware margin, verification-depth search),
-    so a "refuted" verdict stands only when the final gate would reject the
-    move too. `search_cache`: see make_analyze_tool."""
+) -> AnalyzeTool:
+    """Build the `play_out` async tool: one step of an idea per call. The
+    eval before is a search of the line's position; the search after the
+    model's move gives the eval after and, as its pv[0], the opponent's
+    reply -- two searches per step, one per ply, the post-reply search
+    running as the next step's eval before (and only if that step comes).
+    The engine's best for the model's own side is never returned. A step
+    whose drop (mover POV) exceeds PLAY_OUT_MARGIN_CP is not kept. Every
+    first move tried lands in `record` with its eval after. `search_cache`: see make_analyze_tool."""
     cache = search_cache or SearchCache()
 
-    async def refute_check(move: chess.Move, cancel_token: CancelToken) -> bool | None:
+    async def play_out(input_: dict, *, cancel_token: CancelToken) -> dict:
         board = board_provider()
-        if board is None or move not in board.legal_moves:
-            return None
-        situation = situation_provider() if situation_provider is not None else None
-        depth = min(_verification_depth(settings_provider), _max_depth(settings_provider))
+        if board is None:
+            return tool_error(NO_LIVE_POSITION_ERROR)
+        idea = input_.get(PLAY_OUT_IDEA_KEY)
+        if not isinstance(idea, str) or not idea.strip():
+            return tool_error(INVALID_INPUT_ERROR, _IDEA_EMPTY_DETAIL)
+        raw = input_.get(MOVE_KEY)
+        if not isinstance(raw, str) or not raw.strip():
+            return tool_error(INVALID_INPUT_ERROR, MOVE_EMPTY_DETAIL)
+        line = record.line(idea, board)
+        if line.board.is_game_over():
+            return tool_error(_LINE_OVER_ERROR, _LINE_OVER_DETAIL)
+        move, kind, detail = parse_move_reporting(line.board, raw)
+        if move is None:
+            return {**tool_error(kind, detail), FEN_KEY: line.board.fen()}
+        mover = line.board.turn
+        after = line.board.copy()
+        after.push(move)
+
+        limit = chess.engine.Limit(depth=min(SEARCH_DEPTH, _max_depth(settings_provider)))
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
+        await _publish_search_start(bus, game_id)
+        search_kw = dict(
+            bus=bus, game_id=game_id, cancel_token=cancel_token,
+            settings_provider=settings_provider,
+        )
+        try:
+            before_info, cancelled = await _position_search(
+                cache, engine_launcher, line.board, limit, **search_kw,
+            )
+            if not cancelled:
+                after_info, cancelled = await _position_search(
+                    cache, engine_launcher, after, limit, **search_kw,
+                )
+        except _SearchError as err:
+            return tool_error(err.kind, err.detail)
+        if cancelled:
+            return {_CANCELLED_KEY: True}
+
+        before = before_info.get(_SCORE_KEY)
+        after_score = after_info.get(_SCORE_KEY)
+        after_cp = _mover_cp(after_score, mover)
+        if not line.moves:
+            record.note_first_move(move, after_cp)
+        reply = _best_move(after_info)
+        if reply is not None and reply not in after.legal_moves:
+            reply = None
+        step = [move] if reply is None else [move, reply]
+        out: dict = {
+            PLAY_OUT_IDEA_KEY: idea.strip(),
+            MOVE_KEY: line.board.san(move),
+            _REPLY_KEY: after.san(reply) if reply is not None else None,
+            LINE_KEY: _numbered_san(board, line.moves + step),
+            _EVAL_BEFORE_KEY: _step_eval(before),
+            _EVAL_AFTER_KEY: _step_eval(after_score),
+        }
+        before_cp = _mover_cp(before, mover)
+        drop = before_cp - after_cp if before_cp is not None and after_cp is not None else None
+        if drop is not None:
+            out[_DROP_KEY] = drop
+        if drop is not None and drop > PLAY_OUT_MARGIN_CP:
+            out[_FAILED_KEY] = True
+            out[REASON_KEY] = _STEP_FAILED_REASON.format(san=out[MOVE_KEY])
+            out[FEN_KEY] = line.board.fen()
+            return out
+        if reply is not None:
+            after.push(reply)
+        record.keep(idea, _IdeaLine(after, line.moves + step))
+        out[FEN_KEY] = after.fen()
+        return out
+
+    return play_out
+
+
+@dataclass(slots=True)
+class AimTest:
+    """What one delegate red-teams: the move under test (legal in the live
+    position), the aim it works toward (SAN/UCI, legal later if at all), and
+    how many replies test_aim has tried against it."""
+    move: chess.Move
+    aim: str
+    replies: int = 0
+
+
+# The in-flight delegate's AimTest, or None outside one.
+AimProvider = Callable[[], AimTest | None]
+
+# Move-number / continuation prefix on an aim ('7.d4', '7...d5', '...d5').
+_MOVE_NUMBER_PREFIX_RE = re.compile(rf"^\s*{MOVE_NUMBER_PATTERN}?\s*")
+_UCI_MOVE_RE = re.compile(r"[a-h][1-8][a-h][1-8][qrbn]?")
+# chess.SAN_REGEX leaves castling out (parse_san special-cases it).
+_CASTLING_RE = re.compile(r"(?:O-O(?:-O)?|0-0(?:-0)?)[+#]?")
+
+
+def normalize_aim(raw: str) -> str | None:
+    """`raw` as one bare SAN/UCI move ('7.d4' -> 'd4'), or None when it
+    isn't shaped like a move. Shape only: an aim is legal later, not now."""
+    aim = _MOVE_NUMBER_PREFIX_RE.sub("", raw).strip()
+    if any(r.fullmatch(aim) for r in (_UCI_MOVE_RE, _CASTLING_RE)) or chess.SAN_REGEX.match(aim):
+        return aim
+    return None
+
+
+_TEST_AIM_CARD = (
+    "One reply per call; a reply that scores more than "
+    f"{RECOMMEND_MARGIN_CP}cp below the opponent's best comes back unsound "
+    "and tests nothing. refuted=true: after this reply the aim "
+    "never becomes playable along the line, or forcing it falls short of "
+    "the line -- one refutation settles the verdict. untested=true: the "
+    "line ended too soon to judge the aim; try another reply. A line that "
+    "mates for the side that played the move holds. Cite `line` in SAN."
+)
+
+
+TEST_AIM_TOOL_SPEC = ToolSpec(
+    name=TEST_AIM_TOOL_NAME,
+    description=(
+        "Test an opponent reply against the move under test and its aim. "
+        "The move and the reply are played and the engine continues the "
+        f"line; at each of the next {AIM_HORIZON} moves of the side that "
+        "played the move where the aim is legal, the aim is forced and "
+        "scored against the line. Returns `sound` (the reply is near the "
+        "opponent's best), the `line` in SAN, and `refuted`. Up to "
+        f"{VERIFIER_MAX_REPLIES} replies per move under test."
+    ),
+    input_schema=object_schema(
+        {
+            _REPLY_KEY: string_prop(
+                "The opponent's reply to the move under test, UCI or SAN."
+                + _MOVE_NOTATION_CONSTRAINT
+            ),
+        },
+        required=[_REPLY_KEY],
+    ),
+    card=_TEST_AIM_CARD,
+)
+
+
+_NO_AIM_ERROR = "no_move_under_test"
+_REPLIES_SPENT_ERROR = "replies_spent"
+_REPLIES_SPENT_DETAIL = (
+    f"{VERIFIER_MAX_REPLIES} replies tested; give the verdict now"
+)
+_REPLY_EMPTY_DETAIL = "reply must be a non-empty string"
+_UNSOUND_REASON = (
+    "unsound reply: the opponent has a stronger one; test that instead."
+)
+_AIM_NEVER_LEGAL_REASON = "{aim} never becomes playable along the line."
+_AIM_FALLS_SHORT_REASON = "forcing {aim} falls short of the line."
+_LINE_MATES_REASON = "the line mates: the idea wins outright, whatever the aim."
+_AIM_UNTESTED_REASON = (
+    "untested: the line ends before the aim could become playable; try "
+    "another reply."
+)
+_AIM_AT_KEY = "aim_at"
+
+
+@dataclass(slots=True)
+class _AimWalk:
+    """What _aim_attempts saw along the free line."""
+    walked: list[chess.Move] = field(default_factory=list)
+    # The aim was legal at some tested-side move.
+    legal: bool = False
+    # Best forced attempt: (mover cp, the aim in numbered SAN).
+    best: tuple[int, str] | None = None
+    # Every AIM_HORIZON move was read, or the game ended on the line: the
+    # line had its say. False when it stopped short.
+    complete: bool = False
+    cancelled: bool = False
+
+
+async def _aim_attempts(
+    cache: SearchCache,
+    engine_launcher: EngineLauncher,
+    node: chess.Board,
+    free_line: list[chess.Move],
+    aim: str,
+    limit: chess.engine.Limit,
+    **search_kw,
+) -> _AimWalk:
+    """Walk `free_line` from `node` (the tested side to move) over up to
+    AIM_HORIZON of that side's moves; at each where `aim` is legal, search
+    it forced and keep the best attempt."""
+    mover = node.turn
+    node = node.copy()
+    walk = _AimWalk()
+    for own_move in range(AIM_HORIZON):
+        if node.is_game_over():
+            walk.complete = True
+            return walk
+        aim_move = parse_move_canonical(node, aim)
+        if aim_move is not None:
+            walk.legal = True
+            info, cancelled = await cache.get_or_search(
+                engine_launcher, node.copy(stack=False), limit,
+                root_moves=[aim_move], **search_kw,
+            )
+            if cancelled:
+                walk.cancelled = True
+                return walk
+            cp = _mover_cp(info.get(_SCORE_KEY), mover)
+            if cp is not None and (walk.best is None or cp > walk.best[0]):
+                walk.best = (cp, _numbered_san(node, [aim_move]))
+        if own_move == AIM_HORIZON - 1:
+            walk.complete = True
+            return walk
+        pair = free_line[len(walk.walked):len(walk.walked) + PLIES_PER_MOVE]
+        if len(pair) < PLIES_PER_MOVE:
+            return walk
+        for move in pair:
+            if move not in node.legal_moves:
+                return walk
+            node.push(move)
+            walk.walked.append(move)
+    return walk
+
+
+def make_test_aim_tool(
+    engine_launcher: EngineLauncher,
+    bus: EventBus,
+    board_provider: BoardProvider,
+    aim_provider: AimProvider,
+    game_id_provider: GameIdProvider | None = None,
+    settings_provider: SettingsProvider | None = None,
+    search_cache: SearchCache | None = None,
+) -> AnalyzeTool:
+    """Build the verifier's `test_aim` async tool for the in-flight
+    delegate's AimTest (`aim_provider`). Plays the move under test and the
+    reply; the reply is sound when within RECOMMEND_MARGIN_CP of the
+    opponent's best (one search, cached across replies, plus the reply's
+    own). The reply's search pv past the reply is the free line; the aim
+    is forced at each of the tested side's moves on it (see _aim_attempts)
+    and its best attempt scored against the line's eval. Refuted: the aim
+    is legal nowhere on the full horizon, or its best attempt trails by
+    more than PLAY_OUT_MARGIN_CP (the branch and the line root search
+    different depths at that node, so the tighter margin would be noise).
+    Untested: the line ends short with the aim never legal. A line on
+    which the tested side mates holds, whatever the aim. All at
+    verification depth. `search_cache`: see make_analyze_tool."""
+    cache = search_cache or SearchCache()
+
+    async def test_aim(input_: dict, *, cancel_token: CancelToken) -> dict:
+        board = board_provider()
+        if board is None:
+            return tool_error(NO_LIVE_POSITION_ERROR)
+        test = aim_provider()
+        if test is None or test.move not in board.legal_moves:
+            return tool_error(_NO_AIM_ERROR)
+        raw = input_.get(_REPLY_KEY)
+        if not isinstance(raw, str) or not raw.strip():
+            return tool_error(INVALID_INPUT_ERROR, _REPLY_EMPTY_DETAIL)
+        if test.replies >= VERIFIER_MAX_REPLIES:
+            return tool_error(_REPLIES_SPENT_ERROR, _REPLIES_SPENT_DETAIL)
+        after = board.copy()
+        after.push(test.move)
+        reply, kind, detail = parse_move_reporting(after, raw)
+        if reply is None:
+            return {**tool_error(kind, detail), FEN_KEY: after.fen()}
+        test.replies += 1
+
+        depth = min(_verification_depth(settings_provider), _max_depth(settings_provider))
+        limit = chess.engine.Limit(depth=depth)
+        game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
+        await _publish_search_start(bus, game_id)
+        search_kw = dict(
+            bus=bus, game_id=game_id, cancel_token=cancel_token,
+            settings_provider=settings_provider,
+        )
+        out: dict = {_REPLY_KEY: after.san(reply)}
         try:
             searched = await _dominance_searches(
-                cache, engine_launcher, board, move, chess.engine.Limit(depth=depth),
-                bus=bus, game_id=game_id, cancel_token=cancel_token,
-                settings_provider=settings_provider,
+                cache, engine_launcher, after, reply, limit, progress=False, **search_kw,
             )
-        except _SearchError:
-            return None
-        if searched is None:
-            return None
-        best_info, cand_info = searched
-        return _is_dominated(
-            move, best_info, cand_info, board.turn, recommend_margin_cp(situation),
-        )
+            if searched is None:
+                return {**out, _CANCELLED_KEY: True}
+            best_info, reply_info = searched
+            if _is_dominated(reply, best_info, reply_info, after.turn, RECOMMEND_MARGIN_CP):
+                return {**out, SOUND_KEY: False, REASON_KEY: _UNSOUND_REASON}
+            node = after.copy()
+            node.push(reply)
+            pv = reply_info.get(_PV_KEY) or []
+            free_line = list(pv[1:]) if pv and pv[0] == reply else []
+            walk = await _aim_attempts(
+                cache, engine_launcher, node, free_line, test.aim, limit, **search_kw,
+            )
+        except _SearchError as err:
+            return tool_error(err.kind, err.detail)
+        if walk.cancelled:
+            return {**out, _CANCELLED_KEY: True}
 
-    return refute_check
+        line_score = reply_info.get(_SCORE_KEY)
+        line_cp = _mover_cp(line_score, board.turn)
+        # The line mates for the tested side: the idea won outright, no aim
+        # needs to come.
+        line_mate = line_score.pov(board.turn).mate() if line_score is not None else None
+        mates = line_mate is not None and line_mate > 0
+        falls_short = (
+            walk.best is not None and line_cp is not None
+            and walk.best[0] < line_cp - PLAY_OUT_MARGIN_CP
+        )
+        # A line that stops short with the aim never legal says nothing
+        # about the aim: the missing moves might have allowed it.
+        untested = not mates and not walk.legal and not walk.complete
+        out.update({
+            SOUND_KEY: True,
+            LINE_KEY: _numbered_san(board, [test.move, reply, *walk.walked]),
+            REFUTED_KEY: not mates and not untested and (not walk.legal or falls_short),
+        })
+        if walk.best is not None:
+            out[_AIM_AT_KEY] = walk.best[1]
+        if mates:
+            out[REASON_KEY] = _LINE_MATES_REASON
+        elif untested:
+            out[UNTESTED_KEY] = True
+            out[REASON_KEY] = _AIM_UNTESTED_REASON
+        elif not walk.legal:
+            out[REASON_KEY] = _AIM_NEVER_LEGAL_REASON.format(aim=test.aim)
+        elif falls_short:
+            out[REASON_KEY] = _AIM_FALLS_SHORT_REASON.format(aim=test.aim)
+        return out
+
+    return test_aim
 
 
 def make_recommend_verifier(

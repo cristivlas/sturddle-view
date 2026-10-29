@@ -11,10 +11,12 @@ Both return the same dict shape:
      score: {cp|mate: int} | absent,
      pov: "white"|"black" | absent,
      pv_uci: [str, ...] | absent,
-     pv: [str] | absent}
+     pv: [str] | absent,
+     fen: str | absent}
 Keys are absent when the source lacks them. ``pv`` (single-element SAN list)
-is only present when a board is supplied to ``serialize_info``; tournament
-has no board context, so its output carries ``pv_uci`` only. ``pov`` (the
+and ``fen`` (the searched position) are only present when a board is supplied
+to ``serialize_info``; tournament has no board context, so its output carries
+``pv_uci`` only. ``pov`` (the
 side ``score`` is from) is ``serialize_info``-only, present with ``score``.
 """
 from __future__ import annotations
@@ -28,6 +30,9 @@ from .results import SIDE_BLACK, SIDE_WHITE
 from .score import SCORE_CP, SCORE_MATE
 
 INFO_POV = "pov"
+# The searched position: the client paints an info only on the board it
+# was searched for (AI tools search positions off the live board).
+INFO_FEN = "fen"
 _INT_FIELDS = ("depth", "seldepth", "time", "nodes", "nps",
                "hashfull", "tbhits", "multipv")
 
@@ -61,6 +66,8 @@ def serialize_info(
             except (ValueError, AssertionError):
                 # Fall back to UCI tokens if SAN rendering rejects the line.
                 out["pv"] = uci
+    if board is not None:
+        out[INFO_FEN] = board.fen()
     return out
 
 

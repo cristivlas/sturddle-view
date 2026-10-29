@@ -167,6 +167,16 @@ def _playbook_for(hve, board: chess.Board, mode: PromptMode) -> str:
     return render_playbook(hve.situation(our_color), mode, board.turn)
 
 
+def live_playbook(state) -> str | None:
+    """The plan line for the live position, in the persona the turn runs
+    in (the narrator's `plan` tool); None without a live position."""
+    hve = live_hve(state)
+    board = hve.current_board() if hve is not None else None
+    if board is None:
+        return None
+    return _playbook_for(hve, board, _prompt_mode_for(hve))
+
+
 @dataclass(slots=True, frozen=True)
 class TurnInputs:
     """What one AI turn is kicked with: the opening user message, the
@@ -245,7 +255,6 @@ async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
         root_annotation=root_annotation,
         in_opening=in_opening,
         book_reply=reply,
-        playbook=_playbook_for(hve, board, mode),
         player_side=color_name(hve.human_color()) if mode == COACH_MODE else None,
     )
     if reply is None:

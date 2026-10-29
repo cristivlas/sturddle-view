@@ -1299,6 +1299,9 @@ function buildPvTableBody(events, { setOff }) {
   });
   const off = events.on((evt) => {
     if (evt.kind !== KIND.ENGINE_INFO) return;
+    // Rows sample the board's placement, so an info searched for another
+    // position (AI play_out / test_aim lines) would get the wrong frames.
+    if (pvLineBoard && !pvLineBoard.showsPosition(evt.payload.fen)) return;
     pvt.update(evt.payload, evt.payload.pv?.[0]);
   });
   // Re-gate on game-view's own announcement rather than on the bus's

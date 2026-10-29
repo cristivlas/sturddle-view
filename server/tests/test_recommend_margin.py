@@ -1,10 +1,8 @@
 """Margin logic for recommend_move's dominance check.
 
 `_better_for_stm` decides whether the engine's preferred move is
-'strictly better' than the model's candidate by more than a margin;
-`recommend_margin_cp` picks that margin from the side to move's
-Situation: MIN ahead (convert cleanly), MAX behind (practical chances),
-the midpoint when even or unclassified.
+'strictly better' than the model's candidate by more than a margin
+(RECOMMEND_MARGIN_CP, one margin regardless of standing).
 
 Mate scores always trump cp (no margin applies); None scores fall back
 to the original conservative behavior.
@@ -15,27 +13,9 @@ import importlib
 
 import chess
 import chess.engine
-import pytest
 
 import sturddle_view.play.tools_engine as te
-from sturddle_view.play.playbook import (
-    MARGIN_BETTER,
-    MARGIN_CRUSHING,
-    MARGIN_EVEN,
-    MARGIN_LOSING,
-    MARGIN_LOST,
-    MARGIN_WINNING,
-    MARGIN_WORSE,
-    PHASE_MIDDLEGAME,
-    SOURCE_EVAL,
-    Situation,
-)
-from sturddle_view.play.tools_engine import (
-    RECOMMEND_MARGIN_MAX_CP,
-    RECOMMEND_MARGIN_MIN_CP,
-    _better_for_stm,
-    recommend_margin_cp,
-)
+from sturddle_view.play.tools_engine import _better_for_stm
 
 
 _MARGIN = 50
@@ -48,10 +28,6 @@ def _cp(side: chess.Color, value: int) -> chess.engine.PovScore:
 
 def _mate(side: chess.Color, in_n: int) -> chess.engine.PovScore:
     return chess.engine.PovScore(chess.engine.Mate(in_n), side)
-
-
-def _situation(margin: str) -> Situation:
-    return Situation(margin, SOURCE_EVAL, PHASE_MIDDLEGAME, None)
 
 
 # ---------- predicate at a fixed margin ------------------------------
@@ -118,35 +94,15 @@ def test_both_none_not_better():
     assert _better_for_stm(None, None, chess.WHITE, _MARGIN) is False
 
 
-# ---------- plan-aware margin ----------------------------------------
+# ---------- margin knob ----------------------------------------------
 
 
-@pytest.mark.parametrize("margin", [MARGIN_BETTER, MARGIN_WINNING, MARGIN_CRUSHING])
-def test_ahead_uses_min_margin(margin):
-    assert recommend_margin_cp(_situation(margin)) == RECOMMEND_MARGIN_MIN_CP
-
-
-@pytest.mark.parametrize("margin", [MARGIN_WORSE, MARGIN_LOSING, MARGIN_LOST])
-def test_behind_uses_max_margin(margin):
-    assert recommend_margin_cp(_situation(margin)) == RECOMMEND_MARGIN_MAX_CP
-
-
-def test_even_and_unclassified_use_midpoint():
-    mid = (RECOMMEND_MARGIN_MIN_CP + RECOMMEND_MARGIN_MAX_CP) // 2
-    assert recommend_margin_cp(_situation(MARGIN_EVEN)) == mid
-    assert recommend_margin_cp(None) == mid
-
-
-def test_min_max_env_override(monkeypatch):
-    monkeypatch.setenv("SV_AI_RECOMMEND_MARGIN_MIN", "10")
-    monkeypatch.setenv("SV_AI_RECOMMEND_MARGIN_MAX", "30")
+def test_margin_env_override(monkeypatch):
+    monkeypatch.setenv("SV_AI_RECOMMEND_MARGIN", "10")
     importlib.reload(te)
     try:
-        assert te.recommend_margin_cp(_situation(MARGIN_WINNING)) == 10
-        assert te.recommend_margin_cp(_situation(MARGIN_LOSING)) == 30
-        assert te.recommend_margin_cp(None) == 20
+        assert te.RECOMMEND_MARGIN_CP == 10
     finally:
         # Reload with the env unset so module state can't leak.
-        monkeypatch.delenv("SV_AI_RECOMMEND_MARGIN_MIN", raising=False)
-        monkeypatch.delenv("SV_AI_RECOMMEND_MARGIN_MAX", raising=False)
+        monkeypatch.delenv("SV_AI_RECOMMEND_MARGIN", raising=False)
         importlib.reload(te)

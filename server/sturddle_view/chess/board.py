@@ -5,6 +5,9 @@ import chess
 
 from .results import SIDE_BLACK, SIDE_WHITE
 
+# A move number covers White's ply and Black's.
+PLIES_PER_MOVE = 2
+
 
 def board_from(fen: str | None) -> chess.Board:
     """Return a Board from *fen*, or the standard starting position when None."""

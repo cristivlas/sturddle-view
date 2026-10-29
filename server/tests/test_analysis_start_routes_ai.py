@@ -227,6 +227,7 @@ async def test_analysis_stop_cancels_ai_turn(tmp_path):
 _EXPECTED_NARRATOR_TOOLS = {
     "recommend_move", "top_moves", "report_line", "delegate",
     "piece_at", "validate_move", "tactics", "related_openings",
+    "play_out", "plan",
 }
 
 
@@ -241,6 +242,14 @@ def test_narrator_registry_has_expected_toolset(tmp_path):
     # here would dispatch to unknown_tool at runtime.
     app, _client = _build_client(tmp_path, ai_enabled=True)
     assert set(app.state.ai_tool_registry.names()) == _EXPECTED_NARRATOR_TOOLS
+
+
+def test_test_aim_is_verifier_only(tmp_path):
+    # The verifier attacks the delegated aim with test_aim; the narrator
+    # plays its own ideas out instead.
+    app, _client = _build_client(tmp_path, ai_enabled=True)
+    assert "test_aim" in set(app.state.ai_verifier_registry.names())
+    assert "test_aim" not in set(app.state.ai_tool_registry.names())
 
 
 def test_top_moves_in_both_narrator_and_verifier_registries(tmp_path):

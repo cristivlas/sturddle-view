@@ -29,6 +29,7 @@ from sturddle_view.llm.transcript import (
     TRANSCRIPT_ENV_VAR,
     TURN_SEPARATOR,
 )
+from sturddle_view.llm.prompts import SYSTEM_PROMPT_PREFACE
 from sturddle_view.play.ai_analysis import AIAnalysisCoordinator
 
 
@@ -178,7 +179,7 @@ async def test_coordinator_writes_full_turn_to_transcript(monkeypatch, tmp_path)
     assert '"game_id": "g1"' in content
     assert "ScriptedProvider" in content
     assert "[system]" in content
-    assert "You are a chess analyst." in content
+    assert SYSTEM_PROMPT_PREFACE.split(".")[0] in content
     assert "[user]" in content
     assert "FEN: ..." in content
     assert "round 0 chunk" in content

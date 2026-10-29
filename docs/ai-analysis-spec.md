@@ -63,9 +63,10 @@ multi-turn assembly; the provider knows nothing about tool execution.
 Round body, in order:
 1. Stream chunks from the provider (`text`, `thinking`, `tool_use`).
 2. Publish `text` deltas as `ai_info` events, `thinking` as
-   `ai_thinking`. A `tool_use` chunk ends the round (v1 is sequential;
-   downstream chunks would belong to the next round per Anthropic
-   semantics).
+   `ai_thinking`. A `tool_use` chunk ends the round, except that
+   `play_out` steps of different ideas may share one (dispatched in
+   order, one step per idea, results in one message); a call that can't
+   join stays unsent.
 3. Decide exit / continuation:
    - Clean round (no tool_use) -> break. Natural end of turn, unless the
      completeness nudge fires: with no accepted `recommend_move` yet, the
@@ -95,34 +96,36 @@ eval). Splitting them keeps raw eval out of the narrator's context (a
 structural fix for engine over-trust). Applies to both personas; only the
 base system prompt differs.
 
-**Split.** The narrator's registry holds `recommend_move`, `top_moves`
-(rank its own candidate moves in one call), `report_line`, `delegate`,
-and the board-read grounding tools `piece_at` / `validate_move` (no
-engine, no eval -- the split keeps raw eval out, not board facts). The
-verifier registry holds the search/inspection tools
-(`analyze`, `top_moves`, `piece_at`, `validate_move`); both registries
+**Split.** The narrator's registry holds `recommend_move`, `play_out`
+(play an idea against the engine's replies, one move per call),
+`top_moves` (rank its own candidate moves in one call), `report_line`,
+`delegate`, `plan` (the playbook line on request), and the board-read
+grounding tools `piece_at` / `validate_move` (no engine, no eval -- the
+split keeps raw eval out, not board facts). The verifier registry holds
+the search/inspection tools (`analyze`, `top_moves`, `test_aim`,
+`piece_at`, `validate_move`); both registries
 share one per-turn `search_cache`, so a position searched once isn't
 searched again across them. A cache hit republishes the stored result as
 `engine_info`, so the board arrow and Search Lines follow the move now
 under consideration exactly as a live search would.
 
-**Flow per turn:** the narrator weighs its candidates, then red-teams
-its pick with `delegate(move, question)`; each call spawns a verifier
-sub-run (`AIAnalysisCoordinator._run_verifier`, verifier prompt +
-registry, no `delegate` -- one level deep). The verifier is an
-adversary: it assumes the move is flawed and hunts the refutation with
-the engine, must call a tool on its first round (structurally forced via
+**Flow per turn** (docs/ai-analysis-skin-in-the-game.md): the narrator
+names a few ideas (a first move plus its aim), plays each out with
+`play_out`, then red-teams the strongest survivor's aim with
+`delegate(move, aim, question)`; each call spawns a verifier sub-run
+(`AIAnalysisCoordinator._run_verifier`, verifier prompt + registry, no
+`delegate` -- one level deep). The verifier is an adversary on the aim:
+it must call a tool on its first round (structurally forced via
 OpenAI-compat `tool_choice: required`; Anthropic is never forced -- newer
 models reject it and no capability flag detects it -- so the nudge
-covers it), must rank the move under test in a
-`top_moves` call before concluding (`analyze` on the live FEN scores the
-position before the move, so it can't judge the move; an unsearched
-verdict draws one nudge, then is dropped as `verdict_withheld`), and returns a
-one/two sentence holds/refuted
-conclusion that lands as the delegate tool_result. The canonical SAN is prefixed to the
-delegated question ("Move under test: ...") so the verifier knows the
-move under attack regardless of the narrator's phrasing. The narrator
-synthesizes and calls `recommend_move`.
+covers it), must test a reply with `test_aim` before concluding (an
+untested verdict draws one nudge, then is dropped as
+`verdict_withheld`), and returns a one/two sentence holds/refuted
+conclusion that lands as the delegate tool_result. The canonical SAN and
+the aim are prefixed to the delegated question ("Move under test: ...
+Aim: ...") so the verifier knows what is under attack regardless of the
+narrator's phrasing; `test_aim` reads them from the coordinator
+(`active_aim`). The narrator narrates and calls `recommend_move`.
 
 **Verdict gate.** The verifier never talks to the user: its prompt drops
 the reader-facing rules (voice, length, audience) for an output rule (the
@@ -134,22 +137,22 @@ passed on. `no_verdict` is reserved for a sub-run the round cap cut short
 fix a withheld verdict). `delegate` then withholds (as `verdict_withheld`)
 a verdict whose reason
 misstates the board -- a board-check flag, or any illegality claim (the
-move under test is legal by construction) -- and a "refuted" the engine
-doesn't confirm: the same dominance test `recommend_move` applies (plan-
-aware margin, verification depth), so a refutation stands only when the
-final gate would reject the move too.
+move under test is legal by construction); moves of the lines the
+sub-run's `test_aim` calls replayed are exempt -- and a "refuted" no
+`test_aim` result in that sub-run backs. A backed refutation carries its
+line (`refutation`) for the narrator to narrate.
 
 **Red-team hold.** The first accepted `recommend_move` of a turn with no
 prior delegate verdict is held once (`error=red_team_first`) and the
 model is asked to red-team the move first; a stalled model still gets
-its pick on the next attempt. A refutation the engine overruled counts
-as a verdict (the withheld envelope carries `move_survived`): the move
+its pick on the next attempt. A refutation no `test_aim` backed counts
+as a verdict (the withheld envelope carries `move_survived`): the aim
 survived the adversarial check. Enforced in the loop, both personas, only
 when `delegate` is registered. This supersedes the earlier
 commentator-only compare-first hold (a `top_moves` ranking does not
 satisfy it -- ranking is not an adversarial check).
 
-**Verifier sub-run is silent except tool calls.** Its `analyze`/`top_moves`
+**Verifier sub-run is silent except tool calls.** Its tool-call
 events forward to the UI (nested under the originating "Verifying line" row
 via `parent_tool_use_id`); its prose/thinking are suppressed. Thinking is
 forced off for the verifier (the engine does the reasoning; thinking only
@@ -159,8 +162,8 @@ adds latency x fan-out and risks Ollama `<think>` leaking into the verdict).
 model can consult: `piece_at` settles a square, `report_line` replays a
 line's legality, `top_moves`/`recommend_move` score moves, `tactics`
 lists the pins and forks actually on the board. Wrong tactical
-judgment is caught by requiring a search of the move before a verdict
-(the verifier must rank it with `top_moves` before concluding).
+judgment is caught by requiring a tested reply before a verdict (the
+verifier must call `test_aim` before concluding).
 
 A light post-hoc prose check (`llm/position_check.py`) runs over the
 single current board only: piece-on-square, file, bishop-color,
@@ -223,23 +226,28 @@ JSON -> json-repair dependency). Prose avoids it.
 gate on its pick is `recommend_move`'s A/B dominance check; it does not
 separately validate the line behind the move. The dominance check rejects a
 move the engine's best beats by margin -- the guard that matters; deeper
-line-validation is the model's job via `delegate`. The margin is plan-aware
-(docs/ai-playbook-spec.md §Gate): tight when the side to move is ahead,
-wide when behind, so a practical try the plan calls for is not vetoed as
-"weaker"; a side ahead cannot submit a repetition.
+line-validation is the model's job via `play_out` and `delegate`. One
+margin regardless of standing (`SV_AI_RECOMMEND_MARGIN`); a side ahead
+cannot submit a repetition (docs/ai-playbook-spec.md §Gate).
 
-**Settling on a move.** The `Plan:` line of the user message (the
-playbook) decides the pick: the narrator chooses candidates that carry it
-out, weighs them with one `top_moves` call (all candidates ranked
-best-first for the side to move), red-teams the winner via `delegate`,
-then submits with a single `recommend_move` -- among the moves the check
-accepts, the one that serves the plan, not the top score. When the
-submitted move is meaningfully weaker than the best, `recommend_move`
-rejects it and names the stronger move in the reason -- the narrator
-resubmits *that* move, so a rejection resolves in one step rather than
-open-ended probing. The last accepted `recommend_move` is the turn's pick
+**Settling on a move.** Only a move the narrator played out (a first
+step of `play_out` ran with it, failed or not) is taken; among those the
+best-scoring survivor wins. When the engine's best beats the submitted
+move by more than the margin, `recommend_move` rejects it with "a stronger
+move exists" and never names it (nor do its result or `top_moves`'
+entries carry the engine's line): the model keeps hunting with its own
+ideas. A move within the margin is accepted even if the engine's pick was
+never played out. The last accepted `recommend_move` is the turn's pick
 and drives the on-board arrow (via the end-of-turn `ai_recommendation`
 verifier search).
+
+**Out of rounds.** `SV_AI_FALLBACK_ROUNDS_LEFT` rounds before the cap, a
+narrator with no pick but a played-out move is told to submit now; from
+then on `recommend_move` takes the best played-out move unconditionally
+(a move not played out is replaced by the one with the best eval after
+its first step; a dominated one is flagged `weaker_than_best`), with no
+red-team hold. Nothing played out, or the nudge ignored: the turn ends
+without a recommendation.
 
 The dominance check runs two searches -- the engine's free best as the
 baseline, then the candidate restricted -- and reports each as a progress
@@ -274,6 +282,18 @@ engine's own pick.
 - `report_line(moves)` - pure legality replay of a SAN/UCI continuation
   (no engine); grounds any line the narrator names before naming it.
   Capped at `SV_AI_REPORT_LINE_MAX_PLIES`. SHIPPED.
+- `play_out(idea, move)` - one step of an idea against the engine's best
+  reply; one line per idea label; a step dropping the mover's eval past
+  `SV_AI_PLAY_OUT_MARGIN` fails and is not kept. Steps of different ideas
+  share a round; a second step of one idea in a round is refused
+  (`one_step_per_idea`). Narrator-only. SHIPPED.
+- `test_aim(reply)` - the verifier's attack on the delegated aim: reply
+  soundness, then the aim forced along the free line for
+  `SV_AI_AIM_HORIZON` moves; a line that ends early with the aim never
+  legal is `untested`, not refuted. Up to `SV_AI_VERIFIER_MAX_REPLIES`
+  replies per delegate. Verifier-only. SHIPPED.
+- `plan()` - the playbook's plan line for the live position; input for
+  the narrator's ideas, not the answer. Narrator-only. SHIPPED.
 - `related_openings(family=None)` - pure lookup over the vendored opening
   dataset: returns a family's sibling variations with canonical SAN lines,
   grounding variation contrast in real lines instead of model memory.
@@ -497,7 +517,8 @@ carrying the tag flags the model too. Failed probes are not cached.
 - Cancel aborts both engine and LLM as a single user-facing task
 - Cancel is hard-stop: kill current tool + LLM stream, drop agent loop;
   no cooperative wrap-up turn (UI shows partial prose as-is)
-- Tool use is sequential only in v1 (no parallel tool calls)
+- Tool use is sequential, except parallel `play_out` steps of different
+  ideas (dispatched in call order)
 - Forward-looking: parallel tool use is desirable later (latency + token
   savings). Design the tool dispatcher and cancellation to tolerate
   concurrent tool execution from day one even though v1 runs one at a

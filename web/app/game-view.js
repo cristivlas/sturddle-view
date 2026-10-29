@@ -21,6 +21,8 @@ import { EVAL_GAUGE_HTML, setEvalGauge, setEvalGaugeFlipped } from "./eval-gauge
 import { loadRaw, saveRaw } from "./storage.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+// The `analyze` tool's alias for the initial position (a preview's FEN).
+const STARTPOS_ALIAS = "startpos";
 
 // Clock-row name cap: largest value that fits beside the clock on the
 // narrowest desktop board (~400px at the 800px viewport breakpoint).
@@ -685,6 +687,7 @@ function applyBoardUpdate(ctx, evt) {
     // input lock and stale restore-target don't linger.
     if (ctx.previewActive) {
       ctx.previewActive = false;
+      ctx.previewFen = null;
       board.enableInput(ctx.previewInputWasEnabled);
     }
     // Suppress animation when the incoming FEN matches the current one.
@@ -787,7 +790,27 @@ function clearArrows(ctx) {
   resetArrowNumbering(ctx);
 }
 
+// Placement and side to move: what an engine_info must match to paint the
+// board. Castling and en-passant are left out: the analyze preview shows the
+// model's own FEN, whose rights fields python-chess may normalize away in
+// the search's FEN (an "e3" with no capture possible).
+const FEN_SHOWN_FIELDS = 2;
+function fenShown(fen) {
+  return fen.split(" ").slice(0, FEN_SHOWN_FIELDS).join(" ");
+}
+
+// True when `fen` (an engine_info's searched position) is the one the board
+// shows: the live position, or an AI `analyze` preview. AI tools search
+// other positions too (play_out lines, test_aim); those infos must not paint
+// their move and eval on this board. No fen (tournament feed): trusted.
+function showsPosition(ctx, fen) {
+  if (!fen) return true;
+  const shown = ctx.previewActive ? ctx.previewFen : ctx.currentFen;
+  return !!shown && fenShown(fen) === fenShown(shown);
+}
+
 function applyEngineInfo(ctx, evt) {
+  if (!showsPosition(ctx, evt.payload.fen)) return;
   const squares = ctx.editing ? null : uciSquares(evt.payload.pv_uci?.[0]);
   const rank = evt.payload.multipv ?? BEST_RANK;
   // First line below the best: renumber the plain best arrow as line 1.
@@ -1081,16 +1104,19 @@ function buildViewApi(ctx) {
     setHumanWhite: (v) => setHumanWhite(ctx, v),
     setNames: (n) => setNames(ctx, n),
     applyEvent: (evt) => applyEvent(ctx, evt),
-    previewPosition(fen, { animate = true } = {}) {
+    previewPosition(rawFen, { animate = true } = {}) {
+      const fen = rawFen?.trim() === STARTPOS_ALIAS ? INITIAL_FEN : rawFen;
       if (!fen || fen === ctx.currentFen) return;
       if (!ctx.previewActive) ctx.previewInputWasEnabled = ctx.board.isInputEnabled();
       ctx.previewActive = true;
+      ctx.previewFen = fen;
       ctx.board.enableInput(false);
       ctx.board.setPosition(fen, null, animate);
     },
     restorePosition({ animate = true } = {}) {
       if (!ctx.previewActive) return;
       ctx.previewActive = false;
+      ctx.previewFen = null;
       ctx.board.setPosition(ctx.currentFen, null, animate);
       ctx.board.enableInput(ctx.previewInputWasEnabled);
     },
@@ -1134,6 +1160,7 @@ function buildViewApi(ctx) {
     },
     cancelLine() { ctx.board.cancelLine(); },
     currentPlacement() { return ctx.board.currentPlacement(); },
+    showsPosition: (fen) => showsPosition(ctx, fen),
     clearEngineInfo() {
       clearEngineInfoFields(ctx);
       setEvalGauge(ctx.evalGauge, null);
@@ -1271,6 +1298,7 @@ export function mountGameView(container, opts = {}) {
     // Preview overlay: while previewActive the board shows a hypothetical
     // FEN (typically an AI `analyze` arg) and input is suppressed.
     previewActive: false,
+    previewFen: null,
     previewInputWasEnabled: false,
     // Piece-rendering hold during an optimistic move's stop/resume window;
     // see holdBoard/releaseBoard.

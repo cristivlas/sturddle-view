@@ -2495,6 +2495,7 @@ export const playPerspective = {
     // with no board wired every row would go inert and stay that way.
     setPvLineBoard({
       currentPlacement: view.currentPlacement,
+      showsPosition: view.showsPosition,
       canPlayLine: () => view.canPlayLine(),
       playLine: view.playLine,
       cancelLine: view.cancelLine,

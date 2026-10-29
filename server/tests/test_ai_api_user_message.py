@@ -3,13 +3,17 @@ from live hve state via HVE's public accessors. Replace when the
 coordinator owns its own session state."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import chess
 
 from sturddle_view.api._ai_kick import (
     _prompt_mode_for,
     _san_history_for,
+    live_playbook,
 )
 from sturddle_view.chess.board import board_from
+from sturddle_view.llm import PLAYBOOK_LEAD
 from sturddle_view.openings import Opening
 from sturddle_view.play.mode import Mode
 from sturddle_view.play.opening_lines import BookRef
@@ -380,3 +384,30 @@ def test_probe_runs_outside_opening(tmp_path):
     msg = _build(h)
     assert msg is not None
     assert "Book reply here: 1...e5 (configured opening book)" in msg
+
+
+def test_turn_message_carries_no_plan_line():
+    # The plan reaches the narrator only through its `plan` tool.
+    msg = _build(_FakeHve(board=chess.Board()))
+    assert PLAYBOOK_LEAD not in msg
+
+
+def test_live_playbook_speaks_to_the_player_in_live_play():
+    plan = live_playbook(SimpleNamespace(hve=_FakeHve(board=chess.Board())))
+    assert plan.startswith(f"{PLAYBOOK_LEAD}you are ")
+
+
+def test_live_playbook_names_the_side_to_move_in_review():
+    board = chess.Board()
+    board.push_san("e4")
+    hve = _FakeHve(
+        board=board, pre_analysis_mode=Mode.VIEWING,
+        view_full_moves=[chess.Move.from_uci("e2e4")],
+    )
+    plan = live_playbook(SimpleNamespace(hve=hve))
+    assert plan.startswith(f"{PLAYBOOK_LEAD}Black is ")
+
+
+def test_live_playbook_is_none_without_a_live_position():
+    assert live_playbook(SimpleNamespace()) is None
+    assert live_playbook(SimpleNamespace(hve=_FakeHve(board=None))) is None

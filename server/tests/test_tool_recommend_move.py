@@ -9,11 +9,13 @@ the predicate alone can't show:
   the engine has a different, faster mate ("submit a different move" is
   wrong advice for a winning move),
 - a candidate the engine beats by more than the margin is REJECTED with
-  the recommendation_rejected envelope,
+  the recommendation_rejected envelope, which never names the engine's move,
 - the exact-move short-circuit accepts when the engine's free best IS the
   candidate,
-- the plan-aware gate: the margin widens when the side to move is behind,
-  and a side ahead cannot submit a move that repeats the position.
+- one margin regardless of standing, and a side ahead cannot submit a move
+  that repeats the position,
+- only a played-out move is taken; out of rounds (fallback) the best
+  played-out move is, flagged when the engine had a stronger one.
 
 A fixture-local fake emits `score mate` (the stock fakes only do cp) and
 varies its reply by whether the `go` line carries `searchmoves` -- so the
@@ -38,7 +40,7 @@ from sturddle_view.play.playbook import (
     SOURCE_EVAL,
     Situation,
 )
-from sturddle_view.play.tools_engine import make_recommend_move_tool, make_refute_check
+from sturddle_view.play.tools_engine import PlayOutRecord, make_recommend_move_tool
 
 from .conftest import _write_uci_stub
 
@@ -93,15 +95,6 @@ def _tool(engine_path: str, board: chess.Board, situation: Situation | None = No
     )
 
 
-def _refute_check(engine_path: str, board: chess.Board):
-    bus = EventBus()
-    return make_refute_check(
-        _launcher_from_path(engine_path, bus),
-        bus=bus,
-        board_provider=lambda: board,
-    )
-
-
 def _situation(margin: str, repeats: tuple[str, ...] = ()) -> Situation:
     return Situation(margin, SOURCE_EVAL, PHASE_MIDDLEGAME, None, repeats)
 
@@ -127,7 +120,8 @@ async def test_winning_mate_accepted_even_when_engine_mates_faster(tmp_path: Pat
 @pytest.mark.asyncio
 async def test_dominated_candidate_rejected(tmp_path: Path):
     # Candidate (g1f3) scores +10 cp; engine's free best (e2e4) scores
-    # +300 cp -- beats by 290, well over the default 50cp margin. Reject.
+    # +300 cp -- beats by 290, well over the default 20cp margin. Reject,
+    # without naming the stronger move.
     engine_path = _make_free_vs_restricted_fake(
         tmp_path, "rm_reject",
         free_info="info depth 20 score cp 300 nodes 100 time 10 pv e2e4",
@@ -137,8 +131,10 @@ async def test_dominated_candidate_rejected(tmp_path: Path):
     tool = _tool(engine_path, board)
     out = await tool({"move": "Nf3", "depth": 20}, cancel_token=CancelToken())
     assert out.get("error") == "recommendation_rejected", out
-    assert "reason" in out
-    assert out["engine_best_san"] == "e4"
+    assert "stronger move exists" in out["reason"]
+    assert "e4" not in out["reason"]
+    assert "engine_best_san" not in out and "engine_best_move" not in out
+    assert out["engine_best_score"]["score_cp"] == 300
 
 
 @pytest.mark.asyncio
@@ -159,11 +155,11 @@ async def test_exact_match_accepts(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_within_margin_accepted(tmp_path: Path):
-    # Candidate +20, engine best (different move) +60: beats by 40, under
-    # the 50cp margin. Cosmetic preference, not a blunder -- accept.
+    # Candidate +20, engine best (different move) +35: beats by 15, under
+    # the 20cp margin. Cosmetic preference, not a blunder -- accept.
     engine_path = _make_free_vs_restricted_fake(
         tmp_path, "rm_margin",
-        free_info="info depth 20 score cp 60 nodes 100 time 10 pv e2e4",
+        free_info="info depth 20 score cp 35 nodes 100 time 10 pv e2e4",
         restricted_info="info depth 20 score cp 20 nodes 100 time 10 pv g1f3",
     )
     board = chess.Board()
@@ -218,13 +214,12 @@ async def test_shared_cache_makes_free_best_stable_across_calls(monkeypatch):
         lambda: None, bus=EventBus(), board_provider=lambda: board, search_cache=cache,
     )
 
-    # Call 1: recommend Nf3 -> free best is e2e4, Nf3 worse -> rejected, names e4.
+    # Call 1: recommend Nf3 -> free best is e2e4, Nf3 worse -> rejected.
     out1 = await tool({"move": "Nf3"}, cancel_token=CancelToken())
     assert out1.get("error") == "recommendation_rejected", out1
-    assert out1["engine_best_san"] == "e4"
 
-    # Call 2: resubmit the named best (e4). Free search is cached (not re-run),
-    # so best is still e2e4 == the candidate -> exact-match accept, no flip.
+    # Call 2: submit e4. Free search is cached (not re-run), so best is
+    # still e2e4 == the candidate -> exact-match accept, no flip.
     out2 = await tool({"move": "e4"}, cancel_token=CancelToken())
     assert out2.get("ok") is True, out2
     assert out2["uci"] == "e2e4"
@@ -292,22 +287,19 @@ async def test_illegal_pawn_move_returns_pawn_moves():
 
 
 @pytest.mark.asyncio
-async def test_behind_widens_the_margin(tmp_path: Path):
-    # Engine best beats the candidate by 70: over the 50cp midpoint (no
-    # situation) yet under the 80cp behind margin -- a practical try the
-    # plan may prefer to the top line.
+async def test_behind_does_not_widen_the_margin(tmp_path: Path):
+    # Engine best beats the candidate by 70: the plan no longer buys slack,
+    # so the side behind is held to the same margin.
     engine_path = _make_free_vs_restricted_fake(
         tmp_path, "rm_behind",
         free_info="info depth 20 score cp 90 nodes 100 time 10 pv e2e4",
         restricted_info="info depth 20 score cp 20 nodes 100 time 10 pv g1f3",
     )
     board = chess.Board()
-    rejected = await _tool(engine_path, board)({"move": "Nf3", "depth": 20}, cancel_token=CancelToken())
-    assert rejected.get("error") == "recommendation_rejected", rejected
-    accepted = await _tool(engine_path, board, _situation(MARGIN_LOSING))(
+    out = await _tool(engine_path, board, _situation(MARGIN_LOSING))(
         {"move": "Nf3", "depth": 20}, cancel_token=CancelToken(),
     )
-    assert accepted.get("ok") is True, accepted
+    assert out.get("error") == "recommendation_rejected", out
 
 
 @pytest.mark.asyncio
@@ -327,33 +319,124 @@ async def test_ahead_rejects_a_repeating_move_without_searching():
     assert out["san"] == "Nf3"
 
 
-@pytest.mark.parametrize(("free_info", "restricted_info", "confirmed"), [
-    # Engine best beats the candidate by 290: dominated, refutation stands.
-    ("info depth 20 score cp 300 nodes 100 time 10 pv e2e4",
-     "info depth 20 score cp 10 nodes 100 time 10 pv g1f3", True),
-    # Beats it by 40, inside the margin: recommend_move would accept it.
-    ("info depth 20 score cp 60 nodes 100 time 10 pv e2e4",
-     "info depth 20 score cp 20 nodes 100 time 10 pv g1f3", False),
-    # The engine's own pick is never dominated.
-    ("info depth 20 score cp 30 nodes 100 time 10 pv g1f3",
-     "info depth 20 score cp 30 nodes 100 time 10 pv g1f3", False),
-])
-@pytest.mark.asyncio
-async def test_refute_check_matches_the_recommend_gate(
-    tmp_path: Path, free_info: str, restricted_info: str, confirmed: bool,
-):
-    engine_path = _make_free_vs_restricted_fake(
-        tmp_path, "rc", free_info=free_info, restricted_info=restricted_info,
-    )
+# ---------- played-out rule and fallback ------------------------------
+
+_E4 = chess.Move.from_uci("e2e4")
+_NF3 = chess.Move.from_uci("g1f3")
+_D4 = chess.Move.from_uci("d2d4")
+
+
+def _scripted_search(free_uci: str, free_cp: int, restricted_cp: int, searches: list):
+    """A _run_one_search stand-in: the free search names `free_uci` at
+    `free_cp`; a restricted one scores its root move at `restricted_cp`."""
+    async def fake_search(engine_launcher, board, limit, *, root_moves=None, **kw):
+        searches.append(root_moves)
+        if root_moves:
+            return {
+                "depth": limit.depth, "score": _cp(restricted_cp), "pv": list(root_moves),
+            }, False
+        return {
+            "depth": limit.depth, "score": _cp(free_cp), "pv": [chess.Move.from_uci(free_uci)],
+        }, False
+    return fake_search
+
+
+def _record(*first_moves: tuple[chess.Move, int]) -> PlayOutRecord:
+    record = PlayOutRecord()
+    for move, cp in first_moves:
+        record.note_first_move(move, cp)
+    return record
+
+
+def _gated_tool(record: PlayOutRecord, *, fallback: bool = False, situation=None):
     board = chess.Board()
-    check = _refute_check(engine_path, board)
-    assert await check(board.parse_san("Nf3"), CancelToken()) is confirmed
+    return tools_engine.make_recommend_move_tool(
+        lambda: None, bus=EventBus(), board_provider=lambda: board,
+        play_out_record=record, fallback_provider=lambda: fallback,
+        situation_provider=lambda: situation,
+    )
 
 
 @pytest.mark.asyncio
-async def test_refute_check_is_undecided_without_a_live_board():
-    def never():
-        raise AssertionError("no search without a board")
+async def test_move_not_played_out_rejected_without_search(monkeypatch):
+    searches: list = []
+    monkeypatch.setattr(tools_engine, "_run_one_search", _scripted_search("e2e4", 30, 30, searches))
+    out = await _gated_tool(_record((_E4, 30)))({"move": "Nf3"}, cancel_token=CancelToken())
+    assert out["error"] == "recommendation_rejected", out
+    assert "play_out" in out["reason"] and out["san"] == "Nf3"
+    assert searches == []
 
-    check = make_refute_check(never, bus=EventBus(), board_provider=lambda: None)
-    assert await check(chess.Move.from_uci("g1f3"), CancelToken()) is None
+
+@pytest.mark.asyncio
+async def test_played_out_move_goes_to_the_dominance_check(monkeypatch):
+    searches: list = []
+    monkeypatch.setattr(tools_engine, "_run_one_search", _scripted_search("e2e4", 30, 25, searches))
+    out = await _gated_tool(_record((_NF3, 25)))({"move": "Nf3"}, cancel_token=CancelToken())
+    assert out.get("ok") is True and out["uci"] == "g1f3", out
+    assert len(searches) == 2
+
+
+@pytest.mark.asyncio
+async def test_book_move_needs_no_play_out(monkeypatch):
+    searches: list = []
+    monkeypatch.setattr(tools_engine, "_run_one_search", _scripted_search("e2e4", 30, 30, searches))
+    board = chess.Board()
+    tool = tools_engine.make_recommend_move_tool(
+        lambda: None, bus=EventBus(), board_provider=lambda: board,
+        book_move_provider=lambda: "d2d4", play_out_record=PlayOutRecord(),
+    )
+    out = await tool({"move": "d4"}, cancel_token=CancelToken())
+    assert out.get("ok") is True and out["book"] is True, out
+    assert searches == []
+
+
+@pytest.mark.asyncio
+async def test_fallback_replaces_an_unplayed_move_with_the_best_played_out(monkeypatch):
+    # d4 scored best after its first step, so it replaces the unplayed Nf3.
+    searches: list = []
+    monkeypatch.setattr(tools_engine, "_run_one_search", _scripted_search("d2d4", 40, 40, searches))
+    record = _record((_E4, 10), (_D4, 40))
+    out = await _gated_tool(record, fallback=True)({"move": "Nf3"}, cancel_token=CancelToken())
+    assert out.get("ok") is True and out["uci"] == "d2d4", out
+    assert "Nf3 was not played out" in out["note"]
+    assert "weaker_than_best" not in out
+
+
+@pytest.mark.asyncio
+async def test_fallback_accepts_a_dominated_move_flagged(monkeypatch):
+    searches: list = []
+    monkeypatch.setattr(
+        tools_engine, "_run_one_search", _scripted_search("e2e4", 300, 10, searches),
+    )
+    out = await _gated_tool(_record((_NF3, 10)), fallback=True)(
+        {"move": "Nf3"}, cancel_token=CancelToken(),
+    )
+    assert out.get("ok") is True and out["uci"] == "g1f3", out
+    assert out["weaker_than_best"] is True
+    assert "practical choice" in out["note"] and "e4" not in out["note"]
+
+
+@pytest.mark.asyncio
+async def test_fallback_lifts_the_repetition_veto(monkeypatch):
+    searches: list = []
+    monkeypatch.setattr(tools_engine, "_run_one_search", _scripted_search("g1f3", 30, 30, searches))
+    situation = _situation(MARGIN_WINNING, repeats=("Nf3",))
+    held = await _gated_tool(_record((_NF3, 30)), situation=situation)(
+        {"move": "Nf3"}, cancel_token=CancelToken(),
+    )
+    assert held["error"] == "recommendation_rejected" and "repeats" in held["reason"]
+    out = await _gated_tool(_record((_NF3, 30)), fallback=True, situation=situation)(
+        {"move": "Nf3"}, cancel_token=CancelToken(),
+    )
+    assert out.get("ok") is True, out
+
+
+@pytest.mark.asyncio
+async def test_fallback_with_nothing_played_out_still_rejects(monkeypatch):
+    searches: list = []
+    monkeypatch.setattr(tools_engine, "_run_one_search", _scripted_search("e2e4", 30, 30, searches))
+    out = await _gated_tool(PlayOutRecord(), fallback=True)(
+        {"move": "e4"}, cancel_token=CancelToken(),
+    )
+    assert out["error"] == "recommendation_rejected", out
+    assert searches == []

@@ -35,7 +35,7 @@ from .api import settings as settings_api
 from .api import test_hooks as test_hooks_api
 from .api import tournaments as tournaments_api
 from .api import ws as ws_api
-from .api._ai_kick import ai_coordinator
+from .api._ai_kick import ai_coordinator, live_playbook
 from .config import (
     LOOPBACK_HOST,
     PROVIDER_ANTHROPIC,
@@ -66,21 +66,25 @@ from .play.human_vs_engine import HumanVsEngine, live_hve
 from .play.tools_engine import (
     MATERIAL_TOOL_SPEC,
     PIECE_AT_TOOL_SPEC,
+    PLAY_OUT_TOOL_SPEC,
     RECOMMEND_MOVE_TOOL_SPEC,
     REPORT_LINE_TOOL_SPEC,
     TACTICS_TOOL_SPEC,
+    TEST_AIM_TOOL_SPEC,
     TOP_MOVES_TOOL_SPEC,
     VALIDATE_MOVE_TOOL_SPEC,
+    PlayOutRecord,
     SearchCache,
     analyze_tool_spec,
     make_analyze_tool,
     make_material_tool,
     make_piece_at_tool,
+    make_play_out_tool,
     make_recommend_move_tool,
     make_recommend_verifier,
-    make_refute_check,
     make_report_line_tool,
     make_tactics_tool,
+    make_test_aim_tool,
     make_top_moves_tool,
     make_validate_move_tool,
 )
@@ -88,6 +92,7 @@ from .play.tools_openings import (
     RELATED_OPENINGS_TOOL_SPEC,
     make_related_openings_tool,
 )
+from .play.tools_plan import PLAN_TOOL_SPEC, make_plan_tool
 from .recent_imports import RecentImports
 from .tournament.fastchess import FastchessRunner
 from .tournament.orchestrator import Orchestrator, wrap_event_for_bus
@@ -498,6 +503,19 @@ def _setup_ai(app: FastAPI) -> None:
         coord = ai_coordinator(app.state)
         return coord.turn_book_move() if coord is not None else None
 
+    # Late-bound like the book move: the turn's fallback and the in-flight
+    # delegate's aim live on the coordinator.
+    def _ai_fallback_provider() -> bool:
+        coord = ai_coordinator(app.state)
+        return coord.turn_fallback() if coord is not None else False
+
+    def _ai_aim_provider():
+        coord = ai_coordinator(app.state)
+        return coord.active_aim() if coord is not None else None
+
+    def _ai_plan_provider():
+        return live_playbook(app.state)
+
     # Late-bound like the book move: the tools are built before the
     # coordinator that tracks the turn's openings for prose links.
     def _ai_note_openings(openings):
@@ -505,23 +523,25 @@ def _setup_ai(app: FastAPI) -> None:
         if coord is not None:
             coord.note_openings(openings)
 
-    # Side-to-move Situation for the recommend_move gate: the pick under
-    # check is the mover's, whichever persona asked for it.
+    # Side-to-move Situation for recommend_move's repetition veto: the pick
+    # under check is the mover's, whichever persona asked for it.
     def _ai_situation_provider():
         hve = live_hve(app.state)
         board = hve.current_board() if hve else None
         return hve.situation(board.turn) if board is not None else None
 
     # Shared across all engine-backed tools so a position searched once
-    # this turn (analyze, top_moves, recommend_move, the verifier) isn't
-    # re-searched. The coordinator clears it at turn start.
+    # this turn (analyze, top_moves, play_out, test_aim, recommend_move, the
+    # verifier) isn't re-searched. The coordinator clears it at turn start.
     ai_search_cache = SearchCache()
+    # The narrator's play_out lines and first moves this turn: recommend_move
+    # takes only a played-out move. The coordinator clears it at turn start.
+    ai_play_out_record = PlayOutRecord()
 
-    # Strict narrator/verifier split (docs/ai-analysis-spec.md):
-    # the narrator plans + delegates + recommends but never searches; the
-    # verifier sub-run owns all engine tools. This keeps raw eval numbers
-    # out of the narrator's context (structural fix for engine over-trust)
-    # and the verifier's searches off the UI.
+    # Narrator/verifier split (docs/ai-analysis-spec.md): the narrator
+    # plays its ideas out, delegates and recommends, but never gets a free
+    # search (no analyze, no engine line for its own side); the verifier
+    # sub-run owns the free-search tools and test_aim.
     ai_verifier_registry = ToolRegistry()
     ai_verifier_registry.register(
         analyze_tool_spec(_ai_settings_provider, _ai_multipv_max),
@@ -562,6 +582,19 @@ def _setup_ai(app: FastAPI) -> None:
             multipv_max_provider=_ai_multipv_max,
         ),
     )
+    # test_aim: the verifier's attack on the in-flight delegate's aim.
+    ai_verifier_registry.register(
+        TEST_AIM_TOOL_SPEC,
+        make_test_aim_tool(
+            _ai_engine_launcher,
+            bus=app.state.event_bus,
+            board_provider=_ai_board_provider,
+            aim_provider=_ai_aim_provider,
+            game_id_provider=_ai_game_id_provider,
+            settings_provider=_ai_settings_provider,
+            search_cache=ai_search_cache,
+        ),
+    )
 
     # Narrator registry: recommend_move now; delegate registered below,
     # once the coordinator exists (it owns the verifier sub-run).
@@ -577,6 +610,22 @@ def _setup_ai(app: FastAPI) -> None:
             search_cache=ai_search_cache,
             book_move_provider=_ai_book_move_provider,
             situation_provider=_ai_situation_provider,
+            play_out_record=ai_play_out_record,
+            fallback_provider=_ai_fallback_provider,
+        ),
+    )
+    # play_out: the narrator plays its ideas out against the engine's
+    # replies, one move per call; the record gates recommend_move.
+    ai_registry.register(
+        PLAY_OUT_TOOL_SPEC,
+        make_play_out_tool(
+            _ai_engine_launcher,
+            bus=app.state.event_bus,
+            board_provider=_ai_board_provider,
+            record=ai_play_out_record,
+            game_id_provider=_ai_game_id_provider,
+            settings_provider=_ai_settings_provider,
+            search_cache=ai_search_cache,
         ),
     )
     # top_moves: the narrator's one-call way to rank its candidate moves
@@ -628,6 +677,8 @@ def _setup_ai(app: FastAPI) -> None:
             on_shown=_ai_note_openings,
         ),
     )
+    # The playbook plan on request: input for the narrator's ideas.
+    ai_registry.register(PLAN_TOOL_SPEC, make_plan_tool(_ai_plan_provider))
     app.state.ai_tool_registry = ai_registry
     app.state.ai_verifier_registry = ai_verifier_registry
 
@@ -690,6 +741,7 @@ def _setup_ai(app: FastAPI) -> None:
         verifier_registry=ai_verifier_registry,
         search_cache=ai_search_cache,
         book_provider=_ai_book_provider,
+        play_out_record=ai_play_out_record,
     )
     # Register `delegate` last: it dispatches to the coordinator's verifier
     # sub-run, so the coordinator must exist first.
@@ -698,15 +750,6 @@ def _setup_ai(app: FastAPI) -> None:
         make_delegate_tool(
             app.state.ai_coordinator.delegate_runner(),
             board_provider=_ai_board_provider,
-            refute_check=make_refute_check(
-                _ai_engine_launcher,
-                bus=app.state.event_bus,
-                board_provider=_ai_board_provider,
-                game_id_provider=_ai_game_id_provider,
-                settings_provider=_ai_settings_provider,
-                search_cache=ai_search_cache,
-                situation_provider=_ai_situation_provider,
-            ),
         ),
     )
 

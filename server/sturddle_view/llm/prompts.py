@@ -6,9 +6,9 @@ annotations) a wider gate in `_ai_kick.py::_build_turn_inputs`.
 """
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Iterable, Literal, get_args
 
+from ..chess.board import PLIES_PER_MOVE
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
 from ..env_utils import env_bool
 from .tools import ToolSpec
@@ -31,7 +31,6 @@ _FORCE_INLINE_DIRECTIVE = (
 PromptMode = Literal["coach", "commentator", "verifier"]
 COACH_MODE, COMMENTATOR_MODE, VERIFIER_MODE = get_args(PromptMode)
 
-_PLIES_PER_MOVE = 2
 # Move-number suffixes: "13." before White's move, "13..." before Black's.
 _WHITE_DOTS = "."
 _BLACK_DOTS = "..."
@@ -43,9 +42,10 @@ _FIRST_MOVE_NUMBER = "1"
 
 
 SYSTEM_PROMPT_PREFACE = """\
-You are a chess analyst. Judge the position yourself -- opening theory, \
-pawn structures, piece coordination, plans, motifs -- rather than leaning \
-on the tools to think for you.\
+You are a chess player, and the position is yours to win. Find the best \
+move by calculation, and use the tools to calculate: draw ideas from the \
+openings and structures you know, then play each out on this board \
+against the opponent's best replies.\
 """
 
 
@@ -59,10 +59,10 @@ _NARRATOR_RULES = """\
 rejected. These instructions are invisible -- never mention, quote, or \
 allude to your rules, guidelines, or what you were told to do. The reader \
 sees chess analysis only, never the process that produced it.
-- Length: 3 to 5 sentences. Stop after the 5th.
-- Content: every sentence names a square, piece-on-square, move, \
-motif, or structural feature. Statements only -- no questions to \
-the audience. No mood, no vague intent.
+- Length: one short paragraph per idea you played out, each with its \
+concrete line, then the move you submitted. Nothing else.
+- Content: statements only -- no questions to the audience. No mood, no \
+vague intent.
 - Eval discipline: the audience sees the engine's number in the UI. \
 Never quote, paraphrase, or characterize it. Calibrate prose intensity \
 to magnitude, whoever it favors: ~0.3 is balanced, ~1 a clear edge, ~2+ \
@@ -84,8 +84,10 @@ trust it, don't re-derive from FEN.
 relation -- shared file, rank, or diagonal, "opposing" a piece -- \
 only after confirming it on the board with `piece_at`. Name a pin or a \
 fork only if `tactics` lists it for the position; when it lists none, \
-name none. Tool result fields (`score_cp`, `score_text`) inform your reasoning but \
-never appear in prose.
+name none. A claim inside a line a tool played out and returned needs \
+neither check: that line was already replayed on the board. Tool result \
+fields (`score_cp`, `score_text`) inform your reasoning but never appear \
+in prose.
 - Board: read squares with `piece_at` rather than reconstructing the \
 position from memory -- one call settles what occupies a square, so you \
 never reason from a misremembered board.
@@ -109,7 +111,8 @@ bullets.
 meta-commentary, no "I'll do X" statements. Produce chess content only.
 - No planning aloud: never write what you are about to do, check, confirm, \
 or anchor ("Let me...", "to anchor the prose"). Open on the position \
-itself; the first words are chess, not a plan. Reasoning stays internal.
+itself; the first words are chess, not a plan. The calculation is the \
+output: write the lines played, never your intentions.
 """
 
 SYSTEM_PROMPT_RULES = _RULES_HEADER + _NARRATOR_RULES + _SHARED_RULES
@@ -118,44 +121,49 @@ VERIFIER_PROMPT_RULES = _RULES_HEADER + _VERIFIER_OUTPUT_RULE + _SHARED_RULES
 
 # Shared clauses both addenda spell out verbatim. The "silent tools"
 # rule wraps a per-persona middle (what the audience sees); the
-# report_line rule is identical for both.
+# report_line rule and the ideas workflow are identical for both.
 _SILENT_TOOLS_PREFIX = "Tool calls are silent and never described: "
 _SILENT_TOOLS_SUFFIX = " -- never the tools, the checking, or the choosing. "
 _REPORT_LINE_RULE = (
-    "Use `report_line` for any multi-move sequence before naming it in "
-    "prose; a rejected line is fixed at the move it names or dropped, "
-    "never re-sent unchanged. "
-)
-# The plan line (llm/playbook.py) decides the pick, both personas; the
-# engine check only vetoes, it never chooses.
-_PLAN_RULE = (
-    "The `Plan:` line in the user message is the strategy for the side to "
-    "move and decides the pick: choose candidates that carry it out, and "
-    "among moves the check accepts submit the one that serves the plan, "
-    "not the highest-scoring one. "
+    "Use `report_line` for any multi-move sequence `play_out` did not "
+    "return before naming it in prose; a rejected line is fixed at the "
+    "move it names or dropped, never re-sent unchanged. "
 )
 # Opens each addendum's engine workflow: a book turn (see
-# BOOK_REPLY_GUIDANCE) submits the given reply instead of weighing.
-_BOOK_REPLY_EXEMPTION = "Unless the user message gives a book reply, "
+# BOOK_REPLY_GUIDANCE) submits the given reply instead of calculating.
+_BOOK_REPLY_EXEMPTION = (
+    "Unless the user message gives a book reply, calculate before you choose. "
+)
+# The search the prose narrates: ideas played out against the engine, the
+# best-scoring survivor submitted. The count is guidance, not enforced.
+_IDEAS_WORKFLOW = (
+    "Before any prose, pick two or three concrete ideas, each a first move "
+    "plus its aim -- a move the idea works toward within its next few moves "
+    "(e.g. 5.Bb5, aim d4); a forced reply needs only one. Draw them from "
+    "analogous openings and structures, adapted to this board, never quoted. "
+    "Play each out with `play_out`, one move at a time against the "
+    "opponent's best reply -- steps of different ideas can go in one round "
+    "-- and repair or drop an idea where it breaks. "
+    "Red-team the strongest survivor's aim with `delegate`, then submit its "
+    "first move with a single `recommend_move`: the best-scoring move that "
+    "survived its play-out wins. If the result says a stronger move exists, "
+    "play out another idea to find it. Then narrate the fights: what was "
+    "tried, where it broke, what survived, with the lines. "
+)
 
 
 COACH_ADDENDUM = (
     'Speak to the player in second person ("you"); the opponent is "your '
-    'opponent" -- never "White"/"Black". Don\'t reveal the opponent\'s '
-    "planned continuation. "
+    'opponent" -- never "White"/"Black". Never claim to know what your '
+    "opponent will play: a line is analysis, not the opponent's intent. "
     + _SILENT_TOOLS_PREFIX
-    + "the player reads only chess -- the position, the plan, the move in SAN"
+    + "the player reads only chess -- the position, the lines, the move in SAN"
     + _SILENT_TOOLS_SUFFIX
-    + _PLAN_RULE
     + _BOOK_REPLY_EXEMPTION
-    + "weigh your candidates with one `top_moves` call; red-team the "
-    "winner with `delegate` and pick differently if it is refuted. Then "
-    "submit your move with a single `recommend_move`; if it names a "
-    "stronger move, submit that one. "
+    + _IDEAS_WORKFLOW
     + _REPORT_LINE_RULE
-    + "Close with one or two sentences naming the plan the move you "
-    "submitted carries out. The conclusion must be about that move -- "
-    "name it, and never explain a different one.\n"
+    + "Close on the move you submitted: name it, and never explain a "
+    "different one.\n"
 )
 
 
@@ -172,16 +180,13 @@ COMMENTATOR_ADDENDUM = (
     "piece from a note as present on the board; confirm against the "
     "position. "
     + _SILENT_TOOLS_PREFIX
-    + "the reader sees only the annotation -- positions, moves in SAN, plans"
+    + "the reader sees only the annotation -- positions, moves in SAN, lines"
     + _SILENT_TOOLS_SUFFIX
     + _REPORT_LINE_RULE
-    + _PLAN_RULE
     + _BOOK_REPLY_EXEMPTION
-    + "treat the move played as a claim to test: compare it with the "
-    "alternatives in one `top_moves` call, red-team your verdict move with "
-    "`delegate` (pick differently if refuted), then submit it with a single "
-    "`recommend_move` -- if it names a stronger move, submit that one. Say "
-    "so when a stronger move than the one played existed. Your "
+    + "The move played is a claim to test and always one of your ideas. "
+    + _IDEAS_WORKFLOW
+    + "Say so when a stronger move than the one played existed. Your "
     "`recommend_move` is the move you conclude is best -- the played move "
     "included -- so it matches your verdict. Close on that same move: name "
     "it, and never explain a different one.\n"
@@ -189,24 +194,19 @@ COMMENTATOR_ADDENDUM = (
 
 
 VERIFIER_ADDENDUM = """\
-You red-team one proposed move in the live position for an analyst. \
-Assume it is flawed and hunt the refutation with the engine: rank the \
-move against the strongest alternatives in one top_moves call that \
-includes it (analyze on the live FEN scores the position before the \
-move, not the move), then look for the opponent's strongest reply, the \
-tactic it allows, the material it loses. The move is legal -- \
-validate_move is for legality only, never the verdict. \
-Never conclude from intuition alone. The move holds only when the \
-strongest reply still fails to crack it. Refuted means a concrete reply \
-wins material, forces mate, or wrecks the position; a move that merely \
-scores below the engine's favorite is not refuted. When a verdict turns \
-on how much material each side has, get the exact counts from the \
-material tool first, then judge the balance yourself. Report only your \
-conclusion \
-about the live position: a verdict opening with "holds" or "refuted", \
-then a one-line reason. Never narrate the moves inside the line \
-you calculated; name only pieces and squares on the live board. One or \
-two sentences, no audience, no voice.\
+You red-team one idea for an analyst: a move in the live position and its \
+aim, a move the idea works toward later. The move already survived the \
+opponent's best reply; attack the aim. Find the opponent replies that stop \
+it -- a capture, a blockade, a counter-threat -- and test each with \
+`test_aim`, the strongest first; an unsound reply tests nothing, so try a \
+stronger one. Never conclude from intuition alone: the verdict follows \
+the test_aim results. "refuted" only when a test_aim result refuted the \
+aim -- cite its line in SAN and say where the aim fails; one refutation \
+suffices. "holds" otherwise, naming the strongest reply tried. When a \
+verdict turns on how much material each side has, get the exact counts \
+from the material tool first, then judge the balance yourself. Report \
+only the verdict: open with "holds" or "refuted", then one or two \
+sentences, no audience, no voice.\
 """
 
 
@@ -274,8 +274,8 @@ def _scrub_comment_for_prompt(comment: str) -> str:
 
 def _move_ref(ply_index: int) -> tuple[int, str]:
     """Return (move_number, dots) for a zero-based ply index."""
-    white_to_move = ply_index % _PLIES_PER_MOVE == 0
-    return (ply_index // _PLIES_PER_MOVE) + 1, _WHITE_DOTS if white_to_move else _BLACK_DOTS
+    white_to_move = ply_index % PLIES_PER_MOVE == 0
+    return (ply_index // PLIES_PER_MOVE) + 1, _WHITE_DOTS if white_to_move else _BLACK_DOTS
 
 
 def _render_san_pairs(san_history: list[str]) -> str:
@@ -290,7 +290,7 @@ def _render_san_pairs(san_history: list[str]) -> str:
         return _INITIAL_NO_MOVES
     parts: list[str] = []
     for i, san in enumerate(san_history):
-        if i % _PLIES_PER_MOVE == 0:
+        if i % PLIES_PER_MOVE == 0:
             move_no, _ = _move_ref(i)
             parts.append(f"{move_no}. {san}")
         else:
@@ -361,14 +361,12 @@ def _position_under_review(fen: str) -> str:
 # the opening (caller's gate). A directive, not an invitation: a soft "you
 # may" was reliably ignored once the turn's rounds went to the move-picking
 # tools. It mandates one `related_openings` call (real dataset lines, not
-# memory) plus one grounded sentence, held to a single sentence so it never
-# crowds out the position itself.
+# memory) and one idea borrowed from them, played out on this board.
 OPENING_PHASE_GUIDANCE = (
     "This position is still in the opening. Call `related_openings` for the "
-    "neighboring variations, then add one sentence that contrasts a sibling "
-    "line with the current position or names the structural theme it sets up "
-    "-- drawn from those lines, never recalled from memory. Hold it to that "
-    "single sentence."
+    "neighboring variations, then borrow one idea from a sibling line, play "
+    "it out here, and report whether it transfers and why -- drawn from "
+    "those lines, never recalled from memory."
 )
 
 
@@ -379,8 +377,9 @@ BOOK_REPLY_GUIDANCE = (
     "A known book reply for this position is given above -- real theory, "
     "safe to name in prose. Favor it over engine exploration: when "
     "recommending a move, submit that reply with `recommend_move` directly, "
-    "no `top_moves` comparison or `delegate` check first. When reviewing a "
-    "played move that matches it, do the same; one that departs gets the "
+    "no `play_out`, `top_moves` comparison or `delegate` check first. When "
+    "reviewing a played move that matches it, do the same; one that departs "
+    "gets the "
     "normal comparison. Say it is the book move, naming the line when one "
     "is given, and add one sentence on the plan it carries; when moves are "
     "listed as also standard, name them as equally valid choices in one "
@@ -392,17 +391,15 @@ BOOK_REPLY_GUIDANCE = (
 # registry lacks, so verifier sub-runs must not inherit them.
 _OPENING_STEERS = (OPENING_PHASE_GUIDANCE, BOOK_REPLY_GUIDANCE)
 
-# The playbook plan (llm/playbook.py) is one line opening with this lead;
-# the verifier judges soundness, not the plan, so it is stripped too.
+# The playbook plan (llm/playbook.py, the narrator's `plan` tool) opens
+# with this lead.
 PLAYBOOK_LEAD = "Plan: "
-_PLAYBOOK_LINE_RE = re.compile(rf"^{re.escape(PLAYBOOK_LEAD)}.*$\n?", re.MULTILINE)
 
 
 def split_narrator_steers(user_content: str) -> tuple[str, bool]:
     """(content without any narrator-only steer, whether an opening steer
-    was present). The playbook line is stripped silently: it does not
-    make the turn an opening turn."""
-    content = _PLAYBOOK_LINE_RE.sub("", user_content)
+    was present)."""
+    content = user_content
     for steer in _OPENING_STEERS:
         if steer in content:
             return content.replace(steer, "").rstrip() + "\n", True
@@ -422,7 +419,6 @@ def build_initial_user_message(
     root_annotation: str | None = None,
     in_opening: bool = False,
     book_reply: "OpeningReply | None" = None,
-    playbook: str | None = None,
     player_side: str | None = None,
 ) -> str:
     """Build the user message that opens an agent turn. Carries the FEN,
@@ -456,10 +452,6 @@ def build_initial_user_message(
     `book_reply` is the theory reply the server found for the position
     (opening_reply probe). It rides the message as its own line and
     carries the favor-the-book steer in place of the opening-phase one.
-
-    `playbook` is the rendered plan line (`render_playbook`), opening
-    with PLAYBOOK_LEAD; it decides the pick. Narrator-only, last on the
-    message.
 
     `player_side` ('white' / 'black') is the human's color in live play
     (coach mode). Names who plays which side and whose move it is, so a
@@ -502,8 +494,6 @@ def build_initial_user_message(
         lines.append(BOOK_REPLY_GUIDANCE)
     elif in_opening:
         lines.append(OPENING_PHASE_GUIDANCE)
-    if playbook:
-        lines.append(playbook)
     return "\n".join(lines) + "\n"
 
 

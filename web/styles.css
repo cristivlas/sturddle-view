@@ -684,6 +684,9 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
 .play-ai-tool-dot-report_line    { background: var(--wa-color-teal-60, #14b8a6); }
 .play-ai-tool-dot-related_openings { background: var(--wa-color-indigo-60, #6366f1); }
 .play-ai-tool-dot-position_judge { background: var(--wa-color-orange-60, #ea580c); }
+.play-ai-tool-dot-play_out       { background: var(--wa-color-green-60, #22c55e); }
+.play-ai-tool-dot-test_aim       { background: var(--wa-color-blue-70, #60a5fa); }
+.play-ai-tool-dot-plan           { background: var(--wa-color-teal-40, #0f766e); }
 /* Dominance-check steps under a recommend_move row: the baseline search is
    an engine search (top_moves blue), the candidate's is the pick's own. */
 .play-ai-tool-dot-engine_best    { background: var(--wa-color-primary-60, #4a90e2); }
