@@ -16,7 +16,7 @@ import { makePathRow } from "./settings-path-row.js";
 import { buildPlayTab } from "./settings-play-tab.js";
 import { buildDisplayTab } from "./settings-display-tab.js";
 import { buildRecentsTab } from "./settings-recents-tab.js";
-import { debounce } from "./wb-utils.js";
+import { debounce, setStartTab } from "./wb-utils.js";
 
 const SETTINGS_ENGINES_LAYOUT_KEY = STORAGE_KEY.ENGINES_SETTINGS_LAYOUT;
 const PLAYER_NAME_KEY = STORAGE_KEY.PLAYER_NAME;
@@ -293,7 +293,6 @@ export async function openSettingsDialog({
       ].map((entry) => [entry.panel.name, entry]));
 
       const startTab = (TABS.get(initialTab) || TABS.get(generalPanel.name)).tab;
-      startTab.setAttribute("active", "");
       // Common's footer shows only on that tab. WA renders the footer slot
       // only when filled and misses a re-fill, so force the re-render.
       const showGeneralFooter = (on) => {
@@ -337,6 +336,7 @@ export async function openSettingsDialog({
       if (focusClass) onDialogShown(() => dialog.querySelector(`.${focusClass}`)?.focus());
 
       for (const { tab, panel } of TABS.values()) tabs.append(tab, panel);
+      setStartTab(tabs, startTab.panel);
 
       dialog.append(tabs);
     },

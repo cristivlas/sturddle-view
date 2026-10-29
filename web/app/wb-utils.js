@@ -543,3 +543,14 @@ export function installSelection() {
     ev.preventDefault();
   });
 }
+
+// Start a wa-tab-group on panel `name` ourselves: Web Awesome's own start waits
+// on an IntersectionObserver that can miss (blank body). Matched by property,
+// as a name set as one isn't reflected to its attribute until render.
+export function setStartTab(group, name) {
+  for (const el of group.children) {
+    if (el.localName === "wa-tab" ? el.panel === name : el.localName === "wa-tab-panel" && el.name === name) {
+      el.setAttribute("active", "");
+    }
+  }
+}

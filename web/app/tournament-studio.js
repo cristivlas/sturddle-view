@@ -17,7 +17,7 @@ import { createTable, RENDER_REASON } from "./data-table.js";
 import { ACTIVATE_KEYS } from "./keys.js";
 import { formatStamp } from "./tournament-format.js";
 import { reportError, toast } from "./dialogs.js";
-import { debounce, escapeHtml, flashWindow, markSelectable, rafCoalesce, roveTabStop, suppressModifierClickSelect, syncRovingTabStop, WB_EDGE_RIGHT_CLASS, WB_NO_SHADOW_CLASS, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
+import { debounce, escapeHtml, flashWindow, markSelectable, rafCoalesce, roveTabStop, setStartTab, suppressModifierClickSelect, syncRovingTabStop, WB_EDGE_RIGHT_CLASS, WB_NO_SHADOW_CLASS, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
 import { createMultiSelect, selectionTargets } from "./multi-select.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS, STATUS_RANK } from "./tournament-events.js";
 import { newTournamentCta, removeSelected, ribbonHtml, setStartVerb, tournamentActions } from "./tournaments.js";
@@ -1139,7 +1139,7 @@ function wireTabPersistence(ctx) {
   ];
   for (const [el, key, def] of groups) {
     if (!el) continue;
-    el.setAttribute("active", loadRaw(key) || def);
+    setStartTab(el, loadRaw(key) || def);
     el.addEventListener("wa-tab-show", (ev) => {
       if (ev.detail?.name) saveRaw(key, ev.detail.name);
     });
