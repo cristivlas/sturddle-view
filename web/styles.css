@@ -1602,8 +1602,7 @@ body[data-ribbon-float] .studio-ribbon {
   outline-offset: -2px;
 }
 @keyframes analyze-pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.45; }
+  50% { transform: scale(var(--ribbon-hover-scale)); }
 }
 .ribbon-btn.is-active { color: var(--wa-color-brand-90); }
 .ribbon-btn.is-active::before { background: var(--wa-color-brand-90); }
