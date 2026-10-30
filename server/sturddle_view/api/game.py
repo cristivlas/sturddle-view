@@ -15,7 +15,6 @@ from ..auth import require_token
 from ..chess.pgn_tags import TAG_BLACK, TAG_RESULT, TAG_TERMINATION, TAG_WHITE
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
 from ..config import (
-    AI_ENABLED_KEY,
     ALLOW_TAKEBACK_KEY,
     BOOK_ORDER_RANDOM,
     BOOK_ORDER_SEQUENTIAL,
@@ -790,8 +789,9 @@ async def _cancel_ai_analysis(request: Request) -> None:
 async def analysis_start(request: Request) -> dict:
     """Enter analysis mode. The server picks the path:
     - engine go-infinite (default): HVE drives a live PV stream
-    - AI agent (when settings.ai_enabled): tool-call-driven, engine is
-      spawned per analyze call, no parallel go-infinite
+    - AI agent (when settings.ai_enabled at the start; the session keeps
+      that kind): tool-call-driven, engine is spawned per analyze call, no
+      parallel go-infinite
     The client doesn't care which; both produce the same UI signal
     (analyzing=true on board_update, engine_info events on the bus).
     """
@@ -801,7 +801,7 @@ async def analysis_start(request: Request) -> dict:
     # Drop any prior session's buffer before a new one begins, in case
     # the previous /analysis/stop was skipped (mode toggle, crash).
     _clear_replay(request)
-    if getattr(request.app.state.settings, AI_ENABLED_KEY, False):
+    if hve.ai_analysis:
         await start_ai_turn(request)
     return _OK
 

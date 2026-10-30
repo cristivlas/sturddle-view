@@ -152,6 +152,20 @@ async def seed_ai_replay(payload: dict, request: Request) -> dict:
     return {_OK_KEY: True, "count": len(events)}
 
 
+@router.post("/hve/start_ai_analysis")
+async def start_ai_analysis(request: Request) -> dict:
+    """Enter an AI analysis session without kicking a turn, as POST
+    /game/analysis/start would: seed_replay then stands in for the turn.
+    Needs ai_enabled on first -- it fixes the session's kind."""
+    hve = request.app.state.hve
+    if hve is None:
+        raise bad_request("no hve")
+    if not request.app.state.settings.ai_enabled:
+        raise bad_request("ai_enabled is off: the session would be engine-only")
+    await hve.start_analysis()
+    return {_OK_KEY: True}
+
+
 class _SilentProvider(LLMProvider):
     """A model that never answers: its turn stays in round 0, nothing emitted."""
 

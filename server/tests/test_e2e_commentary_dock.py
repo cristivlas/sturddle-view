@@ -17,9 +17,7 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-
-from .conftest import REGISTRY_FILE, assert_no_page_errors, e2e_env, run_uvicorn_subprocess  # noqa: E402
+from .conftest import assert_no_page_errors, serve_unlaunched_engine  # noqa: E402
 
 
 PLAY_PERSP = "#play-perspective"
@@ -51,14 +49,7 @@ _PGN = (
 
 @pytest.fixture
 def server(tmp_path):
-    # Fake engine so _get_hve doesn't reject /game/import; view mode never
-    # actually spawns it.
-    registry_path = tmp_path / REGISTRY_FILE
-    seed = EngineRegistry(path=registry_path)
-    e = seed.add(name="MyEngine", path="/nonexistent/engine")
-    seed.select(e.id)
-    env = e2e_env(tmp_path)
-    with run_uvicorn_subprocess(env_overrides=env) as base:
+    with serve_unlaunched_engine(tmp_path) as base:
         yield base
 
 
@@ -110,7 +101,6 @@ async def _snapshot(page):
           slotText: body?.textContent?.trim() || null,
           wbPresent: !!wb,
           docked: localStorage.getItem('sturddle:commentary:docked'),
-          openFlag: localStorage.getItem('sturddle:commentary:open'),
         };
       }
     """)
@@ -128,15 +118,14 @@ async def test_commentary_opens_docked_on_view_mode_entry(server, make_page):
     assert s["slotPresent"]
     assert s["hostHasDockEmpty"] is False
     assert s["docked"] == "1"
-    assert s["openFlag"] == "1"
     assert SEED_ROOT_COMMENT in (s["slotText"] or "")
     assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
 async def test_commentary_survives_debug_window_lifecycle(server, make_page):
-    """Regression: closeDebugWindowsPersist (triggered on view-mode entry)
-    must only close UCI-dock instances, not commentary."""
+    """Regression: view-mode navigation re-runs the analysis-off path,
+    which once tore commentary down with the debug windows."""
     base = server
     _seed_view_mode(base)
     _ctx, page, errors = await _new_page(make_page)

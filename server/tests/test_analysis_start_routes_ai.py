@@ -20,7 +20,7 @@ from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.play.chess_clock import ChessClock, TimeControl
-from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
+from sturddle_view.play.human_vs_engine import _AI_ANALYSIS_KEY, HumanVsEngine, ViewModeParams
 from sturddle_view.play.mode import Mode
 from .conftest import REGISTRY_FILE
 
@@ -92,6 +92,37 @@ async def test_analysis_start_kicks_ai_when_enabled(tmp_path):
         assert ai_task is not None
         await ai_task
         coord_run.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_engine_session_stays_engine_after_ai_setting_flip(tmp_path):
+    # The session's kind is fixed at its start: turning AI on mid-session
+    # neither relabels it on the wire nor lets a repeat start kick a turn.
+    app, client = _build_client(tmp_path, ai_enabled=False)
+    with client:
+        hve = _install_hve(app, engine_path=str(tmp_path / "engine"))
+        await hve.pause()
+        coord_run = AsyncMock()
+        app.state.ai_coordinator.run = coord_run
+
+        assert client.post("/game/analysis/start").status_code == 200
+        app.state.settings.ai_enabled = True
+        assert client.post("/game/analysis/start").status_code == 200
+
+        coord_run.assert_not_called()
+        assert hve._board_event().payload[_AI_ANALYSIS_KEY] is False
+
+
+@pytest.mark.asyncio
+async def test_ai_session_stays_ai_after_ai_setting_flip(tmp_path):
+    app, client = _build_client(tmp_path, ai_enabled=True)
+    with client:
+        hve = _install_hve(app, engine_path=str(tmp_path / "engine"))
+        await hve.pause()
+        await hve.start_analysis()
+        app.state.settings.ai_enabled = False
+
+        assert hve._board_event().payload[_AI_ANALYSIS_KEY] is True
 
 
 @pytest.mark.asyncio

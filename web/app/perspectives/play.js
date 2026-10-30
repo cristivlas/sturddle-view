@@ -1307,13 +1307,13 @@ async function resumeForDrop(ctx, view, snapBack) {
 // paused, so the ribbon shows Resume (one click exits analysis + resumes play).
 // Reads live state -- call, don't cache.
 function aiAnalysisDone(state) {
-  return state.analyzing && state.aiShared.turnFinished && state.aiEnabled;
+  return state.analyzing && state.aiShared.turnFinished && state.aiSession;
 }
 
-// An AI analysis turn is actually running. aiEnabled excludes engine-only
-// analysis runs that may happen under a stale-open AI panel.
+// An AI analysis turn is actually running. aiSession excludes engine-only
+// sessions, whatever the AI setting says now.
 function aiTurnInFlight(state) {
-  return state.aiEnabled && state.analyzing && !state.aiShared.turnFinished;
+  return state.aiSession && state.analyzing && !state.aiShared.turnFinished;
 }
 
 function refreshButtons(state) {
@@ -2037,6 +2037,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       // view/goto on !analyzing; the main analyzing block runs later in
       // the same event but would be too late.
       if (typeof evt.payload.analyzing === "boolean") setAnalyzing(state, evt.payload.analyzing);
+      state.aiSession = !!evt.payload.ai_analysis;
       if (state.viewing) {
         // Auto-entry from game over: set just before the /game/import round
         // trip that produced this event; consumed on arrival.
@@ -2152,9 +2153,10 @@ function handleBusEvent(state, ai, aiCtx, evt) {
             // user can still see and dismiss it.
             showAnalysisToastImpl(state);
           }
-          // Remount, or engine-only analysis started elsewhere. An AI
-          // session's replay supersedes this (resetAi clears it).
-          if (!state.aiEnabled && !isAiOpen()) openEngineOnlyPanel(state);
+          // Engine-only session without its stand-in: a remount, a start
+          // elsewhere, or one here on a stale AI setting. Phones skip the
+          // stand-in, so there it only drops an open panel.
+          if (!state.aiSession && (isMobileLayout() ? isAiOpen() : !isAiEngineOnly())) openEngineOnlyPanel(state);
         }
       }
       // Title the UCI Log with the engine whose traffic it shows. The
@@ -2248,7 +2250,10 @@ export const playPerspective = {
       // Set by unmount(); post-await continuations check it so they don't
       // build UI (toasts, dock windows) into a torn-down perspective.
       unmounted: false,
+      // The AI setting (decides the next session) vs the live session's
+      // kind (server-reported, fixed at its start).
       aiEnabled: false,
+      aiSession: false,
       aiTitleModel: "",
       noEngine: false,
       allowTakeback: true,
@@ -2770,16 +2775,17 @@ export const playPerspective = {
         ribbonOverflows.forEach((o) => o.detach());
         // Announce no active ribbon so the global float manager unmounts it.
         window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: null } }));
-        // Before setDockContainer(null): commentary now lives in the shared
-        // dock, whose teardown would drop its slot out from under it.
+        // Before the dock containers go (setDockContainer/RailDockContainer
+        // null): commentary and the AI panel dock there too, and would lose
+        // or strand their slots.
         closeCommentary();
+        closeAi();
         setDockContainer(null);
         setPvLineBoard(null);
         setRailDockContainer(null);
         setEvalBarCallbacks(null);
         evalBar.setOnUserClose(null);
         commentaryWindow.setOnUserClose(null);
-        closeAi();
         setAiInlineHost(null);
         setOnUserCloseAi(null);
         setOnReanalyzeAi(null);

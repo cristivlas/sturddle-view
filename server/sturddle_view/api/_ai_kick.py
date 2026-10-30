@@ -2,7 +2,8 @@
 
 The client never talks to AI directly: it asks the server to start or
 stop analysis, and the server picks the path (engine go-infinite or
-AI agent) based on `settings.ai_enabled`. This module owns the AI
+AI agent) based on `settings.ai_enabled` at the session's start
+(`hve.ai_analysis`). This module owns the AI
 half of that choice -- bridging the coordinator, provider factory,
 and HVE board snapshot at the API boundary.
 
@@ -312,7 +313,7 @@ def _on_turn_done(task: asyncio.Task, state) -> None:
 
 async def start_ai_turn(request: Request) -> None:
     """Kick one AI analysis turn. Idempotent w.r.t. start_analysis --
-    callers should invoke this only when `settings.ai_enabled` is true.
+    callers should invoke this only for an AI session (`hve.ai_analysis`).
 
     Raises HTTPException on configuration/provider errors so the
     /game/analysis/start endpoint can surface them as 4xx/5xx.

@@ -33,7 +33,6 @@ import {
 const GEO_KEY       = STORAGE_KEY.AI_GEO;
 const WIN_STATE_KEY = STORAGE_KEY.AI_WIN_STATE;
 const DOCKED_KEY    = STORAGE_KEY.AI_DOCKED;
-const OPEN_KEY      = STORAGE_KEY.AI_OPEN;
 // Last model name shown in the panel title. Pinned at analyze-start;
 // reload restores so the title reflects what last ran, not what is
 // currently selected in Settings.
@@ -533,7 +532,6 @@ const inst = createDockableWindow({
   geoKey: GEO_KEY,
   winStateKey: WIN_STATE_KEY,
   dockedKey: DOCKED_KEY,
-  openKey: OPEN_KEY,
   defaultW: () => DEFAULT_WIN_W,
   defaultH: DEFAULT_WIN_H,
   defaultY: () => DEFAULT_WIN_Y,
@@ -542,6 +540,9 @@ const inst = createDockableWindow({
   },
   dockOrder: DOCK_ORDER.AI_ANALYSIS,
   railDockable: true,
+  // play.js opens it (analysis start, replay, engine-only stand-in);
+  // restoreDebugWindows reopening it on load would leave it blank.
+  selfManaged: true,
   getInlineEl: () => inlineEl,
   closable: true,
   onUserClose: () => {
@@ -590,8 +591,9 @@ export function isAiOpen() {
 const ENGINE_ONLY_LEAD = "Engine-only analysis: see ";
 const ENGINE_ONLY_MID = " for the engine's lines. For AI analysis, choose an LLM provider in ";
 const SETTINGS_LINK = "Settings";
+const ENGINE_ONLY_CLASS = "play-ai-engine-only";
 
-// Stand-in body while the engine analyzes alone; resetAi() clears it.
+// Engine-only stand-in body, spinner on until Stop; resetAi() clears it.
 // Phones skip it (inline below the board, it costs scarce height), but
 // still drop a prior AI run's panel. showLines opens or reveals Search Lines.
 let engineOnly = false;
@@ -604,8 +606,9 @@ export function openAiEngineOnly(showLines) {
   setAiTitle("");
   openAi();
   resetAi();
-  setAiStatus(AI_STATE.IDLE);
+  setAiStatus(AI_STATE.ENGINE);
   const note = document.createElement("p");
+  note.className = ENGINE_ONLY_CLASS;
   note.append(
     ENGINE_ONLY_LEAD, deepLink(PV_TABLE_TITLE, showLines),
     ENGINE_ONLY_MID, deepLink(SETTINGS_LINK, () => openSettings(SETTINGS_TAB_ANALYSIS)), ".",

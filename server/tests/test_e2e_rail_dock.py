@@ -3,9 +3,10 @@
 Covers rail capacity and drop targeting (web/app/play-dock-windows.js) and
 band sizing (web/app/game-view.js): the band grows to fit a stack, its lift
 grip stops at that floor, and with nothing above it the band spans from the
-top clock row. Windows reach the rail either by restore
-(seeded localStorage) or by dragging a slot header onto the band. Every wait
-is a predicate on the DOM/geometry the assertions then read.
+top clock row. Windows are placed by restore (seeded localStorage), by
+opening (the Analysis panel, for a running AI turn), or by dragging a slot
+header onto the band. Every wait is a predicate on the DOM/geometry the
+assertions then read.
 
 Skipped if Playwright is missing.
 """
@@ -61,7 +62,6 @@ UCI_OPEN = "sturddle:ucilog:open"
 UCI_DOCKED = "sturddle:ucilog:docked"
 PV_OPEN = "sturddle:pvtable:open"
 PV_DOCKED = "sturddle:pvtable:docked"
-AI_OPEN = "sturddle:ai:open"
 AI_DOCKED = "sturddle:ai:docked"
 OPEN_ON = "1"
 DEST_RAIL = "rail"
@@ -118,14 +118,18 @@ async def _show_moves(page, base):
     await page.wait_for_selector(MOVE_ROW)
 
 
-async def _open_play(make_page, base, *, open_keys, rail_keys, eval_graph=False, with_moves=True):
+async def _open_play(make_page, base, *, open_keys, rail_keys, eval_graph=False, with_moves=True,
+                     ai_turn=False):
     """Load Play with `open_keys` windows open and `rail_keys` homed in the
     rail. The eval graph is off unless asked: it would claim a rail slot.
-    `with_moves` views a short game so the moves list sits above the band."""
+    `with_moves` views a short game so the moves list sits above the band.
+    `ai_turn` runs an AI turn, so the page opens the Analysis panel."""
     httpx.put(f"{base}/settings",
               json={SETTING_EVAL_GRAPH: eval_graph, SETTING_PGN_COMMENTS: False}).raise_for_status()
     if with_moves:
         _install_view_game(base)
+    if ai_turn:
+        httpx.post(f"{base}/_test/ai/start_silent_turn", json={}).raise_for_status()
     ctx, page = await make_page(viewport=VIEWPORT)
     errors = watch_page_errors(page)
     await ctx.add_init_script(_seed_js(open_keys, rail_keys))
@@ -252,10 +256,12 @@ async def test_full_rail_sends_a_third_window_to_the_main_dock(server, make_page
     falls back to the main dock instead of overflowing it."""
     page, errors = await _open_play(
         make_page, server,
-        open_keys=[UCI_OPEN, PV_OPEN, AI_OPEN],
+        open_keys=[UCI_OPEN, PV_OPEN],
         rail_keys=[UCI_DOCKED, PV_DOCKED, AI_DOCKED],
+        ai_turn=True,
     )
     await _wait_rail_slots(page, STACK)
+    await page.wait_for_selector(f"{MAIN_DOCK} {SLOT}")
     assert await _titles(page, RAIL) == [SEARCH_LINES, UCI_LOG]
     assert await _titles(page, MAIN_DOCK) == [ANALYSIS]
     assert_no_page_errors(errors)

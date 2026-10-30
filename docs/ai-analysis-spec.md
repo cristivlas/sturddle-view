@@ -688,7 +688,9 @@ link, playing the verified line. Client-only.
   reused as-is.
 - **One Settings toggle** ("Use AI analysis") selects engine-only vs.
   engine+AI behavior. Off = today's behavior unchanged. On = engine +
-  AI (engine remains source of truth).
+  AI (engine remains source of truth). Its value when analysis starts
+  fixes that session's kind (board_update `ai_analysis`); flipping it
+  mid-session applies to the next session.
 - **Mode/state still picks the path** (1 = play in-progress, 2 = view
   navigating, 3 = post-game / analyze-all). Same button, different
   downstream pipeline per (mode, game_state).

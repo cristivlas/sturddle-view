@@ -9,13 +9,12 @@ Double-click plays the line, and the board's opening label follows it, then
 comes back.
 
 Driven by seeding the coordinator's replay buffer while the server holds
-ANALYZING (engine-only analysis on a fake engine) -- no real LLM.
+an AI analysis session entered through a test hook, no turn kicked -- no
+real LLM.
 
 Skipped if Playwright is missing.
 """
 from __future__ import annotations
-
-import contextlib
 
 import httpx
 import pytest
@@ -23,9 +22,7 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-
-from .conftest import REGISTRY_FILE, e2e_env, make_searching_fake_uci, run_uvicorn_subprocess  # noqa: E402
+from .conftest import serve_fake_engine, start_ai_analysis  # noqa: E402
 
 
 PLAY_PERSP = "#play-perspective"
@@ -37,33 +34,11 @@ ADVANCE_PGN = "1. e4 c6 2. d4 d5 3. e5"
 ADVANCE_PLIES = 5
 ADVANCE_NAME = "Caro-Kann Defense: Advance Variation"
 CARO_KANN_NAME = "Caro-Kann Defense"
-# Fake engine's canned search for the Advance position (Black to move): the
-# default e2e4 line is illegal there, and python-chess logs an error parsing it.
-ADVANCE_BESTMOVE = "c8f5"
-ADVANCE_PV = "c8f5 f1e2"
-
-
-@contextlib.contextmanager
-def _serve(tmp_path, **engine_search):
-    registry_path = tmp_path / REGISTRY_FILE
-    seed = EngineRegistry(path=registry_path)
-    engine_path = make_searching_fake_uci(tmp_path, "FakeEngine", **engine_search)
-    e = seed.add(name="FakeEngine", path=engine_path)
-    seed.select(e.id)
-    env = e2e_env(tmp_path)
-    with run_uvicorn_subprocess(env_overrides=env) as base:
-        yield base
 
 
 @pytest.fixture
 def server(tmp_path):
-    with _serve(tmp_path) as base:
-        yield base
-
-
-@pytest.fixture
-def advance_server(tmp_path):
-    with _serve(tmp_path, bestmove=ADVANCE_BESTMOVE, pv=ADVANCE_PV) as base:
+    with serve_fake_engine(tmp_path) as base:
         yield base
 
 
@@ -72,7 +47,7 @@ def _start_analysis(base) -> str:
     r.raise_for_status()
     gid = r.json().get("game_id")
     httpx.post(f"{base}/game/pause").raise_for_status()
-    httpx.post(f"{base}/game/analysis/start").raise_for_status()
+    start_ai_analysis(base)
     return gid
 
 
@@ -164,8 +139,8 @@ async def test_opening_surface_matching(server, make_page):
 
 
 @pytest.mark.asyncio
-async def test_opening_label_follows_played_line(advance_server, make_page):
-    base = advance_server
+async def test_opening_label_follows_played_line(server, make_page):
+    base = server
     # The game sits in the Advance Variation; the link replays the plain
     # Caro-Kann from the start, so the label must change and come back.
     r = httpx.post(f"{base}/game/import", json={
@@ -173,7 +148,7 @@ async def test_opening_label_follows_played_line(advance_server, make_page):
     })
     r.raise_for_status()
     gid = r.json()["game_id"]
-    httpx.post(f"{base}/game/analysis/start").raise_for_status()
+    start_ai_analysis(base)
     _seed(
         base, gid,
         deltas=["The Caro-Kann Defense is solid."],

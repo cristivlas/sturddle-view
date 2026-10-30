@@ -279,7 +279,8 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
 /* AI prose -- preserve newlines so the model's blank lines read as paragraph
    breaks. Tokens stream into a single <p>: chunks may carry partial
    whitespace, and pre-wrap handles it without DOM gymnastics. */
-.play-ai-prose {
+.play-ai-prose,
+.play-ai-engine-only {
   white-space: pre-wrap;
   word-wrap: break-word;
   margin: 0 12px;
@@ -296,6 +297,11 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
 /* Tool-only rounds leave the paragraph empty -- don't render an empty box. */
 .play-ai-prose:empty {
   display: none;
+}
+/* Engine-only stand-in: prose's box, spaced like a round's prose. */
+.play-ai-engine-only {
+  margin-top: var(--play-ai-round-pad-top);
+  margin-bottom: var(--play-ai-round-gap);
 }
 
 /* Revision: <details> folding away prose the AI corrected. Summary carries the
@@ -566,16 +572,14 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
    thinking, tool calls, prose. Vertical spacing separates rounds. */
 .play-ai-round {
   display: block;
-  margin: 0 0 4px;
-  padding-top: 6px;
-  /* DEBUG */
-  /* border: 1px solid red; */
+  margin: 0 0 var(--play-ai-round-gap);
+  padding-top: var(--play-ai-round-pad-top);
 }
-/* Tool-only rounds (prose already hidden via .play-ai-prose:empty): trim the
-   round's vertical padding + margin so the next round sits close, not flush.
+/* Tool-only rounds (prose already hidden via .play-ai-prose:empty): drop the
+   top padding, keep the gap, so the next round sits close, not flush.
    Non-empty rounds keep their spacing. */
 .play-ai-round:has(.play-ai-prose:empty) {
-  margin-bottom: 4px;
+  margin-bottom: var(--play-ai-round-gap);
   padding-top: 0;
 }
 /* Thinking keeps its 8px bottom margin so tool calls don't crowd it. */
@@ -583,7 +587,7 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
   margin-top: 0;
   margin-bottom: 0;
 }
-/* After a tool-only round, drop top padding -- it supplied the 4px margin. */
+/* After a tool-only round, drop top padding -- its margin supplied the gap. */
 .play-ai-round:has(.play-ai-prose:empty) + .play-ai-round {
   padding-top: 0;
 }
@@ -591,14 +595,15 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
    lives on .play-ai-rounds (below) so it stays continuous across rounds. */
 .play-ai-timeline {
   margin: 0 12px;
-  /* DEBUG */
-  /* border: 2px solid blue; */
 }
 /* Continuous muted rule through the dot column, on the rounds-container so
    gaps between panels don't break it. Dot column x = timeline margin-left
    (12px) + dot-half (4px) - line-half (0.5px) = ~15.5px. */
 .play-ai-rounds {
   position: relative;
+  /* Round spacing, shared with the engine-only stand-in. */
+  --play-ai-round-pad-top: 6px;
+  --play-ai-round-gap: 4px;
 }
 .play-ai-rounds::before {
   content: "";

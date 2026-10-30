@@ -15,19 +15,17 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-
-from .conftest import REGISTRY_FILE, e2e_env, make_fake_uci, run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
+from .conftest import (  # noqa: E402
+    FAKE_ENGINE,
+    make_fake_uci,
+    serve_with_engine,
+    wait_perspective_ready,
+)
 
 
 @pytest.fixture
 def server(tmp_path):
-    registry_path = tmp_path / REGISTRY_FILE
-    seed = EngineRegistry(path=registry_path)
-    eng = seed.add(name="FakeEngine", path=make_fake_uci(tmp_path, "FakeEngine"))
-    seed.select(eng.id)
-    env = e2e_env(tmp_path)
-    with run_uvicorn_subprocess(env_overrides=env) as base:
+    with serve_with_engine(tmp_path, FAKE_ENGINE, make_fake_uci(tmp_path, FAKE_ENGINE)) as base:
         yield base
 
 

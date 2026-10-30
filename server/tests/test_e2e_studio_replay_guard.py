@@ -15,20 +15,17 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 
 from .conftest import (  # noqa: E402
-    REGISTRY_FILE,
     TOURNAMENT_UX_KEY,
     TOURNAMENT_UX_STUDIO,
-    e2e_env,
-    run_uvicorn_subprocess,
+    UNLAUNCHED_ENGINE_PATH,
+    serve_unlaunched_engine,
     wait_perspective_ready,
     watch_page_errors,
 )
 
-FAKE_ENGINE_PATH = "/nonexistent/engine"
 PERSPECTIVE_LS_KEY = "sturddle:active-perspective"
 LEAVE_MSG = "Review this tournament game and leave the current one?"
 REVIEW_BUTTON = 'wa-dialog wa-button:has-text("Review")'
@@ -63,18 +60,13 @@ def _seed_tournament(tmp_path):
 
 @pytest.mark.asyncio
 async def test_studio_replay_confirms_without_play_mount(tmp_path, make_page):
-    registry_path = tmp_path / REGISTRY_FILE
-    seed = EngineRegistry(path=registry_path)
-    e = seed.add(name="MyEngine", path=FAKE_ENGINE_PATH)
-    seed.select(e.id)
     _seed_tournament(tmp_path)
-    env = e2e_env(tmp_path)
-    with run_uvicorn_subprocess(env_overrides=env) as base:
+    with serve_unlaunched_engine(tmp_path) as base:
         # In-progress HVE game on the server (2 plies, human to move).
         httpx.post(
             f"{base}/_test/hve/install",
             json={
-                "engine_path": FAKE_ENGINE_PATH,
+                "engine_path": UNLAUNCHED_ENGINE_PATH,
                 "human_white": True,
                 "moves_uci": PLAY_MOVES,
             },
