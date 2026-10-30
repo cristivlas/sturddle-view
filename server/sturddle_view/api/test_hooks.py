@@ -6,13 +6,15 @@ would otherwise require deep access to ``app.state.hve`` internals.
 """
 from __future__ import annotations
 
-from typing import Any
+import asyncio
+from typing import Any, AsyncIterator
 
 import chess
 from fastapi import APIRouter, Request
 
 from ..config import DEFAULT_TC_INCREMENT_SECONDS, DEFAULT_TC_INITIAL_SECONDS
 from ..events import Event
+from ..llm import LLMProvider, ProviderChunk
 from ..play.canonical_hash import FMT_PGN
 from ..play.chess_clock import ChessClock, TimeControl
 from ..play.human_vs_engine import VIEWING_KEY, HumanVsEngine, ViewModeParams
@@ -148,6 +150,33 @@ async def seed_ai_replay(payload: dict, request: Request) -> dict:
     events = payload.get("events") or []
     coord.seed_replay(events)
     return {_OK_KEY: True, "count": len(events)}
+
+
+class _SilentProvider(LLMProvider):
+    """A model that never answers: its turn stays in round 0, nothing emitted."""
+
+    async def stream(
+        self, system, messages, tools=None, *, transcript=None,
+        round_index=0, thinking=None, force_tool_call=False,
+    ) -> AsyncIterator[ProviderChunk]:
+        await asyncio.Event().wait()
+        yield  # pragma: no cover - marks this as an async generator
+
+
+@router.post("/ai/start_silent_turn")
+async def start_silent_ai_turn(payload: dict, request: Request) -> dict:
+    """Start an AI turn whose model never answers: the turn runs with no
+    event emitted yet, the window a page reload must still show as busy.
+
+    Body: ``{"game_id": str|None}``."""
+    coord = ai_coordinator(request.app.state)
+    if coord is None:
+        raise bad_request("no ai coordinator")
+    # Strong ref, as the real kick pins it: asyncio may reap a bare task.
+    request.app.state.ai_task = asyncio.create_task(
+        coord.run(game_id=payload.get(_GAME_ID_KEY), provider=_SilentProvider()),
+    )
+    return {_OK_KEY: True}
 
 
 @router.post("/recents/seed_fork")

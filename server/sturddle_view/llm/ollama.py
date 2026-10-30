@@ -25,7 +25,12 @@ import httpx
 
 from ..config import PROVIDER_OLLAMA
 from ..env_utils import env_int
-from ._errors import ThinkingUnsupported, extract_error_message, is_thinking_unsupported
+from ._errors import (
+    ContextFull,
+    ThinkingUnsupported,
+    extract_error_message,
+    is_thinking_unsupported,
+)
 from .base import (
     CONTROL_TIMEOUT_S,
     JSON_HEADERS,
@@ -33,12 +38,14 @@ from .base import (
     Message,
     ProviderChunk,
     ProviderUsage,
+    TOOL_RESULT_BLOCK,
     ToolWireSpec,
     with_system_message,
 )
 from .harmony_strip import flush_harmony_carry, strip_harmony_text
 from .inline_recovery import recover_inline_tool_calls
 from .openai_compat import (
+    FINISH_LENGTH,
     REASONING_EFFORT_KEY,
     inline_recovery_args,
     messages_anthropic_to_openai,
@@ -62,6 +69,14 @@ _LIST_MODELS_SHOW_CONCURRENCY = 8
 # Thinking-capable models (e.g. granite4.2) reason by default when the
 # request is silent; "none" switches that off on the compat path.
 _REASONING_EFFORT_OFF = "none"
+# A reply stopped on the token limit: Ollama's context window is full (it
+# silently drops the oldest input before that), so the turn cannot go on.
+_CONTEXT_FULL_ERROR = (
+    f"{PROVIDER_OLLAMA}: the model ran out of context; raise "
+    "OLLAMA_CONTEXT_LENGTH on the Ollama host"
+)
+# /api/chat's final-line field naming why generation stopped.
+_DONE_REASON_KEY = "done_reason"
 # Native /api/chat request field enabling thinking.
 _THINK_KEY = "think"
 # Request-body fields shared by the compat and native endpoints.
@@ -128,7 +143,7 @@ def messages_anthropic_to_ollama_native(messages: list[Message]) -> list[dict]:
             residual_text: list[str] = []
             for block in content:
                 btype = block.get("type")
-                if btype == "tool_result":
+                if btype == TOOL_RESULT_BLOCK:
                     out.append({
                         "role": "tool",
                         "content": block.get("content", ""),
@@ -187,24 +202,6 @@ class _ThinkCloseWatch:
         return False
 
 
-async def _flag_think_leak(
-    inner: AsyncIterator[ProviderChunk], key: tuple[str, str],
-) -> AsyncIterator[ProviderChunk]:
-    """Pass-through that marks `key` leaky if a reasoning-off reply still
-    carries `</think>` -- backstop for a probe that missed it."""
-    watch = _ThinkCloseWatch()
-    flagged = False
-    async for chunk in inner:
-        if not flagged and chunk.kind == "text" and chunk.text and watch.feed(chunk.text):
-            flagged = True
-            _think_leak_cache[key] = True
-            log.warning(
-                "%s: %s wrote %s with reasoning off; no longer disabling it",
-                PROVIDER_OLLAMA, key[1], _THINK_CLOSE_TAG,
-            )
-        yield chunk
-
-
 # ----- Provider -----
 
 
@@ -221,6 +218,28 @@ class OllamaProvider(LLMProvider):
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._thinking_enabled = thinking_enabled
+        # A reply leaked `</think>` with reasoning off: stop disabling it
+        # for the rest of the turn (a provider lives one turn), not for the
+        # process -- the model then reasons with no cap.
+        self._think_leaked = False
+
+    async def _flag_think_leak(
+        self, inner: AsyncIterator[ProviderChunk],
+    ) -> AsyncIterator[ProviderChunk]:
+        """Pass-through that sets `_think_leaked` if a reasoning-off reply
+        still carries `</think>` -- backstop for a probe that missed it."""
+        watch = _ThinkCloseWatch()
+        async for chunk in inner:
+            if (
+                not self._think_leaked and chunk.kind == "text" and chunk.text
+                and watch.feed(chunk.text)
+            ):
+                self._think_leaked = True
+                log.warning(
+                    "%s: %s wrote %s with reasoning off; not disabling it this turn",
+                    PROVIDER_OLLAMA, self._model, _THINK_CLOSE_TAG,
+                )
+            yield chunk
 
     async def evict_model(self, model: str) -> None:
         """Force the daemon to unload `model` from VRAM.
@@ -401,7 +420,7 @@ class OllamaProvider(LLMProvider):
                 transcript=transcript, round_index=round_index,
             )
         else:
-            reasoning_off = not await self._leaks_think_when_off()
+            reasoning_off = not self._think_leaked and not await self._leaks_think_when_off()
             inner = self._stream_openai_compat(
                 system, messages, tools,
                 transcript=transcript, round_index=round_index,
@@ -409,7 +428,7 @@ class OllamaProvider(LLMProvider):
                 reasoning_off=reasoning_off,
             )
             if reasoning_off:
-                inner = _flag_think_leak(inner, (self._base_url, self._model))
+                inner = self._flag_think_leak(inner)
         # Some local models stream tool calls as prose -- recover them
         # transparently. XML shape handled unconditionally; call-syntax
         # and positional bare-JSON shapes need the tool names + ordered
@@ -461,6 +480,7 @@ class OllamaProvider(LLMProvider):
             error_label=PROVIDER_OLLAMA,
             transcript=transcript,
             round_index=round_index,
+            context_full_error=_CONTEXT_FULL_ERROR,
         )
 
     async def _stream_native(
@@ -497,6 +517,8 @@ class OllamaProvider(LLMProvider):
         # on both content AND thinking channels.
         text_carry: list[str] = []
         think_carry: list[str] = []
+        # Raised after the usage chunk (see stream_openai_compat).
+        context_full = False
 
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(
@@ -531,6 +553,8 @@ class OllamaProvider(LLMProvider):
                         raise RuntimeError(
                             f"{PROVIDER_OLLAMA}: malformed NDJSON line: {line!r} ({exc})"
                         ) from exc
+                    if evt.get(_DONE_REASON_KEY) == FINISH_LENGTH:
+                        context_full = True
                     msg = evt.get("message") or {}
                     thinking = msg.get("thinking")
                     if thinking:
@@ -560,6 +584,8 @@ class OllamaProvider(LLMProvider):
         # providers: the coordinator stops consuming at the first tool_use.
         if usage is not None:
             yield ProviderChunk(kind="usage", usage=usage)
+        if context_full:
+            raise ContextFull(_CONTEXT_FULL_ERROR)
 
         # /api/chat tool_calls carry no id. Mint a synthetic id per call
         # so the coordinator's tool_use_id pipeline keeps working; Ollama

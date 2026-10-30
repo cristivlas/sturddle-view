@@ -16,8 +16,9 @@ import json
 import logging
 import re
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, fields
-from typing import Awaitable, Callable, Iterable, Sequence
+from typing import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 
 import chess
 
@@ -45,6 +46,7 @@ from ..events import (
     EventBus,
 )
 from ..llm import (
+    ContextFull,
     LLMProvider,
     Message,
     PromptMode,
@@ -59,6 +61,7 @@ from ..llm import (
     split_narrator_steers,
     strip_markdown_stream,
 )
+from ..llm.base import TOOL_RESULT_BLOCK
 from ..llm.cancel import CancelToken
 from ..llm.position_check import (
     describe_square,
@@ -866,7 +869,7 @@ def _tool_results_message(
             # ensure_ascii=False: escaped non-ASCII (accented opening names)
             # gets parroted into the model's prose verbatim.
             result = json.dumps(result, ensure_ascii=False)
-        content.append({"type": "tool_result", "tool_use_id": tool_use_id, "content": result})
+        content.append({"type": TOOL_RESULT_BLOCK, "tool_use_id": tool_use_id, "content": result})
         if card:
             cards.append({"type": "text", "text": card})
     return {"role": "user", "content": content + cards}
@@ -1286,6 +1289,9 @@ class AIAnalysisCoordinator:
         # from a short form of the turn's own. None skips that guard.
         self._book_provider = book_provider
         self._lock = asyncio.Lock()
+        # Turns waiting on `_lock` (a prior turn still in its teardown):
+        # running already, for turn_running.
+        self._starting: set[asyncio.Task] = set()
         self._task: asyncio.Task | None = None
         self._cancel_token: CancelToken | None = None
         # Provider active for the current turn. Set in run() so verifier
@@ -1369,7 +1375,7 @@ class AIAnalysisCoordinator:
         active = provider or self._provider
         system_prompt = assemble_system_prompt(mode, tools=self._registry.specs())
         opening_user_content = user_message if user_message is not None else ""
-        async with self._lock:
+        async with self._turn_lock(game_id):
             self._task = asyncio.current_task()
             self._cancel_token = CancelToken()
             self._active_provider = active
@@ -2543,6 +2549,38 @@ class AIAnalysisCoordinator:
     def replay(self) -> list[dict]:
         return list(self._replay_buffer)
 
+    def turn_running(self) -> bool:
+        """True while a turn is in flight, events emitted or not -- from the
+        moment run() starts, before it holds the lock."""
+        if any(not task.done() for task in self._starting):
+            return True
+        return self._task is not None and not self._task.done()
+
+    @asynccontextmanager
+    async def _turn_lock(self, game_id: str | None) -> AsyncIterator[None]:
+        """`_lock` for one turn; while waiting for it, the turn counts as
+        running (turn_running). Cancelled while waiting, with no other turn
+        live to end with its own done event, it emits one: a client that
+        saw it running must not keep spinning."""
+        me = asyncio.current_task()
+        self._starting.add(me)
+        acquired = False
+        try:
+            async with self._lock:
+                acquired = True
+                self._starting.discard(me)
+                yield
+        except asyncio.CancelledError:
+            self._starting.discard(me)
+            if not acquired and not self.turn_running():
+                await self._emit(Event(
+                    kind=EVT_AI_INFO, game_id=game_id,
+                    payload={"done": True, "cancelled": True},
+                ))
+            raise
+        finally:
+            self._starting.discard(me)
+
     def clear_replay(self) -> None:
         # Rebind (not .clear()) so an in-flight replay() iteration on
         # the old list stays consistent.
@@ -2618,9 +2656,10 @@ class AIAnalysisCoordinator:
             return {**tool_error(UNKNOWN_TOOL_ERROR), TOOL_NAME_KEY: call.tool_name}
         try:
             return await fn(call.tool_input, cancel_token=self._cancel_token)
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, ContextFull):
             # Propagate cancellation; the outer except in run() emits
-            # the terminal done/cancelled event.
+            # the terminal done/cancelled event. A full context ends the
+            # turn too (see ContextFull).
             raise
         except Exception as exc:
             # Returned to the model as a structured error it recovers from
@@ -2630,16 +2669,19 @@ class AIAnalysisCoordinator:
             return {**tool_error(TOOL_FAILED_ERROR, str(exc)), TOOL_NAME_KEY: call.tool_name}
 
     async def cancel(self) -> None:
-        """Cancel the running turn (if any). Hard-stop per spec: drops the
-        agent loop, surfaces partial prose as-is. Idempotent."""
+        """Cancel the running turn (if any), and any turn still waiting for
+        it to let go of the lock. Hard-stop per spec: drops the agent loop,
+        surfaces partial prose as-is. Idempotent."""
         token = self._cancel_token
         if token is not None:
             token.cancel()
-        task = self._task
-        if task is None or task.done():
-            return
-        task.cancel()
-        try:
-            await asyncio.shield(task)
-        except (asyncio.CancelledError, Exception):
-            pass
+        me = asyncio.current_task()
+        tasks = [t for t in (*self._starting, self._task) if t is not None and t is not me]
+        tasks = [t for t in tasks if not t.done()]
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            try:
+                await asyncio.shield(task)
+            except (asyncio.CancelledError, Exception):
+                pass

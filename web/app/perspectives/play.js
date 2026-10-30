@@ -581,7 +581,9 @@ async function rehydrateAiPanel(ai, aiCtx, { adopt = false } = {}) {
     // perspective.
     if (aiCtx.isUnmounted()) return;
     const events = Array.isArray(r?.events) ? r.events : [];
-    if (adopt || events.length > 0) {
+    // A turn that has emitted nothing yet (a slow first round) still
+    // opens busy: resetAi shows the spinner.
+    if (adopt || events.length > 0 || r?.running === true) {
       openAi();
       resetAi();
       for (const evt of events) dispatchAiEventOrdered(ai, aiCtx, evt);

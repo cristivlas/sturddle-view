@@ -81,7 +81,9 @@ Round body, in order:
 4. If a tool_use is pending: dispatch via the registry, append the
    `tool_result` user message (matching `tool_use_id`). Failures
    surface as `ai_tool_call_failed` events but do not break the loop
-   -- the model can read the structured error and recover.
+   -- the model can read the structured error and recover. Exception:
+   a full context window (`ContextFull`, e.g. in a verifier sub-run)
+   ends the turn with that error.
 
 The loop terminates on: clean exit (no tool_use),
 `MAX_TOOL_ROUNDS` reached (`done.round_cap=true`), provider error,
@@ -465,7 +467,10 @@ qwen3:4b) ignore it and write their reasoning into visible text ending
 in a bare `</think>`. A lazy one-time probe per (base URL, model) --
 tiny prompt, stopped at the tag -- detects them; they get no "none", so
 their reasoning stays on the dropped `reasoning` channel. A real reply
-carrying the tag flags the model too. Failed probes are not cached.
+carrying the tag stops "none" for the rest of that turn only (the provider
+lives one turn): a flagged model reasons with no cap, so a process-wide
+flag let one stray tag cost every later turn (one live round ran 9
+minutes). Failed probes are not cached.
 
 ### Configuration
 

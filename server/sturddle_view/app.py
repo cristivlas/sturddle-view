@@ -23,7 +23,6 @@ except ImportError:  # optional: uvicorn falls back to its websockets impl
     wsproto = wsproto_impl = ConnectionState = None
 
 from . import APP_NAME, __version__, is_windows
-from . import llm as llm_pkg
 from .auth import AUTH_COOKIE, AUTH_PATH, AUTH_TOKEN_PARAM, INVALID_TOKEN_DETAIL, origin_ok
 from .api import chess_utils as chess_api
 from .api import connect as connect_api
@@ -46,7 +45,7 @@ from .config import (
 )
 from .engine_tmp import sweep_orphans
 from .engines import EngineRegistry, resolve_analysis, resolve_selected
-from .env_utils import env_bool, env_int
+from .env_utils import env_int
 from .events import EVT_REMOTE_CONNECTED, Event, EventBus
 from .llm import CannedProvider, LLMProvider, ToolRegistry
 from .llm.anthropic import AnthropicProvider
@@ -105,7 +104,6 @@ _UI_ENTRY = f"{_UI_PATH}/"
 _AUTH_COOKIE_MAX_AGE_S = env_int(
     "SV_AUTH_COOKIE_MAX_AGE_S", int(timedelta(weeks=1).total_seconds()), min_value=1,
 )
-_AI_DEBUG_ENV = "SV_AI_DEBUG"
 _READY_PORT_ENV = "SV_READY_PORT"
 # SV_READY_PORT unset: not launched by the test harness.
 _NO_READY_PORT = 0
@@ -681,13 +679,6 @@ def _setup_ai(app: FastAPI) -> None:
     ai_registry.register(PLAN_TOOL_SPEC, make_plan_tool(_ai_plan_provider))
     app.state.ai_tool_registry = ai_registry
     app.state.ai_verifier_registry = ai_verifier_registry
-
-    # SV_AI_DEBUG=1: flip the AI loggers to DEBUG so the system prompt,
-    # user message, text deltas, and tool calls are visible. Off by
-    # default; meant to be set when diagnosing a misbehaving model.
-    if env_bool(_AI_DEBUG_ENV, False):
-        logging.getLogger(llm_pkg.__name__).setLevel(logging.DEBUG)
-        logging.getLogger(AIAnalysisCoordinator.__module__).setLevel(logging.DEBUG)
 
     def _ai_provider_factory() -> LLMProvider:
         s = app.state.settings

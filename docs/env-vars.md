@@ -185,7 +185,6 @@ source; check the file when a precise value matters.
 | Var | Default | Effect | Where |
 |---|---|---|---|
 | `SV_AI_TRANSCRIPT` | unset | Opt-in: write per-turn transcripts to disk. | `server/sturddle_view/llm/transcript.py` |
-| `SV_AI_DEBUG` | `0` | Flip AI loggers to DEBUG when `--debug` is also on. Accepts `1`/`true`/`yes`/`on`. | `server/sturddle_view/app.py` |
 | `SV_AI_FORCE_INLINE_CALLS` | `0` | Force the model to emit tool calls as inline text (exercises the inline-call recovery path). Accepts `1`/`true`/`yes`/`on`. | `server/sturddle_view/llm/prompts.py` |
 
 ## Test-only

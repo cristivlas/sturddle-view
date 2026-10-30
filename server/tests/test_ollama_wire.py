@@ -20,7 +20,7 @@ import pytest
 from sturddle_view.llm import Transcript
 from sturddle_view.llm import ollama as ollama_mod
 from sturddle_view.llm import openai_compat as openai_compat_mod
-from sturddle_view.llm._errors import ThinkingUnsupported
+from sturddle_view.llm._errors import ContextFull, ThinkingUnsupported
 from sturddle_view.llm.ollama import OllamaProvider
 from sturddle_view.llm.openai_compat import openai_tool_call_to_provider_chunk
 
@@ -258,6 +258,31 @@ async def test_forced_tool_call_takes_thinking_off_compat_path(install_fake_http
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("thinking_enabled", "lines"), [
+    (False, [
+        'data: {"choices":[{"delta":{"content":""},"finish_reason":"length"}]}',
+        'data: {"choices":[],"usage":{"prompt_tokens":4078,"completion_tokens":18}}',
+        "data: [DONE]",
+    ]),
+    (True, ['{"done":true,"done_reason":"length","message":{"content":""},'
+            '"prompt_eval_count":4078,"eval_count":18}']),
+], ids=["compat", "native"])
+async def test_reply_cut_at_the_context_window_raises(install_fake_httpx, thinking_enabled, lines):
+    # A full context window ends the reply on its token limit, often with
+    # nothing said: fail loudly with the remedy, not with an empty turn --
+    # after the round's usage, which is what sizes OLLAMA_CONTEXT_LENGTH.
+    install_fake_httpx(lines=lines)
+    provider = OllamaProvider(
+        base_url=_FAKE_URL, model=_CLEAN_MODEL, thinking_enabled=thinking_enabled,
+    )
+    chunks = []
+    with pytest.raises(ContextFull, match="OLLAMA_CONTEXT_LENGTH"):
+        async for c in provider.stream(system="", messages=[{"role": "user", "content": "x"}]):
+            chunks.append(c)
+    assert [c.usage.input_tokens for c in chunks if c.kind == "usage"] == [4078]
+
+
+@pytest.mark.asyncio
 async def test_thinking_on_sends_think_without_reasoning_effort(install_fake_httpx):
     install_fake_httpx(lines=['{"done":true,"message":{}}'])
     provider = OllamaProvider(
@@ -331,21 +356,25 @@ async def test_failed_probe_disables_reasoning_and_is_not_cached(install_sequenc
 
 
 @pytest.mark.asyncio
-async def test_leak_in_real_reply_flags_model(install_sequence):
+async def test_leak_in_real_reply_stops_disabling_reasoning_this_turn(install_sequence):
     # Probe said clean (seeded), but a real reply leaks: text passes
-    # through untouched and the next request stops disabling reasoning.
+    # through untouched, and the rest of the turn (this provider) stops
+    # disabling reasoning. Not the process: the next turn's provider says
+    # "none" again, since a flagged model reasons with no cap.
     client = install_sequence([ollama_mod._CAP_TOOLS, ollama_mod._CAP_THINKING], [
-        _sse("reasoning\n</think>\n\nanswer"), _sse("next"),
+        _sse("reasoning\n</think>\n\nanswer"), _sse("next"), _sse("new turn"),
     ])
     provider = OllamaProvider(base_url=_FAKE_URL, model=_CLEAN_MODEL)
     chunks = await _drain(provider)
     await _drain(provider)
+    await _drain(OllamaProvider(base_url=_FAKE_URL, model=_CLEAN_MODEL))
 
     assert "".join(c.text for c in chunks if c.kind == "text") == (
         "reasoning\n</think>\n\nanswer"
     )
-    assert ollama_mod._think_leak_cache[(_FAKE_URL, _CLEAN_MODEL)] is True
     assert _KEY not in client.bodies[1]
+    assert client.bodies[2][_KEY] == ollama_mod._REASONING_EFFORT_OFF
+    assert ollama_mod._think_leak_cache[(_FAKE_URL, _CLEAN_MODEL)] is False
 
 
 @pytest.mark.asyncio

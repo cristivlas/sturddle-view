@@ -22,6 +22,9 @@ if TYPE_CHECKING:
 
 ChunkKind = Literal["text", "thinking", "tool_use", "usage"]
 
+# Canonical (Anthropic-shaped) content-block type of one tool's result.
+TOOL_RESULT_BLOCK = "tool_result"
+
 # Per-request timeout for providers' control-plane calls (model listing,
 # daemon housekeeping). Streaming chat runs without a timeout.
 _DEFAULT_CONTROL_TIMEOUT_S = 10.0

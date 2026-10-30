@@ -82,6 +82,8 @@ _COMMENT_TEXT_KEY = "comment_text"
 _DETECTED_FORMAT_KEY = "detected_format"
 _CHILDREN_KEY = "children"
 _EVENTS_KEY = "events"
+# Replay: a turn is in flight, though it may not have emitted yet.
+_RUNNING_KEY = "running"
 _ERROR_KEY = ERROR_KEY
 _IN_PROGRESS_ERROR = "in_progress"
 _WOULD_LEAVE_ERROR = "would_leave"
@@ -806,13 +808,14 @@ async def analysis_start(request: Request) -> dict:
 
 @router.get(_ANALYSIS_REPLAY_PATH)
 async def analysis_replay(request: Request) -> dict:
-    """Return the buffered AI events for the in-flight analysis turn.
-    Lets a client reconnecting mid-analysis rebuild the panel from the
-    bus events it missed. Empty list when no analysis is live."""
+    """Return the buffered AI events for the in-flight analysis turn, and
+    whether one is running. Lets a client reconnecting mid-analysis rebuild
+    the panel from the bus events it missed -- or show it busy when the
+    turn has emitted nothing yet. Empty list when no analysis is live."""
     coord = ai_coordinator(request.app.state)
     if coord is None:
-        return {_EVENTS_KEY: []}
-    return {_EVENTS_KEY: coord.replay()}
+        return {_EVENTS_KEY: [], _RUNNING_KEY: False}
+    return {_EVENTS_KEY: coord.replay(), _RUNNING_KEY: coord.turn_running()}
 
 
 @router.delete(_ANALYSIS_REPLAY_PATH)
