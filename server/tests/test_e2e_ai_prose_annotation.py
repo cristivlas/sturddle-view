@@ -220,7 +220,7 @@ async def test_cancel_keeps_edit_mode_and_prose_is_single_use(server, make_page)
     await page.click(VIEW_EDIT_BTN)
     await _annotation_text(page)
     await _close_dialog(page)
-    assert await page.evaluate(RIBBON_SHOWN_JS, EDIT_RIBBON)
+    await page.wait_for_function(RIBBON_SHOWN_JS, arg=EDIT_RIBBON)
     # Nothing staged and no leftover prose: the plain comment preloads.
     await page.click(EDIT_ANNOTATE_BTN)
     assert await _annotation_text(page) == OLD_COMMENT

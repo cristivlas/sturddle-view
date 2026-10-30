@@ -28,6 +28,7 @@ from .conftest import (  # noqa: E402
     e2e_env,
     make_searching_fake_uci,
     run_uvicorn_subprocess,
+    wait_eval,
     wait_perspective_ready,
     watch_page_errors,
 )
@@ -296,7 +297,7 @@ async def test_parent_delete_cascades_after_confirm(server, make_page):
     await _open_recents_tab(page)
 
     await page.locator(ROW.format(parent)).locator(ROW_DELETE).click()
-    assert await page.locator(CONFIRM_MESSAGE).text_content() == DELETE_TWO_FORKS
+    await wait_eval(page, "(sel) => document.querySelector(sel)?.textContent ?? null", DELETE_TWO_FORKS, CONFIRM_MESSAGE)
     await page.click(CONFIRM_BUTTON.format(DELETE_LABEL))
 
     await page.locator(ROW.format(parent)).wait_for(state="detached")

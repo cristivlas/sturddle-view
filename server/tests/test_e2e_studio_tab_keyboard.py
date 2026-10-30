@@ -175,8 +175,8 @@ async def test_studio_event_log_ctrl_a_selects_log(tmp_path, make_page):
         await line.click()
         await page.keyboard.press("Control+a")
 
-        sel = await page.evaluate(LOG_SELECTION)
-        assert sel and sel["inList"], sel
-        for text in LOG_LINES:
-            assert text in sel["text"], sel
+        await page.wait_for_function(
+            f"(lines) => {{ const s = ({LOG_SELECTION})(); return !!s?.inList && lines.every((t) => s.text.includes(t)); }}",
+            arg=LOG_LINES,
+        )
         assert not errors, errors

@@ -835,6 +835,25 @@ async def wait_for_async_predicate(page, body: str, *, poll_ms: int = 100) -> No
     await page.wait_for_function(f"() => window['{key}'] === true")
 
 
+async def _wait_json(page, js: str, value, arg, op: str) -> None:
+    await page.wait_for_function(
+        f"([arg, v]) => JSON.stringify(({js})(arg)) {op} JSON.stringify(v)",
+        arg=[arg, value],
+    )
+
+
+async def wait_eval(page, js: str, expected, arg=None) -> None:
+    """Wait until the sync JS function ``js(arg)`` JSON-equals ``expected``.
+    Use after an action instead of evaluate-then-assert, so the read sees
+    the state the action's handlers settle on."""
+    await _wait_json(page, js, expected, arg, "===")
+
+
+async def wait_eval_not(page, js: str, unexpected, arg=None) -> None:
+    """``wait_eval``'s converse: wait until ``js(arg)`` differs from ``unexpected``."""
+    await _wait_json(page, js, unexpected, arg, "!==")
+
+
 def watch_page_errors(page) -> list[str]:
     """Collect page JS exceptions + console errors; assert empty at test end."""
     errors: list[str] = []

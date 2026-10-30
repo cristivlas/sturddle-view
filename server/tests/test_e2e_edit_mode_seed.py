@@ -18,7 +18,13 @@ pytestmark = pytest.mark.e2e
 
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
-from .conftest import REGISTRY_FILE, e2e_env, run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
+from .conftest import (  # noqa: E402
+    REGISTRY_FILE,
+    e2e_env,
+    run_uvicorn_subprocess,
+    wait_eval,
+    wait_perspective_ready,
+)
 
 # Black to move, only White-kingside + Black-queenside castling rights.
 # Asymmetric on every axis so a default-init wouldn't accidentally pass.
@@ -73,15 +79,15 @@ async def test_edit_mode_seeds_stm_and_castling_from_inherited_fen(server, page)
     )
     # Open the side popover to read the toggle pill text.
     await page.click("#edit-side")
-    side_text = await page.text_content("#edit-side-toggle")
+    await wait_eval(page, "() => document.querySelector('#edit-side-toggle').textContent.trim()", "Black to move")
     # Open the castling popover.
     await page.click("#edit-castle-btn")
-    castle_state = await page.evaluate("""() => ({
+    await wait_eval(page, """() => ({
         wK: document.querySelector('#edit-castle-cb-wk').classList.contains('is-active'),
         wQ: document.querySelector('#edit-castle-cb-wq').classList.contains('is-active'),
         bK: document.querySelector('#edit-castle-cb-bk').classList.contains('is-active'),
         bQ: document.querySelector('#edit-castle-cb-bq').classList.contains('is-active'),
-    })""")
+    })""", {"wK": True, "wQ": False, "bK": False, "bQ": True})
     # Clock-row active class must match STM. With FEN STM=b and the user
     # not flipped (bottom = white), the TOP row should be active.
     clock_active = await page.evaluate("""() => ({
@@ -89,12 +95,6 @@ async def test_edit_mode_seeds_stm_and_castling_from_inherited_fen(server, page)
         bottom: document.querySelector('.clock-bottom')?.classList.contains('active') ?? false,
     })""")
 
-    assert side_text.strip() == "Black to move", (
-        f"side pill should read 'Black to move', got {side_text!r}"
-    )
-    assert castle_state == {"wK": True, "wQ": False, "bK": False, "bQ": True}, (
-        f"castling pills mismatch: got {castle_state!r}"
-    )
     assert clock_active["top"] is True and clock_active["bottom"] is False, (
         f"top clock should be active (black to move); got {clock_active!r}"
     )

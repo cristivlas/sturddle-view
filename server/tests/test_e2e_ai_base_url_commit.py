@@ -162,6 +162,6 @@ async def test_invalid_base_url_not_saved_on_close(server, make_page):
 async def test_invalid_base_url_reverts_on_provider_click(server, make_page):
     page, url_input = await _open_and_type(server, make_page, INVALID_URL)
     await _row_control(page, PROVIDER_LABEL, WA_SELECT).click()
-    assert await url_input.evaluate("(el) => el.value") == ""
+    await page.wait_for_function("(el) => el.value === ''", arg=await url_input.element_handle())
     assert not await _shook(page)
     assert await _counts(page) == NOTHING_SAVED

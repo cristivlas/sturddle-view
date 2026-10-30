@@ -18,6 +18,8 @@ from .conftest import (  # noqa: E402
     run_uvicorn_subprocess,
     seed_tournament,
     tournament_server_env,
+    wait_eval,
+    wait_eval_not,
     watch_page_errors,
 )
 
@@ -35,6 +37,8 @@ _MARKED = (
     f"() => [...document.querySelectorAll('{ROW}.marked .studio-tourney-name')]"
     ".map(td => td.textContent).sort()"
 )
+_LABELS = f"() => [...document.querySelectorAll('{HEAD} th .th-label')].map(e => e.textContent)"
+NAME_TH = f'{HEAD} th:has(> .th-label:text-is("Name"))'
 
 
 @pytest.fixture
@@ -55,7 +59,7 @@ async def _mark_two(page, server):
     await page.wait_for_function(f"() => document.querySelectorAll('{ROW}').length === {len(NAMES)}")
     await page.click(_row(NAMES[0]))
     await page.click(_row(NAMES[1]), modifiers=["Control"])
-    assert await page.evaluate(_MARKED) == [NAMES[1]]
+    await wait_eval(page, _MARKED, [NAMES[1]])
 
 
 @pytest.mark.asyncio
@@ -64,7 +68,8 @@ async def test_marks_survive_header_sort(server, make_page):
     errors = watch_page_errors(page)
     await _mark_two(page, server)
 
-    await page.click(f'{HEAD} th .th-label:text-is("Name")')
+    await page.click(f"{NAME_TH} .th-label")
+    await page.wait_for_selector(f'{NAME_TH}[aria-sort="ascending"]')
     assert await page.evaluate(_MARKED) == [NAMES[1]]
     assert_no_page_errors(errors)
 
@@ -77,6 +82,8 @@ async def test_marks_survive_columns_menu_change(server, make_page):
 
     await page.click(f"{HEAD} .dt-menu-btn")
     await page.wait_for_selector(f"{MENU}:popover-open")
+    labels = await page.evaluate(_LABELS)
     await page.click(f'{MENU} .dt-menu-col[data-key="created"] .dt-menu-toggle')
+    await wait_eval_not(page, _LABELS, labels)
     assert await page.evaluate(_MARKED) == [NAMES[1]]
     assert_no_page_errors(errors)

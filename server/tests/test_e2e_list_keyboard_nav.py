@@ -31,6 +31,8 @@ from .conftest import (  # noqa: E402
     e2e_env,
     make_fake_uci,
     run_uvicorn_subprocess,
+    wait_eval,
+    wait_eval_not,
     wait_perspective_ready,
     watch_page_errors,
 )
@@ -133,19 +135,18 @@ async def test_fs_picker_arrow_navigation(tmp_path, make_page):
         ), "Tab never reached the picker's file list"
 
         name = _row_text(PICKER_ROW, ".fs-name")
+        await wait_eval_not(page, name, None)
         first = await page.evaluate(name)
-        assert first, "focusing the list did not select a row"
 
         await page.keyboard.press("ArrowDown")
+        await wait_eval_not(page, name, first)
         second = await page.evaluate(name)
-        assert second and second != first
 
         await page.keyboard.press("End")
-        last = await page.evaluate(name)
-        assert last not in (first, second)
+        await page.wait_for_function(f"(seen) => !seen.includes(({name})())", arg=[first, second])
 
         await page.keyboard.press("Home")
-        assert await page.evaluate(name) == first
+        await wait_eval(page, name, first)
 
         assert not errors, errors
 
@@ -169,7 +170,7 @@ async def test_fs_picker_header_click_selects_nothing(tmp_path, make_page):
         )
 
         await page.click(".fs-picker-head-tbl thead th:first-child")
-        assert await page.evaluate(_row_text(PICKER_ROW, ".fs-name")) is None
+        await wait_eval(page, _row_text(PICKER_ROW, ".fs-name"), None)
         assert not errors, errors
 
 
@@ -197,15 +198,16 @@ async def test_studio_tourney_list_arrow_navigation(tmp_path, make_page):
         ) == "none", "the focused list should not box itself in a focus ring"
 
         name = _row_text(TOURNEY_ROW, ".studio-tourney-name")
+        await wait_eval_not(page, name, None)
         start = await page.evaluate(name)
         await page.keyboard.press("ArrowDown")
-        assert await page.evaluate(name) != start
+        await wait_eval_not(page, name, start)
 
         await page.keyboard.press("End")
-        assert await page.evaluate(name) == f"tourney-{SEEDED_TOURNEYS - 1}"
+        await wait_eval(page, name, f"tourney-{SEEDED_TOURNEYS - 1}")
 
         await page.keyboard.press("Home")
-        assert await page.evaluate(name) == "tourney-0"
+        await wait_eval(page, name, "tourney-0")
 
         assert not errors, errors
 
@@ -239,11 +241,12 @@ async def test_studio_history_is_one_tab_stop(tmp_path, make_page):
         )
         await page.focus(".studio-history-body-tbl")
         await page.keyboard.press("ArrowDown")
+        await page.wait_for_function(f"() => ({cursor_index})() >= 0")
         first = await page.evaluate(cursor_index)
         await page.keyboard.press("ArrowDown")
-        assert first >= 0 and await page.evaluate(cursor_index) == first + 1
-        assert await page.evaluate(
-            "() => document.activeElement.classList.contains('studio-history-body-tbl')"
+        await wait_eval(page, cursor_index, first + 1)
+        await wait_eval(
+            page, "() => document.activeElement.classList.contains('studio-history-body-tbl')", True,
         )
 
         assert not errors, errors
@@ -272,10 +275,10 @@ async def test_openings_list_arrow_navigation(tmp_path, make_page):
         ), "Tab never reached the openings list"
 
         name = _row_text(OPENINGS_ROW, ".openings-list-name")
+        await wait_eval_not(page, name, None)
         first = await page.evaluate(name)
-        assert first, "focusing the list did not select an opening"
 
         await page.keyboard.press("ArrowDown")
-        assert await page.evaluate(name) != first
+        await wait_eval_not(page, name, first)
 
         assert not errors, errors

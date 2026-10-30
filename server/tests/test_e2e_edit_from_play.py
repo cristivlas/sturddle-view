@@ -237,7 +237,7 @@ async def test_changed_commit_asks_then_keep_editing_stays(server, make_page):
     await _change_castling(page)
     await page.click(EDIT_CONFIRM_BTN)
     await _confirm(page, CONFIRM_EDIT_LEAVE, KEEP_EDITING_LABEL)
-    assert await page.evaluate(RIBBON_SHOWN_JS, EDIT_RIBBON)
+    await page.wait_for_function(RIBBON_SHOWN_JS, arg=EDIT_RIBBON)
 
     # The game-id filter is back: cancel lands on the live board.
     await page.click(EDIT_CANCEL_BTN)

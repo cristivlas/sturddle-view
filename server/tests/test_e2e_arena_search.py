@@ -22,6 +22,7 @@ from .conftest import (  # noqa: E402
     run_uvicorn_subprocess,
     seed_tournament,
     tournament_server_env,
+    wait_eval,
     watch_page_errors,
 )
 
@@ -60,16 +61,16 @@ async def test_search_filters_by_name_and_engine(server, make_page, dpr):
     await page.click(SEARCH_BTN)
     await page.wait_for_selector(f"{SEARCH_INPUT}", state="visible")
     await _type(page, "SPRING")
-    assert await page.evaluate(NAMES) == ["spring-cup"]
+    await wait_eval(page, NAMES, ["spring-cup"])
     await _type(page, "gamma")
-    assert await page.evaluate(NAMES) == ["summer-cup"]
+    await wait_eval(page, NAMES, ["summer-cup"])
     await _type(page, "nothing-matches")
-    assert await page.evaluate(NAMES) == []
-    assert await page.locator(".tournaments-no-match").is_visible()
+    await wait_eval(page, NAMES, [])
+    await page.wait_for_selector(".tournaments-no-match", state="visible")
 
     await page.keyboard.press("Escape")
-    assert await page.evaluate(NAMES) == ["spring-cup", "summer-cup"]
-    assert not await page.evaluate(SEARCH_OPEN)
+    await wait_eval(page, NAMES, ["spring-cup", "summer-cup"])
+    await wait_eval(page, SEARCH_OPEN, False)
     assert_no_page_errors(errors)
 
 
@@ -86,7 +87,7 @@ async def test_search_minimizes_workspace_and_restores(server, make_page, close)
     opened, _ = await page.evaluate(_WINDOWS)
 
     await page.click(SEARCH_BTN)
-    assert await page.evaluate(_WINDOWS) == [opened, opened]
+    await wait_eval(page, _WINDOWS, [opened, opened])
     toast = page.get_by_text(TOAST_TEXT)
     await toast.wait_for()
 
@@ -94,7 +95,7 @@ async def test_search_minimizes_workspace_and_restores(server, make_page, close)
         await page.keyboard.press("Escape")
     else:
         await toast.click()
-    assert not await page.evaluate(SEARCH_OPEN)
-    assert await page.evaluate(_WINDOWS) == [opened, 0]
+    await wait_eval(page, SEARCH_OPEN, False)
+    await wait_eval(page, _WINDOWS, [opened, 0])
     await toast.wait_for(state="detached")
     assert_no_page_errors(errors)

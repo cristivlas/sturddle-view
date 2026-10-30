@@ -109,6 +109,7 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, make_p
 
         # Select the row so ribbon verbs reflect that tournament.
         await page.click('.tournament-row')
+        await page.wait_for_selector('.tournament-row.selected')
         row_info = await page.evaluate(
             """() => {
                 const row = document.querySelector('.tournament-row');

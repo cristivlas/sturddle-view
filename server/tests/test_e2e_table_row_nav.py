@@ -26,6 +26,8 @@ from .conftest import (  # noqa: E402
     run_uvicorn_subprocess,
     seed_tournament,
     tournament_server_env,
+    wait_eval,
+    wait_eval_not,
     wait_perspective_ready,
     watch_page_errors,
 )
@@ -50,8 +52,24 @@ _STATE = f"""(body) => {{
 }}"""
 
 
+_CURRENT_ID = f"(body) => ({_STATE})(body).current"
+# The body's last Engines row, re-queried: a selection move re-renders the rows.
+_LAST_ROW = "(body) => [...document.querySelectorAll(`${body} tr.engines-list-item`)].at(-1)"
+_LAST_HOVERED = f"(body) => ({_LAST_ROW})(body).matches(':hover')"
+_LAST_BG = f"(body) => getComputedStyle(({_LAST_ROW})(body)).backgroundColor"
+
+
 async def _state(page, body):
     return await page.evaluate(_STATE, body)
+
+
+async def _wait_cursor(page, body, off=None):
+    """Wait until `body` has focus with a current row other than `off`; return the state."""
+    await page.wait_for_function(
+        f"([b, off]) => {{ const s = ({_STATE})(b); return s.bodyFocused && ![null, off].includes(s.current); }}",
+        arg=[body, off],
+    )
+    return await _state(page, body)
 
 
 @pytest.fixture
@@ -81,12 +99,12 @@ async def test_engines_selection_row_ring(tmp_path, make_page):
         body = ".engines-body-tbl"
         await page.focus(".engines-head-tbl th:last-child .th-label")
         await page.keyboard.press("Tab")
-        first = await _state(page, body)
-        assert first["bodyFocused"] and first["current"] and first["ring"] == "solid", first
+        first = await _wait_cursor(page, body)
+        assert first["ring"] == "solid", first
 
         await page.keyboard.press("ArrowDown")
-        moved = await _state(page, body)
-        assert moved["current"] not in (None, first["current"]) and moved["ring"] == "solid", moved
+        moved = await _wait_cursor(page, body, first["current"])
+        assert moved["ring"] == "solid", moved
         assert await page.evaluate(
             f"() => document.querySelector('{body} {CURRENT}').classList.contains('focused')"
         )
@@ -94,14 +112,17 @@ async def test_engines_selection_row_ring(tmp_path, make_page):
         # Hover a non-current row, then arrow: its hover tint goes (one
         # highlight at a time) and comes back once the mouse moves.
         await page.keyboard.press("Home")
-        last = page.locator(f"{body} tr.engines-list-item").last
-        box = await last.bounding_box()
+        await page.wait_for_function(
+            f"(b) => ({_CURRENT_ID})(b) === document.querySelector(`${{b}} tbody tr`).dataset.id", arg=body,
+        )
+        box = await page.locator(f"{body} tr.engines-list-item").last.bounding_box()
         await page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-        tinted = await last.evaluate("(el) => getComputedStyle(el).backgroundColor")
+        await wait_eval(page, _LAST_HOVERED, True, body)
+        tinted = await page.evaluate(_LAST_BG, body)
         await page.keyboard.press("ArrowDown")
-        assert await last.evaluate("(el) => getComputedStyle(el).backgroundColor") != tinted
+        await wait_eval_not(page, _LAST_BG, tinted, body)
         await page.mouse.move(box["x"] + box["width"] / 2 + 1, box["y"] + box["height"] / 2)
-        assert await last.evaluate("(el) => getComputedStyle(el).backgroundColor") == tinted
+        await wait_eval(page, _LAST_BG, tinted, body)
         assert_no_page_errors(errors)
 
 
@@ -117,16 +138,14 @@ async def test_standings_cursor_row(tourney_server, make_page):
     body = ".wb-standings-body-tbl"
     await page.focus(".wb-standings-head-tbl th:last-child .th-label")
     await page.keyboard.press("Tab")
-    one = await _state(page, body)
-    assert one["bodyFocused"], one
+    one = await _wait_cursor(page, body)
     await page.keyboard.press("ArrowDown")
-    two = await _state(page, body)
+    two = await _wait_cursor(page, body, one["current"])
     assert one["ring"] == two["ring"] == "solid"
-    assert None not in (one["current"], two["current"]) and one["current"] != two["current"]
 
     # A click moves the cursor too (Enter after a click acts on that row).
     await page.click(f"{body} tbody tr[data-id='{one['current']}']")
-    assert (await _state(page, body))["current"] == one["current"]
+    await wait_eval(page, _CURRENT_ID, one["current"], body)
     assert_no_page_errors(errors)
 
 
@@ -142,12 +161,12 @@ async def test_h2h_reachable_with_cursor(tourney_server, make_page):
     body = ".h2h-body-tbl"
     await page.focus('.studio-bottom-right wa-tab[panel="h2h"]')
     await page.keyboard.press("Tab")
-    first = await _state(page, body)
-    assert first["bodyFocused"] and first["current"] and first["ring"] == "solid", first
+    first = await _wait_cursor(page, body)
+    assert first["ring"] == "solid", first
 
     await page.keyboard.press("ArrowDown")
-    cur = await _state(page, body)
-    assert cur["current"] not in (None, first["current"]) and cur["ring"] == "solid", cur
+    cur = await _wait_cursor(page, body, first["current"])
+    assert cur["ring"] == "solid", cur
     assert not await page.evaluate(f"() => document.querySelector('{body} {CURRENT}').classList.contains('h2h-group')")
     assert_no_page_errors(errors)
 
@@ -164,8 +183,8 @@ async def test_tourneys_selection_row_ring(tourney_server, make_page):
     # Completed (last) isn't sortable, so start from the last focusable label.
     await page.locator(".studio-tourney-head-tbl .th-label[tabindex]").last.focus()
     await page.keyboard.press("Tab")
-    st = await _state(page, body)
-    assert st["bodyFocused"] and st["current"] and st["ring"] == "solid", st
+    st = await _wait_cursor(page, body)
+    assert st["ring"] == "solid", st
     assert_no_page_errors(errors)
 
 
@@ -180,11 +199,9 @@ async def test_games_cursor_enter_replays(tourney_server, make_page):
     body = ".studio-history-body-tbl"
     await page.focus(".studio-history-head-tbl th:last-child .th-label")
     await page.keyboard.press("Tab")
-    assert (await _state(page, body))["bodyFocused"]
-
-    assert (await _state(page, body))["current"] == "1"
+    assert (await _wait_cursor(page, body))["current"] == "1"
     await page.keyboard.press("ArrowDown")
-    assert (await _state(page, body))["current"] == "2"
+    await wait_eval(page, _CURRENT_ID, "2", body)
     async with page.expect_request(lambda r: r.url.endswith("/games/2/pgn")):
         await page.keyboard.press("Enter")
     assert_no_page_errors(errors)

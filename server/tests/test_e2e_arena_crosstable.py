@@ -25,6 +25,7 @@ from .conftest import (  # noqa: E402
     run_uvicorn_subprocess,
     seed_tournament,
     tournament_server_env,
+    wait_eval,
     watch_page_errors,
 )
 
@@ -85,8 +86,11 @@ async def _menu_crosstable(page):
     await page.keyboard.press("Enter")
 
 
+_CHECKED = f"(sel) => document.querySelector(sel).classList.contains('{MENU_CHECKED}')"
+
+
 async def _checked(page, sel):
-    return await page.locator(sel).evaluate(f"(el) => el.classList.contains('{MENU_CHECKED}')")
+    return await page.evaluate(_CHECKED, sel)
 
 
 @pytest.mark.asyncio
@@ -116,7 +120,7 @@ async def test_menu_shows_crosstable_grid(server, make_page):
     }
     # Showing G adds each engine's game count after the score columns.
     await page.click(G_TOGGLE)
-    assert [row[len(ENGINES) + 1] for row in await page.evaluate(_GRID)] == ["3", "3", "2"]
+    await wait_eval(page, f"() => ({_GRID})().map((row) => row[{len(ENGINES) + 1}])", ["3", "3", "2"])
     assert_no_page_errors(errors)
 
 
@@ -146,11 +150,11 @@ async def test_toggle_flips_view_and_menu_checks_it(server, make_page):
     await page.wait_for_selector(XT_ROWS)
 
     await page.click(TOGGLE)
-    assert await page.locator(TITLE).text_content() == "Standings"
-    assert await page.locator(".wb-standings").is_visible()
-    assert not await page.locator(".wb-crosstable").is_visible()
+    await wait_eval(page, f"() => document.querySelector('{TITLE}').textContent", "Standings")
+    await page.wait_for_selector(".wb-standings", state="visible")
+    await page.wait_for_selector(".wb-crosstable", state="hidden")
 
     await page.click(".tmb-window-btn")
-    assert await _checked(page, ".tmb-sys-standings")
+    await wait_eval(page, _CHECKED, True, ".tmb-sys-standings")
     assert not await _checked(page, ".tmb-sys-crosstable")
     assert_no_page_errors(errors)

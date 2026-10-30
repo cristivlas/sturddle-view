@@ -26,7 +26,7 @@ pytestmark = pytest.mark.e2e
 
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
-from .conftest import REGISTRY_FILE, e2e_env, run_uvicorn_subprocess  # noqa: E402
+from .conftest import REGISTRY_FILE, e2e_env, run_uvicorn_subprocess, wait_eval  # noqa: E402
 
 
 PLAY_PERSP = "#play-perspective"
@@ -141,7 +141,8 @@ async def test_error_while_away_toasts_on_return(server, make_page):
     await page.click(PLAY_NAV_BTN)
     await _await_rehydrates(page, 2)
     toast = page.locator(_TOAST)
-    assert await toast.count() == 1, "failed turn left no error toast on return"
+    # The failed turn leaves exactly one error toast on return.
+    await wait_eval(page, "(sel) => document.querySelectorAll(sel).length", 1, _TOAST)
     assert LLM_ERROR in (await toast.text_content() or "")
 
 

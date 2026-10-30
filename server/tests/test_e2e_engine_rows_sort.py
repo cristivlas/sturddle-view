@@ -22,6 +22,7 @@ from .conftest import (  # noqa: E402
     open_studio_tab,
     post_proxy,
     running_tournament,
+    wait_eval,
     watch_page_errors,
 )
 
@@ -58,9 +59,9 @@ async def test_studio_engines_sort_ties_by_proxy_id(tmp_path, monkeypatch, make_
         await page.wait_for_function(_ROWS_ARE, arg=[STUDIO_LIST, len(EXPECTED_ASC)])
 
         await page.dblclick(STUDIO_ENGINES_TAB)
-        assert await page.evaluate(_ROW_PIDS, STUDIO_LIST) == EXPECTED_ASC
+        await wait_eval(page, _ROW_PIDS, EXPECTED_ASC, STUDIO_LIST)
         await page.dblclick(STUDIO_ENGINES_TAB)
-        assert await page.evaluate(_ROW_PIDS, STUDIO_LIST) == EXPECTED_DESC
+        await wait_eval(page, _ROW_PIDS, EXPECTED_DESC, STUDIO_LIST)
         assert_no_page_errors(errors)
 
 
@@ -74,7 +75,7 @@ async def test_arena_engines_sort_ties_by_proxy_id(tmp_path, monkeypatch, make_p
         await page.wait_for_function(_ROWS_ARE, arg=[ARENA_LIST, len(EXPECTED_ASC)])
 
         await page.click(ARENA_ASC_BTN)
-        assert await page.evaluate(_ROW_PIDS, ARENA_LIST) == EXPECTED_ASC
+        await wait_eval(page, _ROW_PIDS, EXPECTED_ASC, ARENA_LIST)
         await page.click(ARENA_DESC_BTN)
-        assert await page.evaluate(_ROW_PIDS, ARENA_LIST) == EXPECTED_DESC
+        await wait_eval(page, _ROW_PIDS, EXPECTED_DESC, ARENA_LIST)
         assert_no_page_errors(errors)

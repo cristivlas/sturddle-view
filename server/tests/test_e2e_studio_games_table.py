@@ -20,6 +20,7 @@ from .conftest import (  # noqa: E402
     run_uvicorn_subprocess,
     seed_tournament,
     tournament_server_env,
+    wait_eval,
     watch_page_errors,
 )
 
@@ -60,13 +61,13 @@ async def test_header_tab_and_enter_sort(server, make_page):
 
     await page.focus(f"{HEAD} .dt-menu-btn")
     await page.keyboard.press("Tab")
-    assert await page.evaluate("() => document.activeElement.textContent") == "#"
+    await wait_eval(page, "() => document.activeElement.textContent", "#")
 
     await page.keyboard.press("Enter")
-    assert await page.get_attribute(NUM_TH, "aria-sort") == "ascending"
-    assert await page.evaluate(_ROW_NUMS) == ["1", "2", "3"]
+    await page.wait_for_selector(f'{NUM_TH}[aria-sort="ascending"]')
+    await wait_eval(page, _ROW_NUMS, ["1", "2", "3"])
     await page.keyboard.press("Enter")
-    assert await page.get_attribute(NUM_TH, "aria-sort") == "descending"
-    assert await page.evaluate(_ROW_NUMS) == ["3", "2", "1"]
+    await page.wait_for_selector(f'{NUM_TH}[aria-sort="descending"]')
+    await wait_eval(page, _ROW_NUMS, ["3", "2", "1"])
     assert_no_page_errors(errors)
 
