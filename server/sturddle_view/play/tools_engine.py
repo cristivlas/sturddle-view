@@ -113,7 +113,7 @@ _MATE_SCORE_CP = 100_000
 # recommend_move rejection reason when the side ahead offers a repetition.
 _REPEAT_AHEAD_REASON = (
     "{san} repeats the position; ahead, a repetition only offers the "
-    "draw. Submit a move that makes progress."
+    "draw. Recommend a move that makes progress."
 )
 
 # Default search depth when the caller omits one. 20 plies
@@ -1338,7 +1338,7 @@ _RECOMMEND_MOVE_CARD = (
 RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
     name=RECOMMEND_MOVE_TOOL_NAME,
     description=(
-        "Submit your final move at end-of-turn: one you played out. "
+        "Recommend your final move at end-of-turn: one you played out. "
         "Validates legality and checks it against the strongest move at "
         "the requested depth. Returns post-move FEN on acceptance, or "
         "error=recommendation_rejected with a `reason` when the move was "
@@ -1362,17 +1362,17 @@ RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
 # recommend_move rejections name the rule, never the engine's move: the
 # model keeps hunting with its own ideas.
 _NOT_PLAYED_OUT_REASON = (
-    "Only a move you played out can be submitted: play it out with "
+    "Only a move you played out can be recommended: play it out with "
     "`play_out` first."
 )
 _STRONGER_EXISTS_REASON = (
-    "A stronger move exists. Play out another idea to find it, then submit "
-    "that move."
+    "A stronger move exists. Play out another idea to find it, then "
+    "recommend that move."
 )
 # Fallback notes on an accept (the turn is out of rounds).
 _REPLACED_NOTE = (
     "{orig} was not played out; {san}, the best move you played out, is "
-    "recorded."
+    "the recommended move."
 )
 _WEAKER_NOTE = "A stronger move exists; present {san} as the practical choice."
 _WEAKER_THAN_BEST_KEY = "weaker_than_best"
@@ -1560,7 +1560,7 @@ class PlayOutRecord:
         self._ideas.add(idea_key(idea))
 
     def grant_idea(self) -> None:
-        """Room for one more new idea: a rejected submit must not trap."""
+        """Room for one more new idea: a rejected recommendation must not trap."""
         self._idea_cap = max(self._idea_cap, len(self._ideas) + 1)
 
     def line(self, idea: str, live: chess.Board) -> _IdeaLine:
@@ -1609,7 +1609,7 @@ def make_recommend_move_tool(
     book move (`book_move_provider`) is accepted as-is, no search: `{ok,
     uci, san, post_move_fen, book: True}`. Any other move must have been
     played out (`play_out_record`; None skips the rule), and a side ahead
-    that submits a repeating move is rejected before any search. Then two
+    that recommends a repeating move is rejected before any search. Then two
     engine searches (free + candidate-restricted) at the requested depth;
     if the engine's best scores better for the side to move by more than
     RECOMMEND_MARGIN_CP, a rejection that never names it. On acceptance
@@ -1752,7 +1752,7 @@ PLAY_OUT_TOOL_SPEC = ToolSpec(
         f"move that drops your eval by more than {PLAY_OUT_MARGIN_CP}cp "
         f"fails (failed=true) and is not kept. At most {MAX_IDEAS} ideas "
         f"per turn, {PLAY_OUT_MAX_MOVES} of your moves each; a rejected "
-        "submit opens room for one more idea."
+        "recommendation opens room for one more idea."
     ),
     input_schema=object_schema(
         {
@@ -1772,11 +1772,12 @@ PLAY_OUT_TOOL_SPEC = ToolSpec(
 _IDEA_EMPTY_DETAIL = "idea must be a non-empty string"
 _IDEA_LIMIT_ERROR = "idea_limit"
 _IDEA_LIMIT_DETAIL = (
-    "no room for a new idea; continue one in play or submit"
+    "no room for a new idea; continue one in play or recommend a move"
 )
 _IDEA_DONE_ERROR = "idea_done"
 _IDEA_DONE_DETAIL = (
-    f"this idea has its {PLAY_OUT_MAX_MOVES} moves; play another idea or submit"
+    f"this idea has its {PLAY_OUT_MAX_MOVES} moves; play another idea or "
+    "recommend a move"
 )
 _LINE_OVER_ERROR = "line_over"
 _LINE_OVER_DETAIL = "this idea's line has ended the game; play out another idea"

@@ -155,14 +155,14 @@ VERIFIER_MAX_ROUNDS = env_int("SV_AI_VERIFIER_MAX_ROUNDS", _DEFAULT_AI_VERIFIER_
 SEMANTIC_CHECK_ENABLED = env_bool("SV_AI_SEMANTIC_CHECK", True)
 
 # Consecutive failed recommend_move calls before the loop force-nudges the
-# model to play out a new idea instead of resubmitting.
+# model to play out a new idea instead of retrying.
 MAX_RECOMMEND_FAILURES = env_int(
     "SV_AI_MAX_RECOMMEND_FAILURES", _DEFAULT_AI_MAX_RECOMMEND_FAILURES
 )
 
-# Rounds left when a narrator still without a pick is told to submit now
+# Rounds left when a narrator still without a pick is told to recommend now
 # and recommend_move takes the best played-out move unconditionally: the
-# submit round plus the prose round.
+# recommend round plus the prose round.
 _DEFAULT_FALLBACK_ROUNDS_LEFT = 2
 FALLBACK_ROUNDS_LEFT = env_int(
     "SV_AI_FALLBACK_ROUNDS_LEFT", _DEFAULT_FALLBACK_ROUNDS_LEFT, min_value=1,
@@ -264,25 +264,25 @@ _RECOMMEND_NUDGE_PROMPTS = {
 # analysis (small models treat the call as the end). One-shot. {san}
 # names the recorded move so the prose can't drift to another.
 _POST_RECOMMEND_NUDGE = (
-    "{san} is recorded. Explain it now: why {san} is best and the plan it "
-    "serves, in a few sentences."
+    "{san} is the recommended move. Explain it now: why {san} is best and "
+    "the plan it serves, in a few sentences."
 )
 
 # Injected once when the closing prose describes a move other than the one
 # recorded -- the arrow shows the recorded move, so the two disagree on
 # screen. Re-assertion is struck rather than re-prompted.
 _RECOMMEND_MISMATCH_NUDGE = (
-    "The recorded move is {san}, but the conclusion describes {named} "
-    "instead. Restate the conclusion for {san} -- the move you submitted "
-    "is the one the reader sees."
+    "The recommended move is {san}, but the conclusion describes {named} "
+    "instead. Restate the conclusion for {san} -- it is the move the "
+    "reader sees."
 )
 
 # Injected after MAX_RECOMMEND_FAILURES consecutive failed recommend_move
-# calls: stop resubmitting, play out a new idea. Re-armed by any
+# calls: stop retrying, play out a new idea. Re-armed by any
 # successful play_out call.
 _RECOMMEND_FAILURE_NUDGE = (
-    "Stop resubmitting. Play out a new idea with `play_out`, then submit "
-    "the best move that survives." + _NO_ACK_CLAUSE
+    "Stop retrying `recommend_move`. Play out a new idea with `play_out`, "
+    "then recommend the best move that survives." + _NO_ACK_CLAUSE
 )
 
 # play_out steps of different ideas share a round; a second step of one
@@ -296,7 +296,7 @@ _ONE_STEP_PER_IDEA_DETAIL = (
 # Injected once, FALLBACK_ROUNDS_LEFT rounds before the cap, when nothing
 # was accepted yet but something was played out.
 _FALLBACK_NUDGE = (
-    "Rounds are nearly spent: submit now with `recommend_move` the best "
+    "Rounds are nearly spent: call `recommend_move` now with the best "
     "move you played out." + _NO_ACK_CLAUSE
 )
 
@@ -306,7 +306,7 @@ _FALLBACK_NUDGE = (
 _RED_TEAM_FIRST_ERROR = "red_team_first"
 _RED_TEAM_FIRST_NUDGE = (
     "Before settling, hand this move and its aim to `delegate` to "
-    "red-team it, then submit again." + _NO_ACK_CLAUSE
+    "red-team it, then recommend it again." + _NO_ACK_CLAUSE
 )
 
 # Verifier completeness nudge: a verdict before any sound test_aim.
@@ -635,7 +635,7 @@ def _canonical_fen(input_: dict) -> str | None:
 
 def _norm_report_line(input_: dict, board: chess.Board | None) -> tuple | None:
     # Key on the start position (EPD) + the raw move strings in order. Raw
-    # (not canonical) so a broken line -- one a re-submit would repeat
+    # (not canonical) so a broken line -- one a retry would repeat
     # verbatim -- still dedups; order matters, so no sorting.
     raw_moves = input_.get("moves")
     if not isinstance(raw_moves, list) or not raw_moves:
@@ -903,7 +903,7 @@ class _LoopConfig:
     game_id: str | None
     provider: LLMProvider
     transcript: object
-    # Narrator: nudge to recommend_move when the model never submits one.
+    # Narrator: nudge to recommend_move when the model never calls it.
     # Verifier: nudge to call a tool before concluding. None disables.
     completeness_nudge: str | None = None
     # True only for the narrator loop -- enables recommend_move tracking
@@ -1588,7 +1588,7 @@ class AIAnalysisCoordinator:
         round_index: int,
     ) -> None:
         """FALLBACK_ROUNDS_LEFT or fewer rounds before the cap with no pick
-        yet: tell the narrator to submit now, and from here recommend_move
+        yet: tell the narrator to recommend now, and from here recommend_move
         takes the best played-out move unconditionally (a player out of
         clock plays the best move found). Once, at the first such round with
         something played out -- with nothing, no move could be taken."""
@@ -2630,7 +2630,7 @@ class AIAnalysisCoordinator:
         if norm is None:
             return None
         if call.tool_name == RECOMMEND_MOVE_TOOL_NAME:
-            # Fallback or a spent idea grant changes the ruling: a resubmit
+            # Fallback or a spent idea grant changes the ruling: a retry
             # under it is a new call.
             return (call.tool_name, norm, self._turn_fallback, self._grant_spent())
         return (call.tool_name, norm)

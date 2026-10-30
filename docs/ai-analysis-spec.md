@@ -230,11 +230,11 @@ separately validate the line behind the move. The dominance check rejects a
 move the engine's best beats by margin -- the guard that matters; deeper
 line-validation is the model's job via `play_out` and `delegate`. One
 margin regardless of standing (`SV_AI_RECOMMEND_MARGIN`); a side ahead
-cannot submit a repetition (docs/ai-playbook-spec.md §Gate).
+cannot recommend a repetition (docs/ai-playbook-spec.md §Gate).
 
 **Settling on a move.** Only a move the narrator played out (a first
 step of `play_out` ran with it, failed or not) is taken; among those the
-best-scoring survivor wins. When the engine's best beats the submitted
+best-scoring survivor wins. When the engine's best beats the recommended
 move by more than the margin, `recommend_move` rejects it with "a stronger
 move exists" and never names it (nor do its result or `top_moves`'
 entries carry the engine's line): the model keeps hunting with its own
@@ -244,7 +244,7 @@ and drives the on-board arrow (via the end-of-turn `ai_recommendation`
 verifier search).
 
 **Out of rounds.** `SV_AI_FALLBACK_ROUNDS_LEFT` rounds before the cap, a
-narrator with no pick but a played-out move is told to submit now; from
+narrator with no pick but a played-out move is told to recommend now; from
 then on `recommend_move` takes the best played-out move unconditionally
 (a move not played out is replaced by the one with the best eval after
 its first step; a dominated one is flagged `weaker_than_best`), with no

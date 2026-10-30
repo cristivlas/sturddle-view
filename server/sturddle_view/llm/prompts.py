@@ -131,12 +131,12 @@ _REPORT_LINE_RULE = (
     "move it names or dropped, never re-sent unchanged. "
 )
 # Opens each addendum's engine workflow: a book turn (see
-# BOOK_REPLY_GUIDANCE) submits the given reply instead of calculating.
+# BOOK_REPLY_GUIDANCE) recommends the given reply instead of calculating.
 _BOOK_REPLY_EXEMPTION = (
     "Unless the user message gives a book reply, calculate before you choose. "
 )
 # The search the prose narrates: ideas played out against the engine, the
-# best-scoring survivor submitted.
+# best-scoring survivor recommended.
 _IDEAS_WORKFLOW = (
     f"Before any prose, pick up to {MAX_IDEAS} concrete ideas, each a first move "
     "plus its aim -- a move the idea works toward within its next few moves "
@@ -145,13 +145,14 @@ _IDEAS_WORKFLOW = (
     "Play each out with `play_out`, one move at a time against the "
     "opponent's best reply -- steps of different ideas can go in one round "
     "-- and repair or drop an idea where it breaks. "
-    "Red-team the strongest survivor's aim with `delegate`, then submit its "
-    "first move with a single `recommend_move`: the best-scoring move that "
-    "survived its play-out wins. If the result says a stronger move exists, "
-    "play out another idea to find it. Then explain the move: why it is "
-    "best, the plan it serves, what the opponent can try; name a rejected "
-    "idea and why it fails when that teaches something, with at most one "
-    "short line as evidence. "
+    "Red-team the strongest survivor's aim with `delegate`, then recommend "
+    "its first move with a single `recommend_move`: the best-scoring move "
+    "that survived its play-out wins. If the result says a stronger move "
+    "exists, play out another idea to find it. Then explain the move: give "
+    'its SAN, call it "the recommended move", never "submitted", and say '
+    "why it is best, the plan it serves, what the opponent can try; name a "
+    "rejected idea and why it fails when that teaches something, with at "
+    "most one short line as evidence. "
 )
 
 
@@ -165,7 +166,7 @@ COACH_ADDENDUM = (
     + _BOOK_REPLY_EXEMPTION
     + _IDEAS_WORKFLOW
     + _REPORT_LINE_RULE
-    + "Close on the move you submitted: name it, and never explain a "
+    + "Close on the move you recommended: name it, and never explain a "
     "different one.\n"
 )
 
@@ -191,8 +192,9 @@ COMMENTATOR_ADDENDUM = (
     + _IDEAS_WORKFLOW
     + "Say so when a stronger move than the one played existed. Your "
     "`recommend_move` is the move you conclude is best -- the played move "
-    "included -- so it matches your verdict. Close on that same move: name "
-    "it, and never explain a different one.\n"
+    "included -- so it matches your verdict; when that is the played move, "
+    "call it the move played, not the recommended move. Close on that same "
+    "move: name it, and never explain a different one.\n"
 )
 
 
@@ -379,7 +381,7 @@ OPENING_PHASE_GUIDANCE = (
 BOOK_REPLY_GUIDANCE = (
     "A known book reply for this position is given above -- real theory, "
     "safe to name in prose. Favor it over engine exploration: when "
-    "recommending a move, submit that reply with `recommend_move` directly, "
+    "recommending a move, pass that reply to `recommend_move` directly, "
     "no `play_out`, `top_moves` comparison or `delegate` check first. When "
     "reviewing a played move that matches it, do the same; one that departs "
     "gets the "
