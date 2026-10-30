@@ -994,7 +994,8 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
 }
 .status-badge.hidden { display: none; }
 .status-badge--paused,
-.status-badge--editing {
+.status-badge--editing,
+.status-badge--analyzing {
   color: var(--accent);
   background: rgba(var(--accent-rgb), 0.12);
   border-color: rgba(var(--accent-rgb), 0.4);
@@ -1298,6 +1299,7 @@ body:has(#play-perspective) > header { position: sticky; top: 0; }
   .status-badge { margin-left: 0; }
   #paused-badge,
   #editing-badge,
+  #analyzing-badge,
   #finished-badge,
   #about-btn,
   #settings-btn,
