@@ -52,11 +52,13 @@
   --panel: #25272d;
   --nav-btn-bg: #2a2d33;
   --nav-btn-bg-hover: #32353c;
-  /* Active perspective tab: a steel-blue glass chip, after .brand's gradient.
-     Its ring is inset because the mobile nav clips outside its box. */
-  --nav-active-fg: #fff;
-  --nav-active-bg: linear-gradient(rgba(143, 176, 214, 0.34), rgba(93, 131, 173, 0.22));
-  --nav-active-edge: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 0 0 1px rgba(143, 176, 214, 0.4);
+  /* Steel blue, after .brand's gradient: the active tab and eye-button edges. */
+  --steel-rgb: 143, 176, 214;
+  --fg-bright: #fff;
+  /* Active perspective tab: a glass chip. Its ring is inset because the mobile
+     nav clips outside its box. */
+  --nav-active-bg: linear-gradient(rgba(var(--steel-rgb), 0.34), rgba(93, 131, 173, 0.22));
+  --nav-active-edge: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 0 0 1px rgba(var(--steel-rgb), 0.4);
   /* Watch/unwatch (eye) buttons: lighter than nav buttons to stand off the pane. */
   --watch-btn-bg: #474c56;
   --watch-btn-bg-hover: #525862;
@@ -976,7 +978,7 @@ nav button:focus-visible {
 }
 nav button.active {
   background: var(--nav-active-bg);
-  color: var(--nav-active-fg);
+  color: var(--fg-bright);
   box-shadow: var(--nav-active-edge);
 }
 .conn {
@@ -5257,8 +5259,8 @@ wa-dialog.tournament-info-dialog::part(body) {
   display: inline-flex; gap: 4px;
 }
 .wb-sched-attach-btn, .wb-sched-unwatch-btn {
-  background: var(--watch-btn-bg); color: var(--fg);
-  border: 1px solid var(--border-subtle); border-radius: 6px;
+  background: var(--watch-btn-bg); color: var(--fg-bright);
+  border: 1px solid rgba(var(--steel-rgb), 0.4); border-radius: 6px;
   padding: 2px 6px; cursor: pointer; font-size: 0.6875rem;
 }
 /* Icon-only now: line-height 0 keeps the glyph vertically centred in the
@@ -5268,13 +5270,14 @@ wa-dialog.tournament-info-dialog::part(body) {
 }
 .wb-sched-unwatch-btn { margin-right: 4px; }
 .wb-sched-attach-btn:hover:not(:disabled),
-.wb-sched-unwatch-btn:hover:not(:disabled) { background: var(--watch-btn-bg-hover); border-color: var(--accent); }
+.wb-sched-unwatch-btn:hover:not(:disabled) { background: var(--watch-btn-bg-hover); border-color: rgba(var(--steel-rgb), 0.9); }
 .wb-sched-attach-btn:disabled, .wb-sched-unwatch-btn:disabled {
-  opacity: 0.35; cursor: default;
+  background: transparent; border-color: transparent;
+  opacity: 0.55; cursor: default;
 }
-/* Watched: the Playing badge's slate fill; hover keeps it (amber border only). */
+/* Watched: the Playing badge's slate fill, amber eye; hover keeps both. */
 .wb-sched-attach-btn--live,
-.wb-sched-attach-btn--live:hover:not(:disabled) { background: var(--row-bg-selected); }
+.wb-sched-attach-btn--live:hover:not(:disabled) { background: var(--row-bg-selected); color: var(--accent); }
 .wb-sched-pair .wb-sched-icon { color: var(--muted); }
 
 /* Engine rows: playing/idle (3+ engine tourneys leave engines idle). Playing
