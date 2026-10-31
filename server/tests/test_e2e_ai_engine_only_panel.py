@@ -26,7 +26,7 @@ from .conftest import serve_fake_engine, wait_perspective_ready  # noqa: E402
 PLAY_PERSP = "#play-perspective"
 _VIEWPORT = {"width": 1600, "height": 1000}
 _STAND_IN = ".play-ai-engine-only"
-_STAND_IN_LEAD = "Engine-only analysis: see "
+_STAND_IN_LEAD = "Engine analysis appears in "
 _STATUS_TEXT = ".play-ai-status-text"
 _SPINNER = ".play-ai-status wa-spinner"
 _ENGINE_SEARCH = "Running engine search..."

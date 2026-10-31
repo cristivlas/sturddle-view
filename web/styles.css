@@ -303,6 +303,8 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
   margin-top: var(--play-ai-round-pad-top);
   margin-bottom: var(--play-ai-round-gap);
 }
+/* Margin, not a space: a space would underline with the link. */
+.play-ai-engine-only wa-icon { margin-right: 0.25em; }
 
 /* Revision: <details> folding away prose the AI corrected. Summary carries the
    model's self-correction line, body the struck flawed prose. Neutral (not

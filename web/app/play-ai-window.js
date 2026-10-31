@@ -588,10 +588,20 @@ export function isAiOpen() {
   return inst.mounted;
 }
 
-const ENGINE_ONLY_LEAD = "Engine-only analysis: see ";
-const ENGINE_ONLY_MID = " for the engine's lines. For AI analysis, choose an LLM provider in ";
+const ENGINE_ONLY_LEAD = "Engine analysis appears in ";
+const ENGINE_ONLY_MID = ". To use AI, switch providers in ";
 const SETTINGS_LINK = "Settings";
+const SETTINGS_ICON = "gear";
 const ENGINE_ONLY_CLASS = "play-ai-engine-only";
+
+// Gear inside the link: same target, so no second tab stop.
+function settingsLink() {
+  const gear = document.createElement("wa-icon");
+  gear.name = SETTINGS_ICON;
+  const link = deepLink(SETTINGS_LINK, () => openSettings(SETTINGS_TAB_ANALYSIS));
+  link.prepend(gear);
+  return link;
+}
 
 // Engine-only stand-in body, spinner on until Stop; resetAi() clears it.
 // Phones skip it (inline below the board, it costs scarce height), but
@@ -611,7 +621,7 @@ export function openAiEngineOnly(showLines) {
   note.className = ENGINE_ONLY_CLASS;
   note.append(
     ENGINE_ONLY_LEAD, deepLink(PV_TABLE_TITLE, showLines),
-    ENGINE_ONLY_MID, deepLink(SETTINGS_LINK, () => openSettings(SETTINGS_TAB_ANALYSIS)), ".",
+    ENGINE_ONLY_MID, settingsLink(), ".",
   );
   inst.body?._rounds.append(note);
   engineOnly = true;
@@ -1271,7 +1281,7 @@ function _roundCapNote(message) {
   const text = document.createElement("span");
   text.textContent = message;
   const gear = document.createElement("wa-icon");
-  gear.name = "gear";
+  gear.name = SETTINGS_ICON;
   gear.className = "play-ai-roundcap-gear";
   gear.setAttribute("role", "button");
   gear.setAttribute("tabindex", "0");
