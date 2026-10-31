@@ -52,13 +52,9 @@
   --panel: #25272d;
   --nav-btn-bg: #2a2d33;
   --nav-btn-bg-hover: #32353c;
-  /* Steel blue, after .brand's gradient: the active tab and eye-button edges. */
+  /* Steel blue, after .brand's gradient: eye-button edges, active tab's dash. */
   --steel-rgb: 143, 176, 214;
   --fg-bright: #fff;
-  /* Active perspective tab: a glass chip. Its ring is inset because the mobile
-     nav clips outside its box. */
-  --nav-active-bg: linear-gradient(rgba(var(--steel-rgb), 0.34), rgba(93, 131, 173, 0.22));
-  --nav-active-edge: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 0 0 1px rgba(var(--steel-rgb), 0.4);
   /* Watch/unwatch (eye) buttons: lighter than nav buttons to stand off the pane. */
   --watch-btn-bg: #474c56;
   --watch-btn-bg-hover: #525862;
@@ -964,11 +960,15 @@ header h1 { margin: 0; font-size: 0.9375rem; color: #b8b8b8; font-weight: 500; }
 }
 nav { display: flex; gap: 6px; }
 nav button {
+  position: relative;
   background: transparent;
   color: var(--muted);
   border: 0;
-  border-radius: 6px;
+  border-radius: 0;
   padding: 4px 12px;
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   cursor: pointer;
 }
 nav button:hover { color: var(--fg); }
@@ -976,10 +976,16 @@ nav button:focus-visible {
   outline: 2px solid var(--wa-color-focus, var(--wa-color-brand-60));
   outline-offset: 0;
 }
-nav button.active {
-  background: var(--nav-active-bg);
-  color: var(--fg-bright);
-  box-shadow: var(--nav-active-edge);
+nav button.active { color: var(--fg-bright); }
+nav button.active::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  width: 20px;
+  height: 2px;
+  background: rgb(var(--steel-rgb));
+  transform: translateX(-50%);
 }
 .conn {
   margin-left: auto;
