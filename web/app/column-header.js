@@ -24,6 +24,10 @@ const FIT_LABEL = "Auto-fit";
 const RESET_LABEL = "Reset";
 const UP_ICON = "arrow-up-long";
 const DOWN_ICON = "arrow-down-long";
+const PIN_ICON = "thumbtack";
+const PIN_LABEL = "Pinned last";
+// Marks a pinEnd column, in its header and its Columns-menu row.
+const PIN_HTML = `<wa-icon class="dt-pin" name="${PIN_ICON}" label="${PIN_LABEL}" title="${PIN_LABEL}"></wa-icon>`;
 const ACTIVE_CLASS = "tmb-active";
 const MOVE = Object.freeze({ UP: -1, DOWN: 1 });
 const MOVE_LABEL = Object.freeze({ [MOVE.UP]: "Move up:", [MOVE.DOWN]: "Move down:" });
@@ -54,12 +58,16 @@ const DRAG_THRESHOLD_PX = 5;
 const FULL_PCT = 100;
 // px mode: narrowest a fixed column can be dragged.
 const MIN_COL_PX = 30;
+// px mode: room a drag must leave the pinEnd column.
+const MIN_PIN_END_PX = 120;
 const AUTO_WIDTH = "auto";
 const FULL_WIDTH = "100%";
 
 // Live instances per layoutKey (sync option): a layout change in one
 // re-lays out the others from the saved layout.
 const syncRegistry = new Map(); // layoutKey -> Set<reload fn>
+
+const sum = (sizes) => sizes.reduce((s, w) => s + w, 0);
 
 // Saved { unit, order, hidden, widths } fit to the current columns. Widths in
 // another unit (none = pct) drop; without reorder the declared order wins,
@@ -86,20 +94,29 @@ function reconcileLayout(columns, saved, fixedOrder, unit) {
 }
 
 // Column widths (% of the body) from each column's natural (max-content) px
-// width. All fit: every column gets its natural width plus an equal share of
-// the spare, so the gaps between contents are even. Overflow: columns no
-// wider than an even share of the space keep their natural width
-// (water-filling), and the wider ones split what's left evenly. Every
-// column gets at least minPct; too many columns for that floor: equal shares.
-export function fitPcts(natural, available, minPct) {
+// width and its minimum (natural plus room for a sort arrow), never under
+// minPct. All fit: every column gets its natural width plus an equal share
+// of the spare, so the gaps between contents are even; one the share leaves
+// under its minimum sits there and drops out of it. Overflow: columns whose
+// minimum is no wider than an even share of the space keep it
+// (water-filling), and the wider ones split what's left evenly. Too many
+// columns for the minPct floor: equal shares.
+export function fitPcts(natural, minimum, available, minPct) {
   const n = natural.length;
   if (minPct * n >= FULL_PCT || available <= 0) return natural.map(() => FULL_PCT / n);
   const floor = (minPct / FULL_PCT) * available;
-  const px = natural.map((w) => Math.max(w, floor));
-  const total = px.reduce((s, w) => s + w, 0);
-  if (total <= available) {
-    const extra = (available - total) / n;
-    return px.map((w) => ((w + extra) / available) * FULL_PCT);
+  const px = minimum.map((w) => Math.max(w, floor));
+  if (sum(px) <= available) {
+    let sharing = natural.map((_, i) => i);
+    let extra;
+    for (;;) {
+      const held = sum(px.filter((_, i) => !sharing.includes(i)));
+      extra = (available - held - sum(sharing.map((i) => natural[i]))) / sharing.length;
+      const next = sharing.filter((i) => natural[i] + extra >= px[i]);
+      if (next.length === sharing.length) break;
+      sharing = next;
+    }
+    return natural.map((w, i) => (Math.max(w + extra, px[i]) / available) * FULL_PCT);
   }
   let free = px.map((_, i) => i);
   let budget = available;
@@ -178,7 +195,8 @@ function menuHtml(layout, byKey, traits, visibleCount) {
       return menuBtnHtml(`${key}:${dir}`, "dt-menu-move", `<wa-icon name="${icon}"></wa-icon>`,
         { disabled: moveTarget(layout, byKey, i, dir) < 0, attrs: ` data-dir="${dir}" aria-label="${label}" title="${label}"` });
     };
-    const moves = traits.reorder && !col.pinEnd ? move(MOVE.UP, UP_ICON) + move(MOVE.DOWN, DOWN_ICON) : "";
+    const moves = !traits.reorder ? ""
+      : col.pinEnd ? PIN_HTML : move(MOVE.UP, UP_ICON) + move(MOVE.DOWN, DOWN_ICON);
     const toggle = menuBtnHtml(`${key}:${MENU_ACTION.TOGGLE}`,
       `tmb-dd-item dt-menu-toggle${shown ? ` ${ACTIVE_CLASS}` : ""}`, escapeHtml(col.label),
       { disabled: lockToggle, attrs: ` data-action="${MENU_ACTION.TOGGLE}"` });
@@ -357,7 +375,9 @@ function makePctApplySizes(colElsLists, minAt) {
 
 // px mode: fixed columns in px, floored at minAt(i) on a drag; the pinEnd
 // column auto; both tables at least as wide as the fixed ones (`sizes`).
-function makePxApplySizes(colElsLists, tables, minAt) {
+// A drag can't grow the fixed total past the room that keeps the pinEnd
+// column MIN_PIN_END_PX wide in `availablePx()` (or the start total, if over).
+function makePxApplySizes(colElsLists, tables, minAt, availablePx) {
   return function applySizes(sizes, rctx) {
     if (rctx) {
       const { deltaFrac, tableWidth, startSizes, gripIdx } = rctx;
@@ -366,10 +386,14 @@ function makePxApplySizes(colElsLists, tables, minAt) {
       if (gripIdx + 1 < sizes.length) {
         sizes[gripIdx + 1] = Math.max(minAt(gripIdx + 1), startSizes[gripIdx + 1] - d);
       }
+      const cap = Math.max(availablePx() - MIN_PIN_END_PX, sum(startSizes));
+      const over = sum(sizes) - cap;
+      // Only the column the drag grows adds to the total: give the excess back.
+      if (over > 0) sizes[d > 0 ? gripIdx : gripIdx + 1] -= over;
     }
     applySplitColWidths(colElsLists.map((els) => els.slice(0, sizes.length)), sizes, WIDTH_UNIT.PX);
     for (const els of colElsLists) els.slice(sizes.length).forEach((c) => { c.style.width = AUTO_WIDTH; });
-    const fixedW = sizes.reduce((s, w) => s + w, 0);
+    const fixedW = sum(sizes);
     for (const t of tables) Object.assign(t.style, { width: FULL_WIDTH, minWidth: `${fixedW}px` });
   };
 }
@@ -383,7 +407,8 @@ function menuButtonPx(thead) {
 }
 
 // Each shown column's max-content width (header + rows), measured on an
-// offscreen auto-layout copy carrying both tables' classes.
+// offscreen auto-layout copy carrying both tables' classes: { natural,
+// minimum }, the latter with room for a sort arrow (see fitPcts).
 function naturalWidths({ wrap, headTable, bodyTable, thead, tbody }) {
   const probe = document.createElement("table");
   probe.className = `${headTable.className} ${bodyTable.className}`;
@@ -394,6 +419,9 @@ function naturalWidths({ wrap, headTable, bodyTable, thead, tbody }) {
   probe.append(thead.cloneNode(true), tbody.cloneNode(true));
   // Full-width rows would spread their text across the columns.
   for (const td of probe.querySelectorAll("tbody td[colspan]")) td.parentElement.remove();
+  wrap.append(probe);
+  const widths = () => Array.from(probe.rows[0].cells, (c) => c.getBoundingClientRect().width);
+  const natural = widths();
   // Room for a sort arrow on every sortable header, not just the one sorted
   // now, so sorting another column later doesn't truncate its label.
   for (const th of probe.querySelectorAll(`th.${TH_SORTABLE_CLASS}:not(:has(.${ARROW_CLASS}))`)) {
@@ -402,10 +430,9 @@ function naturalWidths({ wrap, headTable, bodyTable, thead, tbody }) {
     arrow.setAttribute("name", ARROW_DESC);
     th.append(arrow);
   }
-  wrap.append(probe);
-  const natural = Array.from(probe.rows[0].cells, (c) => c.getBoundingClientRect().width);
+  const minimum = widths();
   probe.remove();
-  return natural;
+  return { natural, minimum };
 }
 
 // The Columns menu: a top-layer popover (escapes the scrollers' and WinBox's
@@ -558,7 +585,8 @@ export function createColumnHeader({
       : "";
     const grip = traits.resize && i < cols.length - 1 ? `<span class="${GRIP_CLASS}"></span>` : "";
     const thCls = col.thClass ? ` class="${col.thClass}"` : "";
-    return `<th${thCls}>${btn}<span class="${TH_LABEL_CLASS}">${escapeHtml(col.label)}</span>${grip}</th>`;
+    const pin = traits.reorder && col.pinEnd ? PIN_HTML : "";
+    return `<th${thCls}>${btn}<span class="${TH_LABEL_CLASS}">${escapeHtml(col.label)}</span>${pin}${grip}</th>`;
   }
 
   // The button room in this unit: px, or its share of the head table.
@@ -594,7 +622,7 @@ export function createColumnHeader({
     buttonRoom = stored.length ? measureButtonRoom() : 0;
     const sizes = room.show(stored, buttonRoom);
     liveSizes = sizes;
-    const apply = px ? makePxApplySizes(colEls, [headTable, bodyTable], minAt) : makePctApplySizes(colEls, minAt);
+    const apply = px ? makePxApplySizes(colEls, [headTable, bodyTable], minAt, () => bodyScroll.clientWidth) : makePctApplySizes(colEls, minAt);
     const applySizes = (s, rctx) => { apply(s, rctx); onSizes?.(); };
     applyLive = applySizes;
     resizeCtrl?.destroy();
@@ -644,18 +672,19 @@ export function createColumnHeader({
 
   // Stored widths fit to content. The first column's measure includes the
   // Columns button, which its button room covers. px: each fixed column at
-  // its natural width; pct: see fitPcts.
+  // its minimum width; pct: see fitPcts.
   function fitColumns() {
     const cols = visibleCols();
     const btnPx = menuButtonPx(thead);
-    const natural = naturalWidths({ wrap, headTable, bodyTable, thead, tbody });
+    const { natural, minimum } = naturalWidths({ wrap, headTable, bodyTable, thead, tbody });
     natural[0] -= btnPx;
+    minimum[0] -= btnPx;
     if (unit === WIDTH_UNIT.PX) {
-      cols.forEach((c, i) => { if (!c.pinEnd) layout.widths[c.key] = Math.max(MIN_COL_PX, natural[i]); });
+      cols.forEach((c, i) => { if (!c.pinEnd) layout.widths[c.key] = Math.max(MIN_COL_PX, minimum[i]); });
       return;
     }
     const available = bodyTable.getBoundingClientRect().width - btnPx;
-    storeVisiblePcts(layout, cols, fitPcts(natural, available, minPct));
+    storeVisiblePcts(layout, cols, fitPcts(natural, minimum, available, minPct));
   }
 
   function applyMenuAction({ action, key, dir }) {
@@ -683,7 +712,7 @@ export function createColumnHeader({
     bodyScroll,
     relayout,
     // Summed px of the shown non-pinEnd columns (px mode), live mid-drag.
-    fixedWidth: () => liveSizes.reduce((s, w) => s + w, 0),
+    fixedWidth: () => sum(liveSizes),
     destroy() {
       resizeCtrl?.destroy();
       roomObserver?.disconnect();

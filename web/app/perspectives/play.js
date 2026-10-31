@@ -337,6 +337,7 @@ const MSG = {
 // Body class set while analysis is on; CSS greys + inert-ifies x-game
 // nav links so the user can't jump games mid-analysis.
 const XGAME_LOCK_CLASS = "xgame-nav-locked";
+const HIDDEN_CLASS = "hidden";
 
 // Edit-mode popover (side-to-move / castling) placement when the ribbon
 // floats: the WinBox body clips overflow, so the popover is portaled to
@@ -428,9 +429,9 @@ function configureBtn(btn, {
 }
 
 // Apply one AI analysis event to the panel/board. `aiCtx` holds view, api,
-// refreshButtons, aiShared. Returns true if the event was an ai_* kind.
+// refreshButtons, syncBadges, aiShared. Returns true if the event was an ai_* kind.
 function dispatchAiEvent(aiCtx, evt) {
-  const { view, api, refreshButtons, aiShared } = aiCtx;
+  const { view, api, refreshButtons, syncBadges, aiShared } = aiCtx;
   switch (evt.kind) {
     case KIND.AI_INFO: {
       const p = evt.payload || {};
@@ -468,6 +469,7 @@ function dispatchAiEvent(aiCtx, evt) {
           setAiTurnFinished(aiShared, view, true);
           dismissAnalysisToast(aiShared);
           refreshButtons();
+          syncBadges();
         }
         // A failed turn never produced analysis: close the panel locally.
         // The server exits ANALYZING on its own (its analyzing=false
@@ -581,7 +583,9 @@ async function rehydrateAiPanel(ai, aiCtx, { adopt = false } = {}) {
     // perspective.
     if (aiCtx.isUnmounted()) return;
     const events = Array.isArray(r?.events) ? r.events : [];
-    if (adopt || events.length > 0) {
+    // A turn that has emitted nothing yet (a slow first round) still
+    // opens busy: resetAi shows the spinner.
+    if (adopt || events.length > 0 || r?.running === true) {
       openAi();
       resetAi();
       for (const evt of events) dispatchAiEventOrdered(ai, aiCtx, evt);
@@ -901,7 +905,7 @@ function buildChildrenToast(state, childrenHere) {
   arrowIcon.setAttribute("name", "chevron-up");
   arrow.append(arrowIcon);
   arrow.addEventListener("click", () => {
-    const expanded = !list.classList.toggle("hidden");
+    const expanded = !list.classList.toggle(HIDDEN_CLASS);
     arrowIcon.setAttribute("name", expanded ? "chevron-down" : "chevron-up");
   });
   header.append(arrow);
@@ -1151,12 +1155,12 @@ function _unfloatPopover(popover, wrap) {
 }
 
 function _closeSidePopover(state) {
-  state.el.editSidePopover.classList.add("hidden");
+  state.el.editSidePopover.classList.add(HIDDEN_CLASS);
   state.el.editSideBtn.setAttribute("aria-expanded", "false");
   _unfloatPopover(state.el.editSidePopover, state.el.editSidePopoverWrap);
 }
 function _closeCastlePopover(state) {
-  state.el.editCastlePopover.classList.add("hidden");
+  state.el.editCastlePopover.classList.add(HIDDEN_CLASS);
   state.el.editCastleBtn.setAttribute("aria-expanded", "false");
   _unfloatPopover(state.el.editCastlePopover, state.el.editCastlePopoverWrap);
 }
@@ -1168,11 +1172,11 @@ function _closeEditPopovers(state) {
 }
 function editSidePopoverToggle(state, ev) {
   ev.stopPropagation();
-  if (!state.el.editSidePopover.classList.contains("hidden")) {
+  if (!state.el.editSidePopover.classList.contains(HIDDEN_CLASS)) {
     _closeSidePopover(state);
   } else {
     _closeCastlePopover(state); // popovers are mutually exclusive
-    state.el.editSidePopover.classList.remove("hidden");
+    state.el.editSidePopover.classList.remove(HIDDEN_CLASS);
     state.el.editSideBtn.setAttribute("aria-expanded", "true");
     if (_ribbonFloating()) _floatPopover(state.el.editSideBtn, state.el.editSidePopover);
   }
@@ -1187,11 +1191,11 @@ function editCastleToggle(state, right) {
 }
 function editCastlePopoverToggle(state, ev) {
   ev.stopPropagation();
-  if (!state.el.editCastlePopover.classList.contains("hidden")) {
+  if (!state.el.editCastlePopover.classList.contains(HIDDEN_CLASS)) {
     _closeCastlePopover(state);
   } else {
     _closeSidePopover(state); // popovers are mutually exclusive
-    state.el.editCastlePopover.classList.remove("hidden");
+    state.el.editCastlePopover.classList.remove(HIDDEN_CLASS);
     state.el.editCastleBtn.setAttribute("aria-expanded", "true");
     if (_ribbonFloating()) _floatPopover(state.el.editCastleBtn, state.el.editCastlePopover);
   }
@@ -1199,11 +1203,11 @@ function editCastlePopoverToggle(state, ev) {
 function editDocClickClose(state, ev) {
   if (!state.editing) return;
   const { editCastlePopover, editCastleBtn, editSidePopover, editSideBtn } = state.el;
-  if (!editCastlePopover.classList.contains("hidden") &&
+  if (!editCastlePopover.classList.contains(HIDDEN_CLASS) &&
       !editCastlePopover.contains(ev.target) && !editCastleBtn.contains(ev.target)) {
     _closeCastlePopover(state);
   }
-  if (!editSidePopover.classList.contains("hidden") &&
+  if (!editSidePopover.classList.contains(HIDDEN_CLASS) &&
       !editSidePopover.contains(ev.target) && !editSideBtn.contains(ev.target)) {
     _closeSidePopover(state);
   }
@@ -1257,15 +1261,20 @@ function syncBoardInputEnabled(state) {
   state.view.setEnabled(true);
 }
 
-// Header status badges, one at a time: Editing wins over Paused and the
-// result; Paused also hides while analyzing (it has its own affordance).
+// Header status badges, one at a time: Editing wins over Analyzing, and
+// Analyzing over Paused and the result. A finished AI turn stops Analyzing,
+// but Paused stays off until analysis exits (it has its own affordance).
 function syncStatusBadges(state) {
-  const { pausedBadge, editingBadge, finishedBadge } = state.el;
+  const { pausedBadge, editingBadge, analyzingBadge, finishedBadge } = state.el;
+  const analyzing = analysisActive(state);
   pausedBadge?.classList.toggle(
-    "hidden", !(state.paused && !state.analyzing && !state.editing),
+    HIDDEN_CLASS, !(state.paused && !state.analyzing && !state.editing),
   );
-  editingBadge?.classList.toggle("hidden", !state.editing);
-  finishedBadge?.classList.toggle("hidden", !finishedBadge.textContent || state.editing);
+  editingBadge?.classList.toggle(HIDDEN_CLASS, !state.editing);
+  analyzingBadge?.classList.toggle(HIDDEN_CLASS, !analyzing || state.editing);
+  finishedBadge?.classList.toggle(
+    HIDDEN_CLASS, !finishedBadge.textContent || state.editing || analyzing,
+  );
 }
 
 function showFinishedBadge(state, text) {
@@ -1276,9 +1285,9 @@ function showFinishedBadge(state, text) {
 
 // Unmount: the header outlives the perspective, so its badges go too.
 function hideStatusBadges(state) {
-  const { pausedBadge, editingBadge, finishedBadge } = state.el;
+  const { pausedBadge, editingBadge, analyzingBadge, finishedBadge } = state.el;
   if (finishedBadge) finishedBadge.textContent = "";
-  for (const badge of [pausedBadge, editingBadge, finishedBadge]) badge?.classList.add("hidden");
+  for (const badge of [pausedBadge, editingBadge, analyzingBadge, finishedBadge]) badge?.classList.add(HIDDEN_CLASS);
 }
 
 // Bail out of a drop taken on a held board: let rendering resume and ask the
@@ -1305,13 +1314,19 @@ async function resumeForDrop(ctx, view, snapBack) {
 // paused, so the ribbon shows Resume (one click exits analysis + resumes play).
 // Reads live state -- call, don't cache.
 function aiAnalysisDone(state) {
-  return state.analyzing && state.aiShared.turnFinished && state.aiEnabled;
+  return state.analyzing && state.aiShared.turnFinished && state.aiSession;
 }
 
-// An AI analysis turn is actually running. aiEnabled excludes engine-only
-// analysis runs that may happen under a stale-open AI panel.
+// Analysis is actually running: a finished AI turn leaves the server in
+// ANALYZING with nothing searching.
+function analysisActive(state) {
+  return state.analyzing && !state.aiShared.turnFinished;
+}
+
+// An AI analysis turn is actually running. aiSession excludes engine-only
+// sessions, whatever the AI setting says now.
 function aiTurnInFlight(state) {
-  return state.aiEnabled && state.analyzing && !state.aiShared.turnFinished;
+  return state.aiSession && analysisActive(state);
 }
 
 function refreshButtons(state) {
@@ -1354,7 +1369,7 @@ function refreshButtons(state) {
     // Engines tab so the user knows the next step.
     // AI turn finished but server still ANALYZING: show ribbon as
     // normal ("Analysis mode") even though `analyzing` is true.
-    const viewShowAsActive = state.analyzing && !state.aiShared.turnFinished;
+    const viewShowAsActive = analysisActive(state);
     configureBtn(state.el.viewAnalyzeBtn, {
       disabled: (state.noEngine || state.viewPositionTerminal) && !viewShowAsActive,
       active: viewShowAsActive,
@@ -1394,7 +1409,7 @@ function refreshButtons(state) {
   configureBtn(state.el.resignBtn, { disabled: state.paused || state.analyzing || state.gameOver || !state.resignAvailable });
   // AI turn done but server still ANALYZING: show the button as normal
   // "Analysis mode" (enabled); the reachability gates below still apply.
-  const showAsActive = state.analyzing && !state.aiShared.turnFinished;
+  const showAsActive = analysisActive(state);
   const analyzeReachable = !state.gameOver && state.resignAvailable && (state.paused || state.aiShared.turnFinished);
   configureBtn(state.el.analyzeBtn, {
     disabled: !showAsActive && !analyzeReachable,
@@ -2035,6 +2050,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       // view/goto on !analyzing; the main analyzing block runs later in
       // the same event but would be too late.
       if (typeof evt.payload.analyzing === "boolean") setAnalyzing(state, evt.payload.analyzing);
+      state.aiSession = !!evt.payload.ai_analysis;
       if (state.viewing) {
         // Auto-entry from game over: set just before the /game/import round
         // trip that produced this event; consumed on arrival.
@@ -2150,9 +2166,10 @@ function handleBusEvent(state, ai, aiCtx, evt) {
             // user can still see and dismiss it.
             showAnalysisToastImpl(state);
           }
-          // Remount, or engine-only analysis started elsewhere. An AI
-          // session's replay supersedes this (resetAi clears it).
-          if (!state.aiEnabled && !isAiOpen()) openEngineOnlyPanel(state);
+          // Engine-only session without its stand-in: a remount, a start
+          // elsewhere, or one here on a stale AI setting. Phones skip the
+          // stand-in, so there it only drops an open panel.
+          if (!state.aiSession && (isMobileLayout() ? isAiOpen() : !isAiEngineOnly())) openEngineOnlyPanel(state);
         }
       }
       // Title the UCI Log with the engine whose traffic it shows. The
@@ -2246,7 +2263,10 @@ export const playPerspective = {
       // Set by unmount(); post-await continuations check it so they don't
       // build UI (toasts, dock windows) into a torn-down perspective.
       unmounted: false,
+      // The AI setting (decides the next session) vs the live session's
+      // kind (server-reported, fixed at its start).
       aiEnabled: false,
+      aiSession: false,
       aiTitleModel: "",
       noEngine: false,
       allowTakeback: true,
@@ -2352,7 +2372,7 @@ export const playPerspective = {
     let buttonsReady = false; // gate setNoEngine's early refreshButtons until state.view is wired
     function setNoEngine(v) {
       state.noEngine = !!v;
-      noEngineBanner.classList.toggle("hidden", !state.noEngine);
+      noEngineBanner.classList.toggle(HIDDEN_CLASS, !state.noEngine);
       if (buttonsReady) refreshButtons(state);
     }
     async function checkEngines() {
@@ -2495,6 +2515,7 @@ export const playPerspective = {
     // with no board wired every row would go inert and stay that way.
     setPvLineBoard({
       currentPlacement: view.currentPlacement,
+      showsPosition: view.showsPosition,
       canPlayLine: () => view.canPlayLine(),
       playLine: view.playLine,
       cancelLine: view.cancelLine,
@@ -2556,9 +2577,11 @@ export const playPerspective = {
 
     const pausedBadge = document.getElementById("paused-badge");
     const editingBadge = document.getElementById("editing-badge");
+    const analyzingBadge = document.getElementById("analyzing-badge");
     const finishedBadge = document.getElementById("finished-badge");
     state.el.pausedBadge = pausedBadge;
     state.el.editingBadge = editingBadge;
+    state.el.analyzingBadge = analyzingBadge;
     state.el.finishedBadge = finishedBadge;
 
     // Resign is enabled whenever there is an active game; cleared on
@@ -2573,7 +2596,8 @@ export const playPerspective = {
     // Private replay-buffer state + the deps the AI dispatch needs.
     const ai = { rehydrating: true, liveBuffer: [], maxSeq: 0 };
     const aiCtx = {
-      view, api: ctx.api, refreshButtons: () => refreshButtons(state), aiShared: state.aiShared,
+      view, api: ctx.api, refreshButtons: () => refreshButtons(state),
+      syncBadges: () => syncStatusBadges(state), aiShared: state.aiShared,
       isUnmounted: () => !!state.unmounted,
     };
     rehydrateAiPanel(ai, aiCtx);
@@ -2767,16 +2791,17 @@ export const playPerspective = {
         ribbonOverflows.forEach((o) => o.detach());
         // Announce no active ribbon so the global float manager unmounts it.
         window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: null } }));
-        // Before setDockContainer(null): commentary now lives in the shared
-        // dock, whose teardown would drop its slot out from under it.
+        // Before the dock containers go (setDockContainer/RailDockContainer
+        // null): commentary and the AI panel dock there too, and would lose
+        // or strand their slots.
         closeCommentary();
+        closeAi();
         setDockContainer(null);
         setPvLineBoard(null);
         setRailDockContainer(null);
         setEvalBarCallbacks(null);
         evalBar.setOnUserClose(null);
         commentaryWindow.setOnUserClose(null);
-        closeAi();
         setAiInlineHost(null);
         setOnUserCloseAi(null);
         setOnReanalyzeAi(null);

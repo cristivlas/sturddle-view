@@ -35,6 +35,11 @@ def reporting_progress(reporter: ProgressReporter) -> Iterator[None]:
         _reporter.reset(token)
 
 
+async def skip_progress(name: str, input_: dict) -> StepFinisher:
+    """report_progress's stand-in for a search that shows no panel step."""
+    return _finish_nothing
+
+
 async def report_progress(name: str, input_: dict) -> StepFinisher:
     """Report one step of the running tool; await the returned finisher with
     the step's result once it lands. Both are no-ops outside a dispatch."""

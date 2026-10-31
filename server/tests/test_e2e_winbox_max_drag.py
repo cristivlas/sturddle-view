@@ -23,6 +23,7 @@ from .conftest import (  # noqa: E402
     run_uvicorn_subprocess,
     seed_tournament,
     tournament_server_env,
+    wait_eval,
     wait_winbox_settled,
     watch_page_errors,
 )
@@ -96,7 +97,10 @@ async def test_drag_from_maximized_keeps_pointer_on_title_bar(server, make_page,
     await page.mouse.down()
     await page.mouse.move(ex - (win["w"] - NARROW_PX), ey, steps=STEPS)
     await page.mouse.up()
-    assert (await _rect(page, WIN))["w"] == pytest.approx(NARROW_PX, abs=TOL_PX)
+    await page.wait_for_function(
+        "([sel, w, tol]) => Math.abs(document.querySelector(sel).getBoundingClientRect().width - w) <= tol",
+        arg=[WIN, NARROW_PX, TOL_PX],
+    )
 
     await page.click(f"{WIN} .wb-max")
     await page.wait_for_selector(f"{WIN}.max")
@@ -114,13 +118,13 @@ async def test_drag_from_maximized_keeps_pointer_on_title_bar(server, make_page,
         await page.mouse.move(x0 + i * STEP_PX, y0 + i * STEP_PX)
     x1, y1 = x0 + STEPS * STEP_PX, y0 + STEPS * STEP_PX
 
-    assert not await page.locator(WIN).evaluate("(el) => el.classList.contains('max')")
+    await page.wait_for_selector(f"{WIN}:not(.max)")
     after = await page.evaluate(_SPAN, WIN)
     assert await _cursor_at(page, x1, y1) == MOVE_CURSOR
     await page.mouse.up()
     assert after["l"] <= x1 <= after["l"] + after["w"], (x1, after)
     assert after["t"] <= y1 <= after["t"] + after["h"], (y1, after)
-    assert await page.evaluate(_ON_DRAG_AREA, [x1, y1, WIN]), "pointer left the drag area"
+    await wait_eval(page, _ON_DRAG_AREA, True, [x1, y1, WIN])  # pointer stays on the drag area
     # Same relative spot on the (now narrower) drag area.
     assert (x1 - after["l"]) / after["w"] == pytest.approx(grab_frac, abs=TOL_PX / after["w"])
     assert_no_page_errors(errors)

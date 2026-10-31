@@ -33,7 +33,6 @@ import {
 const GEO_KEY       = STORAGE_KEY.AI_GEO;
 const WIN_STATE_KEY = STORAGE_KEY.AI_WIN_STATE;
 const DOCKED_KEY    = STORAGE_KEY.AI_DOCKED;
-const OPEN_KEY      = STORAGE_KEY.AI_OPEN;
 // Last model name shown in the panel title. Pinned at analyze-start;
 // reload restores so the title reflects what last ran, not what is
 // currently selected in Settings.
@@ -153,6 +152,9 @@ const TOOL = Object.freeze({
   REPORT_LINE: "report_line",
   RELATED_OPENINGS: "related_openings",
   POSITION_JUDGE: "position_judge",
+  PLAY_OUT: "play_out",
+  TEST_AIM: "test_aim",
+  PLAN: "plan",
   // Progress steps of recommend_move's check, nested under its row: which
   // search the board arrow and Search Lines are showing right now.
   ENGINE_BEST: "engine_best",
@@ -403,15 +405,19 @@ const TOOL_FRIENDLY_LABELS = {
   [TOOL.REPORT_LINE]:    ["Checking line", "Reviewing the line", "Going over the idea", "Ascertaining"],
   [TOOL.RELATED_OPENINGS]: ["Comparing openings", "Cross-checking openings", "Matching openings"],
   [TOOL.POSITION_JUDGE]: ["Checking position claims", "Fact-checking the position", "Verifying the claims"],
+  [TOOL.PLAY_OUT]:       ["Playing out an idea", "Trying an idea", "Testing an idea"],
+  [TOOL.TEST_AIM]:       ["Can they stop it?", "Looking for a defense", "Challenging the plan", "Does it hold up?", "Seeking a refutation", "Anticipating the reply"],
+  [TOOL.PLAN]:           ["Consulting the plan", "Recalling the strategy", "Reviewing the plan"],
 };
 
 // Tools whose label shows the actual move under consideration ("Considering
 // Nd3"). Maps the tool to its verb variants; the move SAN from input.move is
 // appended.
 const MOVE_TOOL_VERBS = {
-  [TOOL.RECOMMEND_MOVE]: ["Considering", "Weighing", "Contemplating", "Ratiocinating over", "Projecting"],
-  [TOOL.VALIDATE_MOVE]:  ["Validating", "Probing", "Confirming", "Vetting"],
-  [TOOL.DELEGATE]:       ["Verifying", "Double-checking", "Reviewing", "War-gaming"],
+  [TOOL.RECOMMEND_MOVE]: ["Considering", "Weighing", "Contemplating", "Ratiocinating over", "Projecting", "Ruminating on", "Deliberating over", "Cogitating on"],
+  [TOOL.VALIDATE_MOVE]:  ["Validating", "Probing", "Confirming", "Vetting", "Scrutinizing", "Examining", "Appraising"],
+  [TOOL.DELEGATE]:       ["Verifying", "Double-checking", "Reviewing", "War-gaming", "Gaming out", "Crystal-balling"],
+  [TOOL.PLAY_OUT]:       ["Playing out", "Trying", "Testing", "Following", "Tracing", "Unfolding", "Extending"],
 };
 
 // The dominance check's two steps share one metaphor: the baseline search
@@ -526,7 +532,6 @@ const inst = createDockableWindow({
   geoKey: GEO_KEY,
   winStateKey: WIN_STATE_KEY,
   dockedKey: DOCKED_KEY,
-  openKey: OPEN_KEY,
   defaultW: () => DEFAULT_WIN_W,
   defaultH: DEFAULT_WIN_H,
   defaultY: () => DEFAULT_WIN_Y,
@@ -535,6 +540,9 @@ const inst = createDockableWindow({
   },
   dockOrder: DOCK_ORDER.AI_ANALYSIS,
   railDockable: true,
+  // play.js opens it (analysis start, replay, engine-only stand-in);
+  // restoreDebugWindows reopening it on load would leave it blank.
+  selfManaged: true,
   getInlineEl: () => inlineEl,
   closable: true,
   onUserClose: () => {
@@ -580,11 +588,22 @@ export function isAiOpen() {
   return inst.mounted;
 }
 
-const ENGINE_ONLY_LEAD = "Engine-only analysis: see ";
-const ENGINE_ONLY_MID = " for the engine's lines. For AI analysis, choose an LLM provider in ";
+const ENGINE_ONLY_LEAD = "Engine analysis appears in ";
+const ENGINE_ONLY_MID = ". To use AI, switch providers in ";
 const SETTINGS_LINK = "Settings";
+const SETTINGS_ICON = "gear";
+const ENGINE_ONLY_CLASS = "play-ai-engine-only";
 
-// Stand-in body while the engine analyzes alone; resetAi() clears it.
+// Gear inside the link: same target, so no second tab stop.
+function settingsLink() {
+  const gear = document.createElement("wa-icon");
+  gear.name = SETTINGS_ICON;
+  const link = deepLink(SETTINGS_LINK, () => openSettings(SETTINGS_TAB_ANALYSIS));
+  link.prepend(gear);
+  return link;
+}
+
+// Engine-only stand-in body, spinner on until Stop; resetAi() clears it.
 // Phones skip it (inline below the board, it costs scarce height), but
 // still drop a prior AI run's panel. showLines opens or reveals Search Lines.
 let engineOnly = false;
@@ -597,11 +616,12 @@ export function openAiEngineOnly(showLines) {
   setAiTitle("");
   openAi();
   resetAi();
-  setAiStatus(AI_STATE.IDLE);
+  setAiStatus(AI_STATE.ENGINE);
   const note = document.createElement("p");
+  note.className = ENGINE_ONLY_CLASS;
   note.append(
     ENGINE_ONLY_LEAD, deepLink(PV_TABLE_TITLE, showLines),
-    ENGINE_ONLY_MID, deepLink(SETTINGS_LINK, () => openSettings(SETTINGS_TAB_ANALYSIS)), ".",
+    ENGINE_ONLY_MID, settingsLink(), ".",
   );
   inst.body?._rounds.append(note);
   engineOnly = true;
@@ -1261,7 +1281,7 @@ function _roundCapNote(message) {
   const text = document.createElement("span");
   text.textContent = message;
   const gear = document.createElement("wa-icon");
-  gear.name = "gear";
+  gear.name = SETTINGS_ICON;
   gear.className = "play-ai-roundcap-gear";
   gear.setAttribute("role", "button");
   gear.setAttribute("tabindex", "0");

@@ -19,6 +19,7 @@ pytestmark = pytest.mark.e2e
 from .conftest import (  # noqa: E402
     e2e_env,
     run_uvicorn_subprocess,
+    wait_eval,
     wait_perspective_ready,
     watch_page_errors,
 )
@@ -47,6 +48,8 @@ HEAD_LABELS_JS = (
     "() => Array.from(document.querySelectorAll('.fs-picker-head-tbl .th-label'), (e) => e.textContent)"
 )
 
+_HAS_DATE_JS = f"() => ({HEAD_LABELS_JS})().includes('{DATE_LABEL}')"
+
 LISTED_NAMES_JS = (
     "() => Array.from(document.querySelectorAll('.fs-entry .fs-name'), (e) => e.textContent)"
 )
@@ -68,10 +71,6 @@ async def _open_picker(page, browse_sel):
     await page.wait_for_selector(SELECTED_NAME)
 
 
-async def _picker_path(page):
-    return await page.eval_on_selector(PICKER_PATH, "(el) => el.value")
-
-
 async def _select_and_close(page, label):
     await page.locator(PICKER_FOOTER_BTN, has_text=label).click()
     await page.wait_for_selector(PICKER, state="detached")
@@ -88,7 +87,7 @@ async def test_dir_picker_opens_at_parent_with_value_preselected(tmp_path, make_
         await _open_picker(page, PGN_BROWSE)
 
         assert await page.text_content(SELECTED_NAME) == PGN_DIR_NAME
-        assert await _picker_path(page) == str(listed)
+        await page.wait_for_function(VALUE_IS_JS, arg=[PICKER_PATH, str(listed)])
         assert STRAY_FILE not in await page.evaluate(LISTED_NAMES_JS), (
             "a directory picker must list folders only"
         )
@@ -114,7 +113,7 @@ async def test_file_picker_opens_at_parent_with_value_preselected(tmp_path, make
         await _open_picker(page, FASTCHESS_BROWSE)
 
         assert await page.text_content(SELECTED_NAME) == exe.name
-        assert await _picker_path(page) == str(exe.parent.resolve())
+        await page.wait_for_function(VALUE_IS_JS, arg=[PICKER_PATH, str(exe.parent.resolve())])
         assert not errors, errors
 
 
@@ -131,17 +130,17 @@ async def test_table_layout_is_per_picker_title(tmp_path, make_page):
         await page.click(COLUMNS_BTN)
         await page.click(DATE_TOGGLE)
         await page.click(COLUMNS_BTN)
-        assert DATE_LABEL not in await page.evaluate(HEAD_LABELS_JS)
+        await wait_eval(page, _HAS_DATE_JS, False)
         await _select_and_close(page, SELECT_DIR_LABEL)
 
         await page.click(TOURNAMENT_TAB)
         await _open_picker(page, FASTCHESS_BROWSE)
-        assert DATE_LABEL in await page.evaluate(HEAD_LABELS_JS), "layout leaked across picker titles"
+        await wait_eval(page, _HAS_DATE_JS, True)  # layout must not leak across picker titles
         await _select_and_close(page, SELECT_LABEL)
 
         await page.click(PLAY_TAB)
         await _open_picker(page, PGN_BROWSE)
-        assert DATE_LABEL not in await page.evaluate(HEAD_LABELS_JS), "layout not kept for its title"
+        await wait_eval(page, _HAS_DATE_JS, False)  # layout kept for its title
         assert not errors, errors
 
 
@@ -167,9 +166,10 @@ async def test_sort_keeps_folders_first(tmp_path, make_page):
         await page.click(".fs-exe-only-btn")
         await page.wait_for_function("() => document.querySelectorAll('.fs-entry').length === 5")
 
-        size_label = ".fs-picker-head-tbl th.fs-size .th-label"
-        for _direction in ("desc", "asc"):
-            await page.click(size_label)
+        size_th = ".fs-picker-head-tbl th.fs-size"
+        for direction in ("descending", "ascending"):
+            await page.click(f"{size_th} .th-label")
+            await page.wait_for_selector(f'{size_th}[aria-sort="{direction}"]')
             names = await page.evaluate(LISTED_NAMES_JS)
             assert names[:2] == ["adir", "zdir"], names
         files = [n for n in names if n not in ("adir", "zdir")]

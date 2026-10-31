@@ -19,6 +19,7 @@ from .conftest import (  # noqa: E402
     run_uvicorn_subprocess,
     seed_tournament,
     tournament_server_env,
+    wait_eval,
     watch_page_errors,
 )
 
@@ -62,8 +63,9 @@ async def test_tab_into_list_rings_selected_row(server, make_page):
     await goto_arena_tournaments(page, server)
 
     await _tab_into_list(page)
-    rings = await page.evaluate(_ROW_RINGS)
-    assert [ringed for _sel, ringed in rings] == [sel for sel, _ring in rings], rings
+    await page.wait_for_function(
+        f"() => {{ const r = ({_ROW_RINGS})(); return r.some(([sel]) => sel) && r.every(([sel, ring]) => sel === ring); }}"
+    )
     assert_no_page_errors(errors)
 
 
@@ -78,8 +80,7 @@ async def test_shift_arrow_ring_follows_lead(server, make_page):
     await _tab_into_list(page)
     await page.keyboard.press("Home")
     await page.keyboard.press("Shift+ArrowDown")
-    rings = await page.evaluate(_ROW_RINGS)
-    assert rings == [[True, False], [False, True]], rings
+    await wait_eval(page, _ROW_RINGS, [[True, False], [False, True]])
     assert_no_page_errors(errors)
 
 
@@ -90,6 +91,7 @@ async def test_mouse_click_shows_no_ring(server, make_page):
     await goto_arena_tournaments(page, server)
 
     await page.click(".tournament-row")
+    await page.wait_for_selector(".tournament-row.selected")
     rings = await page.evaluate(_ROW_RINGS)
     assert not any(ringed for _sel, ringed in rings), rings
     assert_no_page_errors(errors)

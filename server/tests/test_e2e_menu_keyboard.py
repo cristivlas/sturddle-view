@@ -22,6 +22,7 @@ from .conftest import (  # noqa: E402
     run_uvicorn_subprocess,
     seed_tournament,
     tournament_server_env,
+    wait_eval,
     watch_page_errors,
 )
 
@@ -42,7 +43,7 @@ def server(tmp_path):
 
 async def _press_expect(page, key, focused):
     await page.keyboard.press(key)
-    assert await page.evaluate(_FOCUSED_TEXT) == focused, key
+    await wait_eval(page, _FOCUSED_TEXT, focused)
 
 
 @pytest.mark.asyncio
@@ -56,6 +57,7 @@ async def test_sort_menu_keys(server, make_page):
     # Reference: the tab stop after the Sort button, menu closed.
     await page.focus(".tmb-sort-btn")
     await page.keyboard.press("Tab")
+    await page.wait_for_function("() => !document.activeElement.matches('.tmb-sort-btn')")
     after_sort = await page.evaluate_handle("() => document.activeElement")
 
     await page.focus(".tmb-sort-btn")
@@ -64,8 +66,8 @@ async def test_sort_menu_keys(server, make_page):
     await _press_expect(page, "End", "Started")
     await _press_expect(page, "Home", "Name")
     await page.keyboard.press("Tab")
-    assert await page.evaluate("(el) => document.activeElement === el", after_sort)
-    assert await page.evaluate(_OPEN_MENUS) == 0
+    await page.wait_for_function("(el) => document.activeElement === el", arg=after_sort)
+    await wait_eval(page, _OPEN_MENUS, 0)
     assert_no_page_errors(errors)
 
 
@@ -84,10 +86,10 @@ async def test_window_menu_submenu_keys(server, make_page):
     await _press_expect(page, "ArrowRight", "Standings")
     await _press_expect(page, "ArrowDown", "Crosstable")
     await _press_expect(page, "Escape", "Tournament")
-    assert await page.evaluate(_OPEN_MENUS) == 1
+    await wait_eval(page, _OPEN_MENUS, 1)
     await _press_expect(page, "ArrowDown", "Snap")
     await _press_expect(page, "Escape", "Window")
-    assert await page.evaluate(_OPEN_MENUS) == 0
+    await wait_eval(page, _OPEN_MENUS, 0)
     assert_no_page_errors(errors)
 
 
@@ -104,10 +106,10 @@ async def test_columns_button_closes_open_arena_menu(server, make_page):
     await page.wait_for_selector(columns_btn)
 
     await page.click(".tmb-sort-btn")
-    assert await page.evaluate(_OPEN_MENUS) == 1
+    await wait_eval(page, _OPEN_MENUS, 1)
     # The Sort dropdown overlaps the button at this viewport, so dispatch the
     # click on it directly: the bug is that click's propagation.
     await page.dispatch_event(columns_btn, "click")
     await page.wait_for_selector(".dt-menu:popover-open")
-    assert await page.evaluate(_OPEN_MENUS) == 0
+    await wait_eval(page, _OPEN_MENUS, 0)
     assert_no_page_errors(errors)

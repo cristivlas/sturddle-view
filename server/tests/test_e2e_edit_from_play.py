@@ -13,19 +13,15 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-
 from .conftest import (  # noqa: E402
+    E5_REPLY,
     PIECE_ON,
-    REGISTRY_FILE,
     XGAME_BY_ID_PATH,
     PageObserver,
     assert_no_page_errors,
     drag_piece_one_rank_up,
-    e2e_env,
-    make_searching_fake_uci,
     posted,
-    run_uvicorn_subprocess,
+    serve_fake_engine,
     wait_board_settled,
     wait_perspective_ready,
     watch_page_errors,
@@ -82,12 +78,7 @@ RIBBON_SHOWN_JS = """(sel) => {
 
 @pytest.fixture
 def server(tmp_path):
-    seed = EngineRegistry(path=tmp_path / REGISTRY_FILE)
-    seed.select(seed.add(
-        name="FakeEngine",
-        path=make_searching_fake_uci(tmp_path, "FakeEngine", bestmove="e7e5", pv="e7e5"),
-    ).id)
-    with run_uvicorn_subprocess(env_overrides=e2e_env(tmp_path)) as base:
+    with serve_fake_engine(tmp_path, **E5_REPLY) as base:
         yield base
 
 
@@ -237,7 +228,7 @@ async def test_changed_commit_asks_then_keep_editing_stays(server, make_page):
     await _change_castling(page)
     await page.click(EDIT_CONFIRM_BTN)
     await _confirm(page, CONFIRM_EDIT_LEAVE, KEEP_EDITING_LABEL)
-    assert await page.evaluate(RIBBON_SHOWN_JS, EDIT_RIBBON)
+    await page.wait_for_function(RIBBON_SHOWN_JS, arg=EDIT_RIBBON)
 
     # The game-id filter is back: cancel lands on the live board.
     await page.click(EDIT_CANCEL_BTN)

@@ -16,8 +16,9 @@ import json
 import logging
 import re
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, fields
-from typing import Awaitable, Callable, Iterable, Sequence
+from typing import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 
 import chess
 
@@ -45,6 +46,7 @@ from ..events import (
     EventBus,
 )
 from ..llm import (
+    ContextFull,
     LLMProvider,
     Message,
     PromptMode,
@@ -59,6 +61,7 @@ from ..llm import (
     split_narrator_steers,
     strip_markdown_stream,
 )
+from ..llm.base import TOOL_RESULT_BLOCK
 from ..llm.cancel import CancelToken
 from ..llm.position_check import (
     describe_square,
@@ -96,22 +99,34 @@ from ..llm.tools import (
 )
 from ..openings import Opening, find_opening_names
 from .tools_engine import (
+    AIM_HORIZON,
+    AIM_KEY,
     ANALYZE_TOOL_NAME,
-    CANDIDATES_KEY,
     FEN_KEY,
     INVALID_MOVE_ERROR,
+    LINE_KEY,
     MATERIAL_TOOL_NAME,
+    MOVE_NUMBER_PATTERN,
     MOVE_EMPTY_DETAIL,
     MOVE_KEY,
     MOVE_UCI_KEY,
     PIECE_AT_TOOL_NAME,
+    PLAY_OUT_IDEA_KEY,
+    PLAY_OUT_TOOL_NAME,
     RECOMMEND_MOVE_TOOL_NAME,
+    REFUTED_KEY,
     REPORT_LINE_TOOL_NAME,
+    SOUND_KEY,
+    UNTESTED_KEY,
     TACTICS_TOOL_NAME,
+    TEST_AIM_TOOL_NAME,
     TOP_MOVES_TOOL_NAME,
     VALIDATE_MOVE_TOOL_NAME,
-    RefuteCheck,
+    AimTest,
+    PlayOutRecord,
     SearchCache,
+    idea_key,
+    normalize_aim,
     parse_move_canonical,
     parse_move_reporting,
 )
@@ -140,9 +155,17 @@ VERIFIER_MAX_ROUNDS = env_int("SV_AI_VERIFIER_MAX_ROUNDS", _DEFAULT_AI_VERIFIER_
 SEMANTIC_CHECK_ENABLED = env_bool("SV_AI_SEMANTIC_CHECK", True)
 
 # Consecutive failed recommend_move calls before the loop force-nudges the
-# model to rank candidates with top_moves instead of guessing one at a time.
+# model to play out a new idea instead of retrying.
 MAX_RECOMMEND_FAILURES = env_int(
     "SV_AI_MAX_RECOMMEND_FAILURES", _DEFAULT_AI_MAX_RECOMMEND_FAILURES
+)
+
+# Rounds left when a narrator still without a pick is told to recommend now
+# and recommend_move takes the best played-out move unconditionally: the
+# recommend round plus the prose round.
+_DEFAULT_FALLBACK_ROUNDS_LEFT = 2
+FALLBACK_ROUNDS_LEFT = env_int(
+    "SV_AI_FALLBACK_ROUNDS_LEFT", _DEFAULT_FALLBACK_ROUNDS_LEFT, min_value=1,
 )
 
 _VERIFIER_MODE: PromptMode = "verifier"
@@ -238,50 +261,60 @@ _RECOMMEND_NUDGE_PROMPTS = {
 }
 
 # Sent once when recommend_move is accepted but the model skips the
-# closing conclusion (small models treat the call as the end). One-shot.
-# {san} names the recorded move so the conclusion can't drift to another.
-_POST_RECOMMEND_NUDGE_PREFIX = (
-    "{san} is recorded. State the one-to-two sentence conclusion "
-    "now, naming the plan {san} "
+# analysis (small models treat the call as the end). One-shot. {san}
+# names the recorded move so the prose can't drift to another.
+_POST_RECOMMEND_NUDGE = (
+    "{san} is the recommended move. Explain it now: why {san} is best and "
+    "the plan it serves, in a few sentences."
 )
-_POST_RECOMMEND_NUDGE_PROMPTS = {
-    "coach": _POST_RECOMMEND_NUDGE_PREFIX + "carries out.",
-    "commentator": _POST_RECOMMEND_NUDGE_PREFIX + "reflects.",
-}
 
 # Injected once when the closing prose describes a move other than the one
 # recorded -- the arrow shows the recorded move, so the two disagree on
 # screen. Re-assertion is struck rather than re-prompted.
 _RECOMMEND_MISMATCH_NUDGE = (
-    "The recorded move is {san}, but the conclusion describes {named} "
-    "instead. Restate the conclusion for {san} -- the move you submitted "
-    "is the one the reader sees."
+    "The recommended move is {san}, but the conclusion describes {named} "
+    "instead. Restate the conclusion for {san} -- it is the move the "
+    "reader sees."
 )
 
 # Injected after MAX_RECOMMEND_FAILURES consecutive failed recommend_move
-# calls: stop guessing one move at a time, rank real candidates in one
-# top_moves call. Re-armed by any top_moves call.
+# calls: stop retrying, play out a new idea. Re-armed by any
+# successful play_out call.
 _RECOMMEND_FAILURE_NUDGE = (
-    "Stop submitting moves one at a time. Call `top_moves` with your "
-    "candidate moves, read the ranking, then recommend the best one."
-    + _NO_ACK_CLAUSE
+    "Stop retrying `recommend_move`. Play out a new idea with `play_out`, "
+    "then recommend the best move that survives." + _NO_ACK_CLAUSE
+)
+
+# play_out steps of different ideas share a round; a second step of one
+# idea in the same round was chosen before its reply came back, so it is
+# refused undispatched (a pre-scripted line breaks once the engine diverges).
+_ONE_STEP_PER_IDEA_ERROR = "one_step_per_idea"
+_ONE_STEP_PER_IDEA_DETAIL = (
+    "this idea already moved this round; read its reply before its next move"
+)
+
+# Injected once, FALLBACK_ROUNDS_LEFT rounds before the cap, when nothing
+# was accepted yet but something was played out.
+_FALLBACK_NUDGE = (
+    "Rounds are nearly spent: call `recommend_move` now with the best "
+    "move you played out." + _NO_ACK_CLAUSE
 )
 
 # One-shot, both narrator modes: the model accepted a move it never
-# red-teamed. Hold the accept and ask for a delegate refutation check;
+# red-teamed. Hold the accept and ask for a delegate check of its aim;
 # a stalled model still gets its pick on the next attempt.
 _RED_TEAM_FIRST_ERROR = "red_team_first"
 _RED_TEAM_FIRST_NUDGE = (
-    "Before settling, hand this move to `delegate` to red-team it; "
-    "submit again once the verdict holds." + _NO_ACK_CLAUSE
+    "Before settling, hand this move and its aim to `delegate` to "
+    "red-team it, then recommend it again." + _NO_ACK_CLAUSE
 )
 
-# Verifier completeness nudge: a verdict before any top_moves ranking that
-# includes the move under test. One-shot per sub-run; a repeat unsearched
-# verdict is dropped (verdict_withheld).
+# Verifier completeness nudge: a verdict before any sound test_aim.
+# One-shot per sub-run; a repeat untested verdict is dropped
+# (verdict_withheld).
 _VERIFIER_SEARCH_NUDGE = (
-    "A verdict needs a search of the move under test first: call "
-    "`top_moves` with it and the strongest alternatives." + _NO_ACK_CLAUSE
+    "A verdict needs a tested reply first: call `test_aim` with the "
+    "opponent's strongest reply to the move." + _NO_ACK_CLAUSE
 )
 
 # A verifier reply must open with one of these (the client badges off the
@@ -312,15 +345,18 @@ _VERIFIER_QUESTION_LABEL = "Question to verify:"
 @dataclass(frozen=True, slots=True)
 class VerifierResult:
     """A verifier sub-run's outcome: the verdict prose ("" when none
-    survived the verdict gates) and whether the round cap cut it short."""
+    survived the verdict gates), whether the round cap cut it short, the
+    SAN lines its test_aim calls replayed, and those that refuted the aim."""
     verdict: str
     round_cap: bool = False
+    lines: tuple[str, ...] = ()
+    refutations: tuple[str, ...] = ()
 
 
-# Delegate tool invokes this: narrator question and the parsed move under
-# test in, the sub-run's outcome out. No cancel token -- the sub-run shares
-# the turn's self._cancel_token.
-VerifierRunner = Callable[[str, chess.Move], Awaitable[VerifierResult]]
+# Delegate tool invokes this: narrator question, the parsed move under test
+# and its aim in, the sub-run's outcome out. No cancel token -- the sub-run
+# shares the turn's self._cancel_token.
+VerifierRunner = Callable[[str, chess.Move, str], Awaitable[VerifierResult]]
 
 
 # A delegate with no usable verdict. no_verdict: the round cap cut the
@@ -333,10 +369,14 @@ _NO_CONCLUSION_DETAIL = 'no conclusion. Try increasing "Max subagent rounds"'
 _UNUSABLE_REPLY_DETAIL = "discarded: the reply was not a usable verdict"
 _FALSE_FACT_DETAIL = "discarded: the verdict misstated the position"
 _UNCONFIRMED_REFUTATION_DETAIL = "discarded: the refutation does not hold up"
+_IGNORED_REFUTATION_DETAIL = "discarded: the aim was refuted; the refutation line stands"
 _QUESTION_EMPTY_DETAIL = "question must be a non-empty string"
-# Set on a withheld refutation the engine overruled: the move survived the
+_AIM_INVALID_DETAIL = "aim must be one move in SAN, e.g. 'd4'"
+# Set on a withheld refutation no test_aim backed: the aim survived the
 # adversarial check, so it satisfies the red-team hold like a verdict does.
 MOVE_SURVIVED_KEY = "move_survived"
+# Delegate result key: the refuting line a "refuted" verdict rests on.
+_REFUTATION_KEY = "refutation"
 
 
 def _verdict_kind(verdict: str) -> str | None:
@@ -354,51 +394,98 @@ _DELEGATE_TOOL_NAME = "delegate"
 # models to reply "Understood, I will..." as prose. Describing behavior
 # removes the thing being acknowledged (same pattern across all cards).
 _DELEGATE_TOOL_CARD = (
-    "One move per call. The result echoes the canonical `move_uci` and a "
-    "holds/refuted verdict about the live position, advisory not quotable."
+    "One idea per call. The result echoes the canonical `move_uci` and a "
+    "holds/refuted verdict on the aim, advisory not quotable; a refuted "
+    "verdict carries the `refutation` line. A refuted aim is narrated: "
+    "justify the move from its played-out line, or drop the idea. The move "
+    "itself still stands if the final check passes it."
 )
 
 
 # Prefixed to the delegated question so the verifier knows the exact
-# move under attack even when the narrator's question doesn't name it.
+# move and aim under attack even when the narrator's question doesn't
+# name them.
 _MOVE_UNDER_TEST_PREFIX = "Move under test:"
+_AIM_PREFIX = "Aim:"
 
 
 DELEGATE_TOOL_SPEC = ToolSpec(
     name=_DELEGATE_TOOL_NAME,
     description=(
-        "Red-team a candidate move before committing to it: an adversary "
-        "searches the live position for a refutation -- the opponent's "
-        "strongest reply, the tactic it allows -- and returns a verdict, "
-        "holds or refuted with the reason."
+        "Red-team an idea's aim before committing to its first move: an "
+        "adversary looks for the opponent replies that stop the aim, tests "
+        "each against the engine, and returns a verdict, holds or refuted "
+        "with the reason."
     ),
     input_schema=object_schema(
         {
             MOVE_KEY: string_prop(
-                "The move to red-team, UCI or SAN (e.g. 'Nf3', 'g1f3')."
+                "The idea's first move, UCI or SAN (e.g. 'Bb5', 'f1b5')."
+            ),
+            AIM_KEY: string_prop(
+                "The move the idea works toward within its next "
+                f"{AIM_HORIZON} moves, SAN (e.g. 'd4')."
             ),
             _QUESTION_ARG_KEY: string_prop(
                 "What to probe, e.g. "
-                "'does it drop material to the d5 break?'."
+                "'can the opponent stop d4 with ...cxd4?'."
             ),
         },
-        required=[MOVE_KEY, _QUESTION_ARG_KEY],
+        required=[MOVE_KEY, AIM_KEY, _QUESTION_ARG_KEY],
     ),
     card=_DELEGATE_TOOL_CARD,
 )
 
 
+# Move-number / continuation prefix before a SAN token in prose.
+_PROSE_MOVE_NUMBER = rf"(?<![\d.]){MOVE_NUMBER_PATTERN}\s*"
+_LINE_MOVE_NUMBER_RE = re.compile(MOVE_NUMBER_PATTERN)
+_BARE_SQUARE_RE = re.compile(r"[a-h][1-8]")
+_SAN_CHECK_SUFFIX = "+#"
+
+
+def _san_run_re(sans: Iterable[str], prefix: str) -> re.Pattern | None:
+    """Matcher for any of `sans` (check suffix optional) after `prefix`."""
+    alternation = "|".join(re.escape(san) for san in sorted(sans, key=len, reverse=True))
+    if not alternation:
+        return None
+    return re.compile(
+        rf"{prefix}(?<![\w-])(?:{alternation})[{_SAN_CHECK_SUFFIX}]?(?![\w-])"
+    )
+
+
+def _without_line_moves(text: str, lines: Iterable[str]) -> str:
+    """`text` with every move of the numbered-SAN `lines` blanked (move
+    number included), so a board check skips moves the server replayed. A
+    pawn push reads as a bare square ('d4'), so it is blanked only when
+    numbered ('3.d4', '...d5'): unnumbered, it may be a piece-on-square
+    claim, which stays checked."""
+    sans = {
+        tok.rstrip(_SAN_CHECK_SUFFIX)
+        for line in lines for tok in _LINE_MOVE_NUMBER_RE.sub(" ", line).split()
+    }
+    pushes = {san for san in sans if _BARE_SQUARE_RE.fullmatch(san)}
+    for pattern in (
+        _san_run_re(sans - pushes, f"(?:{_PROSE_MOVE_NUMBER})?"),
+        _san_run_re(pushes, _PROSE_MOVE_NUMBER),
+    ):
+        if pattern is not None:
+            text = pattern.sub(" ", text)
+    return text
+
+
 def make_delegate_tool(
     runner: VerifierRunner,
     board_provider: BoardProvider,
-    refute_check: RefuteCheck | None = None,
 ) -> Callable:
     """Build the `delegate` tool. Parses `move` to canonical UCI against
-    the live board, dispatches the narrator's question to a verifier
-    sub-run, and echoes the canonical `move_uci` back. Malformed input
-    returns a structured error so the narrator can recover. A verdict that
-    misstates the board, or a "refuted" the engine (`refute_check`) doesn't
-    confirm, is withheld; None skips the engine check."""
+    the live board and checks `aim` is shaped like one move, dispatches the
+    narrator's question to a verifier sub-run, and echoes the canonical
+    `move_uci` back. Malformed input returns a structured error so the
+    narrator can recover. A verdict that misstates the board (moves its
+    test_aim lines replayed exempt), a "refuted" no test_aim result in the
+    sub-run backs, or a "holds" past one that refuted, is withheld; the
+    refuting line rides along whenever there is one."""
     async def delegate(input_: dict, *, cancel_token: CancelToken) -> dict:
         question = input_.get(_QUESTION_ARG_KEY)
         if not isinstance(question, str) or not question.strip():
@@ -406,6 +493,10 @@ def make_delegate_tool(
         raw_move = input_.get(MOVE_KEY)
         if not isinstance(raw_move, str) or not raw_move.strip():
             return tool_error(INVALID_INPUT_ERROR, MOVE_EMPTY_DETAIL)
+        raw_aim = input_.get(AIM_KEY)
+        aim = normalize_aim(raw_aim) if isinstance(raw_aim, str) else None
+        if aim is None:
+            return tool_error(INVALID_INPUT_ERROR, _AIM_INVALID_DETAIL)
         board = board_provider()
         if board is None:
             return tool_error(INVALID_MOVE_ERROR, f"could not parse {raw_move!r}")
@@ -416,8 +507,9 @@ def make_delegate_tool(
         if move is None:
             return {**tool_error(kind, detail), FEN_KEY: board.fen()}
         result = await runner(
-            f"{_MOVE_UNDER_TEST_PREFIX} {board.san(move)}. {question.strip()}",
-            move,
+            f"{_MOVE_UNDER_TEST_PREFIX} {board.san(move)}. {_AIM_PREFIX} {aim}. "
+            f"{question.strip()}",
+            move, aim,
         )
         verdict = result.verdict
         if not verdict:
@@ -428,27 +520,35 @@ def make_delegate_tool(
         # the move under test (legal pre-move) and reasons about its replies
         # (legal post-move), so it straddles the move boundary; validate against
         # both boards and flag only a claim wrong on NEITHER -- a real illegal
-        # move/false claim, not a boundary artifact. A false reason discredits
-        # the verdict word too, so the narrator never sees it. Full stack on
-        # the copy so numbered history refs keep their replay free-pass.
+        # move/false claim, not a boundary artifact. Moves of the lines test_aim
+        # replayed are exempt: a cited line runs past both boards. A false
+        # reason discredits the verdict word too, so the narrator never sees
+        # it. Full stack on the copy so numbered history refs keep their
+        # replay free-pass.
         after = board.copy()
         after.push(move)
-        if has_position_flags(verdict, board, after):
+        if has_position_flags(_without_line_moves(verdict, result.lines), board, after):
             log.info("delegate verdict misstates the board; withheld: %r", verdict)
             return tool_error(_VERDICT_WITHHELD_ERROR, _FALSE_FACT_DETAIL)
-        # A refutation must survive the engine: the same dominance test the
-        # final recommend_move gate applies. Search failures pass it through.
-        if (
-            refute_check is not None
-            and _verdict_kind(verdict) == _VERDICT_REFUTED
-            and await refute_check(move, cancel_token) is False
-        ):
-            log.info("delegate refutation of %s not confirmed; withheld", move.uci())
+        out = {MOVE_UCI_KEY: move.uci(), _VERDICT_KEY: verdict}
+        refuted = _verdict_kind(verdict) == _VERDICT_REFUTED
+        # A refutation stands only on a test_aim that refuted the aim, and
+        # one such result settles it: "holds" past it is false.
+        if refuted and not result.refutations:
+            log.info("delegate refutation of %s not backed by test_aim; withheld", move.uci())
             return {
                 **tool_error(_VERDICT_WITHHELD_ERROR, _UNCONFIRMED_REFUTATION_DETAIL),
                 MOVE_SURVIVED_KEY: True,
             }
-        return {MOVE_UCI_KEY: move.uci(), _VERDICT_KEY: verdict}
+        if not refuted and result.refutations:
+            log.info("delegate holds on %s past a refuting test_aim; withheld", move.uci())
+            return {
+                **tool_error(_VERDICT_WITHHELD_ERROR, _IGNORED_REFUTATION_DETAIL),
+                _REFUTATION_KEY: result.refutations[0],
+            }
+        if result.refutations:
+            out[_REFUTATION_KEY] = result.refutations[0]
+        return out
 
     return delegate
 
@@ -535,7 +635,7 @@ def _canonical_fen(input_: dict) -> str | None:
 
 def _norm_report_line(input_: dict, board: chess.Board | None) -> tuple | None:
     # Key on the start position (EPD) + the raw move strings in order. Raw
-    # (not canonical) so a broken line -- one a re-submit would repeat
+    # (not canonical) so a broken line -- one a retry would repeat
     # verbatim -- still dedups; order matters, so no sorting.
     raw_moves = input_.get("moves")
     if not isinstance(raw_moves, list) or not raw_moves:
@@ -699,22 +799,39 @@ def _is_accepted_recommend(output) -> bool:
     )
 
 
-def _ranks_move(
-    tool: ProviderChunk, output, move: chess.Move | None,
-) -> bool:
-    """True when `tool` is a top_moves ranking whose candidates include
-    `move` -- the verifier's evidence it searched the move under test."""
-    if move is None or tool.tool_name != TOP_MOVES_TOOL_NAME:
+# Result key holding the SAN line a tool replayed, per tool that returns
+# one. A delegate's withheld "holds" still carries its refutation.
+_REPLAYED_LINE_KEYS = {
+    PLAY_OUT_TOOL_NAME: LINE_KEY,
+    TEST_AIM_TOOL_NAME: LINE_KEY,
+    _DELEGATE_TOOL_NAME: _REFUTATION_KEY,
+}
+
+
+def _replayed_lines(call: ProviderChunk, output) -> list[str]:
+    """The replayed SAN line a tool result hands back, if any."""
+    key = _REPLAYED_LINE_KEYS.get(call.tool_name)
+    line = output.get(key) if key and isinstance(output, dict) else None
+    return [line] if isinstance(line, str) and line else []
+
+
+def _shares_round(call: ProviderChunk) -> bool:
+    """True for a call that may share its round with others: a play_out
+    step (ideas are independent, so their steps can go out together)."""
+    return call.tool_name == PLAY_OUT_TOOL_NAME
+
+
+def _repeats_idea(call: ProviderChunk, stepped: set[str]) -> bool:
+    """True when `call` is a play_out step of an idea already in `stepped`
+    (this round's); otherwise records its idea there."""
+    idea = call.tool_input.get(PLAY_OUT_IDEA_KEY) if call.tool_name == PLAY_OUT_TOOL_NAME else None
+    if not isinstance(idea, str):
         return False
-    if not isinstance(output, dict):
-        return False
-    candidates = output.get(CANDIDATES_KEY)
-    if not isinstance(candidates, list):
-        return False
-    return any(
-        isinstance(c, dict) and c.get(MOVE_UCI_KEY) == move.uci()
-        for c in candidates
-    )
+    key = idea_key(idea)
+    if key in stepped:
+        return True
+    stepped.add(key)
+    return False
 
 
 def _inject_nudge(
@@ -729,30 +846,33 @@ def _inject_nudge(
     messages.append({"role": "user", "content": content})
 
 
-def _tool_result_message(
-    tool_use_id: str, result: dict | str, *, card: str | None = None
+def _tool_results_message(
+    results: Sequence[tuple[str, dict | str, str | None]],
 ) -> Message:
-    """Build the user-role tool_result message that closes one tool call.
+    """Build the user-role message that closes a round's tool calls, from
+    (tool_use_id, result, card) per call.
 
-    Wire shape mirrors Anthropic's. The provider for Ollama translates
-    to OpenAI on the way out.
+    Wire shape mirrors Anthropic's: every tool_result block first (the
+    API wants them leading), in call order. The providers for Ollama and
+    OpenAI-compat translate to one `tool` message per result.
 
-    `card` (tool-card body) is appended as a separate text content block
-    inside the same user message. Kept distinct from the tool_result
-    content -- transcripts and log parsers see "data" vs "guidance"
-    cleanly. Injected by the coordinator only on the first call to a
-    given tool per turn (see docs/ai-analysis-spec.md sec. Skills layer).
+    A `card` (tool-card body) rides as a separate text content block after
+    the results. Kept distinct from the tool_result content -- transcripts
+    and log parsers see "data" vs "guidance" cleanly. Injected by the
+    coordinator only on the first call to a given tool per turn (see
+    docs/ai-analysis-spec.md sec. Skills layer).
     """
-    if not isinstance(result, str):
-        # ensure_ascii=False: escaped non-ASCII (accented opening names)
-        # gets parroted into the model's prose verbatim.
-        result = json.dumps(result, ensure_ascii=False)
-    content: list[dict] = [
-        {"type": "tool_result", "tool_use_id": tool_use_id, "content": result}
-    ]
-    if card:
-        content.append({"type": "text", "text": card})
-    return {"role": "user", "content": content}
+    content: list[dict] = []
+    cards: list[dict] = []
+    for tool_use_id, result, card in results:
+        if not isinstance(result, str):
+            # ensure_ascii=False: escaped non-ASCII (accented opening names)
+            # gets parroted into the model's prose verbatim.
+            result = json.dumps(result, ensure_ascii=False)
+        content.append({"type": TOOL_RESULT_BLOCK, "tool_use_id": tool_use_id, "content": result})
+        if card:
+            cards.append({"type": "text", "text": card})
+    return {"role": "user", "content": content + cards}
 
 
 # Emit sink type: the loop calls it for every ai_* event. Narrator passes
@@ -783,7 +903,7 @@ class _LoopConfig:
     game_id: str | None
     provider: LLMProvider
     transcript: object
-    # Narrator: nudge to recommend_move when the model never submits one.
+    # Narrator: nudge to recommend_move when the model never calls it.
     # Verifier: nudge to call a tool before concluding. None disables.
     completeness_nudge: str | None = None
     # True only for the narrator loop -- enables recommend_move tracking
@@ -809,10 +929,9 @@ class _LoopConfig:
     # Narrator: link opening names in its clean prose (ai_opening_links).
     # The verifier's prose never reaches the panel.
     link_openings: bool = False
-    # Verifier: the move under test. A verdict counts only after a top_moves
-    # ranking that includes it -- analyze on the live FEN scores the position
-    # before the move, so it can't judge the move.
-    move_under_test: chess.Move | None = None
+    # Verifier: a verdict counts only after a sound reply's test_aim -- the
+    # aim is judged on the board, not from intuition.
+    require_aim_test: bool = False
 
 
 @dataclass(slots=True)
@@ -828,6 +947,8 @@ class _LoopResult:
     round_cap_hit: bool = False
     text_published: bool = False
     rounds: int = 0
+    # Verifier: every sound-reply test_aim result, in call order.
+    aim_tests: list[dict] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -842,8 +963,11 @@ class _LoopState:
     # SAN of the accepted move -- what the nudges and the mismatch
     # corrective name, since prose speaks SAN, not uci.
     recommended_san: str | None = None
-    # Verifier: flips once a top_moves ranking includes the move under test.
-    move_searched: bool = False
+    # Verifier: every sound-reply test_aim result, in call order.
+    aim_tests: list[dict] = field(default_factory=list)
+    # SAN lines tools replayed and returned this run (play_out, test_aim,
+    # a delegate's refutation): moves the prose board check skips.
+    replayed_lines: list[str] = field(default_factory=list)
     nudge_sent: bool = False
     # Narrator: re-nudge toward an accepted recommend_move each clean
     # exit until one lands, but stop once a nudge draws no new attempt.
@@ -851,8 +975,8 @@ class _LoopState:
     recommend_attempts: int = 0
     attempts_at_last_nudge: int = -1
     # Consecutive failed recommend_move calls (illegal/rejected); when it
-    # hits MAX_RECOMMEND_FAILURES the model is nudged to use top_moves.
-    # Reset by an accepted recommend or a top_moves call.
+    # hits MAX_RECOMMEND_FAILURES the model is nudged to play out a new
+    # idea. Reset by an accepted recommend or a play_out call.
     consecutive_recommend_failures: int = 0
     recommend_failure_nudge_armed: bool = True
     # True once a delegate call returned a verdict this turn. Gates the
@@ -880,6 +1004,9 @@ class _LoopState:
     rephrase_asked: set[str] = field(default_factory=set)
     # Set by the narrator's completeness nudge: the next round is forced.
     force_tool_next: bool = False
+    # Narrator: the rounds ran low with no pick (see _maybe_fall_back);
+    # recommend_move takes the best played-out move, no red-team hold.
+    fallback: bool = False
     # One-shot: a silent round after a fresh attempt still gets nudged.
     silent_renudge_used: bool = False
     rounds: int = 0
@@ -887,10 +1014,11 @@ class _LoopState:
 
 @dataclass(slots=True)
 class _Round:
-    """One provider round: its chunks and the tool_use that ended it."""
+    """One provider round: its chunks and the tool calls it carries (one,
+    or several play_out steps -- see _shares_round)."""
     index: int
     chunks: list[ProviderChunk] = field(default_factory=list)
-    pending_tool: ProviderChunk | None = None
+    pending_tools: list[ProviderChunk] = field(default_factory=list)
     # Per-round thinking duration, carried on the first non-thinking
     # event so the client shows it correctly on replay (a client-side
     # Date.now() delta collapses to ~0 when replay fires at once).
@@ -1125,6 +1253,7 @@ class AIAnalysisCoordinator:
         verifier_registry: ToolRegistry | None = None,
         search_cache: SearchCache | None = None,
         book_provider: BookProvider | None = None,
+        play_out_record: PlayOutRecord | None = None,
     ) -> None:
         self._bus = bus
         # Default provider for callers that don't supply one per turn.
@@ -1146,10 +1275,23 @@ class AIAnalysisCoordinator:
         # Cleared at turn start (position is stable within a turn, not
         # across). None when the tools aren't cache-wired (tests).
         self._search_cache = search_cache
+        # The narrator's play_out lines and first moves, shared with the
+        # play_out and recommend_move tools. Cleared at turn start like the
+        # search cache. None when the tools aren't wired (tests).
+        self._play_out_record = play_out_record
+        # True once the turn fell back (see _maybe_fall_back); read by
+        # recommend_move through turn_fallback(). False outside a turn.
+        self._turn_fallback: bool = False
+        # The in-flight delegate's move and aim, for its verifier's test_aim
+        # (through active_aim()). None outside a delegate.
+        self._active_aim: AimTest | None = None
         # Opening book: lets prose links tell another opening's full name
         # from a short form of the turn's own. None skips that guard.
         self._book_provider = book_provider
         self._lock = asyncio.Lock()
+        # Turns waiting on `_lock` (a prior turn still in its teardown):
+        # running already, for turn_running.
+        self._starting: set[asyncio.Task] = set()
         self._task: asyncio.Task | None = None
         self._cancel_token: CancelToken | None = None
         # Provider active for the current turn. Set in run() so verifier
@@ -1233,7 +1375,7 @@ class AIAnalysisCoordinator:
         active = provider or self._provider
         system_prompt = assemble_system_prompt(mode, tools=self._registry.specs())
         opening_user_content = user_message if user_message is not None else ""
-        async with self._lock:
+        async with self._turn_lock(game_id):
             self._task = asyncio.current_task()
             self._cancel_token = CancelToken()
             self._active_provider = active
@@ -1258,6 +1400,9 @@ class AIAnalysisCoordinator:
             # not satisfy this turn's requests.
             if self._search_cache is not None:
                 self._search_cache.clear()
+            if self._play_out_record is not None:
+                self._play_out_record.clear()
+            self._turn_fallback = False
             messages: list[Message] = [{"role": "user", "content": opening_user_content}]
             tool_schemas = self._registry.schemas() or None
             has_recommend_move = any(
@@ -1391,6 +1536,7 @@ class AIAnalysisCoordinator:
                     self._turn_openings = {}
                     self._turn_game_id = None
                     self._active_delegate_id = None
+                    self._turn_fallback = False
 
     async def _run_loop(
         self, messages: list[Message], config: _LoopConfig,
@@ -1407,10 +1553,11 @@ class AIAnalysisCoordinator:
         st = _LoopState()
         for round_index in range(config.max_rounds):
             st.rounds = round_index + 1
+            self._maybe_fall_back(messages, config, st, round_index)
             rnd = await self._stream_round(messages, config, st, round_index)
             correction = await self._check_round_prose(config, st, rnd)
-            if rnd.pending_tool is not None:
-                await self._dispatch_round_tool(messages, config, st, rnd, correction)
+            if rnd.pending_tools:
+                await self._dispatch_round_tools(messages, config, st, rnd, correction)
                 continue
             if correction is not None:
                 # A mismatch blocks natural exit: append the round's prose and
@@ -1430,7 +1577,38 @@ class AIAnalysisCoordinator:
             round_cap_hit=st.round_cap_hit,
             text_published=st.text_published,
             rounds=st.rounds,
+            aim_tests=st.aim_tests,
         )
+
+    def _maybe_fall_back(
+        self,
+        messages: list[Message],
+        config: _LoopConfig,
+        st: _LoopState,
+        round_index: int,
+    ) -> None:
+        """FALLBACK_ROUNDS_LEFT or fewer rounds before the cap with no pick
+        yet: tell the narrator to recommend now, and from here recommend_move
+        takes the best played-out move unconditionally (a player out of
+        clock plays the best move found). Once, at the first such round with
+        something played out -- with nothing, no move could be taken."""
+        if (
+            not config.track_recommend
+            or st.fallback
+            or st.recommended_uci is not None
+            or config.max_rounds - round_index > FALLBACK_ROUNDS_LEFT
+            or self._play_out_record is None
+            or not self._play_out_record.any_played_out()
+        ):
+            return
+        log.info(
+            "fallback nudge (%s): %d rounds left",
+            config.mode, config.max_rounds - round_index,
+        )
+        st.fallback = True
+        self._turn_fallback = True
+        st.force_tool_next = True
+        messages.append({"role": "user", "content": _FALLBACK_NUDGE})
 
     async def _stream_round(
         self,
@@ -1440,8 +1618,10 @@ class AIAnalysisCoordinator:
         round_index: int,
     ) -> _Round:
         """Run one provider call, streaming its text and thinking onto the
-        bus. A tool_use chunk ends the round and is returned as
-        `pending_tool`."""
+        bus. Its tool calls are returned as `pending_tools`: any call ends
+        the round, except that play_out steps (of different ideas) may share
+        it. A call that can't join stays unsent, as when one call ended
+        every round."""
         emit = config.emit
         game_id = config.game_id
         rnd = _Round(index=round_index)
@@ -1461,6 +1641,8 @@ class AIAnalysisCoordinator:
         # Strip paired markdown (**, __, `) so the panel renders clean
         # prose rather than raw emphasis markers.
         async for chunk in strip_markdown_stream(provider_stream):
+            if chunk.kind == "tool_use" and rnd.pending_tools and not _shares_round(chunk):
+                break
             rnd.chunks.append(chunk)
             await config.transcript.chunk(round_index, chunk)
             if chunk.kind == "text" and chunk.text:
@@ -1487,13 +1669,12 @@ class AIAnalysisCoordinator:
             elif chunk.kind == "usage" and chunk.usage is not None:
                 await self._add_usage(chunk.usage)
             elif chunk.kind == "tool_use":
-                # In sequential mode (v1), a tool_use ends the round;
-                # downstream chunks after it would belong to the next
-                # round per Anthropic semantics. Capture and break.
-                # (Providers order the round's usage chunk before any
-                # tool_use, so it isn't lost to this break.)
-                rnd.pending_tool = chunk
-                break
+                # A call that can't share the round ends it here. (Providers
+                # order the round's usage chunk before any tool_use, so it
+                # isn't lost to this break.)
+                rnd.pending_tools.append(chunk)
+                if not _shares_round(chunk):
+                    break
         return rnd
 
     async def _check_round_prose(
@@ -1506,7 +1687,9 @@ class AIAnalysisCoordinator:
         emit = config.emit
         game_id = config.game_id
         round_index = rnd.index
-        pc, repeat_pc = self._position_check(rnd.chunks).partition(st.corrected_items)
+        pc, repeat_pc = self._position_check(
+            rnd.chunks, st.replayed_lines,
+        ).partition(st.corrected_items)
         # Split off flags the prose placed in another position: not struck,
         # but the narrator is asked (once per item) to name such positions.
         # Repeats were already ruled on, so they skip the judge.
@@ -1516,7 +1699,7 @@ class AIAnalysisCoordinator:
         # unstruck prose.
         rephrase = (
             sorted(other - st.rephrase_asked)
-            if pc.hit or rnd.pending_tool is not None else []
+            if pc.hit or rnd.pending_tools else []
         )
         st.rephrase_asked.update(rephrase)
         # Tool-mention-only hits carry no surface to strike; skip the UI
@@ -1574,7 +1757,7 @@ class AIAnalysisCoordinator:
             and st.recommend_attempts > st.attempts_at_last_nudge
         )
         if self._needs_nudge(
-            config, st.nudge_sent, st.recommended_uci, st.move_searched,
+            config, st.nudge_sent, st.recommended_uci, bool(st.aim_tests),
             st.recommend_attempts, st.attempts_at_last_nudge,
         ) and (produced or silent_retry):
             st.silent_renudge_used = st.silent_renudge_used or silent_retry
@@ -1607,9 +1790,7 @@ class AIAnalysisCoordinator:
             _inject_nudge(
                 messages,
                 round_chunks,
-                _POST_RECOMMEND_NUDGE_PROMPTS[mode].format(
-                    san=st.recommended_san or "the move",
-                ),
+                _POST_RECOMMEND_NUDGE.format(san=st.recommended_san or "the move"),
             )
             return False
         # Prose naming a different move than the one recorded: the
@@ -1657,24 +1838,17 @@ class AIAnalysisCoordinator:
                 return False
             log.warning("verifier reply is not a verdict; dropped: %r", round_text)
             round_text = ""
-        # Past the one search nudge: a verdict on a move never searched
-        # is invented, so it is dropped rather than passed on.
-        if (
-            config.move_under_test is not None
-            and round_text.strip()
-            and not st.move_searched
-        ):
-            log.warning(
-                "verifier verdict without a search of %s; dropped: %r",
-                config.move_under_test.uci(), round_text,
-            )
+        # Past the one test nudge: a verdict with no tested reply is
+        # invented, so it is dropped rather than passed on.
+        if config.require_aim_test and round_text.strip() and not st.aim_tests:
+            log.warning("verifier verdict without a test_aim; dropped: %r", round_text)
             round_text = ""
         st.round_cap_hit = False
         await _flush_think(emit, rnd.think_timer, game_id, rnd.index)
         st.final_text = round_text
         return True
 
-    async def _dispatch_round_tool(
+    async def _dispatch_round_tools(
         self,
         messages: list[Message],
         config: _LoopConfig,
@@ -1682,14 +1856,56 @@ class AIAnalysisCoordinator:
         rnd: _Round,
         correction: str | None,
     ) -> None:
-        """Run the round's tool call and append its result (plus any
-        `correction` and failure nudge) for the next round."""
+        """Run the round's tool calls in order and append their results in
+        one message (plus any `correction` and failure nudge) for the next
+        round."""
+        messages.append(_assistant_message(rnd.chunks))
+        results: list[tuple[str, dict, str | None]] = []
+        stepped: set[str] = set()
+        for call in rnd.pending_tools:
+            output = await self._run_round_call(config, st, rnd, call, stepped)
+            card = self._inject_card_once(
+                call.tool_name, st.cards_injected, registry=config.registry,
+            )
+            results.append((call.tool_use_id, output, card))
+        messages.append(_tool_results_message(results))
+        # Correct a mismatch in this round's prose. After the tool_results
+        # so every assistant tool_use is paired before this user message.
+        if correction is not None:
+            messages.append({"role": "user", "content": correction})
+        # Steer to a new play_out idea after enough failed recommend attempts.
+        # After the tool_results (every tool_use needs a matching result
+        # before a user-role nudge). One-shot until a play_out re-arms it.
+        if (
+            st.recommend_failure_nudge_armed
+            and st.consecutive_recommend_failures >= MAX_RECOMMEND_FAILURES
+        ):
+            log.info(
+                "recommend-failure nudge (%s): new idea after %d failures",
+                config.mode, st.consecutive_recommend_failures,
+            )
+            st.recommend_failure_nudge_armed = False
+            messages.append(
+                {"role": "user", "content": _RECOMMEND_FAILURE_NUDGE}
+            )
+        await _flush_think(config.emit, rnd.think_timer, config.game_id, rnd.index)
+
+    async def _run_round_call(
+        self,
+        config: _LoopConfig,
+        st: _LoopState,
+        rnd: _Round,
+        pending_tool: ProviderChunk,
+        stepped: set[str],
+    ) -> dict:
+        """One tool call of the round: its dispatch (or dedup hit), the
+        loop policy it feeds, its UI events and transcript entry. Returns
+        the result the model reads. `stepped` collects the ideas play_out
+        stepped this round; a second step of one is refused undispatched."""
         emit = config.emit
         game_id = config.game_id
         mode = config.mode
         round_index = rnd.index
-        pending_tool = rnd.pending_tool
-        messages.append(_assistant_message(rnd.chunks))
         # Single-slot dedup. Cache hit returns the prior result
         # without re-dispatching and without a duplicate UI dot.
         key = self._dedup_key(pending_tool)
@@ -1728,9 +1944,14 @@ class AIAnalysisCoordinator:
             )
             try:
                 with reporting_progress(reporter):
-                    tool_output = await self._dispatch_tool(
-                        pending_tool, registry=config.registry,
-                    )
+                    if _repeats_idea(pending_tool, stepped):
+                        tool_output = tool_error(
+                            _ONE_STEP_PER_IDEA_ERROR, _ONE_STEP_PER_IDEA_DETAIL,
+                        )
+                    else:
+                        tool_output = await self._dispatch_tool(
+                            pending_tool, registry=config.registry,
+                        )
             finally:
                 if is_delegate:
                     self._active_delegate_id = None
@@ -1739,13 +1960,15 @@ class AIAnalysisCoordinator:
                 # is as redundant as success) -- and always the raw
                 # result: the red-team hold below is per-call policy.
                 st.last_call = (key, tool_output)
-        # Hold the first un-red-teamed accept (one-shot; book move
-        # exempt) BEFORE any event/transcript sees the output, so the
-        # UI, the transcript, and the model all read the same result.
+        # Hold the first un-red-teamed accept (one-shot; book move and
+        # fallback exempt) BEFORE any event/transcript sees the output, so
+        # the UI, the transcript, and the model all read the same result.
         if (
             config.track_recommend
             and pending_tool.tool_name == RECOMMEND_MOVE_TOOL_NAME
             and config.enforce_red_team
+            and not st.fallback
+            and not self._grant_spent()
             and not st.red_teamed
             and not st.red_team_nudge_sent
             and _is_accepted_recommend(tool_output)
@@ -1772,19 +1995,19 @@ class AIAnalysisCoordinator:
                     },
                 )
             )
-        # A *successful* top_moves call resets the failure streak and
-        # re-arms the nudge. An errored call (malformed args, empty list)
+        # A *successful* play_out call resets the failure streak and
+        # re-arms the nudge. An errored call (malformed args, illegal move)
         # doesn't count, or repeated bad calls would never escalate.
         if (
             config.track_recommend
-            and pending_tool.tool_name == TOP_MOVES_TOOL_NAME
+            and pending_tool.tool_name == PLAY_OUT_TOOL_NAME
             and isinstance(tool_output, dict)
             and not tool_output.get(ERROR_KEY)
         ):
             st.consecutive_recommend_failures = 0
             st.recommend_failure_nudge_armed = True
         # A verdict-bearing delegate marks the pick red-teamed, and so does
-        # a refutation the engine overruled (the move survived); other
+        # a refutation no test_aim backed (the aim survived); other
         # errors (bad move, no verdict) don't count.
         if (
             config.track_recommend
@@ -1793,8 +2016,18 @@ class AIAnalysisCoordinator:
             and (not tool_output.get(ERROR_KEY) or tool_output.get(MOVE_SURVIVED_KEY))
         ):
             st.red_teamed = True
-        if _ranks_move(pending_tool, tool_output, config.move_under_test):
-            st.move_searched = True
+        # Only a sound reply whose line could judge the aim tests it.
+        if (
+            config.require_aim_test
+            and pending_tool.tool_name == TEST_AIM_TOOL_NAME
+            and isinstance(tool_output, dict)
+            and tool_output.get(SOUND_KEY) is True
+            and not tool_output.get(UNTESTED_KEY)
+        ):
+            st.aim_tests.append(tool_output)
+        # Lines the server replayed and handed the model: their moves are
+        # exempt from the prose board check (see _position_check).
+        st.replayed_lines.extend(_replayed_lines(pending_tool, tool_output))
         # An accepted recommend_move is the turn's pick. Safe to read a
         # cached result: the cached uci matches a fresh dispatch's.
         if config.track_recommend and pending_tool.tool_name == RECOMMEND_MOVE_TOOL_NAME:
@@ -1837,41 +2070,16 @@ class AIAnalysisCoordinator:
                     },
                 )
             )
-        card = self._inject_card_once(
-            pending_tool.tool_name, st.cards_injected, registry=config.registry,
-        )
-        messages.append(
-            _tool_result_message(
-                pending_tool.tool_use_id, tool_output, card=card,
-            )
-        )
-        # Correct a mismatch in this round's prose. After the tool_result
-        # so the assistant tool_use is paired before this user message.
-        if correction is not None:
-            messages.append({"role": "user", "content": correction})
-        # Force a top_moves call after enough failed recommend attempts.
-        # After the tool_result (every tool_use needs a matching result
-        # before a user-role nudge). One-shot until a top_moves re-arms it.
-        if (
-            st.recommend_failure_nudge_armed
-            and st.consecutive_recommend_failures >= MAX_RECOMMEND_FAILURES
-        ):
-            log.info(
-                "recommend-failure nudge (%s): forcing top_moves after %d failures",
-                mode, st.consecutive_recommend_failures,
-            )
-            st.recommend_failure_nudge_armed = False
-            messages.append(
-                {"role": "user", "content": _RECOMMEND_FAILURE_NUDGE}
-            )
-        await _flush_think(emit, rnd.think_timer, game_id, round_index)
+        return tool_output
 
     def _position_check(
-        self, chunks: list[ProviderChunk],
+        self, chunks: list[ProviderChunk], replayed_lines: Sequence[str] = (),
     ) -> _PositionCheck:
         """Run the single-board checks on a round's assembled prose, capturing
         each flag's prose surface (for striking) plus its normalized label.
-        Empty when no board_provider, no live board, or no prose."""
+        Moves of `replayed_lines` are exempt (blanked first): the server
+        replayed them. Empty when no board_provider, no live board, or no
+        prose."""
         board = self._board_provider() if self._board_provider else None
         if board is None:
             return _PositionCheck(None, [], [], [])
@@ -1891,8 +2099,11 @@ class AIAnalysisCoordinator:
                 board, [], [], [], tool_mentions, tool_leaks=tool_leaks,
             )
         # Stop at the first move number past the live ply: beyond it the model
-        # is in a hypothetical line, not describing the board.
-        text = truncate_at_future_line(full_text, board)
+        # is in a hypothetical line, not describing the board. Then blank the
+        # replayed lines' moves left before that point (an unnumbered "Bb5
+        # then Nge7"). Blanking first would lift the cut and check the prose
+        # about a line's end position against the live board.
+        text = _without_line_moves(truncate_at_future_line(full_text, board), replayed_lines)
         if not text.strip():
             return _PositionCheck(
                 board, [], [], [], tool_mentions, tool_leaks=tool_leaks,
@@ -2104,7 +2315,7 @@ class AIAnalysisCoordinator:
         config: _LoopConfig,
         nudge_sent: bool,
         recommended_uci: str | None,
-        move_searched: bool,
+        aim_tested: bool,
         recommend_attempts: int,
         attempts_at_last_nudge: int,
     ) -> bool:
@@ -2112,7 +2323,7 @@ class AIAnalysisCoordinator:
         accepted recommend_move on every clean exit until one lands,
         stopping only when a prior nudge drew no new attempt (the model is
         ignoring it -- round_cap is the remaining backstop). Verifier nudge
-        stays one-shot: search the move under test before concluding."""
+        stays one-shot: test a reply before concluding."""
         if config.completeness_nudge is None:
             return False
         if config.track_recommend:
@@ -2123,7 +2334,7 @@ class AIAnalysisCoordinator:
             if not nudge_sent:
                 return True
             return recommend_attempts > attempts_at_last_nudge
-        return not nudge_sent and not move_searched
+        return not nudge_sent and not aim_tested
 
     def note_openings(self, openings: Iterable[Opening]) -> None:
         """Record openings a tool put in front of the narrator this turn
@@ -2135,6 +2346,21 @@ class AIAnalysisCoordinator:
         """The in-flight turn's book move (UCI), for recommend_move's
         book_move_provider; None between turns or off book."""
         return self._turn_book_move
+
+    def _grant_spent(self) -> bool:
+        """recommend_move falls back: the turn's idea grant is spent."""
+        record = self._play_out_record
+        return record is not None and record.grant_spent
+
+    def turn_fallback(self) -> bool:
+        """True once the in-flight turn fell back, for recommend_move's
+        fallback_provider; False between turns."""
+        return self._turn_fallback
+
+    def active_aim(self) -> AimTest | None:
+        """The in-flight delegate's move and aim, for test_aim's
+        aim_provider; None outside a delegate."""
+        return self._active_aim
 
     async def _recommendation_payload(
         self,
@@ -2169,9 +2395,12 @@ class AIAnalysisCoordinator:
         method to build the narrator's `delegate` tool."""
         return self._run_verifier
 
-    async def _run_verifier(self, question: str, move: chess.Move) -> VerifierResult:
+    async def _run_verifier(
+        self, question: str, move: chess.Move, aim: str,
+    ) -> VerifierResult:
         """Run one verifier sub-run for the narrator's `delegate` call on
-        `move` (parsed against the live board).
+        `move` (parsed against the live board) and its `aim`, which the
+        sub-run's test_aim reads through active_aim().
 
         Forwards only its tool-call events to the UI (via `_verifier_emit`,
         nested under the delegate row) and suppresses its prose/thinking;
@@ -2228,11 +2457,12 @@ class AIAnalysisCoordinator:
                 thinking_override=False,
                 force_first_round_tool=True,
                 require_verdict=True,
-                move_under_test=move,
+                require_aim_test=True,
             )
             # done_payload feeds the transcript turn_end only -- a verifier
             # sub-run emits no user-facing done event (it's internal).
             done_payload: dict = {"done": True}
+            self._active_aim = AimTest(move, aim)
             try:
                 result = await self._run_loop(messages, config)
                 if result.round_cap_hit:
@@ -2245,11 +2475,17 @@ class AIAnalysisCoordinator:
                         "verifier sub-run hit round cap (%d) without a verdict; question=%r",
                         self._verifier_max_rounds, question,
                     )
-                return VerifierResult(result.final_text, result.round_cap_hit)
+                tests = result.aim_tests
+                return VerifierResult(
+                    result.final_text, result.round_cap_hit,
+                    lines=tuple(t[LINE_KEY] for t in tests),
+                    refutations=tuple(t[LINE_KEY] for t in tests if t.get(REFUTED_KEY)),
+                )
             except Exception as exc:
                 done_payload.update(_error_fields(exc))
                 raise
             finally:
+                self._active_aim = None
                 await transcript.turn_end(done_payload)
 
     async def _add_usage(self, usage: ProviderUsage) -> None:
@@ -2313,6 +2549,38 @@ class AIAnalysisCoordinator:
     def replay(self) -> list[dict]:
         return list(self._replay_buffer)
 
+    def turn_running(self) -> bool:
+        """True while a turn is in flight, events emitted or not -- from the
+        moment run() starts, before it holds the lock."""
+        if any(not task.done() for task in self._starting):
+            return True
+        return self._task is not None and not self._task.done()
+
+    @asynccontextmanager
+    async def _turn_lock(self, game_id: str | None) -> AsyncIterator[None]:
+        """`_lock` for one turn; while waiting for it, the turn counts as
+        running (turn_running). Cancelled while waiting, with no other turn
+        live to end with its own done event, it emits one: a client that
+        saw it running must not keep spinning."""
+        me = asyncio.current_task()
+        self._starting.add(me)
+        acquired = False
+        try:
+            async with self._lock:
+                acquired = True
+                self._starting.discard(me)
+                yield
+        except asyncio.CancelledError:
+            self._starting.discard(me)
+            if not acquired and not self.turn_running():
+                await self._emit(Event(
+                    kind=EVT_AI_INFO, game_id=game_id,
+                    payload={"done": True, "cancelled": True},
+                ))
+            raise
+        finally:
+            self._starting.discard(me)
+
     def clear_replay(self) -> None:
         # Rebind (not .clear()) so an in-flight replay() iteration on
         # the old list stays consistent.
@@ -2361,6 +2629,10 @@ class AIAnalysisCoordinator:
         norm = normalizer(call.tool_input, board)
         if norm is None:
             return None
+        if call.tool_name == RECOMMEND_MOVE_TOOL_NAME:
+            # Fallback or a spent idea grant changes the ruling: a retry
+            # under it is a new call.
+            return (call.tool_name, norm, self._turn_fallback, self._grant_spent())
         return (call.tool_name, norm)
 
     async def _dispatch_tool(
@@ -2384,9 +2656,10 @@ class AIAnalysisCoordinator:
             return {**tool_error(UNKNOWN_TOOL_ERROR), TOOL_NAME_KEY: call.tool_name}
         try:
             return await fn(call.tool_input, cancel_token=self._cancel_token)
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, ContextFull):
             # Propagate cancellation; the outer except in run() emits
-            # the terminal done/cancelled event.
+            # the terminal done/cancelled event. A full context ends the
+            # turn too (see ContextFull).
             raise
         except Exception as exc:
             # Returned to the model as a structured error it recovers from
@@ -2396,16 +2669,19 @@ class AIAnalysisCoordinator:
             return {**tool_error(TOOL_FAILED_ERROR, str(exc)), TOOL_NAME_KEY: call.tool_name}
 
     async def cancel(self) -> None:
-        """Cancel the running turn (if any). Hard-stop per spec: drops the
-        agent loop, surfaces partial prose as-is. Idempotent."""
+        """Cancel the running turn (if any), and any turn still waiting for
+        it to let go of the lock. Hard-stop per spec: drops the agent loop,
+        surfaces partial prose as-is. Idempotent."""
         token = self._cancel_token
         if token is not None:
             token.cancel()
-        task = self._task
-        if task is None or task.done():
-            return
-        task.cancel()
-        try:
-            await asyncio.shield(task)
-        except (asyncio.CancelledError, Exception):
-            pass
+        me = asyncio.current_task()
+        tasks = [t for t in (*self._starting, self._task) if t is not None and t is not me]
+        tasks = [t for t in tasks if not t.done()]
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            try:
+                await asyncio.shield(task)
+            except (asyncio.CancelledError, Exception):
+                pass

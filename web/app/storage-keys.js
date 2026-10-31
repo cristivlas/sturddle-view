@@ -40,7 +40,6 @@ export const STORAGE_KEY = {
   AI_GEO: "sturddle:ai:geo",
   AI_WIN_STATE: "sturddle:ai:winstate",
   AI_DOCKED: "sturddle:ai:docked",
-  AI_OPEN: "sturddle:ai:open",
   AI_TITLE_MODEL: "sturddle:ai:title-model",
   AI_THINKING_OPEN: "sturddle:ai:thinking-open",
 
@@ -48,7 +47,6 @@ export const STORAGE_KEY = {
   COMMENTARY_GEO: "sturddle:commentary:geo",
   COMMENTARY_WIN_STATE: "sturddle:commentary:winstate",
   COMMENTARY_DOCKED: "sturddle:commentary:docked",
-  COMMENTARY_OPEN: "sturddle:commentary:open",
 
   // Play dock + UCI-log + PV-table + eval-strip window state.
   PLAY_DOCK_GROW: "sturddle:play:dockGrow",

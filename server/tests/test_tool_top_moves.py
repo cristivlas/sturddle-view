@@ -17,7 +17,7 @@ from pathlib import Path
 import chess
 import pytest
 
-from sturddle_view.events import EventBus
+from sturddle_view.events import EVT_ENGINE_INFO, EventBus
 from sturddle_view.llm.cancel import CancelToken
 from sturddle_view.play.engine_supervisor import EngineSupervisor
 from sturddle_view.play.tools_engine import (
@@ -336,3 +336,27 @@ async def test_top_moves_accepts_pgn_continuation_prefix(tmp_path: Path):
     assert "error" not in out, out
     sans = {c["move_san"] for c in out.get("candidates", [])}
     assert "e4" in sans
+
+
+@pytest.mark.asyncio
+async def test_top_moves_hides_the_pv_from_the_model(tmp_path: Path):
+    # The model would copy the engine's continuation instead of playing its
+    # own ideas; the PV still reaches the UI through engine_info.
+    engine_path = make_searching_fake_uci(
+        tmp_path, "tm_pv", score_cp=20, depth=4, bestmove="e2e4", pv="e2e4 e7e5",
+    )
+    bus = EventBus()
+    queue = await bus.subscribe()
+    board = chess.Board()
+    tool = make_top_moves_tool(
+        _launcher_from_path(engine_path, bus), bus=bus, board_provider=lambda: board,
+    )
+    out = await tool({"moves": ["e4"], "depth": 4}, cancel_token=CancelToken())
+    assert "pv" not in out["candidates"][0], out
+    published = []
+    while not queue.empty():
+        published.append(queue.get_nowait())
+    assert any(
+        e.kind == EVT_ENGINE_INFO and e.payload.get("pv_uci") == ["e2e4", "e7e5"]
+        for e in published
+    )

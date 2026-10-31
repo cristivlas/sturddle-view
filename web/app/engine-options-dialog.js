@@ -6,7 +6,7 @@
 // profile) so the user sees what the new launch profile actually exposes.
 
 import { showDialog, pickFile, toast, reportError } from "./dialogs.js";
-import { guard, syncTooltip } from "./wb-utils.js";
+import { guard, setStartTab, syncTooltip } from "./wb-utils.js";
 import { mqNarrowDialog } from "./breakpoints.js";
 
 const PATH_NAME_RE = /(Path|File|Dir)$/i;
@@ -14,6 +14,7 @@ const REFRESH_BTN_LABEL = "Refresh";
 const RESET_BTN_LABEL = "Reset";
 // Secondary-button fill (styles.css .panel-btn).
 const PANEL_BTN_CLASS = "panel-btn";
+const ENGINE_TAB = Object.freeze({ OPTIONS: "options", LAUNCH: "launch" });
 const SAVE_BTN_LABEL = "Apply";
 const REFRESH_BTN_TIP = "Re-query engine options";
 const RESET_BTN_TIP = "Restore engine defaults";
@@ -386,18 +387,18 @@ export function showEngineOptionsDialog({
 
       const optionsTab = document.createElement("wa-tab");
       optionsTab.slot = "nav";
-      optionsTab.setAttribute("panel", "options");
+      optionsTab.setAttribute("panel", ENGINE_TAB.OPTIONS);
       optionsTab.textContent = "Options";
 
       const launchTab = document.createElement("wa-tab");
       launchTab.slot = "nav";
-      launchTab.setAttribute("panel", "launch");
+      launchTab.setAttribute("panel", ENGINE_TAB.LAUNCH);
       launchTab.textContent = "Launch";
 
       const optionsPanel = document.createElement("wa-tab-panel");
-      optionsPanel.setAttribute("name", "options");
+      optionsPanel.setAttribute("name", ENGINE_TAB.OPTIONS);
       const launchPanel = document.createElement("wa-tab-panel");
-      launchPanel.setAttribute("name", "launch");
+      launchPanel.setAttribute("name", ENGINE_TAB.LAUNCH);
 
       // Options tab body -----------------------------------------------
       // Probe failure shows as a panel-wide error banner above the form.
@@ -484,10 +485,11 @@ export function showEngineOptionsDialog({
       // its panel, eliminating the parallel-list bug class where one of
       // them gets forgotten in tabs.append().
       const TABS = new Map([
-        ["options", { tab: optionsTab, panel: optionsPanel }],
-        ["launch",  { tab: launchTab,  panel: launchPanel }],
+        [ENGINE_TAB.OPTIONS, { tab: optionsTab, panel: optionsPanel }],
+        [ENGINE_TAB.LAUNCH,  { tab: launchTab,  panel: launchPanel }],
       ]);
       for (const { tab, panel } of TABS.values()) tabs.append(tab, panel);
+      setStartTab(tabs, ENGINE_TAB.OPTIONS);
       dialog.appendChild(tabs);
 
       // Footer buttons --------------------------------------------------
@@ -611,14 +613,14 @@ export function showEngineOptionsDialog({
       // Refresh and Reset are options-tab actions -- hide them on the
       // Launch tab where they have no meaningful target.
       function syncFooterForTab(panelName) {
-        const onOptions = panelName === "options";
+        const onOptions = panelName === ENGINE_TAB.OPTIONS;
         refresh.style.display = onOptions ? "" : "none";
         defaultsBtn.style.display = onOptions ? "" : "none";
       }
       tabs.addEventListener("wa-tab-show", (e) => {
         syncFooterForTab(e.detail?.name);
       });
-      queueMicrotask(() => syncFooterForTab(tabs.active || "options"));
+      queueMicrotask(() => syncFooterForTab(tabs.active || ENGINE_TAB.OPTIONS));
     },
   });
 }

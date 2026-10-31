@@ -23,6 +23,7 @@ import pytest
 import pytest_asyncio
 import uvicorn
 from fastapi.testclient import TestClient
+import httpx
 from httpx import AsyncClient
 
 import sturddle_view.api.tournaments as tournaments_api
@@ -528,6 +529,62 @@ def run_uvicorn_subprocess(
             pass
 
 
+# Display + script name of the engine serve_fake_engine registers.
+FAKE_ENGINE = "FakeEngine"
+# Canned search answering 1. e4 with 1...e5: serve_fake_engine(**E5_REPLY).
+E5_REPLY = {"bestmove": "e7e5", "pv": "e7e5"}
+# A registered engine that never launches: the game endpoints need one
+# configured, and flows that never search (view, edit, replay) never spawn it.
+UNLAUNCHED_ENGINE = "MyEngine"
+UNLAUNCHED_ENGINE_PATH = "/nonexistent/engine"
+
+
+def make_replying_fake_uci(root: Path, name: str, bestmove: str = E5_REPLY["bestmove"]) -> str:
+    """UCI stub that answers every ``go`` at once with ``bestmove``, no
+    info lines."""
+    return _write_uci_stub(
+        root, name,
+        "    elif line.startswith('go'):\n"
+        f"        sys.stdout.write('bestmove {bestmove}\\n'); sys.stdout.flush()\n",
+    )
+
+
+@contextlib.contextmanager
+def serve_with_engine(tmp_path: Path, name: str, path: str) -> Iterator[str]:
+    """Run the app (subprocess) with one engine registered and selected.
+    Yields the base URL."""
+    seed = EngineRegistry(path=tmp_path / REGISTRY_FILE)
+    seed.select(seed.add(name=name, path=path).id)
+    with run_uvicorn_subprocess(env_overrides=e2e_env(tmp_path)) as base:
+        yield base
+
+
+def serve_unlaunched_engine(
+    tmp_path: Path, name: str = UNLAUNCHED_ENGINE,
+) -> contextlib.AbstractContextManager[str]:
+    """serve_with_engine for an engine that never launches."""
+    return serve_with_engine(tmp_path, name, UNLAUNCHED_ENGINE_PATH)
+
+
+def serve_fake_engine(tmp_path: Path, **search) -> contextlib.AbstractContextManager[str]:
+    """serve_with_engine for the searching fake engine; `search` overrides
+    its canned line (make_searching_fake_uci)."""
+    return serve_with_engine(
+        tmp_path, FAKE_ENGINE, make_searching_fake_uci(tmp_path, FAKE_ENGINE, **search),
+    )
+
+
+_START_AI_ANALYSIS_PATH = "/_test/hve/start_ai_analysis"
+
+
+def start_ai_analysis(base: str) -> None:
+    """Enter an AI analysis session with no turn kicked, for seed_replay to
+    stand in for one: AI on, then the test hook (POST /game/analysis/start
+    would kick a real turn)."""
+    httpx.put(f"{base}/settings", json={cfg.AI_ENABLED_KEY: True}).raise_for_status()
+    httpx.post(base + _START_AI_ANALYSIS_PATH).raise_for_status()
+
+
 @contextlib.contextmanager
 def run_uvicorn(app, *, port: int | None = None) -> Iterator[tuple[str, object]]:
     """Run a uvicorn server in a background thread.
@@ -835,6 +892,25 @@ async def wait_for_async_predicate(page, body: str, *, poll_ms: int = 100) -> No
     await page.wait_for_function(f"() => window['{key}'] === true")
 
 
+async def _wait_json(page, js: str, value, arg, op: str) -> None:
+    await page.wait_for_function(
+        f"([arg, v]) => JSON.stringify(({js})(arg)) {op} JSON.stringify(v)",
+        arg=[arg, value],
+    )
+
+
+async def wait_eval(page, js: str, expected, arg=None) -> None:
+    """Wait until the sync JS function ``js(arg)`` JSON-equals ``expected``.
+    Use after an action instead of evaluate-then-assert, so the read sees
+    the state the action's handlers settle on."""
+    await _wait_json(page, js, expected, arg, "===")
+
+
+async def wait_eval_not(page, js: str, unexpected, arg=None) -> None:
+    """``wait_eval``'s converse: wait until ``js(arg)`` differs from ``unexpected``."""
+    await _wait_json(page, js, unexpected, arg, "!==")
+
+
 def watch_page_errors(page) -> list[str]:
     """Collect page JS exceptions + console errors; assert empty at test end."""
     errors: list[str] = []
@@ -885,7 +961,7 @@ def install_active_game(
 @pytest.fixture
 def game_api_client(tmp_path):
     # _resolve_engine reads settings.engine_path (a Path) when no registry
-    # entry is selected. The path does not need to exist — _get_hve only
+    # entry is selected. The path does not need to exist -- _get_hve only
     # passes it as a string into HumanVsEngine.engine_path comparison.
     fake_engine = tmp_path / "engine"
     fake_engine.write_text("")

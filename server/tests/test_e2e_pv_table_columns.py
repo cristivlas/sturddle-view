@@ -16,7 +16,13 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from .conftest import assert_no_page_errors, e2e_env, run_uvicorn_subprocess, watch_page_errors  # noqa: E402
+from .conftest import (  # noqa: E402
+    assert_no_page_errors,
+    e2e_env,
+    run_uvicorn_subprocess,
+    wait_eval,
+    watch_page_errors,
+)
 
 VIEWPORT = {"width": 1400, "height": 900}
 HOST_PX = 600
@@ -25,6 +31,7 @@ HOST_ATTR = "data-pv-host"
 # Above the app chrome (the header would take the clicks).
 HOST_Z = 1000
 MENU = ".dt-menu:popover-open"
+PIN_CLASS = "dt-pin"
 LEGACY_DEPTH_PX = 70
 PX_TOLERANCE = 1
 
@@ -52,6 +59,7 @@ STATE = f"""(i) => {{
     cells: Array.from(host.querySelector('.wb-pvtable-tbl tbody tr').cells, (td) => td.textContent),
   }};
 }}"""
+LABELS = f"(i) => ({STATE})(i).labels"
 
 
 # The Columns button's px (with margin) and the first column's applied px.
@@ -93,15 +101,15 @@ async def test_hidden_column_keeps_updating_and_returns(server, make_page):
     await _mount(page, server)
     await _open_menu(page)
     await page.click(_menu_item("eval", "dt-menu-toggle"))
+    await wait_eval(page, LABELS, ["Depth", "Nodes", "NPS", "PV"], 0)
     s = await page.evaluate(STATE, 0)
-    assert s["labels"] == ["Depth", "Nodes", "NPS", "PV"], s
     assert s["cells"][:3] == ["3", "1K", "2K"], s
 
     # An update while hidden lands in the detached cell.
     await page.evaluate("() => window.__pvt[0].update({ depth: 3, score: { cp: -50 } }, null)")
     await page.click(_menu_item("eval", "dt-menu-toggle"))
+    await wait_eval(page, LABELS, ["Depth", "Eval", "Nodes", "NPS", "PV"], 0)
     s = await page.evaluate(STATE, 0)
-    assert s["labels"] == ["Depth", "Eval", "Nodes", "NPS", "PV"], s
     assert s["cells"][1] == "-0.50", s
     assert_no_page_errors(errors)
 
@@ -115,6 +123,8 @@ async def test_depth_and_pv_locked_pv_unmovable(server, make_page):
     assert await page.is_disabled(_menu_item("depth", "dt-menu-toggle"))
     assert await page.is_disabled(_menu_item("pv", "dt-menu-toggle"))
     assert await page.locator(_menu_item("pv", "dt-menu-move")).count() == 0
+    assert await page.locator(_menu_item("pv", PIN_CLASS)).count() == 1
+    assert await page.locator(f".wb-pvtable-head-tbl th:last-child .{PIN_CLASS}").count() == 1
     # Nothing moves past PV: NPS, just ahead of it, can't move down.
     assert await page.is_disabled(f'{_menu_item("nps", "dt-menu-move")}[data-dir="1"]')
     assert_no_page_errors(errors)
@@ -128,8 +138,8 @@ async def test_reorder_moves_existing_cells(server, make_page):
     await page.evaluate("() => { window.__npsTd = document.querySelector('.wb-pvtable-tbl tbody tr').cells[3]; }")
     await _open_menu(page)
     await page.click(f'{_menu_item("nps", "dt-menu-move")}[data-dir="-1"]')
+    await wait_eval(page, LABELS, ["Depth", "Eval", "NPS", "Nodes", "PV"], 0)
     s = await page.evaluate(STATE, 0)
-    assert s["labels"] == ["Depth", "Eval", "NPS", "Nodes", "PV"], s
     assert s["cells"][:4] == ["3", "0.20", "2K", "1K"], s
     same = await page.evaluate(
         "() => document.querySelector('.wb-pvtable-tbl tbody tr').cells[2] === window.__npsTd")
@@ -144,8 +154,7 @@ async def test_tables_on_one_key_follow_each_other(server, make_page):
     await _mount(page, server, count=2)
     await _open_menu(page, 0)
     await page.click(_menu_item("nodes", "dt-menu-toggle"))
-    other = await page.evaluate(STATE, 1)
-    assert other["labels"] == ["Depth", "Eval", "NPS", "PV"], other
+    await wait_eval(page, LABELS, ["Depth", "Eval", "NPS", "PV"], 1)
     assert_no_page_errors(errors)
 
 

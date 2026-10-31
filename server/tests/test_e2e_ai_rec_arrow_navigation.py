@@ -12,7 +12,8 @@ the fetch resolves AFTER the arrow is drawn. The tests pin that ordering by
 holding the /recent-imports/by-id response until the arrow is on the board.
 
 Driven by seeding the coordinator's replay buffer while the server holds
-ANALYZING (engine-only analysis on a fake engine) -- no real LLM.
+an AI analysis session entered through a test hook, no turn kicked -- no
+real LLM.
 
 Skipped if Playwright is missing.
 """
@@ -24,17 +25,13 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-
 from .conftest import (  # noqa: E402
-    REGISTRY_FILE,
     XGAME_BY_ID_ROUTE,
     await_xgame_apply,
     count_xgame_applies,
-    e2e_env,
-    make_searching_fake_uci,
     reset_xgame_apply_count,
-    run_uvicorn_subprocess,
+    serve_fake_engine,
+    start_ai_analysis,
 )
 
 PLAY_PERSP = "#play-perspective"
@@ -52,13 +49,7 @@ _PGN = (
 
 @pytest.fixture
 def server(tmp_path):
-    registry_path = tmp_path / REGISTRY_FILE
-    seed = EngineRegistry(path=registry_path)
-    engine_path = make_searching_fake_uci(tmp_path, "FakeEngine")
-    e = seed.add(name="FakeEngine", path=engine_path)
-    seed.select(e.id)
-    env = e2e_env(tmp_path)
-    with run_uvicorn_subprocess(env_overrides=env) as base:
+    with serve_fake_engine(tmp_path) as base:
         yield base
 
 
@@ -103,7 +94,7 @@ async def test_view_mode_arrow_survives_navigation(server, make_page):
     r = httpx.post(f"{base}/game/import", json={"text": _PGN, "format": "pgn"})
     r.raise_for_status()
     gid = r.json()["game_id"]
-    httpx.post(f"{base}/game/analysis/start").raise_for_status()
+    start_ai_analysis(base)
     _seed_recommendation(base, gid)
 
     _ctx, page = await make_page(viewport={"width": 1600, "height": 1000})
@@ -128,7 +119,7 @@ async def test_play_mode_arrow_survives_navigation(server, make_page):
     r.raise_for_status()
     gid = r.json().get("game_id")
     httpx.post(f"{base}/game/pause").raise_for_status()
-    httpx.post(f"{base}/game/analysis/start").raise_for_status()
+    start_ai_analysis(base)
     _seed_recommendation(base, gid)
 
     _ctx, page = await make_page(viewport={"width": 1600, "height": 1000})
@@ -149,7 +140,7 @@ async def test_play_mode_alternative_arrows_drawn_and_survive_navigation(server,
     r.raise_for_status()
     gid = r.json().get("game_id")
     httpx.post(f"{base}/game/pause").raise_for_status()
-    httpx.post(f"{base}/game/analysis/start").raise_for_status()
+    start_ai_analysis(base)
     _seed_recommendation(base, gid, alternatives=["e2e4", "c2c4"])
 
     _ctx, page = await make_page(viewport={"width": 1600, "height": 1000})

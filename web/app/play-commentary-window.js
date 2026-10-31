@@ -19,8 +19,14 @@ import { markSelectable } from "./wb-utils.js";
 const GEO_KEY       = STORAGE_KEY.COMMENTARY_GEO;
 const WIN_STATE_KEY = STORAGE_KEY.COMMENTARY_WIN_STATE;
 const DOCKED_KEY    = STORAGE_KEY.COMMENTARY_DOCKED;
-const OPEN_KEY      = STORAGE_KEY.COMMENTARY_OPEN;
 const EMPTY_TEXT    = "No commentary at this ply.";
+const DEFAULT_WIN_W = 360;
+const DEFAULT_WIN_H = 280;
+const DEFAULT_WIN_Y = 80;
+const NAV_BTN_CLASS = "pgn-comments-nav-btn";
+const PREV_LABEL    = "Previous comment";
+const NEXT_LABEL    = "Next comment";
+const EMPTY_CLASS   = "is-empty";
 
 let onNavPrev = null;
 let onNavNext = null;
@@ -34,16 +40,16 @@ function buildBody() {
   nav.className = "pgn-comments-nav";
   const prevBtn = document.createElement("button");
   prevBtn.type = "button";
-  prevBtn.className = "pgn-comments-nav-btn";
-  prevBtn.title = "Previous comment";
-  prevBtn.setAttribute("aria-label", "Previous comment");
+  prevBtn.className = NAV_BTN_CLASS;
+  prevBtn.title = PREV_LABEL;
+  prevBtn.setAttribute("aria-label", PREV_LABEL);
   prevBtn.innerHTML = `<wa-icon name="square-caret-left"></wa-icon>`;
   prevBtn.disabled = true;
   const nextBtn = document.createElement("button");
   nextBtn.type = "button";
-  nextBtn.className = "pgn-comments-nav-btn";
-  nextBtn.title = "Next comment";
-  nextBtn.setAttribute("aria-label", "Next comment");
+  nextBtn.className = NAV_BTN_CLASS;
+  nextBtn.title = NEXT_LABEL;
+  nextBtn.setAttribute("aria-label", NEXT_LABEL);
   nextBtn.innerHTML = `<wa-icon name="square-caret-right"></wa-icon>`;
   nextBtn.disabled = true;
   prevBtn.addEventListener("click", () => { if (onNavPrev) onNavPrev(); });
@@ -62,14 +68,14 @@ function setText(el, text) {
   // Remove old paragraphs, keep the nav row.
   for (const p of Array.from(el.querySelectorAll("p"))) p.remove();
   if (text) {
-    el.classList.remove("is-empty");
+    el.classList.remove(EMPTY_CLASS);
     for (const para of text.split(/\n{2,}/)) {
       const p = document.createElement("p");
       p.textContent = para;
       el.append(p);
     }
   } else {
-    el.classList.add("is-empty");
+    el.classList.add(EMPTY_CLASS);
     const p = document.createElement("p");
     p.textContent = EMPTY_TEXT;
     el.append(p);
@@ -84,10 +90,9 @@ export const commentaryWindow = createDockableWindow({
   geoKey: GEO_KEY,
   winStateKey: WIN_STATE_KEY,
   dockedKey: DOCKED_KEY,
-  openKey: OPEN_KEY,
-  defaultW: () => 360,
-  defaultH: 280,
-  defaultY: () => 80,
+  defaultW: () => DEFAULT_WIN_W,
+  defaultH: DEFAULT_WIN_H,
+  defaultY: () => DEFAULT_WIN_Y,
   build() {
     return buildBody();
   },

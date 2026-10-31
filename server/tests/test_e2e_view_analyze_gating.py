@@ -32,13 +32,10 @@ pytestmark = pytest.mark.e2e
 
 import pytest_asyncio  # noqa: E402
 
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-
 from .conftest import (  # noqa: E402
-    REGISTRY_FILE,
-    e2e_env,
+    FAKE_ENGINE,
     make_fake_uci,
-    run_uvicorn_subprocess,
+    serve_with_engine,
     wait_perspective_ready,
     watch_page_errors,
 )
@@ -111,12 +108,7 @@ CURSOR_AT_LAST_MOVE_CELL = """() => {
 
 @pytest.fixture
 def server(tmp_path):
-    registry_path = tmp_path / REGISTRY_FILE
-    seed = EngineRegistry(path=registry_path)
-    e = seed.add(name="FakeEngine", path=make_fake_uci(tmp_path, "FakeEngine"))
-    seed.select(e.id)
-    env = e2e_env(tmp_path)
-    with run_uvicorn_subprocess(env_overrides=env) as base:
+    with serve_with_engine(tmp_path, FAKE_ENGINE, make_fake_uci(tmp_path, FAKE_ENGINE)) as base:
         yield base
 
 

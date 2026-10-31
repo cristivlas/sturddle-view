@@ -146,11 +146,18 @@ source; check the file when a precise value matters.
 | `SV_AI_MAX_TOKENS` | `4096` | Anthropic visible-output cap per round (`max_tokens`); an extended-thinking budget is added on top. | `server/sturddle_view/llm/anthropic.py` |
 | `SV_OLLAMA_THINK_PROBE_MAX_TOKENS` | `512` | Token cap for the one-time per-model Ollama probe that checks whether thinking-off (`reasoning_effort: "none"`) leaks reasoning into visible text; hitting the cap reads as clean. | `server/sturddle_view/llm/ollama.py` |
 | `SV_AI_CONTROL_TIMEOUT_S` | `10.0` | Per-request timeout for providers' control-plane calls (model listing, Ollama housekeeping). Streaming chat has no timeout. | `server/sturddle_view/llm/base.py` |
-| `SV_AI_MAX_RECOMMEND_FAILURES` | `2` | Consecutive failed `recommend_move` calls before the loop nudges the model to `top_moves`. | `server/sturddle_view/play/ai_analysis.py` |
+| `SV_AI_MAX_RECOMMEND_FAILURES` | `2` | Consecutive failed `recommend_move` calls before the loop nudges the model to play out a new idea. | `server/sturddle_view/play/ai_analysis.py` |
+| `SV_AI_FALLBACK_ROUNDS_LEFT` | `2` | Rounds left when a narrator with no accepted pick but a played-out move is told to submit now; `recommend_move` then takes the best played-out move unconditionally (flagged `weaker_than_best` when dominated). | `server/sturddle_view/play/ai_analysis.py` |
 | `SV_AI_ANALYZE_MAX_DEPTH` | `30` | `analyze`/`top_moves` per-call depth cap; caller's `depth` clamped down. Searches are depth-only (no time limit) for determinism. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_SEARCH_DEPTH` | `20` | Default depth of `analyze`/`top_moves`/`recommend_move` searches when the model gives none. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_PLAY_OUT_DEPTH` | `14` | Depth of every `play_out` and `test_aim` search (many per turn); `recommend_move` keeps its own floor. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_MAX_IDEAS` | `3` | Ideas `play_out` takes per turn; a new idea past it is refused until a rejected submit opens one more. | `server/sturddle_view/play/play_out_caps.py` |
+| `SV_AI_PLAY_OUT_MAX_MOVES` | `2` | The model's own moves per `play_out` idea. | `server/sturddle_view/play/play_out_caps.py` |
 | `SV_AI_MIN_DEPTH` | `10` | `analyze`/`top_moves` per-call depth floor; caller's `depth` clamped up (then capped at `SV_AI_ANALYZE_MAX_DEPTH` if lower). Shallow searches rank candidates poorly. | `server/sturddle_view/play/tools_engine.py` |
-| `SV_AI_RECOMMEND_MARGIN_MIN` | `20` | `recommend_move` dominance margin (cp) when the side to move is ahead; the engine's best must beat the pick by more than this to reject it. Even/unclassified positions use the MIN/MAX midpoint. | `server/sturddle_view/play/tools_engine.py` |
-| `SV_AI_RECOMMEND_MARGIN_MAX` | `80` | `recommend_move` dominance margin (cp) when the side to move is behind -- room for the plan's practical try. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_RECOMMEND_MARGIN` | `20` | Dominance margin (cp): the engine's best must beat a `recommend_move` pick by more than this to reject it, whatever the standing. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_PLAY_OUT_MARGIN` | `50` | `play_out`: a step fails when the mover's eval drops by more than this (cp); `test_aim`: a reply more than this below the opponent's best is unsound, and the aim is refuted when its best attempt trails the line by more. Wider than the dominance margin, which sits inside depth-to-depth noise. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_AIM_HORIZON` | `3` | `test_aim`: moves of the tested side read off the free line, the aim forced at each where it is legal. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_VERIFIER_MAX_REPLIES` | `2` | `test_aim`: opponent replies one `delegate` may test. | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_PLAYBOOK_EDGE_CP` | `100` | Playbook margin bucket: `better`/`worse` at this many cp (our POV). | `server/sturddle_view/play/playbook.py` |
 | `SV_AI_PLAYBOOK_DECISIVE_CP` | `300` | Playbook margin bucket: `winning`/`losing`. | `server/sturddle_view/play/playbook.py` |
 | `SV_AI_PLAYBOOK_RESIGN_CP` | `900` | Playbook margin bucket: `crushing`/`lost`; mate scores map here. | `server/sturddle_view/play/playbook.py` |
@@ -178,7 +185,6 @@ source; check the file when a precise value matters.
 | Var | Default | Effect | Where |
 |---|---|---|---|
 | `SV_AI_TRANSCRIPT` | unset | Opt-in: write per-turn transcripts to disk. | `server/sturddle_view/llm/transcript.py` |
-| `SV_AI_DEBUG` | `0` | Flip AI loggers to DEBUG when `--debug` is also on. Accepts `1`/`true`/`yes`/`on`. | `server/sturddle_view/app.py` |
 | `SV_AI_FORCE_INLINE_CALLS` | `0` | Force the model to emit tool calls as inline text (exercises the inline-call recovery path). Accepts `1`/`true`/`yes`/`on`. | `server/sturddle_view/llm/prompts.py` |
 
 ## Test-only

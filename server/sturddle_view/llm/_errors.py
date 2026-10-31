@@ -43,6 +43,12 @@ class ThinkingUnsupported(RuntimeError):
     """
 
 
+class ContextFull(RuntimeError):
+    """The model's context window filled mid-turn. Fatal to the whole
+    turn, even raised inside a tool (a verifier sub-run): a tool error
+    would hide it from the user while every later round fails the same."""
+
+
 def is_thinking_unsupported(status_code: int, body: str) -> bool:
     """True when `body` reads as a bad-request rejection of thinking.
 

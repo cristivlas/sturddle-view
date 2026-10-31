@@ -7,6 +7,7 @@ HTTP.
 """
 from __future__ import annotations
 
+from ._errors import ContextFull
 from .base import LLMProvider, Message, ProviderChunk, ProviderUsage, ToolWireSpec
 from .canned import CannedProvider
 from .markdown_strip import strip_markdown_stream
@@ -33,6 +34,7 @@ from .transcript import (
 )
 
 __all__ = [
+    "ContextFull",
     "LLMProvider",
     "Message",
     "ProviderChunk",

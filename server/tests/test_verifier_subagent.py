@@ -44,6 +44,7 @@ from sturddle_view.play.ai_analysis import (
     VerifierResult,
     _EMPTY_TURN_PLACEHOLDER,
     _FALSE_FACT_DETAIL,
+    _IGNORED_REFUTATION_DETAIL,
     _RECOMMEND_FAILURE_NUDGE,
     _UNCONFIRMED_REFUTATION_DETAIL,
     _UNUSABLE_REPLY_DETAIL,
@@ -112,10 +113,32 @@ async def _echo_top_moves(input_, *, cancel_token):
     ]}
 
 
+# A sound reply's line that leaves the aim standing, and one that refutes it.
+_HOLDING_LINE = "1.e4 e5 2.Nf3"
+_REFUTING_LINE = "1.e4 d5 2.exd5 Qxd5"
+
+
+async def _stub_test_aim(input_, *, cancel_token):
+    # ...a6 is unsound; ...h6's line ends too soon (untested); ...d5 refutes
+    # the aim; any other reply leaves it standing.
+    if input_["reply"] == "a6":
+        return {"reply": "a6", "sound": False, "reason": "unsound reply"}
+    if input_["reply"] == "h6":
+        return {
+            "reply": "h6", "sound": True, "refuted": False, "untested": True,
+            "line": "1.e4 h6",
+        }
+    refuted = input_["reply"] == "d5"
+    return {
+        "reply": input_["reply"], "sound": True, "refuted": refuted,
+        "line": _REFUTING_LINE if refuted else _HOLDING_LINE,
+    }
+
+
 def _verifier_registry() -> ToolRegistry:
     """A verifier registry with stand-in tools the sub-run can call: a
-    non-search inspector and a top_moves ranking. Real engine tools aren't
-    needed to exercise the loop wiring."""
+    non-search inspector, a top_moves ranking, and test_aim. Real engine
+    tools aren't needed to exercise the loop wiring."""
     reg = ToolRegistry()
     reg.register(
         ToolSpec(name="piece_at", description="piece_at", input_schema={"type": "object"}),
@@ -125,14 +148,18 @@ def _verifier_registry() -> ToolRegistry:
         ToolSpec(name="top_moves", description="top_moves", input_schema={"type": "object"}),
         _echo_top_moves,
     )
+    reg.register(
+        ToolSpec(name="test_aim", description="test_aim", input_schema={"type": "object"}),
+        _stub_test_aim,
+    )
     return reg
 
 
-def _search_chunk(tool_use_id: str, moves: tuple[str, ...] = ("e4",)) -> ProviderChunk:
-    """A verifier top_moves call; the default ranks the move under test."""
+def _search_chunk(tool_use_id: str, reply: str = "e5") -> ProviderChunk:
+    """A verifier test_aim call; the default reply leaves the aim standing."""
     return ProviderChunk(
         kind="tool_use", tool_use_id=tool_use_id,
-        tool_name="top_moves", tool_input={"moves": list(moves)},
+        tool_name="test_aim", tool_input={"reply": reply},
     )
 
 
@@ -164,13 +191,13 @@ async def _drain_until_done(queue: asyncio.Queue) -> list:
 
 
 def _delegate_chunk(
-    tool_use_id: str, question: str, move: str = "e4",
+    tool_use_id: str, question: str, move: str = "e4", aim: str = "d4",
 ) -> ProviderChunk:
     return ProviderChunk(
         kind="tool_use",
         tool_use_id=tool_use_id,
         tool_name="delegate",
-        tool_input={"move": move, "question": question},
+        tool_input={"move": move, "aim": aim, "question": question},
     )
 
 
@@ -180,23 +207,36 @@ async def test_delegate_reports_illegal_vs_invalid_with_fen():
     # and the FEN it validated against, not a flat "could not parse" -- so a
     # wrong-side-to-move pick (e.g. '...d5' on white's turn) is legible. The
     # parse fails before the verifier runs, so the runner is never called.
-    async def never(_question, _move):
+    async def never(_question, _move, _aim):
         raise AssertionError("runner must not run when the move is rejected")
 
     board = chess.Board()  # white to move
     delegate = make_delegate_tool(never, board_provider=(lambda: board))
 
     illegal = await delegate(
-        {"move": "...d5", "question": "best?"}, cancel_token=CancelToken(),
+        {"move": "...d5", "aim": "d4", "question": "best?"}, cancel_token=CancelToken(),
     )
     assert illegal["error"] == "illegal_move"
     assert illegal["fen"] == board.fen()
 
     invalid = await delegate(
-        {"move": "zz9", "question": "best?"}, cancel_token=CancelToken(),
+        {"move": "zz9", "aim": "d4", "question": "best?"}, cancel_token=CancelToken(),
     )
     assert invalid["error"] == "invalid_move"
     assert invalid["fen"] == board.fen()
+
+
+@pytest.mark.parametrize("aim", [None, "", "the d4 break", 7])
+@pytest.mark.asyncio
+async def test_delegate_rejects_an_aim_that_is_not_one_move(aim):
+    async def never(_question, _move, _aim):
+        raise AssertionError("runner must not run without a usable aim")
+
+    delegate = make_delegate_tool(never, board_provider=(lambda: chess.Board()))
+    out = await delegate(
+        {"move": "e4", "aim": aim, "question": "sound?"}, cancel_token=CancelToken(),
+    )
+    assert out["error"] == "invalid_input"
 
 
 @pytest.mark.asyncio
@@ -226,9 +266,9 @@ async def test_verifier_inherits_turn_position_context():
     user0 = verifier_call["messages"][0]["content"]
     assert _START_FEN in user0, "verifier lost the position context"
     assert "Is e4 sound?" in user0
-    # The canonical SAN is prefixed so the verifier knows the move under
-    # attack even when the narrator's question doesn't name it.
-    assert "Move under test: e4." in user0
+    # The canonical SAN and the aim are prefixed so the verifier knows what
+    # is under attack even when the narrator's question doesn't name it.
+    assert "Move under test: e4. Aim: d4." in user0
 
 
 @pytest.mark.asyncio
@@ -432,7 +472,7 @@ async def test_verifier_tool_events_carry_parent_id_and_prose_suppressed():
     # Verifier tool-call events forward, stamped with the delegate's id.
     verifier_tool_calls = [
         e for e in events
-        if e.kind == "ai_tool_call" and e.payload.get("name") == "top_moves"
+        if e.kind == "ai_tool_call" and e.payload.get("name") == "test_aim"
     ]
     assert verifier_tool_calls, "verifier tool call did not surface"
     assert all(
@@ -492,13 +532,13 @@ async def test_post_recommend_nudge_fires_when_no_conclusion():
 
     # Round 0 accepts the move; round 1 exits with no conclusion -> the
     # nudge injects a prompt and runs round 2. The nudge's user message
-    # (last user message before round 2's stream) asks for the conclusion.
+    # (last user message before round 2's stream) asks for the analysis.
     assert len(provider.calls) == 3
     nudge_round = provider.calls[2]
     last_user = next(
         m for m in reversed(nudge_round["messages"]) if m["role"] == "user"
     )
-    assert "conclusion" in last_user["content"].lower()
+    assert "explain it now" in last_user["content"].lower()
 
 
 @pytest.mark.asyncio
@@ -716,7 +756,7 @@ async def test_accept_without_red_team_is_held_once():
 @pytest.mark.parametrize("survived, holds", [(True, 0), (False, 1)])
 @pytest.mark.asyncio
 async def test_overruled_refutation_counts_as_red_teamed(survived, holds):
-    # The verifier said "refuted" but the engine didn't confirm it: the move
+    # The verifier said "refuted" but no test_aim backed it: the aim
     # survived the adversarial check, so the pick ships without a hold. Any
     # other withheld verdict (no usable reply, false fact) proves nothing.
     envelope = {"error": "verdict_withheld", "detail": _UNCONFIRMED_REFUTATION_DETAIL}
@@ -1077,10 +1117,10 @@ async def test_rejected_recommend_resolves_in_one_resubmit():
 
 
 @pytest.mark.asyncio
-async def test_repeated_recommend_failures_force_top_moves_nudge():
+async def test_repeated_recommend_failures_force_new_idea_nudge():
     # Screenshot regression: the model guesses illegal moves one at a time
     # via recommend_move. After MAX_RECOMMEND_FAILURES (2) failures, the loop
-    # injects a user nudge telling it to use top_moves instead.
+    # injects a user nudge telling it to play out a new idea instead.
 
     async def recommend(_input, *, cancel_token):
         # First two attempts fail; the third (after the nudge) is accepted so
@@ -1117,11 +1157,11 @@ async def test_repeated_recommend_failures_force_top_moves_nudge():
     assert any(
         m["role"] == "user" and m["content"] == _RECOMMEND_FAILURE_NUDGE
         for m in r2_msgs
-    ), "top_moves nudge should fire after 2 failed recommend_move calls"
+    ), "new-idea nudge should fire after 2 failed recommend_move calls"
 
 
 @pytest.mark.asyncio
-async def test_top_moves_call_rearms_the_failure_nudge():
+async def test_play_out_call_rearms_the_failure_nudge():
     # A single failure does NOT trip the nudge (cap is 2). The nudge stays
     # un-fired so long as the model never accumulates 2 failures in a row.
 
@@ -1130,8 +1170,8 @@ async def test_top_moves_call_rearms_the_failure_nudge():
             return {"error": "illegal_move", "detail": "illegal", "legal_moves": ["Nf3"]}
         return {"ok": True, "uci": chess.Board().parse_san(_input["move"]).uci()}
 
-    async def top_moves(_input, *, cancel_token):
-        return {"candidates": [{"move_uci": "g1f3", "move_san": "Nf3", "score_cp": 20}]}
+    async def play_out(_input, *, cancel_token):
+        return {"idea": "Nf3", "move": "Nf3", "reply": "e5", "line": "1.Nf3 e5"}
 
     reg = ToolRegistry()
     reg.register(
@@ -1139,14 +1179,14 @@ async def test_top_moves_call_rearms_the_failure_nudge():
         recommend,
     )
     reg.register(
-        ToolSpec(name="top_moves", description="rank", input_schema={"type": "object"}),
-        top_moves,
+        ToolSpec(name="play_out", description="play", input_schema={"type": "object"}),
+        play_out,
     )
     provider = _RecordingScriptedProvider(rounds=[
         [ProviderChunk(kind="tool_use", tool_use_id="r0",     # failure 1
                        tool_name="recommend_move", tool_input={"move": "Nd7"})],
-        [ProviderChunk(kind="tool_use", tool_use_id="t0",     # top_moves -> resets streak
-                       tool_name="top_moves", tool_input={"moves": ["Nf3"]})],
+        [ProviderChunk(kind="tool_use", tool_use_id="t0",     # play_out -> resets streak
+                       tool_name="play_out", tool_input={"idea": "Nf3", "move": "Nf3"})],
         [ProviderChunk(kind="tool_use", tool_use_id="r1",     # failure 1 again (streak reset)
                        tool_name="recommend_move", tool_input={"move": "Ne7"})],
         [ProviderChunk(kind="tool_use", tool_use_id="r2",     # r3: accept, end the turn
@@ -1162,7 +1202,7 @@ async def test_top_moves_call_rearms_the_failure_nudge():
     await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
     await _drain_until_done(queue)
 
-    # top_moves reset the streak, so the lone failure on each side of it
+    # play_out reset the streak, so the lone failure on each side of it
     # never reaches the cap -- the nudge never fired.
     all_user_content = [
         m.get("content")
@@ -1173,8 +1213,8 @@ async def test_top_moves_call_rearms_the_failure_nudge():
 
 
 @pytest.mark.asyncio
-async def test_errored_top_moves_does_not_rearm_the_failure_nudge():
-    # Regression: an errored (malformed) top_moves call must NOT reset the
+async def test_errored_play_out_does_not_rearm_the_failure_nudge():
+    # Regression: an errored (malformed) play_out call must NOT reset the
     # recommend-failure streak -- else two real failures never trip the
     # nudge. The success tool below would reset if the short-circuit ran it.
 
@@ -1183,8 +1223,8 @@ async def test_errored_top_moves_does_not_rearm_the_failure_nudge():
             return {"error": "illegal_move", "detail": "illegal", "legal_moves": ["Nf3"]}
         return {"ok": True, "uci": chess.Board().parse_san(_input["move"]).uci()}
 
-    async def top_moves(_input, *, cancel_token):
-        return {"candidates": [{"move_uci": "g1f3", "move_san": "Nf3", "score_cp": 20}]}
+    async def play_out(_input, *, cancel_token):
+        return {"idea": "Nf3", "move": "Nf3", "reply": "e5", "line": "1.Nf3 e5"}
 
     reg = ToolRegistry()
     reg.register(
@@ -1192,14 +1232,14 @@ async def test_errored_top_moves_does_not_rearm_the_failure_nudge():
         recommend,
     )
     reg.register(
-        ToolSpec(name="top_moves", description="rank", input_schema={"type": "object"}),
-        top_moves,
+        ToolSpec(name="play_out", description="play", input_schema={"type": "object"}),
+        play_out,
     )
     provider = _RecordingScriptedProvider(rounds=[
         [ProviderChunk(kind="tool_use", tool_use_id="r0",     # failure 1
                        tool_name="recommend_move", tool_input={"move": "Nd7"})],
-        [ProviderChunk(kind="tool_use", tool_use_id="t0",     # malformed top_moves -> errored
-                       tool_name="top_moves", tool_input={},
+        [ProviderChunk(kind="tool_use", tool_use_id="t0",     # malformed play_out -> errored
+                       tool_name="play_out", tool_input={},
                        tool_input_error="could not parse; raw='{}{...}'")],
         [ProviderChunk(kind="tool_use", tool_use_id="r1",     # failure 2 -> cap reached, nudge
                        tool_name="recommend_move", tool_input={"move": "Ne7"})],
@@ -1216,7 +1256,7 @@ async def test_errored_top_moves_does_not_rearm_the_failure_nudge():
     await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
     await _drain_until_done(queue)
 
-    # The errored top_moves didn't reset the streak, so failures 1 + 2 reach
+    # The errored play_out didn't reset the streak, so failures 1 + 2 reach
     # the cap and the nudge fires.
     all_user_content = [
         m.get("content")
@@ -1226,7 +1266,6 @@ async def test_errored_top_moves_does_not_rearm_the_failure_nudge():
     assert _RECOMMEND_FAILURE_NUDGE in all_user_content
 
 
-@pytest.mark.asyncio
 def _last_user_content(call: dict):
     return next(
         m for m in reversed(call["messages"]) if m["role"] == "user"
@@ -1292,15 +1331,18 @@ async def test_verifier_verdict_without_searching_the_move_is_dropped():
 
 
 @pytest.mark.asyncio
-async def test_verifier_ranking_without_the_move_does_not_count():
-    # A top_moves ranking that leaves out the move under test is no search
-    # of it: nudged once, and the ranking that includes it clears the gate.
+async def test_verifier_ranking_alone_does_not_count():
+    # A top_moves ranking tests no reply against the aim: nudged once, and a
+    # test_aim result clears the gate.
     provider = _RecordingScriptedProvider(rounds=[
         [_delegate_chunk("d1", "check e4")],                # narrator
-        [_search_chunk("v1", ("d4",))],                     # verifier: other move only
+        [ProviderChunk(                                     # verifier: ranking only
+            kind="tool_use", tool_use_id="v1",
+            tool_name="top_moves", tool_input={"moves": ["e4", "d4"]},
+        )],
         [ProviderChunk(kind="text", text="Refuted: d4 is better.")],  # nudged
-        [_search_chunk("v2", ("e4", "d4"))],                # verifier: includes e4
-        [ProviderChunk(kind="text", text="Holds: e4 ranks with d4.")],
+        [_search_chunk("v2")],                              # verifier: tests a reply
+        [ProviderChunk(kind="text", text="Holds: e5 does not stop d4.")],
         [ProviderChunk(kind="text", text="done.")],         # narrator
     ])
     bus = EventBus()
@@ -1311,31 +1353,90 @@ async def test_verifier_ranking_without_the_move_does_not_count():
     events = await _drain_until_done(queue)
 
     assert _last_user_content(provider.calls[3]) == _VERIFIER_SEARCH_NUDGE
-    assert _delegate_output(events)["verdict"] == "Holds: e4 ranks with d4."
+    assert _delegate_output(events)["verdict"] == "Holds: e5 does not stop d4."
 
 
-def _verdict_runner(verdict: str):
-    async def runner(_question, _move):
-        return VerifierResult(verdict)
+@pytest.mark.asyncio
+async def test_verifier_refutation_backed_by_test_aim_reaches_the_narrator():
+    # End to end: the sub-run's refuting test_aim backs the verdict, and the
+    # delegate result carries the refuting line for the narrator to narrate.
+    provider = _verifier_rounds_then_narrator(
+        "Refuted: 1...d5 2.exd5 Qxd5 and d4 never comes.", reply="d5",
+    )
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider)
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert _delegate_output(events) == {
+        "move_uci": "e2e4",
+        "verdict": "Refuted: 1...d5 2.exd5 Qxd5 and d4 never comes.",
+        "refutation": _REFUTING_LINE,
+    }
+    assert coord.active_aim() is None
+
+
+@pytest.mark.asyncio
+async def test_verifier_refutation_without_a_refuting_test_aim_is_withheld():
+    # The sub-run's only test_aim left the aim standing: a "refuted" verdict
+    # has nothing under it.
+    provider = _verifier_rounds_then_narrator("Refuted: e4 drops the pawn.")
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider)
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert _delegate_output(events) == {
+        "error": "verdict_withheld", "detail": _UNCONFIRMED_REFUTATION_DETAIL,
+        MOVE_SURVIVED_KEY: True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_verifier_test_aim_reads_the_delegated_move_and_aim():
+    # test_aim learns what it attacks from the coordinator, only while the
+    # delegate's sub-run is in flight.
+    seen = []
+
+    async def test_aim(input_, *, cancel_token):
+        aim = coord.active_aim()
+        seen.append((aim.move.uci(), aim.aim))
+        return {"reply": input_["reply"], "sound": True, "refuted": False, "line": _HOLDING_LINE}
+
+    provider = _verifier_rounds_then_narrator("Holds: e5 does not stop d4.")
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider)
+    coord._verifier_registry = ToolRegistry()
+    coord._verifier_registry.register(
+        ToolSpec(name="test_aim", description="test_aim", input_schema={"type": "object"}),
+        test_aim,
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    await _drain_until_done(queue)
+
+    assert seen == [("e2e4", "d4")]
+    assert coord.active_aim() is None
+
+
+def _verdict_runner(
+    verdict: str, *, lines: tuple[str, ...] = (), refutations: tuple[str, ...] = (),
+):
+    async def runner(_question, _move, _aim):
+        return VerifierResult(verdict, lines=lines, refutations=refutations)
     return runner
 
 
-def _refute_check_returning(result):
-    calls: list[chess.Move] = []
-
-    async def check(move, cancel_token):
-        calls.append(move)
-        return result
-    return check, calls
-
-
-async def _delegate_e4(runner, refute_check=None) -> dict:
+async def _delegate_e4(runner) -> dict:
     board = chess.Board()
-    delegate = make_delegate_tool(
-        runner, board_provider=(lambda: board), refute_check=refute_check,
-    )
+    delegate = make_delegate_tool(runner, board_provider=(lambda: board))
     return await delegate(
-        {"move": "e4", "question": "sound?"}, cancel_token=CancelToken(),
+        {"move": "e4", "aim": "d4", "question": "sound?"}, cancel_token=CancelToken(),
     )
 
 
@@ -1348,39 +1449,55 @@ async def test_delegate_withholds_verdict_that_calls_the_move_illegal():
 
 
 @pytest.mark.asyncio
-async def test_delegate_withholds_refutation_the_engine_does_not_confirm():
-    check, calls = _refute_check_returning(False)
-    out = await _delegate_e4(_verdict_runner("Refuted: e4 drops the pawn."), check)
+async def test_delegate_withholds_refutation_no_test_aim_backs():
+    out = await _delegate_e4(_verdict_runner(
+        "Refuted: e4 drops the pawn.", lines=(_HOLDING_LINE,),
+    ))
     assert out == {
         "error": "verdict_withheld", "detail": _UNCONFIRMED_REFUTATION_DETAIL,
         MOVE_SURVIVED_KEY: True,
     }
-    assert calls == [chess.Move.from_uci("e2e4")]
-
-
-@pytest.mark.parametrize("engine_result", [True, None])
-@pytest.mark.asyncio
-async def test_delegate_passes_confirmed_or_unchecked_refutation(engine_result):
-    # Confirmed by the engine, or the check couldn't run: the verdict stands.
-    check, _calls = _refute_check_returning(engine_result)
-    out = await _delegate_e4(_verdict_runner("Refuted: e4 drops the pawn."), check)
-    assert out == {"move_uci": "e2e4", "verdict": "Refuted: e4 drops the pawn."}
 
 
 @pytest.mark.asyncio
-async def test_delegate_holds_verdict_skips_the_engine_check():
-    check, calls = _refute_check_returning(False)
-    out = await _delegate_e4(_verdict_runner("Holds: nothing cracks e4."), check)
-    assert out["verdict"] == "Holds: nothing cracks e4."
-    assert calls == []
+async def test_delegate_passes_a_backed_refutation_with_its_line():
+    out = await _delegate_e4(_verdict_runner(
+        "Refuted: e4 drops the pawn.",
+        lines=(_REFUTING_LINE,), refutations=(_REFUTING_LINE,),
+    ))
+    assert out == {
+        "move_uci": "e2e4", "verdict": "Refuted: e4 drops the pawn.",
+        "refutation": _REFUTING_LINE,
+    }
 
 
-def _verifier_rounds_then_narrator(*verifier_texts: str) -> _RecordingScriptedProvider:
-    """Narrator delegates, verifier searches the move then replies with each
+@pytest.mark.asyncio
+async def test_delegate_holds_verdict_needs_no_refutation():
+    out = await _delegate_e4(_verdict_runner("Holds: nothing cracks e4."))
+    assert out == {"move_uci": "e2e4", "verdict": "Holds: nothing cracks e4."}
+
+
+@pytest.mark.asyncio
+async def test_delegate_board_check_exempts_moves_of_replayed_lines():
+    # Qxd5 is illegal on both boards around the move, so a verdict naming it
+    # bare is a misstatement -- unless a test_aim line replayed it.
+    verdict = "Refuted: d5 then exd5 and Qxd5 hits the knight."
+    withheld = await _delegate_e4(_verdict_runner(verdict, refutations=(_REFUTING_LINE,)))
+    assert withheld == {"error": "verdict_withheld", "detail": _FALSE_FACT_DETAIL}
+    passed = await _delegate_e4(_verdict_runner(
+        verdict, lines=(_REFUTING_LINE,), refutations=(_REFUTING_LINE,),
+    ))
+    assert passed["verdict"] == verdict
+
+
+def _verifier_rounds_then_narrator(
+    *verifier_texts: str, reply: str = "e5",
+) -> _RecordingScriptedProvider:
+    """Narrator delegates, verifier tests `reply` then replies with each
     of `verifier_texts` in turn, narrator concludes."""
     return _RecordingScriptedProvider(rounds=[
         [_delegate_chunk("d1", "check e4")],                # narrator
-        [_search_chunk("v1")],                              # verifier: search
+        [_search_chunk("v1", reply)],                       # verifier: test_aim
         *[[ProviderChunk(kind="text", text=t)] for t in verifier_texts],
         [ProviderChunk(kind="text", text="done.")],         # narrator
     ])
@@ -1400,6 +1517,7 @@ async def test_verifier_non_verdict_nudged_once_then_complies():
     provider = _verifier_rounds_then_narrator(
         "Would you like me to check d5 as well?",
         "Refuted: d5 wins a pawn.",
+        reply="d5",
     )
     bus = EventBus()
     queue = await bus.subscribe()
@@ -1483,7 +1601,7 @@ async def test_two_delegates_each_get_their_own_parent_id():
         [_search_chunk("vA")],                             # verifier A: search
         [ProviderChunk(kind="text", text="Holds: e4 sound.")],  # verifier A: verdict
         [_delegate_chunk("dB", "check d4", move="d4")],    # narrator: delegate B
-        [_search_chunk("vB", ("d4",))],                    # verifier B: search
+        [_search_chunk("vB")],                             # verifier B: search
         [ProviderChunk(kind="text", text="Holds: d4 sound.")],  # verifier B: verdict
         [ProviderChunk(kind="text", text="done.")],        # narrator
     ])
@@ -1497,7 +1615,7 @@ async def test_two_delegates_each_get_their_own_parent_id():
     parents = {
         e.payload.get("tool_use_id"): e.payload.get("parent_tool_use_id")
         for e in events
-        if e.kind == "ai_tool_call" and e.payload.get("name") == "top_moves"
+        if e.kind == "ai_tool_call" and e.payload.get("name") == "test_aim"
     }
     assert parents == {"vA": "dA", "vB": "dB"}
 
@@ -1698,3 +1816,70 @@ def test_tool_signature_copied_onto_tool_use_block():
                       tool_input={}),
     ])
     assert TOOL_SIGNATURE_KEY not in msg2["content"][0]
+
+
+@pytest.mark.asyncio
+async def test_verifier_unsound_reply_does_not_count_as_tested():
+    # An unsound reply tests nothing: a "holds" after it alone is nudged once,
+    # then dropped -- never a verdict on an untested aim.
+    provider = _verifier_rounds_then_narrator(
+        "Holds: a6 does not stop d4.", "Holds: a6 does not stop d4.", reply="a6",
+    )
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider)
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert _last_user_content(provider.calls[3]) == _VERIFIER_SEARCH_NUDGE
+    assert _delegate_output(events) == {
+        "error": "verdict_withheld", "detail": _UNUSABLE_REPLY_DETAIL,
+    }
+
+
+@pytest.mark.asyncio
+async def test_delegate_keeps_checking_an_unnumbered_square_named_in_a_line():
+    # "d4" in a replayed line is a pawn push; unnumbered in the verdict it
+    # may be a square claim, and a false one is still withheld.
+    lines = ("1.e4 d5 2.exd5 Qxd5 3.d4",)
+    false_claim = await _delegate_e4(_verdict_runner(
+        "Refuted: the knight on d4 is lost.", lines=lines, refutations=lines,
+    ))
+    assert false_claim == {"error": "verdict_withheld", "detail": _FALSE_FACT_DETAIL}
+    numbered = await _delegate_e4(_verdict_runner(
+        "Refuted: after 3.d4 the queen recentralizes.", lines=lines, refutations=lines,
+    ))
+    assert numbered["verdict"].startswith("Refuted")
+
+
+@pytest.mark.asyncio
+async def test_delegate_withholds_holds_past_a_refuting_test_aim():
+    # One refutation settles the verdict: "holds" after it is false, but the
+    # refuting line still reaches the narrator.
+    out = await _delegate_e4(_verdict_runner(
+        "Holds: e4 is fine.", lines=(_REFUTING_LINE,), refutations=(_REFUTING_LINE,),
+    ))
+    assert out == {
+        "error": "verdict_withheld", "detail": _IGNORED_REFUTATION_DETAIL,
+        "refutation": _REFUTING_LINE,
+    }
+
+
+@pytest.mark.asyncio
+async def test_verifier_untested_reply_does_not_count_as_tested():
+    # A line that ended before the aim could be judged tests nothing either.
+    provider = _verifier_rounds_then_narrator(
+        "Holds: h6 does not stop d4.", "Holds: h6 does not stop d4.", reply="h6",
+    )
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider)
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert _last_user_content(provider.calls[3]) == _VERIFIER_SEARCH_NUDGE
+    assert _delegate_output(events) == {
+        "error": "verdict_withheld", "detail": _UNUSABLE_REPLY_DETAIL,
+    }

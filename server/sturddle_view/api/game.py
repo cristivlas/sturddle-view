@@ -15,7 +15,6 @@ from ..auth import require_token
 from ..chess.pgn_tags import TAG_BLACK, TAG_RESULT, TAG_TERMINATION, TAG_WHITE
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
 from ..config import (
-    AI_ENABLED_KEY,
     ALLOW_TAKEBACK_KEY,
     BOOK_ORDER_RANDOM,
     BOOK_ORDER_SEQUENTIAL,
@@ -82,6 +81,8 @@ _COMMENT_TEXT_KEY = "comment_text"
 _DETECTED_FORMAT_KEY = "detected_format"
 _CHILDREN_KEY = "children"
 _EVENTS_KEY = "events"
+# Replay: a turn is in flight, though it may not have emitted yet.
+_RUNNING_KEY = "running"
 _ERROR_KEY = ERROR_KEY
 _IN_PROGRESS_ERROR = "in_progress"
 _WOULD_LEAVE_ERROR = "would_leave"
@@ -788,8 +789,9 @@ async def _cancel_ai_analysis(request: Request) -> None:
 async def analysis_start(request: Request) -> dict:
     """Enter analysis mode. The server picks the path:
     - engine go-infinite (default): HVE drives a live PV stream
-    - AI agent (when settings.ai_enabled): tool-call-driven, engine is
-      spawned per analyze call, no parallel go-infinite
+    - AI agent (when settings.ai_enabled at the start; the session keeps
+      that kind): tool-call-driven, engine is spawned per analyze call, no
+      parallel go-infinite
     The client doesn't care which; both produce the same UI signal
     (analyzing=true on board_update, engine_info events on the bus).
     """
@@ -799,20 +801,21 @@ async def analysis_start(request: Request) -> dict:
     # Drop any prior session's buffer before a new one begins, in case
     # the previous /analysis/stop was skipped (mode toggle, crash).
     _clear_replay(request)
-    if getattr(request.app.state.settings, AI_ENABLED_KEY, False):
+    if hve.ai_analysis:
         await start_ai_turn(request)
     return _OK
 
 
 @router.get(_ANALYSIS_REPLAY_PATH)
 async def analysis_replay(request: Request) -> dict:
-    """Return the buffered AI events for the in-flight analysis turn.
-    Lets a client reconnecting mid-analysis rebuild the panel from the
-    bus events it missed. Empty list when no analysis is live."""
+    """Return the buffered AI events for the in-flight analysis turn, and
+    whether one is running. Lets a client reconnecting mid-analysis rebuild
+    the panel from the bus events it missed -- or show it busy when the
+    turn has emitted nothing yet. Empty list when no analysis is live."""
     coord = ai_coordinator(request.app.state)
     if coord is None:
-        return {_EVENTS_KEY: []}
-    return {_EVENTS_KEY: coord.replay()}
+        return {_EVENTS_KEY: [], _RUNNING_KEY: False}
+    return {_EVENTS_KEY: coord.replay(), _RUNNING_KEY: coord.turn_running()}
 
 
 @router.delete(_ANALYSIS_REPLAY_PATH)

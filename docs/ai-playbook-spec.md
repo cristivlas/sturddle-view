@@ -3,8 +3,11 @@
 Situation-dependent strategy for the AI analysis agent's pick.
 Companion to `docs/ai-analysis-spec.md` (section Future skills points here).
 Shipped: classifier `play/playbook.py`, fragments `llm/playbook.py`,
-plan line wired in `_ai_kick._playbook_for`, gate in
-`tools_engine.make_recommend_move_tool` (`app._ai_situation_provider`).
+plan line served by the narrator's `plan` tool (`_ai_kick.live_playbook`),
+repetition gate in `tools_engine.make_recommend_move_tool`
+(`app._ai_situation_provider`). Since docs/ai-analysis-skin-in-the-game.md
+the plan is input, not the answer: the move that survives `play_out`
+decides the pick, and the margin no longer depends on standing.
 
 ## Goal
 
@@ -33,38 +36,27 @@ candidates that carry the plan out; the engine only vetoes blunders.
 - Thresholds are named module constants with `SV_` env overrides (project
   rule), never literals.
 
-### Injection: the `Plan:` line on the initial user message
+### Injection: the `plan` tool
 
-- Fragments ride the initial user message as one `Plan:` line
-  (`PLAYBOOK_LEAD`), after the position context, exactly like the
-  existing opening steers (`OPENING_PHASE_GUIDANCE`,
-  `BOOK_REPLY_GUIDANCE` in `llm/prompts.py`).
-- Both persona addenda carry `_PLAN_RULE`: the plan decides the pick --
-  candidates for `top_moves` carry it out, and among moves the check
-  accepts the model submits the one that serves the plan, not the
-  highest-scoring one. The closing prose names how the move serves it.
+- Fragments render as one `Plan:` line (`PLAYBOOK_LEAD`) the narrator gets
+  from its `plan` tool on request -- never on the initial user message, so
+  no conclusion is handed over before the model looks at the board.
 - Not the system prompt: the situation changes every ply; the cold prompt
   stays stable / cacheable.
-- Narrator-only. `split_narrator_steers` strips the plan line for
-  verifier sub-runs (the verifier judges soundness, not the plan).
-- Wire-in point: `_ai_kick._build_turn_inputs` -> classify ->
-  `build_initial_user_message(playbook=...)`.
+- Narrator-only: the verifier registry has no `plan` tool.
+- Wire-in point: `app._ai_plan_provider` -> `_ai_kick.live_playbook` ->
+  classify -> `render_playbook` in the turn's persona.
 
-### Gate: `recommend_move` is plan-aware
+### Gate: the repetition veto
 
-The engine check would otherwise veto the plan: a complicating or
-delaying try scores below the top line by design. Two rules, both from
-the side to move's Situation (`app._ai_situation_provider` ->
-`HumanVsEngine.situation(board.turn)`):
+One rule from the side to move's Situation (`app._ai_situation_provider`
+-> `HumanVsEngine.situation(board.turn)`); the dominance margin is one
+value regardless of standing (`RECOMMEND_MARGIN_CP`):
 
-- Dominance margin by margin bucket (`recommend_margin_cp`): ahead
-  (`better`+) -> `RECOMMEND_MARGIN_MIN_CP` (convert cleanly, the engine
-  line rules); behind (`worse`-) -> `RECOMMEND_MARGIN_MAX_CP` (practical
-  chances beat the top line); even or unclassified -> the midpoint.
-  Mate scores ignore the margin as before.
 - Repetition veto: a side ahead that submits a move in `repeats` is
   rejected before any search (`recommendation_rejected`, reason names
   the move). Behind, a repeating move goes through the normal margin.
+  Off in the out-of-rounds fallback.
 
 The end-of-turn verifier search (`ai_recommendation`) is unchanged: it
 reports the engine's view of the accepted pick, it does not re-gate it.
@@ -295,8 +287,8 @@ No combo rows for the specific tags yet; pairs to watch live:
   are cut first, so the advice never drops.
 - Fragments steer the pick, never instruct the model to skip tools or the
   red-team hold (unlike `BOOK_REPLY_GUIDANCE`).
-- Verifier never sees them; the gate's margin never widens past
-  `RECOMMEND_MARGIN_MAX_CP`, and mate scores ignore it.
+- Verifier never sees them; the gate's margin never widens with
+  standing, and mate scores ignore it.
 - Total plan length stays small (target < 80 words) so it does not
   crowd out the position itself.
 
@@ -304,10 +296,9 @@ No combo rows for the specific tags yet; pairs to watch live:
 
 - Classifier: table-driven FEN -> tags tests (pure function); `repeats`
   from a move stack.
-- Prompt assembly: fragment presence per tag; verifier split strips the
-  plan line.
-- Gate: margin per bucket (`recommend_margin_cp`), the tool accepting a
-  behind-margin move it rejects when even, the repetition veto ahead.
+- Prompt assembly: fragment presence per tag; the user message never
+  carries the plan line; `live_playbook` speaks in the turn's persona.
+- Gate: one margin whatever the standing, the repetition veto ahead.
 - No byte-stable prompt tests (project rule); assert on tag -> fragment
   identity, not exact text.
 

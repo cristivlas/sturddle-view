@@ -260,7 +260,7 @@ async def test_debug_window_buttons_say_show_or_hide(server, make_page):
     await page.click(f"{DOCK_LEFT} .dock-slot-close")
     await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", state="detached")
     await page.hover(UCI_BTN)
-    assert await page.get_attribute(UCI_BTN, "title") == SHOW_UCI
+    await page.wait_for_selector(f'{UCI_BTN}[title="{SHOW_UCI}"]')
     assert_no_page_errors(errors)
 
 
@@ -334,7 +334,7 @@ async def test_drag_maximized_float_onto_dock_docks(server, make_page):
     await page.mouse.move(x0, y0)
     await page.mouse.down()
     await page.mouse.move(x1, y1, steps=DOCK_DRAG_STEPS)
-    assert await page.locator(f"{DOCK_LEFT} .dock-ghost").count() == 1, "no drop ghost over the dock"
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-ghost")  # drop ghost over the dock
     await page.mouse.up()
 
     await page.wait_for_function("() => !document.querySelector('.winbox.sturddle-wb-uci-log')")

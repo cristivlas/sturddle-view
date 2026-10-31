@@ -121,3 +121,12 @@ def test_serialize_info_falls_back_to_uci_pv_when_san_rejects():
     out = serialize_info(info, board=board, pov=chess.WHITE)
     assert out["pv_uci"] == ["e2e4", "a1a8"]
     assert out["pv"] == ["e2e4", "a1a8"]
+
+
+def test_serialize_info_carries_the_searched_fen():
+    # The client paints an info only on the board it was searched for.
+    board = chess.Board()
+    board.push_san("e4")
+    out = serialize_info(_typed_info(), board=board, pov=chess.WHITE)
+    assert out["fen"] == board.fen()
+    assert "fen" not in serialize_info(_typed_info(), board=None, pov=chess.WHITE)

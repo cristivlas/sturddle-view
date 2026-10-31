@@ -279,7 +279,8 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
 /* AI prose -- preserve newlines so the model's blank lines read as paragraph
    breaks. Tokens stream into a single <p>: chunks may carry partial
    whitespace, and pre-wrap handles it without DOM gymnastics. */
-.play-ai-prose {
+.play-ai-prose,
+.play-ai-engine-only {
   white-space: pre-wrap;
   word-wrap: break-word;
   margin: 0 12px;
@@ -297,6 +298,13 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
 .play-ai-prose:empty {
   display: none;
 }
+/* Engine-only stand-in: prose's box, spaced like a round's prose. */
+.play-ai-engine-only {
+  margin-top: var(--play-ai-round-pad-top);
+  margin-bottom: var(--play-ai-round-gap);
+}
+/* Margin, not a space: a space would underline with the link. */
+.play-ai-engine-only wa-icon { margin-right: 0.25em; }
 
 /* Revision: <details> folding away prose the AI corrected. Summary carries the
    model's self-correction line, body the struck flawed prose. Neutral (not
@@ -566,16 +574,14 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
    thinking, tool calls, prose. Vertical spacing separates rounds. */
 .play-ai-round {
   display: block;
-  margin: 0 0 4px;
-  padding-top: 6px;
-  /* DEBUG */
-  /* border: 1px solid red; */
+  margin: 0 0 var(--play-ai-round-gap);
+  padding-top: var(--play-ai-round-pad-top);
 }
-/* Tool-only rounds (prose already hidden via .play-ai-prose:empty): trim the
-   round's vertical padding + margin so the next round sits close, not flush.
+/* Tool-only rounds (prose already hidden via .play-ai-prose:empty): drop the
+   top padding, keep the gap, so the next round sits close, not flush.
    Non-empty rounds keep their spacing. */
 .play-ai-round:has(.play-ai-prose:empty) {
-  margin-bottom: 4px;
+  margin-bottom: var(--play-ai-round-gap);
   padding-top: 0;
 }
 /* Thinking keeps its 8px bottom margin so tool calls don't crowd it. */
@@ -583,7 +589,7 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
   margin-top: 0;
   margin-bottom: 0;
 }
-/* After a tool-only round, drop top padding -- it supplied the 4px margin. */
+/* After a tool-only round, drop top padding -- its margin supplied the gap. */
 .play-ai-round:has(.play-ai-prose:empty) + .play-ai-round {
   padding-top: 0;
 }
@@ -591,14 +597,15 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
    lives on .play-ai-rounds (below) so it stays continuous across rounds. */
 .play-ai-timeline {
   margin: 0 12px;
-  /* DEBUG */
-  /* border: 2px solid blue; */
 }
 /* Continuous muted rule through the dot column, on the rounds-container so
    gaps between panels don't break it. Dot column x = timeline margin-left
    (12px) + dot-half (4px) - line-half (0.5px) = ~15.5px. */
 .play-ai-rounds {
   position: relative;
+  /* Round spacing, shared with the engine-only stand-in. */
+  --play-ai-round-pad-top: 6px;
+  --play-ai-round-gap: 4px;
 }
 .play-ai-rounds::before {
   content: "";
@@ -684,6 +691,9 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
 .play-ai-tool-dot-report_line    { background: var(--wa-color-teal-60, #14b8a6); }
 .play-ai-tool-dot-related_openings { background: var(--wa-color-indigo-60, #6366f1); }
 .play-ai-tool-dot-position_judge { background: var(--wa-color-orange-60, #ea580c); }
+.play-ai-tool-dot-play_out       { background: var(--wa-color-green-60, #22c55e); }
+.play-ai-tool-dot-test_aim       { background: var(--wa-color-blue-70, #60a5fa); }
+.play-ai-tool-dot-plan           { background: var(--wa-color-teal-40, #0f766e); }
 /* Dominance-check steps under a recommend_move row: the baseline search is
    an engine search (top_moves blue), the candidate's is the pick's own. */
 .play-ai-tool-dot-engine_best    { background: var(--wa-color-primary-60, #4a90e2); }
@@ -986,7 +996,8 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
 }
 .status-badge.hidden { display: none; }
 .status-badge--paused,
-.status-badge--editing {
+.status-badge--editing,
+.status-badge--analyzing {
   color: var(--accent);
   background: rgba(var(--accent-rgb), 0.12);
   border-color: rgba(var(--accent-rgb), 0.4);
@@ -1290,6 +1301,7 @@ body:has(#play-perspective) > header { position: sticky; top: 0; }
   .status-badge { margin-left: 0; }
   #paused-badge,
   #editing-badge,
+  #analyzing-badge,
   #finished-badge,
   #about-btn,
   #settings-btn,
@@ -1599,8 +1611,7 @@ body[data-ribbon-float] .studio-ribbon {
   outline-offset: -2px;
 }
 @keyframes analyze-pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.45; }
+  50% { transform: scale(var(--ribbon-hover-scale)); }
 }
 .ribbon-btn.is-active { color: var(--wa-color-brand-90); }
 .ribbon-btn.is-active::before { background: var(--wa-color-brand-90); }
@@ -3494,6 +3505,9 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 .dt-menu-move:focus { background: var(--panel-item-hover); }
 .dt-menu-move:disabled { opacity: 0.3; cursor: default; }
+/* Pinned-last marker (column-header.js): header cell and menu row. */
+.dt-pin { color: var(--muted); font-size: 0.8em; margin-left: 4px; }
+.dt-menu-col .dt-pin { padding: 4px 6px; }
 /* Pointer devices: a row's move arrows show only while it holds focus. The
    mouse moves focus to the item under it (menu-nav.js), so focus alone
    tracks mouse and keyboard; :hover would light a second row after a key

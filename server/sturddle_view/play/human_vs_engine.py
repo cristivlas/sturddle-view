@@ -146,6 +146,7 @@ _RESULT_KEY = "result"
 _TERMINATION_KEY = "termination"
 _TURN_KEY = "turn"
 _ANALYZING_KEY = "analyzing"
+_AI_ANALYSIS_KEY = "ai_analysis"
 _VIEW_HASH_KEY = "view_hash"
 _VIEW_SUMMARY_KEY = "view_summary"
 _IN_PROGRESS_KEY = "in_progress"
@@ -259,6 +260,9 @@ class GameBundle:
     view_edited: bool = False  # True once diverged from view_original_text
     # mode to restore when leaving ANALYZING
     pre_analysis_mode: Mode = Mode.PLAY
+    # ANALYZING is AI-driven, not the engine's go-infinite. Fixed at start:
+    # a later ai_enabled flip only applies to the next session.
+    analysis_ai: bool = False
 
     def copy(self) -> GameBundle:
         """Independent copy for edit-mode stash/restore: board and the list
@@ -535,6 +539,7 @@ class HumanVsEngine:
     _view_original_text = _bundle_prop("view_original_text")
     _view_edited = _bundle_prop("view_edited")
     _pre_analysis_mode = _bundle_prop("pre_analysis_mode")
+    _analysis_ai = _bundle_prop("analysis_ai")
 
     @property
     def engine_path(self) -> str:
@@ -576,6 +581,10 @@ class HumanVsEngine:
     @property
     def _editing(self) -> bool:
         return self._mode is Mode.EDITING
+
+    @property
+    def ai_analysis(self) -> bool:
+        return self._analysis_mode and self._analysis_ai
 
     @property
     def game_id(self) -> str | None:
@@ -1239,6 +1248,7 @@ class HumanVsEngine:
                 raise RuntimeError(_GAME_IS_OVER)
             self._pre_analysis_mode = self._mode
             self._mode = Mode.ANALYZING
+            ai = self._analysis_ai = bool(getattr(self._settings, AI_ENABLED_KEY, False))
             # Snapshot game_id + board under the lock so the task doesn't
             # need to re-acquire it for setup (avoids a deadlock window
             # against operations that hold the lock while cancelling us).
@@ -1246,7 +1256,7 @@ class HumanVsEngine:
             board = self._board.copy()
             await self._publish_board()
             await self._publish_clock()
-        if not getattr(self._settings, AI_ENABLED_KEY, False):
+        if not ai:
             self._analysis_task = asyncio.create_task(self._run_analysis(game_id, board))
 
     async def stop_analysis(self) -> None:
@@ -2686,6 +2696,7 @@ class HumanVsEngine:
                     **(self._tb.probe(self._board) or {} if self._tb else {}),
                 },
                 _ANALYZING_KEY: self._analysis_mode,
+                _AI_ANALYSIS_KEY: self.ai_analysis,
                 _IN_PROGRESS_KEY: self._in_progress,
                 "editing": self._editing,
                 "view": view_payload,

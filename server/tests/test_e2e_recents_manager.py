@@ -17,17 +17,15 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-
 from .conftest import (  # noqa: E402
+    E5_REPLY,
     NEXT_FRAME_JS,
-    REGISTRY_FILE,
     XGAME_BY_ID_PATH,
     PageObserver,
     assert_no_page_errors,
-    e2e_env,
-    make_searching_fake_uci,
-    run_uvicorn_subprocess,
+    serve_fake_engine,
+    serve_unlaunched_engine,
+    wait_eval,
     wait_perspective_ready,
     watch_page_errors,
 )
@@ -96,10 +94,7 @@ VIEWED_PGN = '[White "V"]\n[Black "W"]\n\n1. g3 g6 *\n'
 
 @pytest.fixture
 def server(tmp_path):
-    # The game endpoints need a configured engine; viewing never runs it.
-    seed = EngineRegistry(path=tmp_path / REGISTRY_FILE)
-    seed.select(seed.add(name="MyEngine", path="/nonexistent/engine").id)
-    with run_uvicorn_subprocess(env_overrides=e2e_env(tmp_path)) as base:
+    with serve_unlaunched_engine(tmp_path) as base:
         yield base
 
 
@@ -296,7 +291,7 @@ async def test_parent_delete_cascades_after_confirm(server, make_page):
     await _open_recents_tab(page)
 
     await page.locator(ROW.format(parent)).locator(ROW_DELETE).click()
-    assert await page.locator(CONFIRM_MESSAGE).text_content() == DELETE_TWO_FORKS
+    await wait_eval(page, "(sel) => document.querySelector(sel)?.textContent ?? null", DELETE_TWO_FORKS, CONFIRM_MESSAGE)
     await page.click(CONFIRM_BUTTON.format(DELETE_LABEL))
 
     await page.locator(ROW.format(parent)).wait_for(state="detached")
@@ -327,12 +322,7 @@ LIVE_PLIES = 2
 
 @pytest.fixture
 def play_server(tmp_path):
-    seed = EngineRegistry(path=tmp_path / REGISTRY_FILE)
-    seed.select(seed.add(
-        name="FakeEngine",
-        path=make_searching_fake_uci(tmp_path, "FakeEngine", bestmove="e7e5", pv="e7e5"),
-    ).id)
-    with run_uvicorn_subprocess(env_overrides=e2e_env(tmp_path)) as base:
+    with serve_fake_engine(tmp_path, **E5_REPLY) as base:
         yield base
 
 

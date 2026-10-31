@@ -25,6 +25,7 @@ from .conftest import (  # noqa: E402
     TOURNAMENT_UX_KEY,
     TOURNAMENT_UX_STUDIO,
     tournament_server_env,
+    wait_eval,
     wait_perspective_ready,
     watch_page_errors,
 )
@@ -119,7 +120,7 @@ async def test_play_ribbon_overflows_into_menu(server, make_page):
         )
         await page.click(f"{PLAY_RIBBON} > {MORE_BTN}")
         await page.locator(f"{MORE_MENU} .tmb-dd-item", has_text=label).click()
-        assert await page.evaluate("() => window.__ribbonClicks") == [label]
+        await wait_eval(page, "() => window.__ribbonClicks", [label])
 
     await _check_restored(page, PLAY_RIBBON)
     assert_no_page_errors(errors)

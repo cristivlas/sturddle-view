@@ -24,9 +24,7 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-
-from .conftest import REGISTRY_FILE, e2e_env, run_uvicorn_subprocess  # noqa: E402
+from .conftest import serve_unlaunched_engine, wait_eval  # noqa: E402
 
 
 PLAY_PERSP = "#play-perspective"
@@ -80,10 +78,7 @@ def llm_url():
 
 @pytest.fixture
 def server(tmp_path, llm_url):
-    seed = EngineRegistry(path=tmp_path / REGISTRY_FILE)
-    e = seed.add(name="MyEngine", path="/nonexistent/engine")
-    seed.select(e.id)
-    with run_uvicorn_subprocess(env_overrides=e2e_env(tmp_path)) as base:
+    with serve_unlaunched_engine(tmp_path) as base:
         httpx.put(f"{base}/settings", json={
             "ai_enabled": True, "ai_provider": "ollama", "ai_base_url": llm_url,
         }).raise_for_status()
@@ -141,7 +136,8 @@ async def test_error_while_away_toasts_on_return(server, make_page):
     await page.click(PLAY_NAV_BTN)
     await _await_rehydrates(page, 2)
     toast = page.locator(_TOAST)
-    assert await toast.count() == 1, "failed turn left no error toast on return"
+    # The failed turn leaves exactly one error toast on return.
+    await wait_eval(page, "(sel) => document.querySelectorAll(sel).length", 1, _TOAST)
     assert LLM_ERROR in (await toast.text_content() or "")
 
 

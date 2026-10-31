@@ -30,9 +30,7 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-
-from .conftest import REGISTRY_FILE, e2e_env, run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
+from .conftest import serve_unlaunched_engine, wait_perspective_ready  # noqa: E402
 
 
 # The ribbon-side <wa-select> has no stable id; reach it by its option set
@@ -55,14 +53,7 @@ _RIBBON_SELECT_PRESENT_JS = (
 
 @pytest.fixture
 def server(tmp_path):
-    # A fake engine keeps API calls from rejecting with no_engine_configured;
-    # the ribbon UI never spawns it.
-    registry_path = tmp_path / REGISTRY_FILE
-    seed = EngineRegistry(path=registry_path)
-    e = seed.add(name="MyEngine", path="/nonexistent/engine")
-    seed.select(e.id)
-    env = e2e_env(tmp_path)
-    with run_uvicorn_subprocess(env_overrides=env) as base:
+    with serve_unlaunched_engine(tmp_path) as base:
         yield base
 
 

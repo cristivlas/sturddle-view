@@ -16,9 +16,9 @@
 // past a small threshold undocks into a float that follows the pointer.
 //
 // The exported createDockableWindow factory is reused by play-commentary-
-// window.js, which shares this dock column but passes selfManaged so the
-// main-dock lifecycle helpers (closeDebugWindows, restoreDebugWindows) skip
-// it -- play.js drives when commentary opens.
+// window.js and play-ai-window.js, which share this dock column but pass
+// selfManaged so the main-dock lifecycle helpers (closeDebugWindows,
+// restoreDebugWindows) skip them -- play.js drives when they open.
 //
 // Narrow-viewport behavior: at <=800px width / <=700px height, CSS hides
 // .play-dock-left. The JS still creates dock slots into the (hidden)
@@ -709,9 +709,11 @@ export function createDockableWindow(config) {
     getInlineEl = null,
     closable = false,
     // Where the open/closed decision is read from and written to. Defaults to
-    // the localStorage openKey; a window whose visibility is a user setting
-    // (not placement state) passes a store backed by that setting instead.
-    openStore = { load: () => isOpen(openKey), save: (v) => setOpen(openKey, v) },
+    // the localStorage openKey (none without one); a window whose visibility
+    // is a user setting passes a store backed by that setting instead.
+    openStore = openKey
+      ? { load: () => isOpen(openKey), save: (v) => setOpen(openKey, v) }
+      : { load: () => false, save: () => {} },
     titleActions = [],
     defaultDest = DOCK_DEST_MAIN,
     railDockable = false,
@@ -1154,9 +1156,8 @@ export function setDockContainer(el) {
 }
 
 // Rail dock container under the moves list (positioned by game-view's
-// positionSideRail, so no bounds tracking here). Pass null on unmount --
-// after closeDebugWindows/setDockContainer(null), which tear down any slot
-// still parked in it.
+// positionSideRail, so no bounds tracking here). Pass null on unmount, once
+// every window that docks here is closed: this tears no slot down.
 export function setRailDockContainer(el) {
   railDockEl = el;
   if (el) syncSlotCount(el);
@@ -1299,6 +1300,9 @@ function buildPvTableBody(events, { setOff }) {
   });
   const off = events.on((evt) => {
     if (evt.kind !== KIND.ENGINE_INFO) return;
+    // Rows sample the board's placement, so an info searched for another
+    // position (AI play_out / test_aim lines) would get the wrong frames.
+    if (pvLineBoard && !pvLineBoard.showsPosition(evt.payload.fen)) return;
     pvt.update(evt.payload, evt.payload.pv?.[0]);
   });
   // Re-gate on game-view's own announcement rather than on the bus's

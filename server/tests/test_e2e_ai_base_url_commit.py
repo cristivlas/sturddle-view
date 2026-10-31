@@ -30,6 +30,8 @@ TYPED_URL = "http://localhost:11434"
 INVALID_URL = "foo"
 BASE_URL_LABEL = "Base URL"
 PROVIDER_LABEL = "Provider"
+MODEL_LABEL = "Model"
+STUB_MODEL = "m1"
 WA_INPUT = "wa-input"
 WA_SELECT = "wa-select"
 ENTER = "Enter"
@@ -99,7 +101,7 @@ async def _open_and_type(server, make_page, text=TYPED_URL):
     await page.clock.install()
     # Stub the provider list so no request reaches a real Ollama.
     await page.route(f"**{MODELS_PATH}",
-                     lambda route: route.fulfill(json={"models": ["m1"], "thinking": {}}))
+                     lambda route: route.fulfill(json={"models": [STUB_MODEL], "thinking": {}}))
     await page.goto(server + "/")
     await wait_perspective_ready(page)
     await page.evaluate(
@@ -108,6 +110,10 @@ async def _open_and_type(server, make_page, text=TYPED_URL):
     )
     # Mount-time fetch is the baseline.
     await page.wait_for_function(_MODELS_AT_LEAST_JS, arg=[MODELS_PATH, 1])
+    # ...and applied: its re-render must land before the clicks below, or a
+    # late one moves the dialog under a click (it then misses the select).
+    model_select = await _row_control(page, MODEL_LABEL, WA_SELECT).element_handle()
+    await page.wait_for_function("([el, m]) => el.value === m", arg=[model_select, STUB_MODEL])
     url_input = _row_control(page, BASE_URL_LABEL, WA_INPUT)
     await url_input.click()
     await page.keyboard.type(text)
@@ -156,6 +162,6 @@ async def test_invalid_base_url_not_saved_on_close(server, make_page):
 async def test_invalid_base_url_reverts_on_provider_click(server, make_page):
     page, url_input = await _open_and_type(server, make_page, INVALID_URL)
     await _row_control(page, PROVIDER_LABEL, WA_SELECT).click()
-    assert await url_input.evaluate("(el) => el.value") == ""
+    await page.wait_for_function("(el) => el.value === ''", arg=await url_input.element_handle())
     assert not await _shook(page)
     assert await _counts(page) == NOTHING_SAVED

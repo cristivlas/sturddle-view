@@ -18,52 +18,24 @@ needed -- so no leaked listeners) and await the request lifecycles that
 deterministically bound when the cursor would have been mutated."""
 from __future__ import annotations
 
-import stat
-import sys
-from pathlib import Path
-
 import httpx
 import pytest
 
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-
-from .conftest import REGISTRY_FILE, PageObserver, e2e_env, run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
-
-
-def _make_fake_uci(root: Path, name: str) -> str:
-    py = root / f"{name}.py"
-    py.write_text(
-        "#!/usr/bin/env python3\n"
-        "import sys\n"
-        "while True:\n"
-        "    line = sys.stdin.readline()\n"
-        "    if not line: break\n"
-        "    line = line.strip()\n"
-        f"    if line == 'uci': sys.stdout.write('id name {name}\\nuciok\\n'); sys.stdout.flush()\n"
-        "    elif line == 'isready': sys.stdout.write('readyok\\n'); sys.stdout.flush()\n"
-        "    elif line.startswith('go'):\n"
-        "        sys.stdout.write('bestmove e7e5\\n'); sys.stdout.flush()\n"
-        "    elif line == 'quit': break\n"
-    )
-    if sys.platform.startswith("win"):
-        wrapper = root / f"{name}.cmd"
-        wrapper.write_text(f'@"{sys.executable}" "{py}" %*\r\n')
-        return str(wrapper)
-    py.chmod(py.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return str(py)
+from .conftest import (  # noqa: E402
+    FAKE_ENGINE,
+    PageObserver,
+    make_replying_fake_uci,
+    serve_with_engine,
+    wait_perspective_ready,
+)
 
 
 @pytest.fixture
 def server(tmp_path):
-    registry_path = tmp_path / REGISTRY_FILE
-    seed = EngineRegistry(path=registry_path)
-    eng = seed.add(name="FakeEngine", path=_make_fake_uci(tmp_path, "FakeEngine"))
-    seed.select(eng.id)
-    env = e2e_env(tmp_path)
-    with run_uvicorn_subprocess(env_overrides=env) as base:
+    with serve_with_engine(tmp_path, FAKE_ENGINE, make_replying_fake_uci(tmp_path, FAKE_ENGINE)) as base:
         yield base
 
 

@@ -25,8 +25,15 @@ from typing import Any, AsyncIterator
 
 import httpx
 
-from ._errors import extract_error_message
-from .base import LLMProvider, Message, ProviderChunk, ProviderUsage, ToolWireSpec
+from ._errors import ContextFull, extract_error_message
+from .base import (
+    LLMProvider,
+    Message,
+    ProviderChunk,
+    ProviderUsage,
+    TOOL_RESULT_BLOCK,
+    ToolWireSpec,
+)
 from .harmony_strip import flush_harmony_carry, strip_harmony_text
 from .transcript import Transcript
 
@@ -40,6 +47,9 @@ TOOL_SIGNATURE_KEY = "tool_signature"
 _GEMINI_SIG_PATH = ("extra_content", "google", "thought_signature")
 # OpenAI-compat request field selecting reasoning depth (or "none").
 REASONING_EFFORT_KEY = "reasoning_effort"
+# Stop reason of a reply cut at its token limit (OpenAI finish_reason and
+# Ollama's native done_reason alike).
+FINISH_LENGTH = "length"
 
 
 def _read_gemini_signature(tool_call: dict) -> str:
@@ -130,7 +140,7 @@ def messages_anthropic_to_openai(messages: list[Message]) -> list[dict]:
             residual_text: list[str] = []
             for block in content:
                 btype = block.get("type")
-                if btype == "tool_result":
+                if btype == TOOL_RESULT_BLOCK:
                     out.append({
                         "role": "tool",
                         "tool_call_id": block.get("tool_use_id", ""),
@@ -207,6 +217,7 @@ async def stream_openai_compat(
     error_label: str,
     transcript: Transcript | None,
     round_index: int,
+    context_full_error: str | None = None,
 ) -> AsyncIterator[ProviderChunk]:
     """Run one OpenAI-compatible chat-completions SSE round.
 
@@ -220,6 +231,8 @@ async def stream_openai_compat(
     `error_label` prefixes the RuntimeError on a non-200 (e.g. "ollama",
     "gemini") so toasts name the failing provider. `provider` is only used
     for its transcript helpers (`_tx_request` / `_tx_wire`).
+    `context_full_error`: ContextFull's message when the round stops on its
+    token limit (finish_reason "length"); None lets such a round end normally.
     """
     await provider._tx_request(transcript, round_index, body)
 
@@ -231,6 +244,9 @@ async def stream_openai_compat(
     # via stream_options.include_usage; some send it regardless). Last
     # non-empty payload wins.
     usage_raw: dict | None = None
+    # Set on a round cut at its token limit: raised after the usage chunk,
+    # so the round that filled the context still counts.
+    context_full = False
     # Harmony marker carry-buffers. See harmony_strip.py -- some models
     # leak `<|...|>` tokens into both visible content AND the reasoning
     # channel; each needs its own carry because deltas interleave.
@@ -279,6 +295,8 @@ async def stream_openai_compat(
                 choices = evt.get("choices") or []
                 if not choices:
                     continue
+                if context_full_error and choices[0].get("finish_reason") == FINISH_LENGTH:
+                    context_full = True
                 delta = choices[0].get("delta") or {}
                 content = delta.get("content")
                 if content:
@@ -332,6 +350,8 @@ async def stream_openai_compat(
     usage = _usage_from_openai(usage_raw)
     if usage is not None:
         yield ProviderChunk(kind="usage", usage=usage)
+    if context_full:
+        raise ContextFull(context_full_error)
 
     # Emit accumulated tool_calls (if any) AFTER text streaming completes
     # -- matches Anthropic's "text first, tool_use last" ordering that the

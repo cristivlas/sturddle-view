@@ -18,6 +18,8 @@ from .conftest import (  # noqa: E402
     assert_no_page_errors,
     e2e_env,
     run_uvicorn_subprocess,
+    wait_eval,
+    wait_eval_not,
     wait_perspective_ready,
     watch_page_errors,
 )
@@ -30,10 +32,7 @@ ACTIVE = "is-active"
 
 _ROW_NAMES = f"() => [...document.querySelectorAll('{ROW} .openings-list-name')].map(td => td.textContent)"
 _SELECTED_NAME = f"() => document.querySelector('{ROW}.selected .openings-list-name')?.textContent ?? null"
-
-
-async def _has_class(page, sel, cls):
-    return await page.locator(sel).evaluate(f"(el) => el.classList.contains('{cls}')")
+_HAS_CLASS = "([sel, cls]) => document.querySelector(sel).classList.contains(cls)"
 
 
 async def _search(page, text):
@@ -68,11 +67,11 @@ async def test_header_and_ribbon_share_sort(server, make_page):
     await _open_openings(page, server)
 
     await page.click(f"{NAME_TH} .th-label")
-    assert await page.get_attribute(NAME_TH, "aria-sort") == "ascending"
-    assert await _has_class(page, ".openings-sort-asc", ACTIVE)
+    await page.wait_for_selector(f'{NAME_TH}[aria-sort="ascending"]')
+    await wait_eval(page, _HAS_CLASS, True, [".openings-sort-asc", ACTIVE])
 
     await page.click(".openings-sort-desc")
-    assert await page.get_attribute(NAME_TH, "aria-sort") == "descending"
+    await page.wait_for_selector(f'{NAME_TH}[aria-sort="descending"]')
     names = await page.evaluate(_ROW_NAMES)
     assert names[0].lower() >= names[-1].lower()
     assert_no_page_errors(errors)
@@ -89,14 +88,16 @@ async def test_pick_survives_closing_search(server, make_page):
 
     await page.click(".openings-search-btn")
     await _search(page, NEEDLE)
+    await page.wait_for_function(f"(total) => ({_ROW_NAMES})().length < total", arg=total)
     names = await page.evaluate(_ROW_NAMES)
     assert 0 < len(names) < total and all(NEEDLE.lower() in n.lower() for n in names)
 
     await page.locator(ROW).nth(1).click()
+    await wait_eval_not(page, _SELECTED_NAME, None)
     picked = await page.evaluate(_SELECTED_NAME)
     assert picked and NEEDLE.lower() in picked.lower()
 
     await page.keyboard.press("Escape")
     await page.wait_for_function(f"() => document.querySelectorAll('{ROW}').length === {total}")
-    assert await page.evaluate(_SELECTED_NAME) == picked
+    await wait_eval(page, _SELECTED_NAME, picked)
     assert_no_page_errors(errors)

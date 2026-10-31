@@ -19,6 +19,7 @@ import pytest
 
 from sturddle_view.events import EVT_AI_USAGE, EventBus
 from sturddle_view.llm import (
+    ContextFull,
     ProviderChunk,
     ProviderUsage,
     ScriptedProvider,
@@ -346,6 +347,79 @@ async def test_tool_raising_returns_structured_error_and_loop_continues():
     assert "tool_failed" in tr["content"]
     assert "kaboom" in tr["content"]
     assert _payload_subset(events[-1].payload, {"done": True})
+
+
+class _SignalingLock(asyncio.Lock):
+    """A lock that signals the first acquire() that has to wait."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.waiting = asyncio.Event()
+
+    async def acquire(self) -> bool:
+        if self.locked():
+            self.waiting.set()
+        return await super().acquire()
+
+
+@pytest.mark.asyncio
+async def test_turn_waiting_for_the_lock_already_counts_as_running():
+    # A reload while the new turn waits for the old one's teardown must
+    # still see a turn in flight (the panel opens busy).
+    coord = AIAnalysisCoordinator(EventBus(), ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="done.")],
+    ]))
+    lock = coord._lock = _SignalingLock()
+    async with lock:                            # the prior turn's teardown
+        task = asyncio.create_task(coord.run(game_id="g"))
+        await lock.waiting.wait()               # run() is blocked on the lock
+        assert coord.turn_running()
+    await task
+    assert not coord.turn_running()
+
+
+@pytest.mark.asyncio
+async def test_cancel_stops_a_turn_still_waiting_for_the_lock():
+    # A stop while the next turn waits for the old one's teardown must not
+    # let that turn start once the lock frees.
+    bus = EventBus()
+    coord = AIAnalysisCoordinator(bus, ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="must not run.")],
+    ]))
+    lock = coord._lock = _SignalingLock()
+    async with lock:                            # the prior turn's teardown
+        task = asyncio.create_task(coord.run(game_id="g"))
+        await lock.waiting.wait()
+        queue = await bus.subscribe()
+        await coord.cancel()
+    assert task.cancelled()
+    assert not coord.turn_running()
+    # A client that saw the waiting turn as running gets its terminal event.
+    done = (await _drain_until_done(queue))[-1].payload
+    assert done["done"] is True and done["cancelled"] is True
+
+
+@pytest.mark.asyncio
+async def test_tool_hitting_a_full_context_ends_the_turn():
+    # A verifier sub-run out of context: the user must see it, not the
+    # narrator a tool error.
+    async def full(_input, *, cancel_token):
+        raise ContextFull("ollama: the model ran out of context")
+
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="tool_use", tool_use_id="tu_c", tool_name="full", tool_input={})],
+        [ProviderChunk(kind="text", text="never reached.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=_make_registry({"full": full}))
+
+    with pytest.raises(ContextFull):
+        await coord.run(game_id="g")
+    terminal = (await _drain_until_done(queue))[-1].payload
+    assert terminal["error"] == "ContextFull"
+    assert "ran out of context" in terminal["error_detail"]
+    assert provider.stream_calls == 1
 
 
 @pytest.mark.asyncio

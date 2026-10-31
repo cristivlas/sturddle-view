@@ -97,6 +97,7 @@ async def test_window_edges_match_list_border(server, make_page, dpr):
     await open_arena_workspace(page)
     # Move the pointer off the list so no row shows its hover tint.
     await page.mouse.move(VIEWPORT["width"] / 2, 0)
+    await page.wait_for_function("() => !document.querySelector('.tournament-row:hover')")
 
     list_y = await page.evaluate(_MID_Y, ".tournament-row")
     left_y = await page.evaluate(_BODY_MID_Y, LEFT_WIN)
@@ -271,6 +272,7 @@ async def test_minimized_window_stays_above_others(server, make_page):
     errors = watch_page_errors(page)
     await _minimize_standings(page, server)
     await page.click(f"{LEFT_WIN} .wb-title")
+    await page.wait_for_selector(f"{LEFT_WIN}.focus")
 
     min_z, others_z, menu_z = await page.evaluate(_MIN_Z_VS_OTHERS, STANDINGS_WIN)
     assert others_z < min_z < menu_z, (others_z, min_z, menu_z)

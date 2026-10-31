@@ -19,6 +19,7 @@ from .conftest import (  # noqa: E402
     run_uvicorn_subprocess,
     seed_tournament,
     tournament_server_env,
+    wait_eval,
     wait_perspective_ready,
     watch_page_errors,
 )
@@ -116,6 +117,18 @@ async def _open_menu(page):
     await page.wait_for_selector(f"{MENU}:popover-open")
 
 
+LAYOUT_KEY = "sturddle:tournaments:standingsLayout"
+_STORED_LAYOUT = "(k) => localStorage.getItem(k)"
+
+
+async def _fit(page):
+    """Fit; its handler stores the layout, then relayouts in the same task."""
+    before = await page.evaluate(_STORED_LAYOUT, LAYOUT_KEY)
+    await _open_menu(page)
+    await page.click(f'{MENU} [data-action="fit"]')
+    await page.wait_for_function(f"([k, b]) => ({_STORED_LAYOUT})(k) !== b", arg=[LAYOUT_KEY, before])
+
+
 @pytest.fixture
 def server(tmp_path):
     seed_tournament(tmp_path, "dt", list(ENGINES), GAMES)
@@ -136,11 +149,11 @@ async def test_hide_column_persists_and_engine_locked(server, make_page):
     await page.click(_menu_item("wins", "dt-menu-toggle"))
 
     expected = [lbl for lbl in DEFAULT_LABELS if lbl != "W"]
-    assert await page.evaluate(_LABELS) == expected
-    assert await page.evaluate(_CELLS_PER_ROW) == [len(expected)] * 2
+    await wait_eval(page, _LABELS, expected)
+    await wait_eval(page, _CELLS_PER_ROW, [len(expected)] * 2)
 
     await _reload_standings(page)
-    assert await page.evaluate(_LABELS) == expected
+    await wait_eval(page, _LABELS, expected)
     assert_no_page_errors(errors)
 
 
@@ -153,11 +166,11 @@ async def test_reorder_then_reset(server, make_page):
     await _open_menu(page)
 
     await page.click(f'{_menu_item("games", "dt-menu-move")}[data-dir="1"]')
-    assert await page.evaluate(_LABELS) == ["Engine", "W", "G", *DEFAULT_LABELS[3:]]
+    await wait_eval(page, _LABELS, ["Engine", "W", "G", *DEFAULT_LABELS[3:]])
 
     await page.click(_menu_item("draws", "dt-menu-toggle"))
     await page.click(f'{MENU} [data-action="reset"]')
-    assert await page.evaluate(_LABELS) == DEFAULT_LABELS
+    await wait_eval(page, _LABELS, DEFAULT_LABELS)
     assert_no_page_errors(errors)
 
 
@@ -171,7 +184,7 @@ async def test_reorder_skips_hidden_neighbor(server, make_page):
 
     await page.click(_menu_item("wins", "dt-menu-toggle"))
     await page.click(f'{_menu_item("games", "dt-menu-move")}[data-dir="1"]')
-    assert await page.evaluate(_LABELS) == ["Engine", "L", "G", "D", "Pts", "%", "Elo", "Ordo"]
+    await wait_eval(page, _LABELS, ["Engine", "L", "G", "D", "Pts", "%", "Elo", "Ordo"])
     assert_no_page_errors(errors)
 
 
@@ -182,6 +195,12 @@ DROP_FRAC = 0.8
 DRAG_GHOST_CLASS = "dt-drag-ghost"
 _DRAG_LEFTOVERS = f"() => document.querySelectorAll('.{DRAG_GHOST_CLASS}, .dt-drop-marker').length"
 DEFAULT_SORT = {"%": "descending"}
+# Drag copy's [label text, menu-button count]; null label until it exists.
+_GHOST_PARTS = (
+    f"() => {{ const g = document.querySelector('.{DRAG_GHOST_CLASS}');"
+    f" return [g?.querySelector('.{TH_LABEL_CLASS}')?.textContent ?? null,"
+    f" g ? g.querySelectorAll('.{MENU_BTN_CLASS}').length : null]; }}"
+)
 
 
 async def _press_and_drag(page, label, onto):
@@ -205,12 +224,12 @@ async def test_drag_header_reorders_and_persists(server, make_page):
     await _press_and_drag(page, "G", "D")
     await page.mouse.up()
     expected = ["Engine", "W", "L", "D", "G", *DEFAULT_LABELS[5:]]
-    assert await page.evaluate(_LABELS) == expected
-    assert await page.evaluate(_SORTED_HEADERS) == DEFAULT_SORT
-    assert await page.evaluate(_DRAG_LEFTOVERS) == 0
+    await wait_eval(page, _LABELS, expected)
+    await wait_eval(page, _SORTED_HEADERS, DEFAULT_SORT)
+    await wait_eval(page, _DRAG_LEFTOVERS, 0)
 
     await _reload_standings(page)
-    assert await page.evaluate(_LABELS) == expected
+    await wait_eval(page, _LABELS, expected)
     assert_no_page_errors(errors)
 
 
@@ -225,9 +244,9 @@ async def test_drag_header_escape_cancels(server, make_page):
     await _press_and_drag(page, "G", "D")
     await page.keyboard.press("Escape")
     await page.mouse.up()
-    assert await page.evaluate(_LABELS) == DEFAULT_LABELS
-    assert await page.evaluate(_SORTED_HEADERS) == DEFAULT_SORT
-    assert await page.evaluate(_DRAG_LEFTOVERS) == 0
+    await wait_eval(page, _LABELS, DEFAULT_LABELS)
+    await wait_eval(page, _SORTED_HEADERS, DEFAULT_SORT)
+    await wait_eval(page, _DRAG_LEFTOVERS, 0)
     assert_no_page_errors(errors)
 
 
@@ -240,9 +259,7 @@ async def test_drag_first_header_copy_leaves_menu_button_out(server, make_page):
     await _open_standings(page, server)
 
     await _press_and_drag(page, "Engine", "G")
-    ghost = page.locator(f".{DRAG_GHOST_CLASS}")
-    assert await ghost.locator(f".{TH_LABEL_CLASS}").text_content() == "Engine"
-    assert await ghost.locator(f".{MENU_BTN_CLASS}").count() == 0
+    await wait_eval(page, _GHOST_PARTS, ["Engine", 0])
     await page.keyboard.press("Escape")
     await page.mouse.up()
     assert_no_page_errors(errors)
@@ -258,16 +275,17 @@ async def test_fit_columns_widens_content_and_persists(server, make_page):
     assert await page.evaluate(_NAME_TRUNCATED), "precondition: Engine column truncates"
     before = await page.evaluate(_HEAD_WIDTHS)
 
-    await _open_menu(page)
-    await page.click(f'{MENU} [data-action="fit"]')
+    await _fit(page)
     after = await page.evaluate(_HEAD_WIDTHS)
     assert after["Engine"] > before["Engine"]
     assert after["G"] < before["G"]
 
     await _reload_standings(page)
-    reloaded = await page.evaluate(_HEAD_WIDTHS)
-    for label, width in after.items():
-        assert reloaded[label] == pytest.approx(width, abs=1), label
+    await page.wait_for_function(
+        f"([want, tol]) => {{ const w = ({_HEAD_WIDTHS})();"
+        " return Object.entries(want).every(([k, v]) => Math.abs(w[k] - v) <= tol); }",
+        arg=[after, WIDTH_TOL_PX],
+    )
     assert_no_page_errors(errors)
 
 
@@ -291,17 +309,27 @@ _ARROW_FITS = (
 )
 
 
-async def _fit(page):
-    await _open_menu(page)
-    await page.click(f'{MENU} [data-action="fit"]')
-
-
 # fitPcts on content that fits: natural px widths, the available px, minPct.
 FIT_NATURAL = [50, 100, 150]
 FIT_AVAILABLE = 600
 FIT_MIN_PCT = 5
 FULL_PCT = 100
 PCT_TOL = 1e-9
+# Narrow columns under the 80px floor that the 100px extra lifts past it.
+FIT_FLOORED_NATURAL = [20, 30, 200, 150]
+FIT_FLOORED_AVAILABLE = 800
+FIT_FLOORED_MIN_PCT = 10
+
+
+async def _fit_pcts(page, natural, available, min_pct):
+    """fitPcts with no sort-arrow room: minimum = natural."""
+    return await page.evaluate(
+        """async ([natural, available, minPct]) => {
+            const { fitPcts } = await import('/ui/app/column-header.js');
+            return fitPcts(natural, natural, available, minPct);
+        }""",
+        [natural, available, min_pct],
+    )
 
 
 @pytest.mark.asyncio
@@ -310,16 +338,21 @@ async def test_fit_spare_is_shared_evenly(server, make_page):
     extra px, so the gaps between contents are even."""
     _ctx, page = await make_page(viewport=VIEWPORT)
     await _open_standings(page, server)
-    pcts = await page.evaluate(
-        """async ([natural, available, minPct]) => {
-            const { fitPcts } = await import('/ui/app/column-header.js');
-            return fitPcts(natural, available, minPct);
-        }""",
-        [FIT_NATURAL, FIT_AVAILABLE, FIT_MIN_PCT],
-    )
+    pcts = await _fit_pcts(page, FIT_NATURAL, FIT_AVAILABLE, FIT_MIN_PCT)
     extra = (FIT_AVAILABLE - sum(FIT_NATURAL)) / len(FIT_NATURAL)
     expected = [(w + extra) / FIT_AVAILABLE * FULL_PCT for w in FIT_NATURAL]
     assert pcts == pytest.approx(expected, abs=PCT_TOL)
+
+
+@pytest.mark.asyncio
+async def test_fit_floored_columns_get_no_extra_spare(server, make_page):
+    """Columns the spare lifts past the minPct floor all get the same extra
+    px; one under the floor isn't given the floor's slack on top."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    await _open_standings(page, server)
+    pcts = await _fit_pcts(page, FIT_FLOORED_NATURAL, FIT_FLOORED_AVAILABLE, FIT_FLOORED_MIN_PCT)
+    gaps = [p * FIT_FLOORED_AVAILABLE / FULL_PCT - w for p, w in zip(pcts, FIT_FLOORED_NATURAL)]
+    assert gaps == pytest.approx([gaps[0]] * len(gaps), abs=PCT_TOL)
 
 
 @pytest.mark.asyncio
@@ -330,7 +363,52 @@ async def test_fit_when_all_fits_truncates_nothing(server, make_page):
     errors = watch_page_errors(page)
     await _open_standings(page, server)
     await _fit(page)
-    assert await page.evaluate(_TRUNCATED_COLS) == []
+    await wait_eval(page, _TRUNCATED_COLS, [])
+    assert_no_page_errors(errors)
+
+
+# Per header column after Fit: [shown px, content px, content px with sort
+# arrow room], measured on an auto-layout clone; the first column less the
+# Columns button.
+_FIT_GAPS = f"""() => {{
+  const head = document.querySelector('{HEAD}');
+  const body = document.querySelector('.wb-standings-body-tbl');
+  const btn = head.querySelector('.{MENU_BTN_CLASS}');
+  const btnPx = btn.getBoundingClientRect().width + (parseFloat(getComputedStyle(btn).marginRight) || 0);
+  const probe = document.createElement('table');
+  probe.className = `${{head.className}} ${{body.className}}`;
+  Object.assign(probe.style, {{ position: 'absolute', tableLayout: 'auto', width: 'max-content' }});
+  probe.append(head.tHead.cloneNode(true), body.tBodies[0].cloneNode(true));
+  body.parentElement.append(probe);
+  const widths = () => Array.from(probe.rows[0].cells, (c) => c.getBoundingClientRect().width);
+  const content = widths();
+  for (const th of probe.querySelectorAll('th.th-sortable:not(:has(.th-sort-arrow))')) {{
+    const arrow = document.createElement('wa-icon');
+    arrow.className = 'th-sort-arrow';
+    arrow.setAttribute('name', 'caret-down');
+    th.append(arrow);
+  }}
+  const withArrow = widths();
+  probe.remove();
+  return Array.from(head.rows[0].cells, (c, i) => [c.getBoundingClientRect().width, content[i], withArrow[i]]
+    .map((w) => (i ? w : w - btnPx)));
+}}"""
+
+
+@pytest.mark.asyncio
+async def test_fit_gaps_even_past_sort_arrow_room(server, make_page):
+    """With room to spare, Fit leaves the same empty space past every
+    column's content; only a column held at its sort-arrow room (so sorting
+    it later doesn't truncate the label) may show more."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_standings(page, server)
+    await _fit(page)
+    cols = await page.evaluate(_FIT_GAPS)
+    gap = min(shown - content for shown, content, _ in cols)
+    for shown, content, with_arrow in cols:
+        assert (shown - content == pytest.approx(gap, abs=WIDTH_TOL_PX)
+                or shown == pytest.approx(with_arrow, abs=WIDTH_TOL_PX)), cols
     assert_no_page_errors(errors)
 
 
@@ -353,7 +431,7 @@ async def test_fit_on_overflow_truncates_only_wide_columns(server, make_page):
     # The th's own scrollWidth can't tell: its resize grip overhangs the
     # edge. The new arrow must end inside the cell's content box instead.
     await page.click(f'{_th_at("G")} .{TH_LABEL_CLASS}')
-    assert await page.locator(_th_at("G")).evaluate(_ARROW_FITS)
+    await wait_eval(page, f"(sel) => ({_ARROW_FITS})(document.querySelector(sel))", True, _th_at("G"))
     assert_no_page_errors(errors)
 
 
@@ -369,16 +447,16 @@ async def test_hidden_sort_column_drops_out_of_order(server, make_page):
     w_label = f'{_th_at("W")} .{TH_LABEL_CLASS}'
     await page.click(w_label)  # W opens descending
     await page.click(w_label)  # -> ascending
-    assert await page.evaluate(_ROW_NAMES) == [ENGINE_B, ENGINE_A]
+    await wait_eval(page, _ROW_NAMES, [ENGINE_B, ENGINE_A])
 
     await _open_menu(page)
     await page.click(_menu_item("wins", "dt-menu-toggle"))
-    assert await page.evaluate(_ROW_NAMES) == [ENGINE_A, ENGINE_B]
-    assert await page.evaluate(_SORTED_HEADERS) == {"%": "descending"}
+    await wait_eval(page, _ROW_NAMES, [ENGINE_A, ENGINE_B])
+    await wait_eval(page, _SORTED_HEADERS, {"%": "descending"})
 
     await page.click(_menu_item("wins", "dt-menu-toggle"))
-    assert await page.evaluate(_ROW_NAMES) == [ENGINE_B, ENGINE_A]
-    assert await page.evaluate(_SORTED_HEADERS) == {"W": "ascending"}
+    await wait_eval(page, _ROW_NAMES, [ENGINE_B, ENGINE_A])
+    await wait_eval(page, _SORTED_HEADERS, {"W": "ascending"})
     assert_no_page_errors(errors)
 
 
@@ -415,24 +493,20 @@ async def test_keyboard_tab_order_and_enter(server, make_page):
 
     await page.focus(MENU_BTN)
     await page.keyboard.press("Tab")
-    assert await page.evaluate(
-        _FOCUSED_LABEL_TEXT, TH_LABEL_CLASS,
-    ) == "Engine"
+    await wait_eval(page, _FOCUSED_LABEL_TEXT, "Engine", TH_LABEL_CLASS)
 
     await page.keyboard.press("Enter")
-    assert await page.get_attribute(engine_th, "aria-sort") == "ascending"
+    await page.wait_for_selector(f'{engine_th}[aria-sort="ascending"]')
 
     await page.focus(MENU_BTN)
     await page.keyboard.press("Enter")
     await page.wait_for_selector(f"{MENU}:popover-open")
     assert await page.get_attribute(engine_th, "aria-sort") == "ascending"
-    assert await page.evaluate(f"() => document.querySelector('{MENU}').contains(document.activeElement)")
+    await wait_eval(page, f"() => document.querySelector('{MENU}').contains(document.activeElement)", True)
 
     await page.keyboard.press("Escape")
     await page.wait_for_selector(f"{MENU}:not(:popover-open)", state="attached")
-    assert await page.evaluate(
-        "(cls) => document.activeElement.classList.contains(cls)", MENU_BTN_CLASS,
-    )
+    await wait_eval(page, "(cls) => document.activeElement.classList.contains(cls)", True, MENU_BTN_CLASS)
     assert_no_page_errors(errors)
 
 
@@ -449,7 +523,7 @@ async def test_columns_menu_arrow_keys(server, make_page):
     errors = watch_page_errors(page)
     await _open_standings(page, server)
     await _open_menu(page)
-    assert await page.evaluate(_FOCUSED_FID) == "name:1"
+    await wait_eval(page, _FOCUSED_FID, "name:1")
 
     for key, fid in (
         ("ArrowDown", "games:1"),
@@ -457,22 +531,20 @@ async def test_columns_menu_arrow_keys(server, make_page):
         ("ArrowLeft", "games:toggle"),
     ):
         await page.keyboard.press(key)
-        assert await page.evaluate(_FOCUSED_FID) == fid, key
+        await wait_eval(page, _FOCUSED_FID, fid)
 
     await page.keyboard.press("Enter")
-    assert "G" not in await page.evaluate(_LABELS)
-    assert await page.evaluate(_FOCUSED_FID) == "games:toggle"
+    await wait_eval(page, f"() => ({_LABELS})().includes('G')", False)
+    await wait_eval(page, _FOCUSED_FID, "games:toggle")
 
     await page.keyboard.press("End")
-    assert await page.evaluate(_FOCUSED_FID) == "reset"
+    await wait_eval(page, _FOCUSED_FID, "reset")
     await page.keyboard.press("Home")
-    assert await page.evaluate(_FOCUSED_FID) == "name:1"
+    await wait_eval(page, _FOCUSED_FID, "name:1")
 
     await page.keyboard.press("Tab")
     await page.wait_for_selector(f"{MENU}:not(:popover-open)", state="attached")
-    assert await page.evaluate(
-        _FOCUSED_LABEL_TEXT, TH_LABEL_CLASS,
-    ) == "Engine"
+    await wait_eval(page, _FOCUSED_LABEL_TEXT, "Engine", TH_LABEL_CLASS)
     assert_no_page_errors(errors)
 
 

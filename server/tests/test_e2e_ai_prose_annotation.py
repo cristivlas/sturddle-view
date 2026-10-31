@@ -14,8 +14,8 @@ mode it flips to view first, skipping the discard-game confirm.
   discard game in play).
 
 Driven by seeding the coordinator's replay buffer while the server holds
-ANALYZING (engine-only analysis on a fake engine) with ai_enabled on for
-the client -- no real LLM.
+an AI analysis session entered through a test hook, no turn kicked -- no
+real LLM.
 
 Skipped if Playwright is missing.
 """
@@ -27,16 +27,12 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-
 from .conftest import (  # noqa: E402
-    REGISTRY_FILE,
     assert_no_page_errors,
     drag_piece_one_rank_up,
-    e2e_env,
-    make_searching_fake_uci,
     posted,
-    run_uvicorn_subprocess,
+    serve_fake_engine,
+    start_ai_analysis,
     wait_board_settled,
     wait_perspective_ready,
     watch_page_errors,
@@ -93,14 +89,7 @@ def _pgn(comment: str | None) -> str:
 
 @pytest.fixture
 def server(tmp_path):
-    registry_path = tmp_path / REGISTRY_FILE
-    seed = EngineRegistry(path=registry_path)
-    engine_path = make_searching_fake_uci(
-        tmp_path, "FakeEngine", bestmove=ENGINE_BESTMOVE, pv=ENGINE_PV,
-    )
-    e = seed.add(name="FakeEngine", path=engine_path)
-    seed.select(e.id)
-    with run_uvicorn_subprocess(env_overrides=e2e_env(tmp_path)) as base:
+    with serve_fake_engine(tmp_path, bestmove=ENGINE_BESTMOVE, pv=ENGINE_PV) as base:
         yield base
 
 
@@ -150,10 +139,7 @@ async def _play_with_finished_ai(make_page, base, *, rounds):
 
 
 async def _load_with_finished_ai(make_page, base, gid, rounds):
-    httpx.post(f"{base}/game/analysis/start").raise_for_status()
-    # After the start: the client reads ai_enabled; the server already
-    # chose the engine-only path, so no real AI turn is kicked.
-    httpx.put(f"{base}/settings", json={"ai_enabled": True}).raise_for_status()
+    start_ai_analysis(base)
     httpx.post(f"{base}/_test/ai/seed_replay",
                json={"events": _round_events(gid, rounds)}).raise_for_status()
     _ctx, page = await make_page(viewport={"width": 1600, "height": 1000})
@@ -220,7 +206,7 @@ async def test_cancel_keeps_edit_mode_and_prose_is_single_use(server, make_page)
     await page.click(VIEW_EDIT_BTN)
     await _annotation_text(page)
     await _close_dialog(page)
-    assert await page.evaluate(RIBBON_SHOWN_JS, EDIT_RIBBON)
+    await page.wait_for_function(RIBBON_SHOWN_JS, arg=EDIT_RIBBON)
     # Nothing staged and no leftover prose: the plain comment preloads.
     await page.click(EDIT_ANNOTATE_BTN)
     assert await _annotation_text(page) == OLD_COMMENT
