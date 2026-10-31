@@ -52,7 +52,11 @@
   --panel: #25272d;
   --nav-btn-bg: #2a2d33;
   --nav-btn-bg-hover: #32353c;
-  --nav-btn-bg-active: #3a3d44;
+  /* Active perspective tab: a steel-blue glass chip, after .brand's gradient.
+     Its ring is inset because the mobile nav clips outside its box. */
+  --nav-active-fg: #fff;
+  --nav-active-bg: linear-gradient(rgba(143, 176, 214, 0.34), rgba(93, 131, 173, 0.22));
+  --nav-active-edge: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 0 0 1px rgba(143, 176, 214, 0.4);
   /* Watch/unwatch (eye) buttons: lighter than nav buttons to stand off the pane. */
   --watch-btn-bg: #474c56;
   --watch-btn-bg-hover: #525862;
@@ -959,19 +963,22 @@ header h1 { margin: 0; font-size: 0.9375rem; color: #b8b8b8; font-weight: 500; }
 nav { display: flex; gap: 6px; }
 nav button {
   background: transparent;
-  color: var(--fg);
-  border: 1px solid transparent;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
+  color: var(--muted);
+  border: 0;
+  border-radius: 6px;
   padding: 4px 12px;
   cursor: pointer;
 }
-nav button:hover { border-bottom-color: rgba(224, 155, 58, 0.75); }
+nav button:hover { color: var(--fg); }
 nav button:focus-visible {
   outline: 2px solid var(--wa-color-focus, var(--wa-color-brand-60));
   outline-offset: 0;
 }
-nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
+nav button.active {
+  background: var(--nav-active-bg);
+  color: var(--nav-active-fg);
+  box-shadow: var(--nav-active-edge);
+}
 .conn {
   margin-left: auto;
   width: 10px;
