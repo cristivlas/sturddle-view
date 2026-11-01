@@ -2482,6 +2482,17 @@ body .side-popover.popover-floating {
 .game-view-board .clock-row .clock-name { color: var(--muted-bright); }
 .game-view-board .clock-row.active .clock-name { color: inherit; }
 .game-view-board .clock-row .clock-time { font-variant-numeric: tabular-nums; }
+/* Player's color. The gray edge keeps it visible on a same-colored active row. */
+.game-view-board .clock-row[data-color]::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  border: 1px solid #777;
+}
+.game-view-board .clock-row[data-color="white"]::before { background: #e8e8e8; }
+.game-view-board .clock-row[data-color="black"]::before { background: #111; }
 /* On-move accent ring; must follow the border-color override above. */
 .game-view-board .clock-row.active {
   border-color: var(--accent);
