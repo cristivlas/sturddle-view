@@ -245,6 +245,14 @@ const FORCED_TERMINATIONS = new Set([
 const ERR_WOULD_LEAVE = "would_leave";
 const ERR_IN_PROGRESS = "in_progress";
 
+const VARIANT_WARNING = "warning";
+const EVENT_BLUR = "blur";
+const EVENT_FOCUS = "focus";
+const EVENT_KEYDOWN = "keydown";
+const EVENT_POINTERDOWN = "pointerdown";
+
+let saveDialogWatch = null;
+
 // User-facing copy, grouped for an eventual move to a shared i18n
 // catalog. HTML-template aria-labels stay inline (static markup).
 const MSG = {
@@ -255,6 +263,7 @@ const MSG = {
   NEW_GAME_FAILED: "New game failed",
   RESIGN_FAILED: "Resign failed",
   SAVE_PGN_FAILED: "Save PGN failed",
+  SAVE_PGN_MAY_BE_BLOCKED: "Blocked? Choose Keep in browser downloads.",
   TAKEBACK_FAILED: "Take-back failed",
   IMPORT_FAILED: "Import failed",
   SWITCH_SIDES_FAILED: "Switch sides failed",
@@ -397,11 +406,11 @@ function wireShowHideLabel(btn, name, isOpen) {
   const onClick = () => queueMicrotask(sync);
   sync();
   btn.addEventListener("pointerenter", sync);
-  btn.addEventListener("focus", sync);
+  btn.addEventListener(EVENT_FOCUS, sync);
   btn.addEventListener("click", onClick);
   return () => {
     btn.removeEventListener("pointerenter", sync);
-    btn.removeEventListener("focus", sync);
+    btn.removeEventListener(EVENT_FOCUS, sync);
     btn.removeEventListener("click", onClick);
   };
 }
@@ -1436,6 +1445,28 @@ async function onResignImpl(state) {
   }
 }
 
+function warnSavePgnBlocked(state) {
+  state.dismissSaveWarning?.();
+  state.dismissSaveWarning = stickyToast(MSG.SAVE_PGN_MAY_BE_BLOCKED, { variant: VARIANT_WARNING });
+}
+
+async function resumeAfterSave(state) {
+  try { await state.ctx.api("POST", "/game/resume", {}); } catch (_) { /* best-effort */ }
+}
+
+// Pages get no Save As events: the window losing focus and regaining it is
+// the only sign the dialog closed. Page input first means none opened.
+function onSaveDialogClose(onClose) {
+  saveDialogWatch?.abort();
+  const watch = saveDialogWatch = new AbortController();
+  const { signal } = watch;
+  const close = () => { watch.abort(); onClose(); };
+  window.addEventListener(EVENT_BLUR, () => window.addEventListener(EVENT_FOCUS, close, { signal }), { once: true, signal });
+  for (const type of [EVENT_POINTERDOWN, EVENT_KEYDOWN]) {
+    window.addEventListener(type, () => watch.abort(), { capture: true, signal });
+  }
+}
+
 async function onSavePgnImpl(state) {
   const needsPause = !state.viewing && !state.paused && !state.gameOver && state.resignAvailable;
   if (needsPause) {
@@ -1444,6 +1475,7 @@ async function onSavePgnImpl(state) {
       return;
     }
   }
+  let resumeNow = needsPause;
   try {
     const r = await fetch("/game/pgn");
     if (!r.ok) {
@@ -1474,13 +1506,18 @@ async function onSavePgnImpl(state) {
       a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
+      // a.click() returns with Save As still open: hold the pause until it
+      // closes. Chromium blocks .pgn downloads from plain-HTTP pages.
+      resumeNow = false;
+      onSaveDialogClose(() => {
+        if (needsPause) resumeAfterSave(state);
+        if (!window.isSecureContext) warnSavePgnBlocked(state);
+      });
     }
   } catch (e) {
     reportError(state.ctx, MSG.SAVE_PGN_FAILED, e);
   } finally {
-    if (needsPause) {
-      try { await state.ctx.api("POST", "/game/resume", {}); } catch (_) { /* best-effort */ }
-    }
+    if (resumeNow) await resumeAfterSave(state);
   }
 }
 
@@ -1599,7 +1636,7 @@ async function onImportImpl(state) {
     state.ctx.api("POST", "/game/sync", {}).catch(() => {});
   } catch (e) {
     if (apiErrorObject(e)?.error === ERR_IN_PROGRESS) {
-      toast(MSG.IMPORT_IN_PROGRESS, { variant: "warning" });
+      toast(MSG.IMPORT_IN_PROGRESS, { variant: VARIANT_WARNING });
     } else {
       reportError(state.ctx, MSG.IMPORT_FAILED, e);
     }
@@ -2664,7 +2701,7 @@ export const playPerspective = {
       ev.preventDefault();
       onImport();
     };
-    window.addEventListener("keydown", onKeydown);
+    window.addEventListener(EVENT_KEYDOWN, onKeydown);
 
     newGameBtn.addEventListener("click", onNewGame);
     importBtn.addEventListener("click", onImport);
@@ -2757,7 +2794,7 @@ export const playPerspective = {
             },
           }];
           dismiss = stickyToast(MSG.DIFFICULTY_UNAVAILABLE, {
-            variant: "warning",
+            variant: VARIANT_WARNING,
             actions,
             onDismiss: () => { _difficultyToastUp = false; },
           });
@@ -2826,7 +2863,7 @@ export const playPerspective = {
         window.removeEventListener(APP_EVT.ENGINES_CHANGED, onEnginesChanged);
         window.removeEventListener(APP_EVT.RECENTS_CHANGED, onRecentsChanged);
         window.removeEventListener("resize", onCommentsResize);
-        window.removeEventListener("keydown", onKeydown);
+        window.removeEventListener(EVENT_KEYDOWN, onKeydown);
         newGameBtn.removeEventListener("click", onNewGame);
         importBtn.removeEventListener("click", onImport);
         resignBtn.removeEventListener("click", onResign);
