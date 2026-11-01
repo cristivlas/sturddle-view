@@ -6,13 +6,12 @@ import { closeLiveWindow, isLiveWindowOpen } from "./tournament-live-game.js";
 
 const WATCH_CLASS = "wb-sched-attach-btn";
 const UNWATCH_CLASS = "wb-sched-unwatch-btn";
-const LIVE_CLASS = "wb-sched-attach-btn--live";
 const WATCH_ICON = "eye";
 const UNWATCH_ICON = "eye-slash";
 const WATCH_LABEL = "Watch";
 const UNWATCH_LABEL = "Stop watching";
-// Both kinds carry the key, so a refresh can resync a whole pane by query.
-const CONTROL_SEL = `.${WATCH_CLASS}, .${UNWATCH_CLASS}`;
+// Each carries its key, so a refresh can resync a whole pane by query.
+const CONTROL_SEL = `.${UNWATCH_CLASS}`;
 
 function makeBtn(className, icon, label, attachKey) {
   const btn = document.createElement("button");
@@ -32,14 +31,11 @@ export function appendWatchControls(parent, attachKey, onWatch) {
   watch.addEventListener("click", () => onWatch(watch));
   parent.append(stop, watch);
   syncControl(stop);
-  syncControl(watch);
   return watch;
 }
 
 function syncControl(btn) {
-  const live = isLiveWindowOpen(btn.dataset.attachKey);
-  if (btn.classList.contains(UNWATCH_CLASS)) btn.disabled = !live;
-  else btn.classList.toggle(LIVE_CLASS, live);
+  btn.disabled = !isLiveWindowOpen(btn.dataset.attachKey);
 }
 
 // Resync every control under the given roots to the set of open boards.

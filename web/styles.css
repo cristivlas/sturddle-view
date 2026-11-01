@@ -5265,8 +5265,8 @@ wa-dialog.tournament-info-dialog::part(body) {
   display: inline-flex; gap: 4px;
 }
 .wb-sched-attach-btn, .wb-sched-unwatch-btn {
-  background: var(--watch-btn-bg); color: var(--fg-bright);
-  border: 1px solid rgba(var(--steel-rgb), 0.4); border-radius: 6px;
+  background: transparent; color: var(--muted-bright);
+  border: 1px solid var(--watch-btn-bg); border-radius: 6px;
   padding: 2px 6px; cursor: pointer; font-size: 0.6875rem;
 }
 /* Icon-only now: line-height 0 keeps the glyph vertically centred in the
@@ -5276,14 +5276,13 @@ wa-dialog.tournament-info-dialog::part(body) {
 }
 .wb-sched-unwatch-btn { margin-right: 4px; }
 .wb-sched-attach-btn:hover:not(:disabled),
-.wb-sched-unwatch-btn:hover:not(:disabled) { background: var(--watch-btn-bg-hover); border-color: rgba(var(--steel-rgb), 0.9); }
+.wb-sched-unwatch-btn:hover:not(:disabled) { background: var(--watch-btn-bg-hover); border-color: rgba(var(--steel-rgb), 0.9); color: var(--fg-bright); }
 .wb-sched-attach-btn:disabled, .wb-sched-unwatch-btn:disabled {
   background: transparent; border-color: transparent;
   opacity: 0.55; cursor: default;
 }
-/* Watched: the Playing badge's slate fill, amber eye; hover keeps both. */
-.wb-sched-attach-btn--live,
-.wb-sched-attach-btn--live:hover:not(:disabled) { background: var(--row-bg-selected); color: var(--accent); }
+/* Not watching: the eye-slash holds its slot, so the eyes stay aligned. */
+.wb-sched-unwatch-btn:disabled { visibility: hidden; }
 .wb-sched-pair .wb-sched-icon { color: var(--muted); }
 
 /* Engine rows: playing/idle (3+ engine tourneys leave engines idle). Playing
