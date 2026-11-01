@@ -15,6 +15,9 @@ import { installSelection, installScrollEdgeTracking } from "./wb-utils.js";
 installSelection();
 installScrollEdgeTracking();
 
+// No browser context menu anywhere in the app. Capture beats stopPropagation.
+document.addEventListener("contextmenu", (ev) => ev.preventDefault(), true);
+
 // F11 toggles native fullscreen ("theater mode") in the desktop shell via the
 // pywebview bridge -- the OS/browser F11 handling doesn't apply to the
 // chromeless native window, so this is a no-op outside desktop mode.
