@@ -779,6 +779,8 @@ async def browser():
 
 _E2E_PAGES_ATTR = "_sv_e2e_pages"
 _E2E_ERRORS_ATTR = "_sv_console_errors"
+# Instant dock changes: a view-transition glide would show tests mid-move.
+_E2E_REDUCED_MOTION = "reduce"
 
 
 def _attach_console_capture(page):
@@ -816,6 +818,7 @@ async def make_page(browser, request):
 
     async def _make(viewport=None, **ctx_kwargs):
         kwargs = dict(ctx_kwargs)
+        kwargs.setdefault("reduced_motion", _E2E_REDUCED_MOTION)
         if viewport is not None:
             kwargs["viewport"] = viewport
         ctx = await browser.new_context(**kwargs)

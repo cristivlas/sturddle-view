@@ -1568,6 +1568,19 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   display: flex;
   flex-direction: column;
 }
+/* Dock rail changes glide the play columns (glideIfDockChanged). Names are set
+   only during the glide: an active name changes stacking. */
+:root.dock-glide .play-board-host { view-transition-name: play-board; }
+:root.dock-glide .play-side-host { view-transition-name: play-side; }
+:root.dock-glide .play-dock-left { view-transition-name: play-dock; }
+/* Named too, or they would sink below the columns while gliding. */
+:root.dock-glide body > header { view-transition-name: play-header; }
+:root.dock-glide .winbox,
+:root.dock-glide [popover]:popover-open { view-transition-name: match-element; }
+:root.dock-glide { --dock-glide-dur: 200ms; }
+:root.dock-glide::view-transition-group(*),
+:root.dock-glide::view-transition-old(*),
+:root.dock-glide::view-transition-new(*) { animation-duration: var(--dock-glide-dur); }
 /* Docked ribbons: fixed vertical rail, buttons centered, over the footer. top
    defaults to 0 (Play, Studio -- under the z-20 header); Arena sets
    --arena-ribbon-top from JS so its rail starts below the menubar. */

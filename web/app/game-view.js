@@ -45,6 +45,21 @@ const MIN_AVAIL_REM = 10;
 const RAIL_EDGE_GAP_REM = 1; // viewport-edge breathing room beside the rail
 const RAIL_WIDTH_FRACTION = 0.18;
 const DEFAULT_LEFT_RAIL_EMPTY_RATIO = 0.4;
+const DOCK_GLIDE_CLASS = "dock-glide";
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+const EVENT_POINTERDOWN = "pointerdown";
+const EVENT_POINTERMOVE = "pointermove";
+const EVENT_POINTERUP = "pointerup";
+const EVENT_POINTERCANCEL = "pointercancel";
+
+// Held pointer = drag in progress: a glide would freeze it and eat its drop.
+let pointerHeld = false;
+let pointerDowns = 0;
+window.addEventListener(EVENT_POINTERDOWN, () => { pointerHeld = true; pointerDowns++; }, true);
+for (const type of [EVENT_POINTERUP, EVENT_POINTERCANCEL]) {
+  window.addEventListener(type, () => { pointerHeld = false; }, true);
+}
+
 // Viewport >= this caps the rail at its natural width (raw px on purpose:
 // a rem-derived threshold would slide the rail as font-size grows).
 const RAIL_NATURAL_CAP_VIEWPORT_PX = 1500;
@@ -384,7 +399,7 @@ function ensureRailGrip(ctx, railDock) {
   const grip = document.createElement("div");
   grip.className = `${DOCK_GRIP_CLASS} ${RAIL_GRIP_SEL_CLASS}`;
   railDock.after(grip);
-  grip.addEventListener("pointerdown", (eDown) => {
+  grip.addEventListener(EVENT_POINTERDOWN, (eDown) => {
     if (eDown.button !== 0) return;
     eDown.preventDefault();
     try { grip.setPointerCapture(eDown.pointerId); } catch { /* */ }
@@ -397,14 +412,14 @@ function ensureRailGrip(ctx, railDock) {
     };
     const onUp = () => {
       grip.classList.remove("dragging");
-      grip.removeEventListener("pointermove", onMove);
-      grip.removeEventListener("pointerup", onUp);
-      grip.removeEventListener("pointercancel", onUp);
+      grip.removeEventListener(EVENT_POINTERMOVE, onMove);
+      grip.removeEventListener(EVENT_POINTERUP, onUp);
+      grip.removeEventListener(EVENT_POINTERCANCEL, onUp);
       saveRaw(STORAGE_KEY.PLAY_RAIL_LIFT, String(Math.round(railLift)));
     };
-    grip.addEventListener("pointermove", onMove);
-    grip.addEventListener("pointerup", onUp);
-    grip.addEventListener("pointercancel", onUp);
+    grip.addEventListener(EVENT_POINTERMOVE, onMove);
+    grip.addEventListener(EVENT_POINTERUP, onUp);
+    grip.addEventListener(EVENT_POINTERCANCEL, onUp);
   });
   return grip;
 }
@@ -586,8 +601,7 @@ function recomputeNow(ctx) {
   } else {
     const usable = window.innerWidth - sidePad;
     railW = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.floor(usable * RAIL_WIDTH_FRACTION)));
-    leftEmpty =
-      document.querySelector(".play-dock-left")?.classList.contains(DOCK_EMPTY_CLASS) !== false;
+    leftEmpty = dockSideEmpty();
     leftRailW = leftEmpty ? Math.floor(railW * LEFT_RAIL_EMPTY_RATIO) : railW;
     availW = Math.max(rem(MIN_AVAIL_REM), Math.floor(usable - railW - leftRailW - 2 * gapW));
   }
@@ -629,9 +643,36 @@ function recomputeNow(ctx) {
   board.forceResize();
 }
 
+function dockSideEmpty() {
+  return document.querySelector(".play-dock-left")?.classList.contains(DOCK_EMPTY_CLASS) !== false;
+}
+
+// A dock emptying or filling resizes its rail, which moves the board: glide
+// there. Starts from rAF so the old snapshot has the old rail, whatever the
+// dock's own DOM already did; dock lifecycle stays synchronous.
+function glideIfDockChanged(ctx, update) {
+  const empty = dockSideEmpty();
+  const changed = ctx.dockEmpty !== null && empty !== ctx.dockEmpty;
+  ctx.dockEmpty = empty;
+  // A remount restores docks async (/game/sync, AI replay), after first layout:
+  // only a click since mount tells a real change from that restore.
+  const restoring = pointerDowns === ctx.mountPointerDowns;
+  if (!changed || restoring || pointerHeld || !document.startViewTransition || isMobileLayout()
+      || window.matchMedia(REDUCED_MOTION_QUERY).matches) {
+    update();
+    return;
+  }
+  const root = document.documentElement;
+  // A newer glide skips this one, whose finish must not strip the shared class.
+  const clear = () => { if (ctx.glide === glide) root.classList.remove(DOCK_GLIDE_CLASS); };
+  root.classList.add(DOCK_GLIDE_CLASS);
+  const glide = ctx.glide = document.startViewTransition(update);
+  glide.finished.finally(clear);
+}
+
 function recomputeBoardSize(ctx) {
   ctx.scheduleRecompute ??= rafCoalesce(() => {
-    recomputeNow(ctx);
+    glideIfDockChanged(ctx, () => recomputeNow(ctx));
     // Run again after the next paint so secondary measurements reflect
     // the new layout (e.g. controls/clocks settled into final positions).
     requestAnimationFrame(() => recomputeNow(ctx));
@@ -1306,6 +1347,9 @@ export function mountGameView(container, opts = {}) {
     holdPending: null,
     holdBaseFen: null,
     scheduleRecompute: null,
+    dockEmpty: null,
+    glide: null,
+    mountPointerDowns: pointerDowns,
     off: null,
   };
 
