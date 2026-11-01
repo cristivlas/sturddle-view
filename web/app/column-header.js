@@ -12,7 +12,7 @@ import { loadJson, saveJson } from "./storage.js";
 import { attachColumnResize } from "./col-resize.js";
 import { ARROW_CLASS, ARROW_DESC, TH_LABEL_CLASS, TH_SORTABLE_CLASS } from "./col-sort.js";
 import { ESCAPE_KEY } from "./keys.js";
-import { attachMenuNav, focusFirstItem, positionMenu, wireMenuToggle } from "./menu-nav.js";
+import { attachMenuNav, focusFirstItem, positionMenuAt, wireMenuToggle } from "./menu-nav.js";
 import { applySplitColWidths, wireSplitScroll } from "./split-table.js";
 import { escapeHtml } from "./wb-utils.js";
 
@@ -493,17 +493,26 @@ function createColumnsMenu({ wrap, thead, html, onAction }) {
   });
   wrap.append(menu);
 
+  // Opened and placed synchronously (no unpositioned first paint). Already
+  // open means a second right-click: the menu just moves there.
+  function open(anchor) {
+    render();
+    if (!isOpen()) menu.showPopover();
+    positionMenuAt(menu, anchor);
+    focusFirstItem(menu);
+  }
+
+  wrap.addEventListener("contextmenu", (ev) => {
+    if (menu.contains(ev.target)) return;
+    ev.preventDefault();
+    open({ top: ev.clientY, bottom: ev.clientY, left: ev.clientX });
+  });
+
   return {
-    // Opened and placed synchronously (no unpositioned first paint). The
-    // click bubbles on (col-sort skips th controls), so document-level
+    // The click bubbles on (col-sort skips th controls), so document-level
     // listeners such as other menus' close-on-click still see it.
     wire(btn) {
-      wireMenuToggle(btn, menu, () => {
-        render();
-        menu.showPopover();
-        positionMenu(menu, btn);
-        focusFirstItem(menu);
-      });
+      wireMenuToggle(btn, menu, () => open(btn.getBoundingClientRect()));
     },
     // A layout change from elsewhere (a synced table) shows in an open menu.
     refresh() {

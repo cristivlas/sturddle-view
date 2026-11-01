@@ -2711,6 +2711,7 @@ export const playPerspective = {
     editCastleCb.bK.addEventListener("click", onCastleBK);
     editCastleCb.bQ.addEventListener("click", onCastleBQ);
     document.addEventListener("click", onDocClickClosePopover);
+    document.addEventListener("contextmenu", onDocClickClosePopover);
     const onPopoverDismiss = () => _closeEditPopovers(state);
     window.addEventListener("resize", onPopoverDismiss);
     window.addEventListener(APP_EVT.RIBBON_MOVED, onPopoverDismiss);
@@ -2858,6 +2859,7 @@ export const playPerspective = {
         editCastleCb.bK.removeEventListener("click", onCastleBK);
         editCastleCb.bQ.removeEventListener("click", onCastleBQ);
         document.removeEventListener("click", onDocClickClosePopover);
+        document.removeEventListener("contextmenu", onDocClickClosePopover);
         window.removeEventListener("resize", onPopoverDismiss);
         window.removeEventListener(APP_EVT.RIBBON_MOVED, onPopoverDismiss);
         window.removeEventListener(APP_EVT.RIBBON_FLOAT_CLOSED, onPopoverDismiss);

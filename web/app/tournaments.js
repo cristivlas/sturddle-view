@@ -1686,6 +1686,8 @@ export function mountTournaments({ container, api, events, log }) {
 
   ctx.onMenuDocClick = () => closeMenus(ctx);
   document.addEventListener("click", ctx.onMenuDocClick);
+  // Right-click fires no click. Capture: closes before a Columns menu opens.
+  document.addEventListener("contextmenu", ctx.onMenuDocClick, true);
 
   ctx.onWsEvent = (evt) => onWsEvent(ctx, evt);
   const offEvents = ctx.events.on(ctx.onWsEvent);
@@ -1752,6 +1754,7 @@ export function mountTournaments({ container, api, events, log }) {
       mqMobileHPlay.removeEventListener("change", ctx.onViewportChange);
       window.removeEventListener("resize", ctx.onRibbonResize);
       document.removeEventListener("click", ctx.onMenuDocClick);
+      document.removeEventListener("contextmenu", ctx.onMenuDocClick, true);
       stopSearch();
       ribbonOverflow.detach();
       dismissSortToastNow(ctx);

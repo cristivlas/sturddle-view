@@ -388,10 +388,8 @@ similar role buttons render neutral. Destructive verbs use
 `variant="danger"`. Icon-only buttons get `aria-label` plus a recognized
 font-awesome glyph; we never rely on tooltips for primary meaning.
 
-Top nav and list rows share a token family — `--nav-btn-bg`,
-`--nav-btn-bg-hover`, `--nav-btn-bg-active` — so "selected/hovered"
-reads consistently across the app. Recessed list panels use a slightly
-darker `#15171b` well with `#34373d` border.
+Recessed list panels use a slightly darker `#15171b` well with `#34373d`
+border.
 
 Confirm/alert dialogs are headerless (the message is the heading), have
 `--width: fit-content` to size to content, and use

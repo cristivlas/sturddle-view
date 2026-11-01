@@ -134,11 +134,14 @@ export function attachMenuNav(menu, { close }) {
   });
 }
 
-// Popover menu placement: below the button, else above; fitting neither
-// side, it takes the whole viewport height (covering the button) and only
-// then scrolls inside. Clamped inside the viewport horizontally.
 export function positionMenu(menu, btn) {
-  const r = btn.getBoundingClientRect();
+  positionMenuAt(menu, btn.getBoundingClientRect());
+}
+
+// Popover menu placement: below the anchor { top, bottom, left }, else above;
+// fitting neither side, it takes the whole viewport height (covering the
+// anchor) and only then scrolls inside. Clamped inside the viewport horizontally.
+export function positionMenuAt(menu, r) {
   menu.style.maxHeight = "";
   const h = menu.offsetHeight;
   const roomBelow = window.innerHeight - r.bottom - MENU_GAP_PX - MENU_EDGE_PX;
