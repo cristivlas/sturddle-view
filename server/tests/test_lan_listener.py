@@ -28,7 +28,7 @@ def _free_port() -> int:
 
 
 @pytest.fixture
-def server():
+async def server():
     """Just enough of uvicorn.Server for LanListener: a loaded Config, the
     shared ServerState, lifespan state, and the servers list it appends to."""
     # ws="wsproto": the "auto" choice imports websockets.legacy, which warns.
@@ -40,6 +40,9 @@ def server():
     yield srv
     for listening in srv.servers:
         listening.close()
+        # Waits out accepted connections too: their transports must not
+        # outlive the loop.
+        await listening.wait_closed()
 
 
 @pytest.fixture
