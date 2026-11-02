@@ -852,9 +852,14 @@ async def wait_perspective_ready(page) -> None:
     its controller resolves ``ready``; before that, ``#perspective-root``
     carries the ``is-pending`` class. Tests that click ribbon buttons
     immediately after page.goto MUST await this before clicking, or
-    the click can land on an unbound element and silently do nothing."""
+    the click can land on an unbound element and silently do nothing.
+    An empty root means main.js hasn't mounted anything yet: is-pending is
+    absent then too."""
     await page.wait_for_function(
-        "() => !document.querySelector('#perspective-root')?.classList.contains('is-pending')",
+        """() => {
+            const root = document.querySelector('#perspective-root');
+            return root?.childElementCount > 0 && !root.classList.contains('is-pending');
+        }""",
     )
 
 
