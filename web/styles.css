@@ -3536,6 +3536,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 .dt-menu-col { display: flex; align-items: center; padding-right: 6px; }
 .dt-menu-col .dt-menu-toggle { flex: 1 1 auto; width: auto; }
+/* Smaller check; centered, since its shorter line box would ride high. */
+.dt-menu .tmb-dd-item.tmb-active::before { font-size: 0.625rem; top: 50%; transform: translateY(-50%); }
 .dt-menu .tmb-dd-item:disabled, .ribbon-more-menu .tmb-dd-item:disabled,
 .header-more-menu .tmb-dd-item:disabled { opacity: 0.5; cursor: default; }
 .dt-menu-move {

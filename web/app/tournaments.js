@@ -15,7 +15,7 @@ import { baseCompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { rankCmp } from "./sort-stack.js";
 import { wireInlineSearch } from "./inline-search.js";
 import { attachRibbonOverflow } from "./ribbon-overflow.js";
-import { attachMenuNav, focusFirstItem, MENU_OPEN_CLASS } from "./menu-nav.js";
+import { attachMenuNav, focusFirstItem, MENU_CHECKED_CLASS, MENU_OPEN_CLASS } from "./menu-nav.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import {
@@ -67,8 +67,6 @@ const REVEAL_COOLDOWN_MS = 1500;
 // Workspace windows' outside outline width (styles.css :root).
 const WB_OUTLINE_W_VAR = "--wb-outline-w";
 const WB_OUTLINE_W_FALLBACK_PX = 1;
-// Checkmark on a menu item (styles.css .tmb-dd-item.tmb-active).
-const MENU_CHECK_CLASS = "tmb-active";
 // Window-menu items for the Standings window's two views.
 const STANDINGS_VIEW_ITEMS = [
   [".tmb-sys-standings", STANDINGS_VIEW.TABLE],
@@ -1320,7 +1318,7 @@ function layoutToggles(ctx) {
 
 function syncTidyBtn(ctx) {
   const layout = getActiveLayout();
-  for (const [btn, mode] of layoutToggles(ctx)) btn.classList.toggle(MENU_CHECK_CLASS, layout === mode);
+  for (const [btn, mode] of layoutToggles(ctx)) btn.classList.toggle(MENU_CHECKED_CLASS, layout === mode);
 }
 
 // Check the open Standings window's view; synced on menu open, since the
@@ -1328,7 +1326,7 @@ function syncTidyBtn(ctx) {
 function syncStandingsViewItems(ctx) {
   const view = getActiveWorkspace()?.standingsView;
   for (const [cls, v] of STANDINGS_VIEW_ITEMS) {
-    ctx.container.querySelector(cls).classList.toggle(MENU_CHECK_CLASS, view === v);
+    ctx.container.querySelector(cls).classList.toggle(MENU_CHECKED_CLASS, view === v);
   }
 }
 

@@ -12,7 +12,7 @@ import { loadJson, saveJson } from "./storage.js";
 import { attachColumnResize } from "./col-resize.js";
 import { ARROW_CLASS, ARROW_DESC, TH_LABEL_CLASS, TH_SORTABLE_CLASS } from "./col-sort.js";
 import { ESCAPE_KEY } from "./keys.js";
-import { attachMenuNav, focusFirstItem, positionMenuAt, wireMenuToggle } from "./menu-nav.js";
+import { attachMenuNav, focusFirstItem, MENU_CHECKED_CLASS, positionMenuAt, wireMenuToggle } from "./menu-nav.js";
 import { applySplitColWidths, wireSplitScroll } from "./split-table.js";
 import { escapeHtml } from "./wb-utils.js";
 
@@ -28,7 +28,6 @@ const PIN_ICON = "thumbtack";
 const PIN_LABEL = "Pinned last";
 // Marks a pinEnd column, in its header and its Columns-menu row.
 const PIN_HTML = `<wa-icon class="dt-pin" name="${PIN_ICON}" label="${PIN_LABEL}" title="${PIN_LABEL}"></wa-icon>`;
-const ACTIVE_CLASS = "tmb-active";
 const MOVE = Object.freeze({ UP: -1, DOWN: 1 });
 const MOVE_LABEL = Object.freeze({ [MOVE.UP]: "Move up:", [MOVE.DOWN]: "Move down:" });
 const MENU_ACTION = Object.freeze({ TOGGLE: "toggle", FIT: "fit", RESET: "reset" });
@@ -198,7 +197,7 @@ function menuHtml(layout, byKey, traits, visibleCount) {
     const moves = !traits.reorder ? ""
       : col.pinEnd ? PIN_HTML : move(MOVE.UP, UP_ICON) + move(MOVE.DOWN, DOWN_ICON);
     const toggle = menuBtnHtml(`${key}:${MENU_ACTION.TOGGLE}`,
-      `tmb-dd-item dt-menu-toggle${shown ? ` ${ACTIVE_CLASS}` : ""}`, escapeHtml(col.label),
+      `tmb-dd-item dt-menu-toggle${shown ? ` ${MENU_CHECKED_CLASS}` : ""}`, escapeHtml(col.label),
       { disabled: lockToggle, attrs: ` data-action="${MENU_ACTION.TOGGLE}"` });
     return `<li class="${MENU_COL_CLASS}" data-key="${escapeHtml(key)}">${toggle}${moves}</li>`;
   }).join("");

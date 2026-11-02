@@ -14,13 +14,14 @@ import { ACTIVATE_KEYS } from "./keys.js";
 
 // Marks an open (sub)menu's <li>; callers' CSS shows its nested list.
 export const MENU_OPEN_CLASS = "open";
+// Checkmark on a menu item (styles.css .tmb-dd-item.tmb-active).
+export const MENU_CHECKED_CLASS = "tmb-active";
 
 const ROW_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
 const MENU_GAP_PX = 4;
 const MENU_EDGE_PX = 8;
-// A mirrored button's toggled-on state, and the menu's checkmark for it.
+// A mirrored button's toggled-on state; its menu row gets MENU_CHECKED_CLASS.
 const BTN_ACTIVE_CLASS = "is-active";
-const ITEM_CHECKED_CLASS = "tmb-active";
 const DIR = Object.freeze({ ArrowRight: 1, ArrowLeft: -1 });
 
 const rowButtons = (li) => Array.from(li.querySelectorAll(":scope > button"));
@@ -185,7 +186,7 @@ export function mirrorItemsHtml(buttons, disabled = (btn) => btn.disabled) {
   return buttons.map((btn, i) => {
     const icon = btn.querySelector("wa-icon")?.getAttribute("name");
     const label = btn.getAttribute("aria-label") || btn.title;
-    const cls = btn.classList.contains(BTN_ACTIVE_CLASS) ? ` ${ITEM_CHECKED_CLASS}` : "";
+    const cls = btn.classList.contains(BTN_ACTIVE_CLASS) ? ` ${MENU_CHECKED_CLASS}` : "";
     return `<li><button type="button" class="tmb-dd-item${cls}" data-i="${i}"${disabled(btn) ? " disabled" : ""}>`
       + `${icon ? `<wa-icon name="${escapeHtml(icon)}"></wa-icon>` : ""}${escapeHtml(label)}</button></li>`;
   }).join("");
