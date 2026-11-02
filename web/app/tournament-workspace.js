@@ -24,8 +24,8 @@ import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, loadRaw, saveJson, saveRaw, removeKey } from "./storage.js";
 import { attachButtonSort, loadSortDir, SORT_ASC_LABEL, SORT_DESC_LABEL, SORT_DIR } from "./col-sort.js";
-import { gatedStart } from "./tournament-restart.js";
-import { apiErrorDetail, copyToClipboard, toast } from "./dialogs.js";
+import { gatedStart, reportStartError } from "./tournament-restart.js";
+import { copyToClipboard, toast } from "./dialogs.js";
 import {
   addTitleControl,
   AUTOSCROLL_SLACK_ROW_PX,
@@ -1168,7 +1168,7 @@ async function restartFromBanner(ctx) {
   try {
     await gatedStart({ api: ctx.api, log: ctx.log }, ctx.detail ?? ctx.tournament);
   } catch (e) {
-    toast(`Restart failed: ${apiErrorDetail(e)}`, { variant: "danger" });
+    reportStartError(ctx.log, "Restart failed", e);
     // Resync even on failure: Update & start may have PATCHed (reset to
     // idle, games wiped) before the start POST failed.
     await refresh(ctx);

@@ -23,6 +23,7 @@ import {
   engineRefFromRegistry,
   gatedStart,
   loadGlobalEngineDefaults,
+  reportStartError,
   resolveResourceParams,
 } from "./tournament-restart.js";
 import { BOOK_KEYS, mountTournamentTemplateForm } from "./tournament-template-form.js";
@@ -548,7 +549,7 @@ async function startOne(ctx, t) {
   try {
     started = await gatedStart({ api: ctx.api, log: ctx.log }, t);
   } catch (e) {
-    reportError({ log: ctx.log }, `Starting "${t.name}" failed`, e);
+    reportStartError(ctx.log, `Starting "${t.name}" failed`, e);
     // Resync even on failure: Update & start may have PATCHed (reset to
     // idle, games wiped) before the start POST failed.
     await ctx.loadList();

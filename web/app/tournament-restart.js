@@ -5,8 +5,11 @@
 
 import {
   apiErrorDetail,
+  apiErrorObject,
   confirm,
   CONFIRM_DIALOG_WIDTH,
+  errorActionsFor,
+  reportError,
   showDialog,
   toast,
   TOAST_DURATION_MS,
@@ -15,6 +18,7 @@ import { STATUS } from "./tournament-events.js";
 import { ENGINES_NO_PROBE_PATH } from "./engines.js";
 
 const CONFIRM_WIPE_QS = "confirm_wipe=true";
+const FASTCHESS_CHECK_PATH = "/api/tournament-settings/fastchess-check";
 
 // Exported for e2e: tests target the dialog and its verbs by these
 // strings instead of hardcoding copies that could silently drift.
@@ -246,11 +250,30 @@ async function updateAndStart(api, t, available) {
 
 // ---- The gate -------------------------------------------------------------
 
+let dismissStartError = null;
+
+function clearStartError() {
+  dismissStartError?.();
+  dismissStartError = null;
+}
+
+// Report a failed gatedStart. One with a fix to reach stays up until it's
+// taken: a repeat failure replaces the toast, a launchable start retires it.
+export function reportStartError(log, action, e) {
+  clearStartError();
+  const fixable = errorActionsFor(apiErrorObject(e)?.code).length > 0;
+  dismissStartError = reportError({ log }, action, e, { duration: fixable ? 0 : undefined });
+}
+
 // Start `t` behind the drift gate: no drift keeps today's flow (wipe
 // confirm for stopped/failed, then start); drift swaps the confirm for
 // the three-way dialog. Returns true when a start was issued; false on
 // cancel or rescheck blocker. API errors propagate to the caller.
 export async function gatedStart({ api, log }, t) {
+  // First: the confirms promise a start, and Update & start's PATCH wipes.
+  await api("GET", FASTCHESS_CHECK_PATH);
+  clearStartError();
+
   const needsWipe = t.status === STATUS.STOPPED || t.status === STATUS.FAILED;
   const wipeQs = needsWipe ? `?${CONFIRM_WIPE_QS}` : "";
 
