@@ -51,14 +51,28 @@ const EVENT_POINTERDOWN = "pointerdown";
 const EVENT_POINTERMOVE = "pointermove";
 const EVENT_POINTERUP = "pointerup";
 const EVENT_POINTERCANCEL = "pointercancel";
+const EVENT_CLICK = "click";
+const EVENT_RESIZE = "resize";
+const EVENT_SCROLL = "scroll";
+const EVENT_VISIBILITYCHANGE = "visibilitychange";
+const EVENT_FOCUS = "focus";
+const EVENT_BLUR = "blur";
 
 // Held pointer = drag in progress: a glide would freeze it and eat its drop.
 let pointerHeld = false;
 let pointerDowns = 0;
+// View whose dock change waits for the drag to end (glideIfDockChanged).
+let deferredGlideCtx = null;
 window.addEventListener(EVENT_POINTERDOWN, () => { pointerHeld = true; pointerDowns++; }, true);
-for (const type of [EVENT_POINTERUP, EVENT_POINTERCANCEL]) {
-  window.addEventListener(type, () => { pointerHeld = false; }, true);
+function releasePointer() {
+  pointerHeld = false;
+  deferredGlideCtx?.scheduleRecompute();
+  deferredGlideCtx = null;
 }
+for (const type of [EVENT_POINTERUP, EVENT_POINTERCANCEL]) window.addEventListener(type, releasePointer, true);
+// A press that loses the window may never see its pointerup. Not capture:
+// element blurs would reach it then.
+window.addEventListener(EVENT_BLUR, releasePointer);
 
 // Viewport >= this caps the rail at its natural width (raw px on purpose:
 // a rem-derived threshold would slide the rail as font-size grows).
@@ -89,7 +103,7 @@ function renderMoveList(el, sanList, {
     cell.textContent = san;
     if (onMoveClick) {
       cell.classList.add("clickable");
-      cell.addEventListener("click", () => onMoveClick(plyIdx));
+      cell.addEventListener(EVENT_CLICK, () => onMoveClick(plyIdx));
     }
     const info = forkInfo ? forkInfo.get(plyIdx) : null;
     const childCount = info?.childCount ?? 0;
@@ -108,7 +122,7 @@ function renderMoveList(el, sanList, {
         : "Forked from parent here";
       if (onForkClick) {
         glyph.classList.add("clickable");
-        glyph.addEventListener("click", (e) => {
+        glyph.addEventListener(EVENT_CLICK, (e) => {
           e.stopPropagation();
           onForkClick(plyIdx);
         });
@@ -653,26 +667,34 @@ function dockSideEmpty() {
 function glideIfDockChanged(ctx, update) {
   const empty = dockSideEmpty();
   const changed = ctx.dockEmpty !== null && empty !== ctx.dockEmpty;
-  ctx.dockEmpty = empty;
   // A remount restores docks async (/game/sync, AI replay), after first layout:
   // only a click since mount tells a real change from that restore.
   const restoring = pointerDowns === ctx.mountPointerDowns;
-  if (!changed || restoring || pointerHeld || !document.startViewTransition || isMobileLayout()
+  if (!changed || restoring || !document.startViewTransition || isMobileLayout()
       || window.matchMedia(REDUCED_MOTION_QUERY).matches) {
+    ctx.dockEmpty = empty;
     update();
-    return;
+    return true;
   }
+  // Mid-drag (undock, piece), hold the old layout: the board would move under
+  // the pointer and a glide would freeze the drag. The release glides.
+  if (pointerHeld) {
+    deferredGlideCtx = ctx;
+    return false;
+  }
+  ctx.dockEmpty = empty;
   const root = document.documentElement;
   // A newer glide skips this one, whose finish must not strip the shared class.
   const clear = () => { if (ctx.glide === glide) root.classList.remove(DOCK_GLIDE_CLASS); };
   root.classList.add(DOCK_GLIDE_CLASS);
   const glide = ctx.glide = document.startViewTransition(update);
   glide.finished.finally(clear);
+  return true;
 }
 
 function recomputeBoardSize(ctx) {
   ctx.scheduleRecompute ??= rafCoalesce(() => {
-    glideIfDockChanged(ctx, () => recomputeNow(ctx));
+    if (!glideIfDockChanged(ctx, () => recomputeNow(ctx))) return;
     // Run again after the next paint so secondary measurements reflect
     // the new layout (e.g. controls/clocks settled into final positions).
     requestAnimationFrame(() => recomputeNow(ctx));
@@ -1256,12 +1278,13 @@ function buildViewApi(ctx) {
       ctx.board.destroy();
       ctx.off?.();
       try { ctx.ro.disconnect(); } catch {}
-      window.removeEventListener("resize", ctx.onRecompute);
+      window.removeEventListener(EVENT_RESIZE, ctx.onRecompute);
       window.removeEventListener(APP_EVT.LAYOUT_CHANGED, ctx.onRecompute);
-      window.removeEventListener("scroll", ctx.onScroll);
-      document.removeEventListener("visibilitychange", ctx.onVisibilityChange);
-      window.removeEventListener("focus", ctx.onWindowFocus);
+      window.removeEventListener(EVENT_SCROLL, ctx.onScroll);
+      document.removeEventListener(EVENT_VISIBILITYCHANGE, ctx.onVisibilityChange);
+      window.removeEventListener(EVENT_FOCUS, ctx.onWindowFocus);
       ctx.scheduleRecompute?.cancel();
+      if (deferredGlideCtx === ctx) deferredGlideCtx = null;
     },
   };
 }
@@ -1358,8 +1381,8 @@ export function mountGameView(container, opts = {}) {
     markSelectable(ctx.moveListEl, { rows: ".move-row" });
   }
   if (ctx.fenText) ctx.fenText.textContent = INITIAL_FEN;
-  ctx.fenCopyBtn?.addEventListener("click", () => copyFen(ctx));
-  ctx.fenText?.addEventListener("click", () => copyFen(ctx));
+  ctx.fenCopyBtn?.addEventListener(EVENT_CLICK, () => copyFen(ctx));
+  ctx.fenText?.addEventListener(EVENT_CLICK, () => copyFen(ctx));
 
   ctx.board = mountBoard({
     element: ctx.boardEl,
@@ -1378,18 +1401,18 @@ export function mountGameView(container, opts = {}) {
   ctx.ro = new ResizeObserver(ctx.onRecompute);
   ctx.ro.observe(ctx.boardCol);
   ctx.ro.observe(document.body);
-  window.addEventListener("resize", ctx.onRecompute);
+  window.addEventListener(EVENT_RESIZE, ctx.onRecompute);
   window.addEventListener(APP_EVT.LAYOUT_CHANGED, ctx.onRecompute);
   // The side rail is viewport-fixed: follow the board as the document scrolls.
   // Synchronous, not rAF-deferred, so it moves in the same frame as the board.
   ctx.onScroll = () => { if (ctx.railGeom && !ctx.railGeom.mobile) positionSideRail(ctx, ctx.railGeom); };
-  window.addEventListener("scroll", ctx.onScroll, { passive: true });
+  window.addEventListener(EVENT_SCROLL, ctx.onScroll, { passive: true });
   requestAnimationFrame(ctx.onRecompute);
 
   ctx.onVisibilityChange = () => { if (!document.hidden) ctx.board.cancelAnimations(); };
   ctx.onWindowFocus = () => ctx.board.cancelAnimations();
-  document.addEventListener("visibilitychange", ctx.onVisibilityChange);
-  window.addEventListener("focus", ctx.onWindowFocus);
+  document.addEventListener(EVENT_VISIBILITYCHANGE, ctx.onVisibilityChange);
+  window.addEventListener(EVENT_FOCUS, ctx.onWindowFocus);
 
   if (events) ctx.off = events.on((evt) => applyEvent(ctx, evt));
 
