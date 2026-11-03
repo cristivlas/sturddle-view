@@ -1679,7 +1679,7 @@ def test_read_game_record_returns_hash_and_summary():
     # summary is a structured dict; white/black match the engine headers
     s = rec["summary"]
     assert s["white"] == rec["engine_white"] and s["black"] == rec["engine_black"]
-    # result mirrors rec; _get_game_offsets only indexes decisive games
+    # result mirrors rec; _get_game_index only indexes decisive games
     assert s["result"] == rec["result"]
 
 
@@ -1693,7 +1693,7 @@ def test_read_game_record_missing_file_returns_none(tmp_path):
 
 def test_read_game_record_out_of_range_returns_none(tmp_path):
     """game_n past end of file -> None. Kills NotEq/Gt mutations on
-    the `game_n > len(offsets)` bounds check."""
+    the `game_n > len(entries)` bounds check."""
     body = _game("A", "B", "1-0")
     p = _write_pgn(tmp_path, body)
     assert read_game_record(p, 2) is None
@@ -1778,9 +1778,9 @@ def test_read_game_record_cache_invalidates_when_size_grows(tmp_path):
     # Patch the cache entry: pretend the cached mtime equals the new file
     # mtime (so only the size check could falsely accept it).
     new_st = p.stat()
-    pgn_stats._game_offsets_cache[p] = (new_st.st_mtime_ns,
-                                   pgn_stats._game_offsets_cache[p][1],
-                                   pgn_stats._game_offsets_cache[p][2])
+    pgn_stats._game_index_cache[p] = (new_st.st_mtime_ns,
+                                   pgn_stats._game_index_cache[p][1],
+                                   pgn_stats._game_index_cache[p][2])
 
     # Size differs, mtime matches -> cache must miss via size check.
     rec2 = read_game_record(p, 2)
@@ -1817,9 +1817,9 @@ def test_read_game_record_cache_invalidates_when_mtime_changes(tmp_path):
     p.write_text(g_padded, encoding="utf-8")
     new_st = p.stat()
     os.utime(p, ns=(new_st.st_atime_ns, new_st.st_mtime_ns + _MTIME_BUMP_NS))
-    pgn_stats._game_offsets_cache[p] = (pgn_stats._game_offsets_cache[p][0],
+    pgn_stats._game_index_cache[p] = (pgn_stats._game_index_cache[p][0],
                                    new_st.st_size,
-                                   pgn_stats._game_offsets_cache[p][2])
+                                   pgn_stats._game_index_cache[p][2])
 
     # Recomputed offsets = [] (the only game has Result "*"). game_n=1
     # is out of range -> None. With stale-hit (mutated mtime check),
@@ -1889,10 +1889,13 @@ _NAJDORF = "1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6"
 _QGD = "1. d4 d5 2. c4 e6"
 
 
-def _game_moves(white: str, black: str, result: str, moves: str) -> str:
+def _game_moves(
+    white: str, black: str, result: str, moves: str, opening: str | None = None,
+) -> str:
+    tag = f'[Opening "{opening}"]\n' if opening is not None else ""
     return (
         f'[Event "x"]\n[White "{white}"]\n[Black "{black}"]\n'
-        f'[Round "1"]\n[Result "{result}"]\n\n{moves} {result}\n\n'
+        f'[Round "1"]\n[Result "{result}"]\n{tag}\n{moves} {result}\n\n'
     )
 
 
@@ -1903,6 +1906,22 @@ def test_games_list_attaches_identified_opening(tmp_path):
         ("A", "B", "1-0"), ("B", "A", "1/2-1/2")]
     assert "Najdorf" in games[0]["opening"]
     assert games[1]["opening"] == "Queen's Gambit Declined"
+
+
+def test_games_list_uses_opening_tag_else_book(tmp_path):
+    # A present tag wins over the book; a missing or "?" tag falls back to
+    # identifying the opening from the moves. Rows keep PGN order.
+    tagged = "Tagged Name"
+    body = (
+        _game_moves("A", "B", "1-0", _QGD, opening=tagged)
+        + _game_moves("B", "A", "0-1", _NAJDORF, opening="?")
+        + _game_moves("A", "B", "1/2-1/2", _QGD)
+    )
+    games = compute_games_list(_write_pgn(tmp_path, body))
+    assert [g["white"] for g in games] == ["A", "B", "A"]
+    assert games[0]["opening"] == tagged
+    assert "Najdorf" in games[1]["opening"]
+    assert games[2]["opening"] == "Queen's Gambit Declined"
 
 
 def test_games_list_opening_blank_for_moveless_game(tmp_path):
