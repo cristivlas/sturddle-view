@@ -1283,6 +1283,11 @@ function pvTableIsExempt(target) {
   );
 }
 
+// Live Search Lines table, or null while the window is closed. play.js
+// clears it on a game change so the prior game's lines don't linger.
+let pvTableApi = null;
+export function clearSearchLines() { pvTableApi?.clear(); }
+
 function buildPvTableBody(events, { setOff }) {
   const pvt = createPvTable({
     layoutKey: STORAGE_KEY.PVTABLE_LAYOUT,
@@ -1310,7 +1315,9 @@ function buildPvTableBody(events, { setOff }) {
   // predate the remounted view's handler and would read the stale gate.
   const onGate = () => pvt.refreshShowability();
   window.addEventListener(APP_EVT.PLAY_LINE_GATE_CHANGED, onGate);
+  pvTableApi = pvt;
   setOff(() => {
+    pvTableApi = null;
     window.removeEventListener(APP_EVT.PLAY_LINE_GATE_CHANGED, onGate);
     off();
     pvt.dispose();

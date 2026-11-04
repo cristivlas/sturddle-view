@@ -10,7 +10,7 @@ import { STORAGE_KEY } from "../storage-keys.js";
 import { sidePovScore } from "../wb-utils.js";
 import { alert as showAlert, apiErrorObject, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportAiError, reportError, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, revealPvTableWindow, isUciLogOpen, isPvTableOpen, UCI_LOG_TITLE, PV_TABLE_TITLE, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, clearUciLog, isMobileLayout, setPvLineBoard } from "../play-dock-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, revealPvTableWindow, isUciLogOpen, isPvTableOpen, UCI_LOG_TITLE, PV_TABLE_TITLE, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, clearUciLog, clearSearchLines, isMobileLayout, setPvLineBoard } from "../play-dock-windows.js";
 import {
   commentaryWindow,
   openCommentary,
@@ -2080,8 +2080,11 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       state.viewingGameId = evt.game_id ?? null;
       const gameChanged = state.viewingGameId !== prevGameId;
       // New game (New Game / Play from here / opening a different game):
-      // drop the prior game's UCI traffic before its own lands.
-      if (prevGameId != null && gameChanged) clearUciLog();
+      // drop the prior game's UCI traffic and search lines before the new game's land.
+      if (prevGameId != null && gameChanged) {
+        clearUciLog();
+        clearSearchLines();
+      }
       state.viewing = !!v;
       // Read analyzing early: syncCommentsVisibility (called below) gates
       // view/goto on !analyzing; the main analyzing block runs later in
