@@ -60,6 +60,53 @@ def _close_and_wait(transport) -> asyncio.Future:
     return fut
 
 
+_SPIN = "spin"
+
+
+def _clamp(value: int, low: int | None, high: int | None) -> int:
+    """`value` within the bounds an engine declared; a missing bound is None."""
+    if low is not None:
+        value = max(value, low)
+    if high is not None:
+        value = min(value, high)
+    return value
+
+
+def _settable(
+    engine: chess.engine.UciProtocol, options: dict | None, engine_path: str,
+) -> tuple[dict, list[str]]:
+    """(options the engine will take, names skipped as unknown / managed).
+
+    A spin value outside the engine's declared range is clamped to it (an
+    engine may cap Hash by free memory). A value the engine would still
+    reject is dropped with a warning: python-chess sets options one by
+    one, so one bad value would otherwise silently drop every option
+    after it."""
+    settable: dict = {}
+    skipped: list[str] = []
+    for name, value in (options or {}).items():
+        option = engine.options.get(name)
+        if option is None or option.is_managed():
+            skipped.append(name)
+            continue
+        if option.type == _SPIN and isinstance(value, int) and not isinstance(value, bool):
+            clamped = _clamp(value, option.min, option.max)
+            if clamped != value:
+                log.warning(
+                    "engine %s: option %s %s clamped to %s (engine range %s-%s)",
+                    engine_path, name, value, clamped, option.min, option.max,
+                )
+                value = clamped
+        try:
+            option.parse(value)
+        except (chess.engine.EngineError, TypeError) as exc:
+            # TypeError: parse's int() on a None / list (e.g. a JSON null).
+            log.warning("engine %s: dropping option %s: %s", engine_path, name, exc)
+            continue
+        settable[name] = value
+    return settable, skipped
+
+
 class EngineSupervisor:
     """Single-engine session manager. One instance per HumanVsEngine."""
 
@@ -180,27 +227,29 @@ class EngineSupervisor:
         if rc_future is not None:
             rc_future.add_done_callback(lambda f: f.exception())
         self._patch_log(engine)
-        accepted: dict = {}
-        for k, v in (self._options or {}).items():
-            if k in engine.options and not engine.options[k].is_managed():
-                accepted[k] = v
-            else:
-                log.warning(
-                    "engine %s: skipping unknown/managed option %s",
-                    self._engine_path, k,
-                )
-        for k, v in (global_defaults or {}).items():
-            if k in engine.options and not engine.options[k].is_managed():
-                accepted[k] = v
-        for k, v in (overrides or {}).items():
-            if k in engine.options and not engine.options[k].is_managed():
-                accepted[k] = v
-        if accepted:
-            try:
-                await engine.configure(accepted)
-            except chess.engine.EngineError:
-                log.error("engine refused options %s", accepted, exc_info=True)
+        accepted, skipped = _settable(engine, self._options, self._engine_path)
+        for name in skipped:
+            log.warning("engine %s: skipping unknown/managed option %s", self._engine_path, name)
+        await self._configure(engine, accepted, global_defaults, overrides)
         return engine
+
+    async def _configure(
+        self,
+        engine: chess.engine.UciProtocol,
+        accepted: dict,
+        global_defaults: dict | None,
+        overrides: dict | None,
+    ) -> None:
+        """Layer global defaults then overrides (later wins) over the
+        per-engine options and send them."""
+        for layer in (global_defaults, overrides):
+            accepted.update(_settable(engine, layer, self._engine_path)[0])
+        if not accepted:
+            return
+        try:
+            await engine.configure(accepted)
+        except chess.engine.EngineError:
+            log.error("engine refused options %s", accepted, exc_info=True)
 
     async def spawn_throwaway(
         self,
@@ -226,21 +275,8 @@ class EngineSupervisor:
         if rc_future is not None:
             rc_future.add_done_callback(lambda f: f.exception())
         self._patch_log(engine)
-        accepted: dict = {}
-        for k, v in (self._options or {}).items():
-            if k in engine.options and not engine.options[k].is_managed():
-                accepted[k] = v
-        for k, v in (global_defaults or {}).items():
-            if k in engine.options and not engine.options[k].is_managed():
-                accepted[k] = v
-        for k, v in (overrides or {}).items():
-            if k in engine.options and not engine.options[k].is_managed():
-                accepted[k] = v
-        if accepted:
-            try:
-                await engine.configure(accepted)
-            except chess.engine.EngineError:
-                log.error("engine refused options %s", accepted, exc_info=True)
+        accepted, _ = _settable(engine, self._options, self._engine_path)
+        await self._configure(engine, accepted, global_defaults, overrides)
 
         async def _cleanup() -> None:
             """Exception-safe by contract: callers don't wrap. Swallows

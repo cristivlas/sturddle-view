@@ -36,18 +36,9 @@ from sturddle_view.events import EventBus
 # ---------------------------------------------------------------------------
 
 
-class _OptionDef:
-    def __init__(self, name: str, managed: bool = False) -> None:
-        self.name = name
-        self.type = "spin"
-        self.default = 0
-        self.min = 0
-        self.max = 1024
-        self.var: list[str] = []
-        self._managed = managed
-
-    def is_managed(self) -> bool:
-        return self._managed
+def _spin(name: str, max_: int = 1024) -> chess.engine.Option:
+    """A real python-chess option (MultiPV is managed by python-chess)."""
+    return chess.engine.Option(name, "spin", 0, 0, max_, [])
 
 
 class _StubTransport:
@@ -63,9 +54,9 @@ class _StubEngine:
 
     def __init__(self, options: dict | None = None, id_name: str | None = None) -> None:
         self.options = options or {
-            "Threads": _OptionDef("Threads"),
-            "Hash": _OptionDef("Hash"),
-            "MultiPV": _OptionDef("MultiPV", managed=True),
+            "Threads": _spin("Threads"),
+            "Hash": _spin("Hash"),
+            "MultiPV": _spin("MultiPV"),
         }
         self.id = {"name": id_name} if id_name else {}
         self.transport = _StubTransport()
@@ -133,6 +124,56 @@ async def test_spawn_includes_overrides_for_analysis(supervisor, stub_engine):
     supervisor.options = {"Threads": 1}
     await supervisor.spawn(overrides={"Threads": 8})
     assert stub_engine.configured == {"Threads": 8}
+
+
+def _capped_hash(stub_engine) -> None:
+    """Hash capped below the setting (an engine may size it by free memory),
+    plus a string option set after it."""
+    stub_engine.options["Hash"] = _spin("Hash", 233)
+    stub_engine.options["SyzygyPath"] = chess.engine.Option("SyzygyPath", "string", "", None, None, [])
+
+
+async def test_spawn_clamps_spin_to_the_engine_range(supervisor, stub_engine, caplog):
+    _capped_hash(stub_engine)
+    supervisor.options = {"Threads": 4, "Hash": 256, "SyzygyPath": "/tb"}
+    await supervisor.spawn()
+    assert stub_engine.configured == {"Threads": 4, "Hash": 233, "SyzygyPath": "/tb"}
+    assert "Hash 256 clamped to 233" in caplog.text
+
+
+@pytest.mark.parametrize("bad", ["lots", None, [256]])
+async def test_spawn_drops_a_value_the_engine_rejects_and_keeps_the_rest(
+    supervisor, stub_engine, caplog, bad,
+):
+    _capped_hash(stub_engine)
+    supervisor.options = {"Hash": bad, "Threads": 4, "SyzygyPath": "/tb"}
+    await supervisor.spawn()
+    assert stub_engine.configured == {"Threads": 4, "SyzygyPath": "/tb"}
+    assert "dropping option Hash" in caplog.text
+
+
+@pytest.mark.parametrize("low, high, value, expected", [
+    (1, None, 256, 256),     # no max: nothing to clamp above
+    (1, None, 0, 1),
+    (None, 233, 256, 233),   # no min
+    (None, None, 256, 256),
+])
+async def test_spawn_clamps_against_declared_bounds_only(
+    supervisor, stub_engine, low, high, value, expected,
+):
+    stub_engine.options["Hash"] = chess.engine.Option("Hash", "spin", 16, low, high, [])
+    supervisor.options = {"Hash": value, "Threads": 4}
+    await supervisor.spawn()
+    assert stub_engine.configured == {"Hash": expected, "Threads": 4}
+
+
+async def test_throwaway_clamps_global_defaults_and_overrides(supervisor, stub_engine):
+    _capped_hash(stub_engine)
+    engine, cleanup = await supervisor.spawn_throwaway(
+        overrides={"Threads": 2}, global_defaults={"Hash": 256, "Threads": 4},
+    )
+    await cleanup()
+    assert stub_engine.configured == {"Hash": 233, "Threads": 2}
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only creationflag")
