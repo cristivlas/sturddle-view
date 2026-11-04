@@ -547,6 +547,38 @@ def test_split_narrator_steers_passes_through_without_steer():
     assert stripped == "Context line\n"
 
 
+@pytest.mark.parametrize("mode", ["coach", "commentator"])
+def test_narrator_asks_for_the_plan_before_picking_ideas(mode):
+    # Models skipped the optional tool (Gemini, Gemma): the ideas step names it.
+    out = assemble_system_prompt(mode)
+    assert "call `plan`" in out
+    assert out.index("call `plan`") < out.index("Play each out with `play_out`")
+
+
+def test_verifier_prompt_never_asks_for_the_plan():
+    # The verifier registry has no `plan` tool.
+    assert "`plan`" not in assemble_system_prompt("verifier")
+
+
+def test_user_message_carries_a_given_plan_line():
+    plan = f"{PLAYBOOK_LEAD}you are level; hanging pawns: keep them mobile."
+    got = build_initial_user_message(fen=_STARTPOS_FEN, san_history=[], plan_line=plan)
+    assert plan in got.splitlines()
+
+
+@pytest.mark.parametrize("in_opening", [False, True])
+def test_split_narrator_steers_strips_the_plan_line(in_opening):
+    # The verifier never sees the playbook (strategy prose would bias it).
+    plan = f"{PLAYBOOK_LEAD}you are level; hanging pawns: keep them mobile."
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN, san_history=[], plan_line=plan, in_opening=in_opening,
+    )
+    stripped, opening = split_narrator_steers(got)
+    assert PLAYBOOK_LEAD not in stripped
+    assert opening is in_opening
+    assert f"Current position (FEN): {_STARTPOS_FEN}" in stripped
+
+
 def test_user_message_never_carries_a_plan_line():
     # The plan is the narrator's `plan` tool now: input it may ask for, not
     # a line handed over before it looks at the board.

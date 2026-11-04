@@ -158,3 +158,16 @@ def render_playbook(
     note = _repeat_note(situation, catalog)
     line = f"{PLAYBOOK_LEAD}{_standing(situation, subject)}; {body}"
     return f"{line}{_NOTE_SEP}{note}" if note else line
+
+
+def structural_playbook(situation: Situation, catalog: Catalog | None = None) -> str | None:
+    """The structural themes alone (formation, imbalance, bishops, ...) for
+    the opening message, or None without a specific tag. No verdict: the
+    standing, margin and combo text and the repetition note stay behind
+    the `plan` tool, so nothing is concluded before the model looks."""
+    if catalog is None:
+        catalog = default_catalog()
+    fragments = _specific(situation, catalog)[:MAX_FRAGMENTS]
+    if not fragments:
+        return None
+    return PLAYBOOK_LEAD + _NOTE_SEP.join(fragments)

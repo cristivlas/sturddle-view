@@ -140,8 +140,11 @@ _BOOK_REPLY_EXEMPTION = (
 _IDEAS_WORKFLOW = (
     f"Before any prose, pick up to {MAX_IDEAS} concrete ideas, each a first move "
     "plus its aim -- a move the idea works toward within its next few moves "
-    "(e.g. 5.Bb5, aim d4); a forced reply needs only one. Draw them from "
-    "analogous openings and structures, adapted to this board, never quoted. "
+    "(e.g. 5.Bb5, aim d4); a forced reply needs only one. Take this "
+    "structure's themes from the message's `Plan:` line, or call `plan` "
+    "first when it has none; at least one idea must carry that plan out. "
+    "Draw the rest from analogous openings and structures, adapted to this "
+    "board, never quoted. "
     "Play each out with `play_out`, one move at a time against the "
     "opponent's best reply -- steps of different ideas can go in one round "
     "-- and repair or drop an idea where it breaks. "
@@ -396,15 +399,21 @@ BOOK_REPLY_GUIDANCE = (
 # registry lacks, so verifier sub-runs must not inherit them.
 _OPENING_STEERS = (OPENING_PHASE_GUIDANCE, BOOK_REPLY_GUIDANCE)
 
-# The playbook plan (llm/playbook.py, the narrator's `plan` tool) opens
-# with this lead.
+# The playbook plan (llm/playbook.py: the narrator's `plan` tool, or the
+# opening message on a structural match) opens with this lead.
 PLAYBOOK_LEAD = "Plan: "
 
 
+def _without_plan_line(content: str) -> str:
+    return "".join(
+        line for line in content.splitlines(keepends=True) if not line.startswith(PLAYBOOK_LEAD)
+    )
+
+
 def split_narrator_steers(user_content: str) -> tuple[str, bool]:
-    """(content without any narrator-only steer, whether an opening steer
-    was present)."""
-    content = user_content
+    """(content without any narrator-only steer or plan line, whether an
+    opening steer was present)."""
+    content = _without_plan_line(user_content)
     for steer in _OPENING_STEERS:
         if steer in content:
             return content.replace(steer, "").rstrip() + "\n", True
@@ -425,6 +434,7 @@ def build_initial_user_message(
     in_opening: bool = False,
     book_reply: "OpeningReply | None" = None,
     player_side: str | None = None,
+    plan_line: str | None = None,
 ) -> str:
     """Build the user message that opens an agent turn. Carries the FEN,
     the explicit side-to-move (so the model does not re-derive it), the
@@ -457,6 +467,10 @@ def build_initial_user_message(
     `book_reply` is the theory reply the server found for the position
     (opening_reply probe). It rides the message as its own line and
     carries the favor-the-book steer in place of the opening-phase one.
+
+    `plan_line` is the playbook line when a structure-specific tag matched
+    (llm/playbook.py `structural_playbook`); narrator-only, stripped for
+    the verifier by `split_narrator_steers`.
 
     `player_side` ('white' / 'black') is the human's color in live play
     (coach mode). Names who plays which side and whose move it is, so a
@@ -495,6 +509,8 @@ def build_initial_user_message(
     annotations_line = _render_annotations(san_history, annotations)
     if annotations_line:
         lines.append(annotations_line)
+    if plan_line:
+        lines.append(plan_line)
     if book_reply is not None:
         lines.append(BOOK_REPLY_GUIDANCE)
     elif in_opening:

@@ -8,7 +8,7 @@ import chess
 import pytest
 
 import sturddle_view.llm.playbook as playbook_prompts
-from sturddle_view.llm.playbook import render_playbook
+from sturddle_view.llm.playbook import render_playbook, structural_playbook
 from sturddle_view.llm.prompts import COACH_MODE, COMMENTATOR_MODE, PLAYBOOK_LEAD
 from sturddle_view.play.matchers import (
     castling_tag,
@@ -422,6 +422,26 @@ def test_render_opposite_bishops_without_a_combo_keeps_the_bishops_fragment(marg
         _situation(margin=margin, phase=PHASE_ENDGAME, bishops=bishops), COACH_MODE, chess.WHITE,
     )
     assert _frag(AXIS_BISHOPS, bishops) in line
+
+
+def test_structural_playbook_only_on_a_specific_tag():
+    # Open / closed is threshold-tuned and generic: not a match.
+    assert structural_playbook(_situation()) is None
+    assert structural_playbook(_situation(structure=STRUCTURE_OPEN)) is None
+    line = structural_playbook(_situation(imbalance=IMBALANCE_IQP_OURS))
+    assert line == PLAYBOOK_LEAD + _frag(AXIS_IMBALANCE, IMBALANCE_IQP_OURS)
+
+
+def test_structural_playbook_hands_over_no_verdict():
+    # Behind with opposite-colored bishops and a repetition on the board:
+    # the standing, margin combo and repetition note stay behind the tool.
+    situation = _situation(
+        margin=MARGIN_LOSING, phase=PHASE_ENDGAME, bishops=BISHOPS_OPPOSITE, repeats=("Nf3",),
+    )
+    line = structural_playbook(situation)
+    assert line == PLAYBOOK_LEAD + _frag(AXIS_BISHOPS, BISHOPS_OPPOSITE)
+    full = render_playbook(situation, COACH_MODE, chess.WHITE)
+    assert _SHIPPED.combo(MARGIN_LOSING, AXIS_BISHOPS, BISHOPS_OPPOSITE) in full
 
 
 def test_lost_note_is_coach_only_and_not_in_opening():

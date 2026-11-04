@@ -40,9 +40,20 @@ candidates that carry the plan out; the engine only vetoes blunders.
 
 ### Injection: the `plan` tool
 
-- Fragments render as one `Plan:` line (`PLAYBOOK_LEAD`) the narrator gets
-  from its `plan` tool on request -- never on the initial user message, so
-  no conclusion is handed over before the model looks at the board.
+- Fragments render as one `Plan:` line (`PLAYBOOK_LEAD`). The full line
+  (standing, margin and combo text, repetition note) comes only from the
+  narrator's `plan` tool: no verdict is handed over before the model looks
+  at the board.
+- Structural themes may ride the initial user message: when a specific tag
+  matches (formation, imbalance, bishops, pawn, castling; not open /
+  closed), `structural_playbook` adds a `Plan:` line of those fragments
+  alone. Left to the optional tool, models skipped it (Gemini, Gemma) and
+  explained structures wrong (a King's Indian center as queenside play for
+  Black).
+- The ideas step of the narrator prompt (`_IDEAS_WORKFLOW`) takes the
+  themes from that line, or calls `plan` when there is none, and makes at
+  least one idea carry the plan out.
+- `split_narrator_steers` strips the line from the verifier's context.
 - Not the system prompt: the situation changes every ply; the cold prompt
   stays stable / cacheable.
 - Narrator-only: the verifier registry has no `plan` tool.
