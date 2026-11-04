@@ -1,7 +1,8 @@
 # AI Playbook Matchers - Spec (tentative)
 
-Status: draft for review. Companion to `docs/ai-playbook-spec.md`, which
-stays the reference for today's tags, fragments and combination rules.
+Status: stage 1 shipped on `feat/0.7.7`; stage 2 draft for review.
+Companion to `docs/ai-playbook-spec.md`, which stays the reference for
+today's tags, fragments and combination rules.
 
 ## Goal
 
@@ -242,12 +243,150 @@ logged and the bad entry skipped (never crash the server).
 recorded per entry, but nothing reads `trust` in stage 1: the render
 gate for unverified entries comes with the first research file.
 
+## Stage 2: pawn formations (draft)
+
+The first data-defined matcher: named pawn formations (Maroczy bind,
+hanging pawns, Hedgehog, Stonewall, ...) declared in playbook files,
+with their plan text next to them. Adding a formation is a data change.
+
+### Axis and tags
+
+- New axis `formation`. Tags are `<pattern id>_ours` / `<pattern
+  id>_theirs`, our side's point of view, as for `imbalance`.
+- One tag per axis, as today. Several patterns matching at once: the
+  most specific wins (most constraints), then load order (sorted
+  filename, shipped before user, so a user pattern loses a tie to a
+  shipped one).
+- Specificity resolves refinements on purpose. A Hedgehog with no White
+  d-pawn is also a Maroczy from White's side; Hedgehog (7 constraints)
+  beats Maroczy (5), so White sees `hedgehog_theirs`, never
+  `maroczy_ours`. Intended: the Hedgehog is the more precise
+  description, and `hedgehog_theirs` text carries the bind plan (keep
+  the clamp, stop ...b5 / ...d5).
+- Render order: right after `imbalance` (registry order), so it competes
+  with the other specific tags under the fragment cap.
+- Shipped patterns do not restate a coded tag. IQP and the Carlsbad
+  minority attack stay coded on `imbalance`: IQP's "not passed" is
+  relational, and a relational grammar for one tag is not worth it.
+
+### Pattern format
+
+A new `[[pattern]]` array in playbook files:
+
+```toml
+[[pattern]]
+id = "maroczy"
+ours = { c = "4", d = "-", e = "4" }
+theirs = { c = "-", d = "3" }
+examples = ["r1bqkb1r/pp2pppp/2np1n2/8/2PNP3/8/PP3PPP/RNBQKB1R w KQkq - 0 1"]
+counterexamples = ["r1bqkb1r/pp2pppp/2np1n2/8/3NP3/8/PPP2PPP/RNBQKB1R w KQkq - 0 1"]
+
+[[entry]]
+id = "formation.maroczy_ours"
+when = { formation = "maroczy_ours" }
+text = "..."
+```
+
+- `ours` / `theirs`: one constraint per file, files left out are free.
+  Values, ranks relative to that side (2 = its home rank):
+  - `"-"`: no pawn of that side on the file;
+  - `"*"`: at least one pawn on the file;
+  - `"4"`: a pawn on that rank; `"3-4"`: a pawn on one of those ranks.
+  File keys `a`-`h` only; ranks 2-7, a range low <= high. Anything else
+  invalidates the pattern.
+  A file constraint holds if any of the side's pawns on it fits
+  (doubled pawns are not expressible; not needed yet).
+- Color-normalized: the matcher reads the board from each side in turn;
+  `ours` binds to the side being tested. Holds for us -> `_ours`, for
+  the opponent -> `_theirs`; both at once -> no tag (ambiguous).
+- `mirror` (default false): also try the a<->h file mirror. Off by
+  default: most formations mean something on their wing.
+- `phases` (default: every phase but `endgame`): where the pattern may
+  fire, matching the "structure is middlegame talk" rule.
+- Exact match. Tolerance lives in the pattern (rank ranges, free files),
+  not in a score: a near miss stays a miss, in line with "fewer fragments
+  beats wrong ones". The similarity score stays deferred.
+
+### Self-checking patterns
+
+- `examples` (at least one) and `counterexamples` (at least one) are
+  FENs; the side to move is `ours` (so a Hedgehog example has Black to
+  move). At load, each example must match `_ours` for the side to move
+  and `_theirs` for the other side, and each counterexample must match
+  neither. A failing pattern is invalid (shipped: error; user:
+  skipped and logged).
+- At least three constraints across both sides, so a pattern cannot
+  fire on half the positions in the game.
+- The per-pattern check cannot see overlaps, so each example is also run
+  through the whole formation matcher (after the tie-break) and must
+  yield its own pattern's tag. Phase gating applies, so an example must
+  sit in one of the pattern's `phases`. Shipped patterns are checked against
+  the shipped set (error on failure). Each user pattern is added in load
+  order only if every example, shipped and user, still yields its tag;
+  otherwise it is skipped and logged (a user pattern cannot steal a
+  shipped example).
+
+### Catalog, registry, classify
+
+- Load runs in passes over all files (shipped, then user): (1)
+  patterns, so a pattern in one file can be referenced from another;
+  (2) entries, validated against a vocabulary that includes the
+  formation tags; (3) coverage: a user pattern missing its `_ours` or
+  `_theirs` fragment is dropped, with any fragment that names it.
+  Shipped coverage gaps are errors, as in stage 1.
+- The catalog builds one `FormationMatcher` from the surviving
+  patterns and exposes `Catalog.matchers`: the static `REGISTRY` with
+  the formation matcher spliced in after `imbalance`.
+- Overrides: a user file may add patterns; a shipped pattern id cannot
+  be redefined (same rule as re-keying an entry). Its fragments'
+  text is overridable as usual.
+- `classify(..., matchers=REGISTRY)`: the classifier never sees the
+  catalog and stays a pure function of its arguments (no file I/O in
+  `play/playbook.py`). `HumanVsEngine.situation` passes
+  `default_catalog().matchers`. The `Situation` gains a `formation`
+  field.
+- Render order comes from the same composed registry: the renderer
+  derives its specific axes from `catalog.matchers`, not from the
+  static `SPECIFIC_AXES` (a catalog-only matcher would never render).
+
+### Shipped content (first draft)
+
+Four formations not covered by a coded tag; text drafted with the
+implementation and reviewed as chess content. Squares are relative to
+the side (Black's d6 is d3):
+
+| id | ours | theirs | plan gist (ours) |
+|----|------|--------|------------------|
+| `maroczy` | c4, e4, no d-pawn | no c-pawn, d3 | keep the bind, stop the ...b5 / ...d5 breaks, squeeze |
+| `hanging` | c4 + d4, no b- / e-pawn | no c- or d-pawn | keep them mobile, push d5 at the right time |
+| `hedgehog` | a3 b3 d3 e3, no c-pawn | c4, e4 | wait, prepare the ...b5 or ...d5 break |
+| `stonewall` | c3 d4 e3 f4 | free | e5 outpost, kingside attack; mind the e4 hole |
+
+### Stage 2 testing
+
+- Pattern grammar: each value form, mirror, phases, color flip.
+- Self-checks run over shipped patterns (examples, counterexamples,
+  both sides); a broken example fails load. Whole-matcher check: every
+  shipped example yields its own tag.
+- Grammar validation: bad file key, rank outside 2-7, inverted range.
+- User patterns: cross-file reference works; a pattern missing a
+  fragment is dropped with its other fragment; a pattern that steals a
+  shipped example is skipped; ties go to shipped.
+- Specificity tie-break; both-orientation ambiguity yields no tag.
+- Rendering: formation fragment in registry order and under the cap.
+- Baseline: positions without a formation render exactly as stage 1.
+
+### Stage 2 open questions
+
+- Symmetric formations (both sides the same): ambiguous today; worth a
+  neutral tag?
+- Do any formations need a material condition (queens on, minor-piece
+  balance)? None in the first four.
+
 ## Later stages (not specified yet)
 
-- **Declarative pawn-layout matcher.** Patterns as pawn placements with
-  wildcards, color-normalized and file-mirrored, matched by similarity
-  score. Lets structure entries (Carlsbad, Maroczy, hanging pawns, ...)
-  carry their own pattern in the file instead of a coded predicate.
+- **Similarity matching.** A score for near-miss formations, with how
+  scores compare across matchers (stage 2 is exact match).
 - **Game-reference matcher.** Matches the position against a curated
   game index; evidence is the reference ("Kasparov, game 6 of ...").
   Hard rule: references come from the index only, never from model
