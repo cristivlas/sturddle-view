@@ -29,6 +29,7 @@ import { makeH2HBody, renderH2H } from "./tournament-h2h.js";
 import { renderEventLogList } from "./tournament-eventlog.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 import { renderInfoWall } from "./tournament-info.js";
+import { mountStudioWallpaper } from "./studio-wallpaper.js";
 import { mqMobile, mqMobileH } from "./breakpoints.js";
 import { attachRibbonOverflow } from "./ribbon-overflow.js";
 
@@ -843,7 +844,7 @@ function paintWall(ctx, hasBoards = anyBoardsShown()) {
   // (not only in regridBoards) so the idle first paint, which never re-grids,
   // still clips.
   ctx.boardsEl?.classList.toggle("no-boards", !hasBoards);
-  // No tourneys at all: the wall hosts the New-tournament CTA, not poster art.
+  // No tourneys at all: the wall hosts the New-tournament CTA, not the footer.
   ctx.boardsWallEl.classList.toggle("is-empty", ctx.tournaments.length === 0);
   if (ctx.tournaments.length === 0) {
     renderEmptyWall(ctx);
@@ -1371,6 +1372,8 @@ export function mountTournamentStudio({ container, api, events, log }) {
   wireEnginesSort(ctx);
   wireLeftTabsFold(ctx);
   wireRibbonActions(ctx);
+  // Before overflow attaches, so its first fit check counts the wallpaper button.
+  ctx.wallpaper = mountStudioWallpaper({ ribbonEl: ctx.ribbonEl, boardsEl: ctx.boardsEl, api: ctx.api, log: ctx.log });
   ctx.ribbonOverflow = attachRibbonOverflow(ctx.ribbonEl);
   announceRibbon(ctx.ribbonEl);
 
@@ -1439,6 +1442,7 @@ function unmountStudio(ctx) {
   window.removeEventListener(APP_EVT.LIVEGAME_RESOLVED, ctx.onBoardResolved);
   window.removeEventListener("resize", ctx.onBoardResize);
   mqMobile.removeEventListener("change", ctx.onMqMobile);
+  ctx.wallpaper?.unmount();
   // stopLive unsubscribes, nulls liveTid (so a pending standings refresh
   // no-ops), and closes the boards.
   stopLive(ctx);

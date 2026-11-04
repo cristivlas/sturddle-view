@@ -18,6 +18,8 @@
      the ribbon. A separate name: --dialog-bg must stay undefined outside
      dialogs, where tables reading it fall back to transparent. */
   --panel-bg: #363a42;
+  /* Fills that must read against --panel-bg (dialog borders, slider tracks). */
+  --panel-accent: #4a5b73;
   /* Hovered/focused menu item: a blue-gray accent over the gray panel. */
   --panel-item-hover: #364b66;
   /* Secondary button fill on the panel (path Browse/Clear, confirm-popup
@@ -3104,7 +3106,7 @@ wa-dialog {
   /* Shared accent for anything that needs to read against --dialog-bg:
      borders/dividers via --border-subtle, and non-border fills (e.g. the
      slider track) that read --dialog-accent directly. */
-  --dialog-accent: #4a5b73;
+  --dialog-accent: var(--panel-accent);
   --border-subtle: var(--dialog-accent);
   --border-faint: #3a4a5f;
 }
@@ -3517,15 +3519,16 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 
 /* column-header.js columns menu, ribbon-overflow.js and header-menu.js ellipsis
-   menus: top-layer popovers reusing the .tmb-dropdown look. Must follow
-   .tmb-dropdown: same specificity, fixed placement (JS sets top/left)
-   overrides its absolute one. */
-.dt-menu, .ribbon-more-menu, .header-more-menu {
+   menus, studio-wallpaper.js menu: top-layer popovers reusing the .tmb-dropdown
+   look. Must follow .tmb-dropdown: same specificity, fixed placement (JS sets
+   top/left) overrides its absolute one. */
+.dt-menu, .ribbon-more-menu, .header-more-menu, .studio-wallpaper-menu {
   position: fixed; inset: auto; color: var(--fg);
   /* JS max-height (viewport room) includes padding/border; tall menus scroll. */
   box-sizing: border-box; overflow-y: auto;
 }
-.dt-menu:popover-open, .ribbon-more-menu:popover-open, .header-more-menu:popover-open { display: block; }
+.dt-menu:popover-open, .ribbon-more-menu:popover-open, .header-more-menu:popover-open,
+.studio-wallpaper-menu:popover-open { display: block; }
 /* Vertical ribbon overflow (ribbon-overflow.js): items keep their size, so a
    short rail overflows into the ellipsis menu instead of squashing them. */
 .ribbon-overflow-managed > * { flex-shrink: 0; }
@@ -3841,207 +3844,60 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .studio-boards.no-boards { overflow: hidden; }
 .studio-boards-canvas { width: 1px; height: 0; pointer-events: none; }
 
-/* Info wall: a comic-noir splash on the empty Boards region -- muted
-   monochrome ink, thick-outlined stat panels with hard shadows, a slanted
-   status placard, tag-style engines. Full-width so the composition isn't
-   left-heavy; recedes behind boards when present. Local ink/paper vars keep
-   it self-contained. */
+/* Info wall: the selected tourney's progress footer, pinned to the bottom of
+   the empty Boards region; recedes behind boards when present. */
 .studio-boards-wall {
-  --iw-ink: #4a4e57;          /* very muted ink -- barely-there backdrop */
-  --iw-paper: #14161b;        /* near-black panel fill */
-  --iw-buttery: #c3bba6;      /* aged warm-gray paper for pasted stamps */
-  --iw-shadow: rgba(0, 0, 0, 0.5);
   position: absolute; inset: 0; z-index: 0;
   display: flex; flex-direction: column; justify-content: center; align-items: stretch;
-  gap: clamp(12px, 1.8vw, 22px);
   padding: clamp(24px, 5vw, 68px);
   overflow: hidden;
   pointer-events: none;
   color: var(--muted-bright);
   opacity: 0.85;
 }
-/* Each row spans the wall so the splash fills the region. */
 .studio-boards-wall > * { width: 100%; }
-/* Empty state: the wall hosts a clickable New-tournament CTA (poster art
-   suppressed), so undo the backdrop fade and re-enable pointer events. */
+/* Empty state: the wall hosts a clickable New-tournament CTA, so undo the
+   backdrop fade and re-enable pointer events. */
 .studio-boards-wall.is-empty { opacity: 1; pointer-events: auto; }
 .studio-empty {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   color: var(--muted); text-align: center;
 }
-
-/* Status placard: stark black-on-white, slanted and hand-pasted. */
-.iw-burst {
-  flex: 0 0 auto;
-  transform: rotate(-4deg);
-  background: var(--iw-ink);
-  color: #000;
-  padding: 5px 16px;
-  font-family: var(--wa-font-family-code);
-  font-weight: 800; font-size: clamp(12px, 1.5vw, 17px);
-  letter-spacing: 0.28em; text-transform: uppercase;
-  box-shadow: 5px 5px 0 var(--iw-shadow);
+/* Wallpaper (studio-wallpaper.js): fills the region behind the wall and the
+   boards. Layer 1 is the fade overlay (app background at the fade percent,
+   always full-size), layer 2 the image, sized per data-wallpaper-fit. */
+.studio-boards.has-wallpaper {
+  --studio-wallpaper-fade-color: color-mix(in srgb, var(--bg) var(--studio-wallpaper-fade, 0%), transparent);
+  background-image:
+    linear-gradient(var(--studio-wallpaper-fade-color), var(--studio-wallpaper-fade-color)),
+    var(--studio-wallpaper);
+  background-size: 100% 100%, cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
-/* Running pops louder: buttery pasted-stamp fill, vs the muted ink. */
-.iw-burst--running { background: var(--iw-buttery); }
-/* Terminal states get an inverted (white outline on black) placard. */
-.iw-burst--done, .iw-burst--stopped, .iw-burst--failed {
-  background: #000; color: var(--accent-line); border: 2px solid var(--iw-ink);
+.studio-boards[data-wallpaper-fit="contain"] { background-size: 100% 100%, contain; }
+.studio-boards[data-wallpaper-fit="stretch"] { background-size: 100% 100%, 100% 100%; }
+.studio-boards[data-wallpaper-fit="center"] { background-size: 100% 100%, auto; }
+.studio-boards[data-wallpaper-fit="tile"] {
+  background-size: 100% 100%, auto;
+  background-position: center, top left;
+  background-repeat: no-repeat, repeat;
 }
-/* SPRT: same family but outlined (a mode tag, not a status) and tilted the
-   other way, so the two stamps read as hand-pasted. */
-.iw-burst--sprt {
-  background: var(--iw-paper); color: var(--iw-ink);
-  border: 2px solid var(--iw-ink);
-  transform: rotate(3deg);
-}
-/* Live run: amber lettering, so it reads as "test in progress". */
-.iw-burst--sprt-live { color: var(--accent-line); }
-/* SPRT + status placards clustered hard right of the headline. */
-.iw-stamps { display: flex; align-items: center; gap: clamp(8px, 1vw, 16px); flex: 0 0 auto; }
-
-/* Headline row spans the wall: title left, status placard hard right. */
-.iw-head {
-  display: flex; align-items: center; justify-content: space-between;
-  flex-wrap: wrap; gap: 12px 20px;
-}
-.iw-name {
-  margin: 0; min-width: 0;
-  /* Italic glyphs overhang their box and the shadow drops below, so pad right
-     + bottom or -webkit-line-clamp's overflow:hidden shaves the last slanted
-     character and clips the shadow. */
-  padding-right: 0.18em; padding-bottom: 0.16em;
-  font-style: italic; font-weight: 900;
-  font-size: clamp(28px, 6vw, var(--iw-name-max, 96px));
-  letter-spacing: -0.03em; line-height: 1;
-  color: var(--iw-ink);
-  text-shadow: 4px 5px 0 var(--iw-shadow);
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
-  overflow: hidden;
-}
-
-/* Bill body: tale of the tape (left) and contenders (right), each framed.
-   They share the wall width and wrap on narrow regions. */
-.iw-bill {
-  display: flex; flex-wrap: wrap; align-items: flex-start;
-  gap: clamp(14px, 2vw, 26px);
-}
-.iw-tape { flex: 1 1 340px; }
-.iw-card { flex: 1 1 260px; }
-.iw-tape, .iw-card {
-  background: var(--iw-paper);
-  border: 3px solid var(--iw-ink);
-  box-shadow: 6px 6px 0 var(--iw-shadow);
-  padding: clamp(12px, 1.4vw, 22px) clamp(16px, 1.8vw, 28px) clamp(14px, 1.6vw, 24px);
-}
-/* Section nameplate atop each framed block. */
-.iw-tape-title {
-  font-family: var(--wa-font-family-code);
-  font-size: clamp(10px, 0.8vw, 13px); font-weight: 800;
-  letter-spacing: 0.28em; text-transform: uppercase;
-  color: var(--muted);
-  padding-bottom: clamp(6px, 0.8vw, 12px);
-  margin-bottom: clamp(6px, 0.8vw, 12px);
-  border-bottom: 2px solid var(--iw-ink);
-}
-
-/* Ledger row: label, leader dots eating the slack, big numeral hard right.
-   The dots fill the width so no value ever floats. */
-.iw-tape-row {
-  display: flex; align-items: baseline; gap: 10px;
-  padding: clamp(3px, 0.5vw, 7px) 0;
-}
-.iw-tape-label {
-  flex: 0 0 auto;
-  font-family: var(--wa-font-family-code);
-  font-size: clamp(11px, 0.95vw, 15px); letter-spacing: 0.12em; text-transform: uppercase;
-  color: var(--muted-bright);
-}
-.iw-tape-dots {
-  flex: 1 1 auto; min-width: 18px;
-  border-bottom: 3px dotted var(--iw-ink);
-  transform: translateY(-5px);
-}
-.iw-tape-value {
-  flex: 0 0 auto;
-  font-weight: 900; font-size: clamp(22px, 2.6vw, 40px); line-height: 0.9;
-  color: var(--iw-ink);
-}
-
-/* Contenders billing: seed(s) vs field, or a two-engine A vs B. */
-.iw-versus {
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
-  gap: clamp(8px, 1.2vw, 18px);
-}
-.iw-vs {
-  font-style: italic; font-weight: 900;
-  font-size: clamp(20px, 2.4vw, 38px);
-  letter-spacing: -0.02em; color: var(--muted);
-  text-shadow: 3px 3px 0 var(--iw-shadow);
-}
-
-/* Fine print: sanctioning-body small print at the foot of the bill. */
-.iw-setup {
-  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 24px;
-  font-size: clamp(13px, 1vw, 18px); color: var(--muted-bright);
-}
-.iw-fact-key {
-  font-family: var(--wa-font-family-code);
-  text-transform: uppercase; letter-spacing: 0.12em;
-  font-size: 10px; color: var(--muted);
-  margin-right: 4px;
-}
-
-/* Adjudication marks: skewed sanctioning stickers, echoing the engine plates
-   but smaller and inked on paper. */
-.iw-adj-stamps {
-  display: inline-flex; flex-wrap: wrap; align-items: center;
-  gap: 6px 8px; vertical-align: middle;
-}
-.iw-adj-stamp {
-  --iw-adj-ink: #14110a;     /* near-black */
-  display: inline-flex; align-items: baseline; gap: 6px;
-  padding: 4px 9px;
-  background: var(--iw-buttery);
-  box-shadow: 3px 3px 0 var(--iw-shadow), 4px 4px 8px rgba(0, 0, 0, 0.6);
-  transform: skewX(-8deg);
-}
-.iw-adj-stamp > * { transform: skewX(8deg); }
-.iw-adj-stamp-label {
-  font-family: var(--wa-font-family-code);
-  text-transform: uppercase; letter-spacing: 0.1em;
-  font-size: 11px; font-weight: 700; color: var(--iw-adj-ink);
-}
-.iw-adj-stamp-detail { font-size: 13px; font-weight: 700; color: var(--iw-adj-ink); }
-
-/* Engines: tag stickers, slightly skewed, hard outline. Sized to content. */
-.iw-roster { display: flex; flex-wrap: wrap; gap: 8px 10px; }
-.iw-engine {
-  font-weight: 700; font-size: 13px;
-  padding: 3px 12px;
-  background: var(--iw-paper);
-  border: 2px solid var(--iw-ink);
-  color: var(--iw-ink);
-  box-shadow: 3px 3px 0 var(--iw-shadow);
-  transform: skewX(-8deg);
-}
-.iw-engine > * { display: inline-block; transform: skewX(8deg); }
-.iw-engine-ver { margin-left: 6px; color: var(--muted); font-weight: 600; }
-.iw-engine--more { flex: 0 0 auto; color: var(--muted); font-weight: 600; }
-/* Gauntlet seed: louder plate so the runner reads as the headliner. */
-.iw-engine--seed {
-  background: var(--iw-ink); color: var(--iw-paper);
-  border-width: 3px; box-shadow: 4px 4px 0 var(--iw-shadow);
-}
-.iw-engine--seed .iw-engine-ver { color: var(--iw-paper); opacity: 0.7; }
+/* Never scrolls, so its flyouts aren't clipped. */
+.studio-wallpaper-menu { overflow: visible; }
+.studio-wallpaper-menu.flyout-left .tmb-dd-submenu > .tmb-dropdown { left: auto; right: 100%; }
+/* Outranks .tmb-dropdown > li's zero padding. */
+.tmb-dropdown > li.studio-wallpaper-fade { display: flex; align-items: center; gap: 12px; padding: 12px 18px; }
+.studio-wallpaper-fade wa-slider { flex: 1 1 auto; min-width: 140px; --thumb-width: 1.15em; --thumb-height: 1.15em; }
+.studio-wallpaper-fade wa-slider::part(track) { background: var(--panel-accent); }
+.studio-wallpaper-fade-val { min-width: 3.5ch; text-align: right; color: var(--muted); }
 
 /* Footer spans the wall: progress/tally left, created stamp hard right. */
 .iw-footer {
   display: flex; align-items: center; justify-content: space-between;
   flex-wrap: wrap; gap: 12px;
-  /* Pinned to the poster's bottom; padding keeps the old minimum spacing. */
+  /* Pinned to the wall's bottom. */
   margin-top: auto;
-  padding-top: clamp(20px, 3vw, 40px);
 }
 .iw-progress { display: flex; align-items: center; gap: 12px; flex: 1 1 280px; max-width: 75%; }
 .iw-progress .tournament-progress { flex: 1 1 auto; }

@@ -25,6 +25,13 @@ const MENU_EDGE_PX = 8;
 
 const isShown = (el) => getComputedStyle(el).display !== "none";
 
+// Where a ribbon button's own popover anchors: the button, or the ellipsis
+// while the button sits in the overflow menu.
+export function ribbonAnchor(btn) {
+  if (!btn.classList.contains(OVERFLOWED_CLASS)) return btn;
+  return btn.parentElement.querySelector(`:scope > .${MORE_CLASS}`) ?? btn;
+}
+
 // Wire overflow onto one ribbon element. Returns { detach } for unmount.
 export function attachRibbonOverflow(ribbon) {
   const more = document.createElement("button");

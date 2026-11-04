@@ -30,9 +30,13 @@ const navRows = (list) =>
   Array.from(list.querySelectorAll(":scope > li")).filter((li) => rowButtons(li).some(isEnabled));
 const submenuOf = (li) => li.querySelector(":scope > ul");
 
+// A buttonless (sub)menu, e.g. a slider flyout, focuses its first control.
+const FALLBACK_CONTROL = "input, wa-slider";
+
 export function focusFirstItem(list) {
   const row = navRows(list)[0];
   if (row) rowButtons(row).find(isEnabled)?.focus();
+  else list.querySelector(FALLBACK_CONTROL)?.focus();
 }
 
 // Enabled button in `row` nearest to position `pos` (keeps the column on

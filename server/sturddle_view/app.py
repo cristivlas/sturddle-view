@@ -33,6 +33,7 @@ from .api import openings as openings_api
 from .api import settings as settings_api
 from .api import test_hooks as test_hooks_api
 from .api import tournaments as tournaments_api
+from .api import wallpaper as wallpaper_api
 from .api import ws as ws_api
 from .api._ai_kick import ai_coordinator, live_playbook
 from .config import (
@@ -405,6 +406,7 @@ def create_app(
     app.include_router(openings_api.router)
     app.include_router(tournaments_api.router)
     app.include_router(tournaments_api.internal_router)
+    app.include_router(wallpaper_api.router)
     app.include_router(ws_api.router)
     if settings.test_mode:
         app.include_router(test_hooks_api.router)
