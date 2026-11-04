@@ -637,7 +637,8 @@ class HumanVsEngine:
     def book_ref(self) -> BookRef | None:
         """Per-game PGN book reference armed at new_game -- its anchor is
         the game-start cursor, unlike the live settings cursor which has
-        already advanced; restored with a saved game. None in view mode."""
+        already advanced; restored with a saved game. None when the game
+        has no book."""
         return self._book
 
     def view_full_moves_san(self) -> list[str]:

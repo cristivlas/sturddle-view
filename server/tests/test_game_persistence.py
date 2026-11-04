@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import chess
 import chess.pgn
+import pytest
 from fastapi.testclient import TestClient
 
 from sturddle_view.app import create_app
@@ -265,12 +266,18 @@ async def test_book_survives_a_restart(tmp_path):
     assert restarted.book_ref() == book
 
 
-def test_store_drops_a_malformed_book(tmp_path):
+@pytest.mark.parametrize("book", [
+    {"path": "/books/lines.pgn"},
+    {"path": "/books/lines.pgn", "plies": "8", "order": "random", "anchor": 5},
+    {"path": "/books/lines.pgn", "plies": None, "order": 1, "anchor": 5},
+    {"path": "/books/lines.pgn", "plies": None, "order": "random", "anchor": True},
+])
+def test_store_drops_a_malformed_book(tmp_path, book):
     store = GameStore(path=tmp_path / "game.json")
     store.save(GameState(
         game_id="g", human_white=True, tc_initial_seconds=60.0,
         tc_increment_seconds=0.0, white_time=60.0, black_time=60.0,
-        paused=False, book={"path": "/books/lines.pgn"},
+        paused=False, book=book,
     ))
     assert store.load().book is None
 

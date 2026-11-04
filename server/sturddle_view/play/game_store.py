@@ -71,14 +71,22 @@ class GameState:
     version: int = SCHEMA_VERSION
 
 
-_BOOK_KEYS = frozenset({"path", "plies", "order", "anchor"})
+# BookRef field -> the types its saved value may have.
+_BOOK_TYPES: dict[str, tuple[type, ...]] = {
+    "path": (str,),
+    "plies": (int, type(None)),
+    "order": (str, type(None)),
+    "anchor": (int,),
+}
 
 
 def _book_fields(raw) -> dict | None:
     """The saved book's fields, or None when absent or malformed."""
-    if not isinstance(raw, dict) or raw.keys() != _BOOK_KEYS:
+    if not isinstance(raw, dict) or raw.keys() != _BOOK_TYPES.keys():
         return None
-    if not isinstance(raw["path"], str) or not isinstance(raw["anchor"], int):
+    if not all(
+        type(raw[key]) in types for key, types in _BOOK_TYPES.items()
+    ):
         return None
     return dict(raw)
 
