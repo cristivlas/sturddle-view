@@ -373,6 +373,62 @@ async def test_maximized_window_ends_on_list_border_after_resize(server, make_pa
     assert_no_page_errors(errors)
 
 
+LOG_WIN = ".winbox.sturddle-wb-arena:has(.wb-eventlog)"
+# Inline bottom edge of a window (its layout target, not the animated box).
+_INLINE_BOTTOM = """(sel) => {
+  const w = document.querySelector(sel);
+  return parseFloat(w.style.top) + parseFloat(w.style.height);
+}"""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("height", (700, 1100))
+@pytest.mark.parametrize("state", ("max", "min"))
+async def test_min_or_max_window_survives_a_resize_in_clean(server, make_page, state, height):
+    """Maximize or minimize, then resize: the debounced refit re-lays out
+    Clean around the window instead of restoring it into its tile
+    (docs/tournament-workspace.md T-S1 / T-S2)."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await goto_arena_tournaments(page, server)
+    await page.click(".tournament-row")
+    await open_arena_workspace(page)
+    await page.click(f"{STANDINGS_WIN} .wb-{state}")
+    await page.wait_for_selector(f"{STANDINGS_WIN}.{state}")
+    log_bottom = await page.evaluate(_INLINE_BOTTOM, LOG_WIN)
+    await page.set_viewport_size({"width": VIEWPORT["width"], "height": height})
+    # The refit has run once Clean re-tiled the other windows to the new edge.
+    await page.wait_for_function(
+        f"([sel, before]) => ({_INLINE_BOTTOM})(sel) !== before", arg=[LOG_WIN, log_bottom],
+    )
+
+    assert await page.locator(f"{STANDINGS_WIN}.{state}").count() == 1
+    if state == "max":
+        await _bottom_ends_on_list_border(page, 1, STANDINGS_WIN, expect_max=True)
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_closed_window_stays_closed_after_a_resize_in_clean(server, make_page):
+    """X-close, then resize: the refit tiles what is open and does not reopen
+    the closed window (docs/tournament-workspace.md T-S4)."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await goto_arena_tournaments(page, server)
+    await page.click(".tournament-row")
+    await open_arena_workspace(page)
+    await page.click(f"{LEFT_WIN} .wb-close")
+    await page.wait_for_selector(LEFT_WIN, state="detached")
+    log_bottom = await page.evaluate(_INLINE_BOTTOM, LOG_WIN)
+    await page.set_viewport_size({"width": VIEWPORT["width"], "height": 700})
+    await page.wait_for_function(
+        f"([sel, before]) => ({_INLINE_BOTTOM})(sel) !== before", arg=[LOG_WIN, log_bottom],
+    )
+
+    assert await page.locator(LEFT_WIN).count() == 0
+    assert_no_page_errors(errors)
+
+
 @pytest.mark.asyncio
 async def test_maximized_window_ends_on_list_border_when_built_unlaid(server, make_page):
     """The maximize fence is read at maximize, not at creation: windows built

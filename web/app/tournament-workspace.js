@@ -278,8 +278,12 @@ function tidy(ctx, { preserveMin = false } = {}) {
   setLayout(ctx, LAYOUT.TIDY);
   const { left, top, slotGrid } = ctx;
   const keys = ["engines", "standings", "schedule", "log"];
-  for (const k of keys) {
-    if (!ctx.windows[k]) openSystemWindow(ctx, k, { flash: false });
+  // Only an explicit Clean (menu, fresh workspace) reopens closed system
+  // windows; a refit keeps them closed (docs/tournament-workspace.md T-S4).
+  if (!preserveMin) {
+    for (const k of keys) {
+      if (!ctx.windows[k]) openSystemWindow(ctx, k, { flash: false });
+    }
   }
   // If watchers exist, re-grid them first while the 4 system panels
   // are hidden, so the user doesn't see the panels flicker beneath
@@ -346,6 +350,11 @@ function tidy(ctx, { preserveMin = false } = {}) {
   for (const [k, x, y, w, h] of placements) {
     const wb = ctx.windows[k];
     if (!wb) continue;
+    // A refit (preserveMin) keeps a minimized or maximized window as the
+    // user left it (docs/tournament-workspace.md T-S1 / T-S2); the rest tile
+    // around it, as Tile / Snap's preserveMax do. Clean from the menu (no
+    // preserveMin) still brings every system window back into its tile.
+    if (preserveMin && (wb.min || wb.max)) continue;
     unminimize(wb);
     wb.resize(w, h).move(x, y);
     setShadow(wb, false, ctx);
@@ -1535,11 +1544,18 @@ export function openTournamentWorkspace({
       spec.postCreate?.(ctx.windows[key]);
     }
   } else {
-    // Default: standings only; initWorkspace opens more based on tournament status.
+    // Default: standings only; the explicit Clean below opens the other
+    // three (initWorkspace's status-based opens then find them open).
     ctx.windows.standings = makeBox(ctx, "standings", windowSpecs.standings.title, standingsView);
     windowSpecs.standings.postCreate(ctx.windows.standings);
   }
-  requestAnimationFrame(() => reapplyLayout(ctx));
+  // Fresh: an explicit Clean (all four system windows). Restored: a refit
+  // of what was saved, closed windows staying closed.
+  requestAnimationFrame(() => {
+    if (ctx.finalized) return;
+    if (restoreFromSaved) reapplyLayout(ctx);
+    else tidy(ctx);
+  });
 
   // ---- Data refresh -----------------------------------------------------
 
