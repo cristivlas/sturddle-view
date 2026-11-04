@@ -544,6 +544,40 @@ def test_clause_boundary_breaks_binding():
     ) == []
 
 
+# From the wild (2026-11-04): "10...Nxe3, eliminating the light-squared
+# bishop" -- the e3 bishop is dark-squared (f1 holds the light one, so the
+# bare check cleared it). The participle clause describes the move before
+# its comma. White to move; "10..." marks Black's capture.
+_WILD_E3_FEN = "r2qkb1r/pp3ppp/n1b1p3/2p3N1/3P1Pn1/P3B3/1PP1N1PP/R2QKB1R w KQkq - 5 10"
+_WILD_E3_TEXT = (
+    "Black answers with 10...Nxe3, eliminating the light-squared bishop and "
+    "initiating a series of exchanges that simplify the center."
+)
+
+
+def test_wild_participle_clause_binds_the_move_before_its_comma():
+    board = _board(_WILD_E3_FEN)
+    assert find_false_bishop_color_refs(_WILD_E3_TEXT, board) == [
+        "light-squared bishop on e3"
+    ]
+
+
+def test_participle_clause_correct_color_clears():
+    board = _board(_WILD_E3_FEN)
+    assert find_false_bishop_color_refs(
+        "Black answers with 10...Nxe3, eliminating the dark-squared bishop", board,
+    ) == []
+
+
+def test_non_participle_comma_clause_stays_unbound():
+    # A new subject after the comma: not about Nxe3's victim; the bare
+    # check clears (f1 is light).
+    board = _board(_WILD_E3_FEN)
+    assert find_false_bishop_color_refs(
+        "Black answers with 10...Nxe3, while the light-squared bishop waits", board,
+    ) == []
+
+
 # From the wild (2026-07-26): "Bxd6 removes the active light-squared bishop"
 # -- d6 is dark. Clause binding caught it, but the semantic judge wrongly
 # cleared the flag; square-bound labels are now judge-exempt (invariant).
