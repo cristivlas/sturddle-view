@@ -1,6 +1,6 @@
 # AI Playbook Matchers - Spec (tentative)
 
-Status: stage 1 shipped on `feat/0.7.7`; stage 2 draft for review.
+Status: stages 1 and 2 implemented on `feat/0.7.7`.
 Companion to `docs/ai-playbook-spec.md`, which stays the reference for
 today's tags, fragments and combination rules.
 
@@ -243,7 +243,7 @@ logged and the bad entry skipped (never crash the server).
 recorded per entry, but nothing reads `trust` in stage 1: the render
 gate for unverified entries comes with the first research file.
 
-## Stage 2: pawn formations (draft)
+## Stage 2: pawn formations
 
 The first data-defined matcher: named pawn formations (Maroczy bind,
 hanging pawns, Hedgehog, Stonewall, ...) declared in playbook files,
@@ -334,9 +334,12 @@ text = "..."
   formation tags; (3) coverage: a user pattern missing its `_ours` or
   `_theirs` fragment is dropped, with any fragment that names it.
   Shipped coverage gaps are errors, as in stage 1.
-- The catalog builds one `FormationMatcher` from the surviving
-  patterns and exposes `Catalog.matchers`: the static `REGISTRY` with
-  the formation matcher spliced in after `imbalance`.
+- The catalog builds one `FormationMatcher` (`play/formations.py`) from
+  the surviving patterns and exposes `Catalog.matchers`: the static
+  `REGISTRY` with the formation matcher spliced in after `imbalance`
+  (`compose`).
+- Pattern ids are lowercase identifiers; example FENs must be valid
+  positions.
 - Overrides: a user file may add patterns; a shipped pattern id cannot
   be redefined (same rule as re-keying an entry). Its fragments'
   text is overridable as usual.
@@ -346,21 +349,36 @@ text = "..."
   `default_catalog().matchers`. The `Situation` gains a `formation`
   field.
 - Render order comes from the same composed registry: the renderer
-  derives its specific axes from `catalog.matchers`, not from the
-  static `SPECIFIC_AXES` (a catalog-only matcher would never render).
+  derives its specific axes from `catalog.matchers`
+  (`Catalog.specific_axes`); the static `SPECIFIC_AXES` is gone (a
+  catalog-only matcher would never render).
 
-### Shipped content (first draft)
+### Shipped content
 
-Four formations not covered by a coded tag; text drafted with the
-implementation and reviewed as chess content. Squares are relative to
-the side (Black's d6 is d3):
+Nine formations not covered by a coded tag, in
+`play/playbook_data/formations.toml`. Squares are relative to the side
+(Black's d6 is d3). The last five came from mining 5,000 engine games
+for common central structures; on that sample the nine together fire
+(held for 3+ moves, opening / middlegame) in about 29% of games, the
+first four alone in about 5%:
 
 | id | ours | theirs | plan gist (ours) |
 |----|------|--------|------------------|
 | `maroczy` | c4, e4, no d-pawn | no c-pawn, d3 | keep the bind, stop the ...b5 / ...d5 breaks, squeeze |
 | `hanging` | c4 + d4, no b- / e-pawn | no c- or d-pawn | keep them mobile, push d5 at the right time |
 | `hedgehog` | a3 b3 d3 e3, no c-pawn | c4, e4 | wait, prepare the ...b5 or ...d5 break |
+| `french_chain` | d4, e5 | d4, e3 | defend the chain's base, kingside space |
 | `stonewall` | c3 d4 e3 f4 | free | e5 outpost, kingside attack; mind the e4 hole |
+| `kid_center` | d5, e4 | d3, e4 | c-pawn break on the queenside; meet the f-pawn storm |
+| `benoni` | no c-pawn, d5 | c4, d3, no e-pawn | keep the wedge, prepare e-pawn break |
+| `caro_kann` | c2-3, d4, no e-pawn | c3, no d-pawn, e2-3 | space, central outpost before the c-pawn break |
+| `open_sicilian` | c2-3, no d-pawn, e4 | no c-pawn, d3 | development lead, half-open d-file, attack |
+
+Rows are in load order. `french_chain` loads before `stonewall`: both
+have four constraints and can hold at once (a Stonewall against an
+enemy pawn on e5), and there the chain is the right plan, since the
+Stonewall hole holds the enemy pawn. The grammar cannot say "no enemy
+pawn on the hole", so load order decides.
 
 ### Stage 2 testing
 

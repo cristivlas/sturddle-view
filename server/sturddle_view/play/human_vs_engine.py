@@ -101,6 +101,7 @@ from .import_position import explain_invalid, parse_fen
 from .mode import Mode, ModeConflictError, Op
 from .opening_lines import BookRef, book_reply
 from .playbook import Situation, classify
+from .playbook_catalog import default_catalog
 from .tablebase import TablebaseProber
 
 if TYPE_CHECKING:
@@ -651,7 +652,10 @@ class HumanVsEngine:
     def situation(self, our_color: chess.Color) -> Situation:
         """Playbook tags for the position under review from `our_color`'s
         point of view (docs/ai-playbook-spec.md)."""
-        return classify(self._board, score_white=self._position_eval(), our_color=our_color)
+        return classify(
+            self._board, score_white=self._position_eval(), our_color=our_color,
+            matchers=default_catalog().matchers,
+        )
 
     def _position_eval(self) -> dict | None:
         """White-POV eval dict ({cp} or {mate}) for the position under

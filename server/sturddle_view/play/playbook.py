@@ -9,13 +9,14 @@ gate's margin and its repetition veto.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import chess
 
 from ..chess.score import SCORE_CP, SCORE_MATE
 from ..env_utils import env_int
-from .matchers import REGISTRY, Match, MatchContext
+from .matchers import REGISTRY, Match, MatchContext, Matcher
 from .playbook_tags import (
     MARGIN_BETTER,
     MARGIN_CRUSHING,
@@ -72,7 +73,8 @@ class Situation:
     bishops: str | None = None
     pawn: str | None = None
     castling: str | None = None
-    # Every match, in REGISTRY order.
+    formation: str | None = None
+    # Every match, in matcher order.
     matches: tuple[Match, ...] = ()
 
 
@@ -143,12 +145,17 @@ def repeating_moves(board: chess.Board) -> tuple[str, ...]:
 
 
 def classify(
-    board: chess.Board, *, score_white: dict | None, our_color: chess.Color,
+    board: chess.Board,
+    *,
+    score_white: dict | None,
+    our_color: chess.Color,
+    matchers: Sequence[Matcher] = REGISTRY,
 ) -> Situation:
     """Tags for `board` from `our_color`'s point of view. `score_white` is
     an engine/PGN eval dict ({cp} or {mate}, white POV); None or unusable
     falls back to the material balance. Repetitions come from the board's
-    move stack."""
+    move stack. `matchers` defaults to the static registry; the catalog's
+    composed registry adds the data-defined ones."""
     cp_white = _score_cp_white(score_white)
     source = SOURCE_EVAL
     if cp_white is None:
@@ -159,7 +166,7 @@ def classify(
         board=board, our_color=our_color, margin=_margin_tag(cp_ours),
         margin_source=source, phase=phase_tag(board),
     )
-    matches = tuple(m for matcher in REGISTRY for m in matcher.match(ctx))
+    matches = tuple(m for matcher in matchers for m in matcher.match(ctx))
     return Situation(
         margin=ctx.margin,
         margin_source=source,

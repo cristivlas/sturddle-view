@@ -152,6 +152,12 @@ only; the gate never reads them. Directional values (`_ours` /
 - `castling` reads king squares, not move history: an artificially
   castled king plays the same race, and a bare FEN works.
 
+### `formation` -- named pawn formations
+
+Data-defined patterns (Maroczy, KID center, French chain, ...) in
+playbook files; see docs/ai-playbook-matchers-spec.md, Stage 2. Renders
+after `imbalance`, like the other specific tags.
+
 ### Tags deferred
 
 - `king_safety` (castled / open lines near king / pawn shield)

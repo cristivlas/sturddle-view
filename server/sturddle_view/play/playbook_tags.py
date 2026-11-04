@@ -14,6 +14,7 @@ AXIS_IMBALANCE = "imbalance"
 AXIS_BISHOPS = "bishops"
 AXIS_PAWN = "pawn"
 AXIS_CASTLING = "castling"
+AXIS_FORMATION = "formation"
 
 MARGIN_LOST = "lost"
 MARGIN_LOSING = "losing"

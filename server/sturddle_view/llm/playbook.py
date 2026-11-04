@@ -10,7 +10,6 @@ import chess
 
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
 from ..env_utils import env_int
-from ..play.matchers import SPECIFIC_AXES
 from ..play.playbook import Situation
 from ..play.playbook_catalog import (
     NOTE_CRUSHING,
@@ -70,8 +69,8 @@ def _standing(situation: Situation, subject: str) -> str:
 
 
 def _specific(situation: Situation, catalog: Catalog) -> list[str]:
-    """Specific-tag fragments in registry order."""
-    tags = ((axis, getattr(situation, axis)) for axis in SPECIFIC_AXES)
+    """Specific-tag fragments in the catalog's composed registry order."""
+    tags = ((axis, getattr(situation, axis)) for axis in catalog.specific_axes)
     return [catalog.fragment(axis, tag) for axis, tag in tags if tag is not None]
 
 

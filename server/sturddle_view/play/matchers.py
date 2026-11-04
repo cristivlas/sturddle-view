@@ -4,7 +4,9 @@
 A matcher reads a MatchContext (board plus the base tags, margin and
 phase) and returns the tags it recognizes. Pure functions of the
 context: no engine, no I/O. REGISTRY order is render order for the
-specific tags. Thresholds are named constants with SV_ env overrides.
+specific tags; the catalog splices data-defined matchers in
+(play/playbook_catalog.py `compose`). Thresholds are named constants
+with SV_ env overrides.
 """
 from __future__ import annotations
 
@@ -277,9 +279,4 @@ REGISTRY: tuple[Matcher, ...] = (
         {AXIS_CASTLING: frozenset({CASTLING_OPPOSITE})},
         _middlegame_talk(lambda ctx: castling_tag(ctx.board)),
     ),
-)
-
-# Specific-tag axes in render order; structure renders by its own rule.
-SPECIFIC_AXES = tuple(
-    axis for matcher in REGISTRY for axis in matcher.tags if axis != AXIS_STRUCTURE
 )
