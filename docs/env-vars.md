@@ -164,10 +164,11 @@ source; check the file when a precise value matters.
 | `SV_AI_PLAYBOOK_OPENING_MIN_PAWNS` | `13` | Playbook phase: pawns on board at or above this -> `opening`. | `server/sturddle_view/play/playbook.py` |
 | `SV_AI_PLAYBOOK_MIDDLEGAME_MIN_PAWNS` | `9` | Playbook phase: lower pawn bound of `middlegame`. | `server/sturddle_view/play/playbook.py` |
 | `SV_AI_PLAYBOOK_LATE_MIN_PAWNS` | `5` | Playbook phase: lower pawn bound of `late`; fewer -> `endgame`. | `server/sturddle_view/play/playbook.py` |
-| `SV_AI_PLAYBOOK_CLOSED_MIN_LOCKED` | `3` | Playbook structure: locked pawn pairs needed for `closed`. | `server/sturddle_view/play/playbook.py` |
-| `SV_AI_PLAYBOOK_CLOSED_MAX_OPEN_FILES` | `1` | Playbook structure: most open files a `closed` position may have. | `server/sturddle_view/play/playbook.py` |
-| `SV_AI_PLAYBOOK_OPEN_MIN_FILES` | `4` | Playbook structure: open + half-open files needed for `open`. | `server/sturddle_view/play/playbook.py` |
+| `SV_AI_PLAYBOOK_CLOSED_MIN_LOCKED` | `3` | Playbook structure: locked pawn pairs needed for `closed`. | `server/sturddle_view/play/matchers.py` |
+| `SV_AI_PLAYBOOK_CLOSED_MAX_OPEN_FILES` | `1` | Playbook structure: most open files a `closed` position may have. | `server/sturddle_view/play/matchers.py` |
+| `SV_AI_PLAYBOOK_OPEN_MIN_FILES` | `4` | Playbook structure: open + half-open files needed for `open`. | `server/sturddle_view/play/matchers.py` |
 | `SV_AI_PLAYBOOK_MAX_FRAGMENTS` | `3` | Cap on plan fragments per turn (the repetition note rides outside it). | `server/sturddle_view/llm/playbook.py` |
+| `SV_AI_PLAYBOOK_DIR` | platform config dir `/playbook` | User playbook files (`*.toml`): override shipped plan text by entry id or add entries; bad entries are logged and skipped. | `server/sturddle_view/play/playbook_catalog.py` |
 | `SV_AI_VERIFICATION_DEPTH` | `25` | Floor depth for the end-of-turn recommendation check; searches at least this deep (deeper if the model asked for more). | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_TOP_MOVES_MAX_N` | `5` | Hard cap on `top_moves` candidate count; over-large `n` clamped. | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_REPORT_LINE_MAX_PLIES` | `40` | Hard cap on `report_line` continuation length; bounds payload size (no engine search). | `server/sturddle_view/play/tools_engine.py` |

@@ -57,7 +57,8 @@ from .engine_analysis import (
 from .engine_info_pump import is_interesting_info, publish_engine_info, pump_engine_info
 from .engine_supervisor import EngineSupervisor
 from .play_out_caps import MAX_IDEAS, PLAY_OUT_MAX_MOVES
-from .playbook import AHEAD_MARGINS, Situation
+from .playbook import Situation
+from .playbook_tags import AHEAD_MARGINS
 from .tactics import all_forks, all_pins, piece_label
 
 

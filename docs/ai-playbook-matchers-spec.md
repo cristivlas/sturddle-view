@@ -27,14 +27,15 @@ A refactor with no behavior change:
 
 ### Acceptance
 
-- **Behavior:** for every situation the current tests build, the
-  rendered plan line is identical before and after. Checked once with a
-  throwaway script that dumps `render_playbook` output over the test
-  matrix on `feat/0.7.6` and diffs it on this branch; not committed
-  (no byte-stable tests, project rule).
+- **Behavior:** the rendered plan line is identical before and after.
+  Checked once with a throwaway script (not committed: no byte-stable
+  tests, project rule) that dumps `classify` + `render_playbook` output
+  on `feat/0.7.6` and diffs it on this branch: the test files' FENs and
+  seeded random games under 10 evals x both colors x both modes, and
+  every `Situation` field combination.
 - **Tests:** `test_playbook.py` changes mechanically. It imports the
   private fragment dicts today (`_MARGIN_FRAGMENTS`, `_COMBO_FRAGMENTS`,
-  ...); those lookups become catalog lookups by entry id. Assertions
+  ...); those lookups become catalog lookups by tag (notes by id). Assertions
   keep their meaning (which fragment, in which order); no test is
   dropped.
 
@@ -46,7 +47,7 @@ Later stages), any new tag, any new content source.
 - **Base tags** -- `margin` and `phase`: computed by `classify()` before
   any matcher runs; every matcher may read them.
 - **Matcher** -- recognizes zero or more patterns in a position.
-- **Match** -- one recognized pattern: axis, tag, evidence.
+- **Match** -- one recognized pattern: axis, tag.
 - **Entry** -- one piece of plan text plus the tags that select it.
 - **Catalog** -- all loaded entries, merged and validated.
 - **Trust** -- how far an entry's content has been vetted.
@@ -73,7 +74,6 @@ class MatchContext:
 class Match:
     axis: str                      # structure, imbalance, bishops, ...
     tag: str
-    evidence: Evidence | None = None
 ```
 
 - Matchers are pure functions of the context: no engine search, no I/O
@@ -81,18 +81,21 @@ class Match:
 - `tags` is the declared vocabulary: the coverage test and user-file
   validation read it. A match outside it is a bug (asserted in tests).
 - One tag per axis, as today; each axis has exactly one matcher.
-- No match score in stage 1: today's predicates are boolean. A score
-  (defaulted, so non-breaking) comes with the first similarity matcher,
-  together with how scores compare across matchers.
+- No match score or evidence in stage 1: today's predicates are boolean
+  and nothing would read either. Both come as defaulted (non-breaking)
+  fields with their first consumer: a score with the first similarity
+  matcher (with how scores compare across matchers), evidence (squares,
+  pieces, a game reference) with the first renderer that shows it.
 - Phase gating ("not in the endgame") stays inside each matcher, read
   from `ctx.phase`.
-- `Evidence` is a small typed record: squares / pieces involved, and
-  later a game reference (Later stages). Stage 1 fills squares where
-  cheap; nothing renders it yet.
 
 ### Registry
 
-- An ordered tuple of matcher instances in `play/matchers.py`.
+- An ordered tuple of matcher instances in `play/matchers.py`, which
+  also holds the predicates and their thresholds.
+- Tag vocabulary (axes, tags) in `play/playbook_tags.py`, shared by the
+  classifier, the matchers, the catalog and the renderer (breaks the
+  classifier <-> registry import cycle).
 - Stage 1 matchers: structure, imbalance, bishops, pawn, castling.
 - Margin and phase are not matchers: they are base tags, computed first
   so matchers can read them (no circularity).
@@ -118,9 +121,8 @@ class Match:
 
 TOML (stdlib `tomllib`, Python 3.12). Entries are short by design (plan
 line < 80 words); long source material belongs in citations, not
-entries, so Markdown's prose comfort buys nothing. One file per theme
-(`margin.toml`, `structure.toml`, `imbalance.toml`, `combos.toml`,
-`notes.toml`, ...).
+entries, so Markdown's prose comfort buys nothing. One file per kind:
+`fragments.toml`, `combos.toml`, `notes.toml`.
 
 ```toml
 [meta]
@@ -187,18 +189,22 @@ text = "A repetition is available ($moves): repeating is the drawing try; take i
 ### Location and layering
 
 - Catalog loader `play/playbook_catalog.py`, shipped data
-  `play/playbook_data/*.toml` (package data; `pyproject.toml` needs a
-  `package-data` entry). Next to the matchers, so later declarative
+  `play/playbook_data/*.toml` (package data in `pyproject.toml`; the
+  desktop exe bundles the dir via `--add-data` in
+  `scripts/build_exe.py`). Next to the matchers, so later declarative
   patterns (match data in files) live with the code that reads them.
 - `llm/playbook.py` keeps rendering, reading text from the catalog (it
   already imports `play.playbook`).
-- User files: `app_config_dir() / "playbook" / *.toml`; path
+- User files: `app_config_dir() / "playbook" / *.toml`; tests point it
+  at a temp dir (conftest); path
   overridable via `SV_AI_PLAYBOOK_DIR`.
 - `load_catalog(shipped_dir, user_dir) -> Catalog`: pure, immutable
   result, no module state. Tests call it on temp dirs.
 - `render_playbook(situation, mode, side_to_move, catalog=None)`: an
   explicit catalog wins; `None` reads `default_catalog()`, loaded on
-  first use from the real dirs and cached. No hot reload in stage 1.
+  first use from the real dirs and cached; the app lifespan warms it,
+  so a bad shipped file fails boot, not a live plan call. No hot reload
+  in stage 1.
 
 ### Overrides
 
@@ -210,6 +216,8 @@ text = "A repetition is available ($moves): repeating is the drawing try; take i
   collide with an existing `(kind, when)`.
 - Provenance is per entry after merge: an override carries its own
   file's `[meta]` (source, trust), not the shipped file's.
+- A user-dir file's `source` is `user` (default) or `research`; one
+  claiming `shipped` is rejected whole.
 
 ### Validation at load
 
@@ -260,15 +268,16 @@ gate for unverified entries comes with the first research file.
 
 ## Testing
 
-- `test_playbook.py`: mechanical port from private dicts to entry ids
-  (see Acceptance).
+- `test_playbook.py`: mechanical port from private dicts to catalog
+  lookups (see Acceptance).
 - Matchers: each returns the same tag as the old predicate over the
   existing FEN tables; every emitted match is in its declared `tags`.
 - Catalog: the validation invariants above, run over the shipped files.
 - Overrides: replace by id, re-key rejected, new id added, `(kind,
   when)` collision rejected, bad template identifier rejected; each bad
   user entry skipped and logged.
-- No byte-stable text assertions (project rule); assert entry ids.
+- No byte-stable text assertions (project rule); assert the entry a tag
+  selects.
 
 ## Voice
 

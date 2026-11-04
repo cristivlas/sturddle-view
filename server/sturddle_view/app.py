@@ -62,6 +62,7 @@ from .play.engine_analysis import make_analysis_supervisor
 from .play.engine_supervisor import EngineSupervisor
 from .play.game_store import GameStore
 from .play.human_vs_engine import HumanVsEngine, live_hve
+from .play.playbook_catalog import default_catalog
 from .play.tools_engine import (
     MATERIAL_TOOL_SPEC,
     PIECE_AT_TOOL_SPEC,
@@ -303,6 +304,8 @@ async def _lifespan(app: FastAPI):
             log.info("reconciled stale running tournament: %s (%s)", t.id, t.name)
     except Exception:
         log.error("tournament reconcile failed", exc_info=True)
+    # A bad shipped playbook fails boot, not a live plan call.
+    default_catalog()
     _signal_ready_port()
     yield
     # Best-effort: stop any active tournament on shutdown.

@@ -22,6 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ENTRY_POINT = ROOT / "scripts" / "_exe_entry.py"
+PLAYBOOK_DATA = ROOT / "server" / "sturddle_view" / "play" / "playbook_data"
 VENV_DIR = ROOT / "build_venv"
 BUILDS_DIR = ROOT / "dist"
 
@@ -127,6 +128,8 @@ def _pyinstaller_cmd(python: Path, exe_name: str, icon: Path, console: bool = Fa
         f"--specpath={VENV_DIR}",
         # Bundle the entire web tree (static assets + openings TSVs).
         f"--add-data={ROOT / 'web'}{sep}web",
+        # Shipped playbook text, beside the module that reads it.
+        f"--add-data={PLAYBOOK_DATA}{sep}{PLAYBOOK_DATA.relative_to(ROOT / 'server')}",
     ]
     for imp in _HIDDEN_IMPORTS:
         cmd.append(f"--hidden-import={imp}")

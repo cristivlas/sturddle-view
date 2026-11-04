@@ -42,6 +42,9 @@ sturddle-view = "sturddle_view.__main__:main"
 [tool.setuptools.packages.find]
 where = ["server"]
 
+[tool.setuptools.package-data]
+"sturddle_view.play" = ["playbook_data/*.toml"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

@@ -1,5 +1,5 @@
-"""Playbook: situation classifier (play/playbook.py) and fragment rendering
-(llm/playbook.py). Positions are built to sit on one side of each
+"""Playbook: situation classifier (play/playbook.py, play/matchers.py) and
+fragment rendering (llm/playbook.py). Positions are built to sit on one side of each
 threshold; text assertions check fragment identity, never exact bytes.
 """
 from __future__ import annotations
@@ -8,28 +8,41 @@ import chess
 import pytest
 
 import sturddle_view.llm.playbook as playbook_prompts
-from sturddle_view.llm.playbook import (
-    _BISHOPS_FRAGMENTS,
-    _CASTLING_FRAGMENTS,
-    _COMBO_FRAGMENTS,
-    _CRUSHING_NOTE,
-    _IMBALANCE_FRAGMENTS,
-    _LOST_NOTE,
-    _MARGIN_FRAGMENTS,
-    _PAWN_FRAGMENTS,
-    _PHASE_FRAGMENTS,
-    _REPEAT_AHEAD_NOTE,
-    _REPEAT_BEHIND_NOTE,
-    _STRUCTURE_FRAGMENTS,
-    render_playbook,
-)
+from sturddle_view.llm.playbook import render_playbook
 from sturddle_view.llm.prompts import COACH_MODE, COMMENTATOR_MODE, PLAYBOOK_LEAD
+from sturddle_view.play.matchers import (
+    castling_tag,
+    imbalance_tag,
+    structure_tag,
+)
 from sturddle_view.play.playbook import (
+    DECISIVE_CP,
+    EDGE_CP,
+    RESIGN_CP,
+    Situation,
+    classify,
+    phase_tag,
+    repeating_moves,
+)
+from sturddle_view.play.playbook_catalog import (
+    NOTE_CRUSHING,
+    NOTE_LOST,
+    NOTE_REPEAT_AHEAD,
+    NOTE_REPEAT_BEHIND,
+    SHIPPED_DIR,
+    load_catalog,
+)
+from sturddle_view.play.playbook_tags import (
+    AXIS_BISHOPS,
+    AXIS_CASTLING,
+    AXIS_IMBALANCE,
+    AXIS_MARGIN,
+    AXIS_PAWN,
+    AXIS_PHASE,
+    AXIS_STRUCTURE,
     BISHOPS_OPPOSITE,
     BISHOPS_OPPOSITE_QUEENS,
     CASTLING_OPPOSITE,
-    DECISIVE_CP,
-    EDGE_CP,
     IMBALANCE_IQP_OURS,
     IMBALANCE_IQP_THEIRS,
     IMBALANCE_MINORITY_OURS,
@@ -47,18 +60,10 @@ from sturddle_view.play.playbook import (
     PHASE_LATE,
     PHASE_MIDDLEGAME,
     PHASE_OPENING,
-    RESIGN_CP,
     SOURCE_EVAL,
     SOURCE_MATERIAL,
     STRUCTURE_CLOSED,
     STRUCTURE_OPEN,
-    Situation,
-    castling_tag,
-    classify,
-    imbalance_tag,
-    phase_tag,
-    repeating_moves,
-    structure_tag,
 )
 
 
@@ -101,6 +106,14 @@ _OPP_CASTLING_FEN = "3q2k1/ppp2ppp/8/8/8/8/PPP2PPP/2KQ4 w - - 0 1"
 _SAME_WING_KINGS_FEN = "3q2k1/ppp2ppp/8/8/8/8/PPP2PPP/3Q2K1 w - - 0 1"
 _OPP_CASTLING_NO_BLACK_QUEEN_FEN = "6k1/ppp2ppp/8/8/8/8/PPP2PPP/2KQ4 w - - 0 1"
 _OPP_CASTLING_ENDGAME_FEN = "3q2k1/p6p/8/8/8/8/P6P/2KQ4 w - - 0 1"
+
+
+# Shipped text only: assertions name the fragment a tag selects.
+_SHIPPED = load_catalog(SHIPPED_DIR, None)
+
+
+def _frag(axis: str, tag: str) -> str:
+    return _SHIPPED.fragment(axis, tag)
 
 
 def _situation(**overrides) -> Situation:
@@ -293,9 +306,9 @@ def test_render_additive_margin_then_phase_then_structure():
     )
     assert line.startswith(PLAYBOOK_LEAD)
     assert "you are slightly worse;" in line
-    margin_at = line.index(_MARGIN_FRAGMENTS[MARGIN_WORSE])
-    phase_at = line.index(_PHASE_FRAGMENTS[PHASE_MIDDLEGAME])
-    structure_at = line.index(_STRUCTURE_FRAGMENTS[STRUCTURE_OPEN])
+    margin_at = line.index(_frag(AXIS_MARGIN, MARGIN_WORSE))
+    phase_at = line.index(_frag(AXIS_PHASE, PHASE_MIDDLEGAME))
+    structure_at = line.index(_frag(AXIS_STRUCTURE, STRUCTURE_OPEN))
     assert margin_at < phase_at < structure_at
 
 
@@ -303,15 +316,18 @@ def test_render_phase_leads_in_endgame():
     line = render_playbook(
         _situation(margin=MARGIN_BETTER, phase=PHASE_ENDGAME), COACH_MODE, chess.WHITE,
     )
-    phase_at = line.index(_PHASE_FRAGMENTS[PHASE_ENDGAME])
-    assert phase_at < line.index(_MARGIN_FRAGMENTS[MARGIN_BETTER])
+    phase_at = line.index(_frag(AXIS_PHASE, PHASE_ENDGAME))
+    assert phase_at < line.index(_frag(AXIS_MARGIN, MARGIN_BETTER))
 
 
 def test_render_even_margin_has_no_margin_fragment():
     line = render_playbook(_situation(), COACH_MODE, chess.WHITE)
     assert "you are level;" in line
-    assert _PHASE_FRAGMENTS[PHASE_MIDDLEGAME] in line
-    assert not any(f in line for f in _MARGIN_FRAGMENTS.values())
+    assert _frag(AXIS_PHASE, PHASE_MIDDLEGAME) in line
+    assert not any(
+        _frag(AXIS_MARGIN, m) in line
+        for m in (MARGIN_WORSE, MARGIN_BETTER, MARGIN_LOSING, MARGIN_WINNING)
+    )
 
 
 def test_render_combo_replaces_margin_and_phase_keeps_structure():
@@ -319,10 +335,10 @@ def test_render_combo_replaces_margin_and_phase_keeps_structure():
         _situation(margin=MARGIN_WINNING, phase=PHASE_ENDGAME, structure=STRUCTURE_OPEN),
         COACH_MODE, chess.WHITE,
     )
-    assert _COMBO_FRAGMENTS[(MARGIN_WINNING, PHASE_ENDGAME)] in line
-    assert _MARGIN_FRAGMENTS[MARGIN_WINNING] not in line
-    assert _PHASE_FRAGMENTS[PHASE_ENDGAME] not in line
-    assert _STRUCTURE_FRAGMENTS[STRUCTURE_OPEN] in line
+    assert _SHIPPED.combo(MARGIN_WINNING, AXIS_PHASE, PHASE_ENDGAME) in line
+    assert _frag(AXIS_MARGIN, MARGIN_WINNING) not in line
+    assert _frag(AXIS_PHASE, PHASE_ENDGAME) not in line
+    assert _frag(AXIS_STRUCTURE, STRUCTURE_OPEN) in line
 
 
 def test_render_structure_combo_keeps_phase():
@@ -330,28 +346,28 @@ def test_render_structure_combo_keeps_phase():
         _situation(margin=MARGIN_LOSING, phase=PHASE_MIDDLEGAME, structure=STRUCTURE_CLOSED),
         COACH_MODE, chess.WHITE,
     )
-    assert _COMBO_FRAGMENTS[(MARGIN_LOSING, STRUCTURE_CLOSED)] in line
-    assert _STRUCTURE_FRAGMENTS[STRUCTURE_CLOSED] not in line
-    assert _PHASE_FRAGMENTS[PHASE_MIDDLEGAME] in line
+    assert _SHIPPED.combo(MARGIN_LOSING, AXIS_STRUCTURE, STRUCTURE_CLOSED) in line
+    assert _frag(AXIS_STRUCTURE, STRUCTURE_CLOSED) not in line
+    assert _frag(AXIS_PHASE, PHASE_MIDDLEGAME) in line
 
 
 def test_render_extreme_margins_use_base_combo_plus_note():
     lost = render_playbook(
         _situation(margin=MARGIN_LOST, structure=STRUCTURE_OPEN), COACH_MODE, chess.WHITE,
     )
-    assert _COMBO_FRAGMENTS[(MARGIN_LOSING, STRUCTURE_OPEN)] in lost
-    assert _LOST_NOTE in lost
+    assert _SHIPPED.combo(MARGIN_LOSING, AXIS_STRUCTURE, STRUCTURE_OPEN) in lost
+    assert _SHIPPED.text(NOTE_LOST) in lost
     crushing = render_playbook(
         _situation(margin=MARGIN_CRUSHING, phase=PHASE_ENDGAME), COMMENTATOR_MODE, chess.BLACK,
     )
-    assert _COMBO_FRAGMENTS[(MARGIN_WINNING, PHASE_ENDGAME)] in crushing
-    assert _CRUSHING_NOTE in crushing
+    assert _SHIPPED.combo(MARGIN_WINNING, AXIS_PHASE, PHASE_ENDGAME) in crushing
+    assert _SHIPPED.text(NOTE_CRUSHING) in crushing
 
 
 def test_lost_note_is_coach_only_and_not_in_opening():
     lost = _situation(margin=MARGIN_LOST)
-    assert _LOST_NOTE not in render_playbook(lost, COMMENTATOR_MODE, chess.WHITE)
-    assert _LOST_NOTE not in render_playbook(
+    assert _SHIPPED.text(NOTE_LOST) not in render_playbook(lost, COMMENTATOR_MODE, chess.WHITE)
+    assert _SHIPPED.text(NOTE_LOST) not in render_playbook(
         _situation(margin=MARGIN_LOST, phase=PHASE_OPENING), COACH_MODE, chess.WHITE,
     )
 
@@ -375,9 +391,9 @@ def test_render_caps_fragment_count(monkeypatch):
     line = render_playbook(
         _situation(margin=MARGIN_WORSE, structure=STRUCTURE_OPEN), COACH_MODE, chess.WHITE,
     )
-    assert _MARGIN_FRAGMENTS[MARGIN_WORSE] in line
-    assert _PHASE_FRAGMENTS[PHASE_MIDDLEGAME] not in line
-    assert _STRUCTURE_FRAGMENTS[STRUCTURE_OPEN] not in line
+    assert _frag(AXIS_MARGIN, MARGIN_WORSE) in line
+    assert _frag(AXIS_PHASE, PHASE_MIDDLEGAME) not in line
+    assert _frag(AXIS_STRUCTURE, STRUCTURE_OPEN) not in line
 
 
 def test_render_is_one_line():
@@ -393,11 +409,11 @@ def test_render_repetition_note_by_margin():
     behind = render_playbook(
         _situation(margin=MARGIN_LOSING, repeats=repeats), COACH_MODE, chess.WHITE,
     )
-    assert behind.endswith(_REPEAT_BEHIND_NOTE.format(moves="Nf3, Nh3"))
+    assert behind.endswith(_SHIPPED.note(NOTE_REPEAT_BEHIND, moves="Nf3, Nh3"))
     ahead = render_playbook(
         _situation(margin=MARGIN_BETTER, repeats=repeats), COACH_MODE, chess.WHITE,
     )
-    assert ahead.endswith(_REPEAT_AHEAD_NOTE.format(moves="Nf3, Nh3"))
+    assert ahead.endswith(_SHIPPED.note(NOTE_REPEAT_AHEAD, moves="Nf3, Nh3"))
     even = render_playbook(_situation(repeats=repeats), COACH_MODE, chess.WHITE)
     assert "Nf3" not in even
 
@@ -407,11 +423,11 @@ def test_render_specific_tag_replaces_phase_after_margin():
         _situation(margin=MARGIN_WORSE, structure=STRUCTURE_OPEN, imbalance=IMBALANCE_IQP_THEIRS),
         COACH_MODE, chess.WHITE,
     )
-    margin_at = line.index(_MARGIN_FRAGMENTS[MARGIN_WORSE])
-    iqp_at = line.index(_IMBALANCE_FRAGMENTS[IMBALANCE_IQP_THEIRS])
-    structure_at = line.index(_STRUCTURE_FRAGMENTS[STRUCTURE_OPEN])
+    margin_at = line.index(_frag(AXIS_MARGIN, MARGIN_WORSE))
+    iqp_at = line.index(_frag(AXIS_IMBALANCE, IMBALANCE_IQP_THEIRS))
+    structure_at = line.index(_frag(AXIS_STRUCTURE, STRUCTURE_OPEN))
     assert margin_at < iqp_at < structure_at
-    assert _PHASE_FRAGMENTS[PHASE_MIDDLEGAME] not in line
+    assert _frag(AXIS_PHASE, PHASE_MIDDLEGAME) not in line
 
 
 def test_render_specific_tags_in_precedence_order_capped_from_the_tail():
@@ -422,11 +438,11 @@ def test_render_specific_tags_in_precedence_order_capped_from_the_tail():
         ),
         COACH_MODE, chess.WHITE,
     )
-    iqp_at = line.index(_IMBALANCE_FRAGMENTS[IMBALANCE_IQP_OURS])
-    bishops_at = line.index(_BISHOPS_FRAGMENTS[BISHOPS_OPPOSITE_QUEENS])
-    pawn_at = line.index(_PAWN_FRAGMENTS[PAWN_PASSED_OUTSIDE_OURS])
+    iqp_at = line.index(_frag(AXIS_IMBALANCE, IMBALANCE_IQP_OURS))
+    bishops_at = line.index(_frag(AXIS_BISHOPS, BISHOPS_OPPOSITE_QUEENS))
+    pawn_at = line.index(_frag(AXIS_PAWN, PAWN_PASSED_OUTSIDE_OURS))
     assert iqp_at < bishops_at < pawn_at
-    assert _CASTLING_FRAGMENTS[CASTLING_OPPOSITE] not in line
+    assert _frag(AXIS_CASTLING, CASTLING_OPPOSITE) not in line
 
 
 def test_render_phase_leads_in_endgame_with_specific_tags_after():
@@ -434,9 +450,9 @@ def test_render_phase_leads_in_endgame_with_specific_tags_after():
         _situation(margin=MARGIN_BETTER, phase=PHASE_ENDGAME, bishops=BISHOPS_OPPOSITE),
         COACH_MODE, chess.WHITE,
     )
-    phase_at = line.index(_PHASE_FRAGMENTS[PHASE_ENDGAME])
-    margin_at = line.index(_MARGIN_FRAGMENTS[MARGIN_BETTER])
-    bishops_at = line.index(_BISHOPS_FRAGMENTS[BISHOPS_OPPOSITE])
+    phase_at = line.index(_frag(AXIS_PHASE, PHASE_ENDGAME))
+    margin_at = line.index(_frag(AXIS_MARGIN, MARGIN_BETTER))
+    bishops_at = line.index(_frag(AXIS_BISHOPS, BISHOPS_OPPOSITE))
     assert phase_at < margin_at < bishops_at
 
 
@@ -448,9 +464,9 @@ def test_render_structure_combo_specific_tag_replaces_phase():
         ),
         COACH_MODE, chess.WHITE,
     )
-    combo_at = line.index(_COMBO_FRAGMENTS[(MARGIN_LOSING, STRUCTURE_CLOSED)])
-    assert combo_at < line.index(_IMBALANCE_FRAGMENTS[IMBALANCE_MINORITY_THEIRS])
-    assert _PHASE_FRAGMENTS[PHASE_MIDDLEGAME] not in line
+    combo_at = line.index(_SHIPPED.combo(MARGIN_LOSING, AXIS_STRUCTURE, STRUCTURE_CLOSED))
+    assert combo_at < line.index(_frag(AXIS_IMBALANCE, IMBALANCE_MINORITY_THEIRS))
+    assert _frag(AXIS_PHASE, PHASE_MIDDLEGAME) not in line
 
 
 def test_render_phase_combo_keeps_specific_then_structure():
@@ -461,15 +477,15 @@ def test_render_phase_combo_keeps_specific_then_structure():
         ),
         COACH_MODE, chess.WHITE,
     )
-    combo_at = line.index(_COMBO_FRAGMENTS[(MARGIN_WORSE, PHASE_OPENING)])
-    castling_at = line.index(_CASTLING_FRAGMENTS[CASTLING_OPPOSITE])
-    structure_at = line.index(_STRUCTURE_FRAGMENTS[STRUCTURE_CLOSED])
+    combo_at = line.index(_SHIPPED.combo(MARGIN_WORSE, AXIS_PHASE, PHASE_OPENING))
+    castling_at = line.index(_frag(AXIS_CASTLING, CASTLING_OPPOSITE))
+    structure_at = line.index(_frag(AXIS_STRUCTURE, STRUCTURE_CLOSED))
     assert combo_at < castling_at < structure_at
 
 
 @pytest.mark.parametrize("margin, note", [
-    (MARGIN_LOST, _LOST_NOTE),
-    (MARGIN_CRUSHING, _CRUSHING_NOTE),
+    (MARGIN_LOST, _SHIPPED.text(NOTE_LOST)),
+    (MARGIN_CRUSHING, _SHIPPED.text(NOTE_CRUSHING)),
 ])
 def test_render_note_wins_its_slot_over_axis_fragments(margin, note):
     # Combo + IQP + bishops would fill all three slots; the note evicts bishops.
@@ -481,8 +497,8 @@ def test_render_note_wins_its_slot_over_axis_fragments(margin, note):
         COACH_MODE, chess.WHITE,
     )
     assert line.endswith(note)
-    assert _IMBALANCE_FRAGMENTS[IMBALANCE_IQP_THEIRS] in line
-    assert _BISHOPS_FRAGMENTS[BISHOPS_OPPOSITE] not in line
+    assert _frag(AXIS_IMBALANCE, IMBALANCE_IQP_THEIRS) in line
+    assert _frag(AXIS_BISHOPS, BISHOPS_OPPOSITE) not in line
 
 
 def test_render_repetition_note_survives_the_fragment_cap(monkeypatch):
@@ -491,4 +507,4 @@ def test_render_repetition_note_survives_the_fragment_cap(monkeypatch):
         _situation(margin=MARGIN_LOST, structure=STRUCTURE_CLOSED, repeats=("Nf3",)),
         COACH_MODE, chess.WHITE,
     )
-    assert line.endswith(_REPEAT_BEHIND_NOTE.format(moves="Nf3"))
+    assert line.endswith(_SHIPPED.note(NOTE_REPEAT_BEHIND, moves="Nf3"))

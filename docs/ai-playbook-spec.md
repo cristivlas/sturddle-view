@@ -2,7 +2,9 @@
 
 Situation-dependent strategy for the AI analysis agent's pick.
 Companion to `docs/ai-analysis-spec.md` (section Future skills points here).
-Shipped: classifier `play/playbook.py`, fragments `llm/playbook.py`,
+Shipped: classifier `play/playbook.py` + matchers `play/matchers.py`,
+plan text `play/playbook_data/*.toml` (catalog `play/playbook_catalog.py`,
+see docs/ai-playbook-matchers-spec.md), rendering `llm/playbook.py`,
 plan line served by the narrator's `plan` tool (`_ai_kick.live_playbook`),
 repetition gate in `tools_engine.make_recommend_move_tool`
 (`app._ai_situation_provider`). Since docs/ai-analysis-skin-in-the-game.md
