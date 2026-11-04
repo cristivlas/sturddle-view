@@ -1,4 +1,5 @@
-# Combo overrides: margin plus phase or structure; replaces both fragments.
+# Combo overrides: margin plus bishops, phase or structure; replaces both fragments.
+# A bishops combo outranks the others (opposite-colored bishops change what trades do).
 
 [meta]
 source = "shipped"
@@ -51,3 +52,15 @@ id = "combo.better_opening"
 kind = "combo"
 when = { margin = "better", phase = "opening" }
 text = "slightly better in the opening: keep developing, do not cash in early; punish the lag later."
+
+[[entry]]
+id = "combo.winning_opposite"
+kind = "combo"
+when = { margin = "winning", bishops = "opposite" }
+text = "ahead with opposite-colored bishops: keep the rooks on and pawns on both wings, create a second passed pawn; avoid pawn trades."
+
+[[entry]]
+id = "combo.losing_opposite"
+kind = "combo"
+when = { margin = "losing", bishops = "opposite" }
+text = "behind with opposite-colored bishops: trade pawns, blockade on the bishop's color, head for the drawn ending."

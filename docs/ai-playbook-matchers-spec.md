@@ -151,13 +151,15 @@ text = "A repetition is available ($moves): repeating is the drawing try; take i
 ### Kinds
 
 - `fragment` (default): `when` has exactly one key.
-- `combo`: `when` is `margin` plus exactly one of `phase` / `structure`
-  (the only pairs the renderer looks up: margin+phase, then
-  margin+structure); replaces both axes' fragments.
-  The axes it consumes are its `when` keys. Phase combos and structure
-  combos behave differently today (a phase combo keeps the specific
-  tags, a structure combo keeps the phase slot); that branching stays in
-  code, keyed on whether `phase` is among the consumed axes.
+- `combo`: `when` is `margin` plus exactly one of `bishops` / `phase` /
+  `structure` (the only pairs the renderer looks up, in that order:
+  margin+bishops, margin+phase, then margin+structure); replaces both
+  axes' fragments. The axes it consumes are its `when` keys. Phase
+  combos and structure combos behave differently (a phase combo keeps
+  the specific tags, a structure combo keeps the phase slot); a bishops
+  combo renders like a phase combo, minus the bishops and structure
+  fragments. That
+  branching stays in code.
 - `note`: no `when`; selected by id from code (crushing / lost notes,
   repetition notes). Notes are the only kind with template fields.
 

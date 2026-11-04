@@ -367,6 +367,63 @@ def test_render_extreme_margins_use_base_combo_plus_note():
     assert _SHIPPED.text(NOTE_CRUSHING) in crushing
 
 
+@pytest.mark.parametrize("margin, base", [
+    (MARGIN_WINNING, MARGIN_WINNING),
+    (MARGIN_CRUSHING, MARGIN_WINNING),
+    (MARGIN_LOSING, MARGIN_LOSING),
+    (MARGIN_LOST, MARGIN_LOSING),
+])
+def test_render_opposite_bishops_combo_outranks_the_endgame_combo(margin, base):
+    # Ahead, the endgame combo says "trade pieces"; with opposite-colored
+    # bishops that draws, so the bishops combo replaces it and the phase.
+    line = render_playbook(
+        _situation(margin=margin, phase=PHASE_ENDGAME, bishops=BISHOPS_OPPOSITE),
+        COACH_MODE, chess.WHITE,
+    )
+    assert _SHIPPED.combo(base, AXIS_BISHOPS, BISHOPS_OPPOSITE) in line
+    assert _SHIPPED.combo(base, AXIS_PHASE, PHASE_ENDGAME) not in line
+    assert _frag(AXIS_PHASE, PHASE_ENDGAME) not in line
+    assert _frag(AXIS_BISHOPS, BISHOPS_OPPOSITE) not in line
+
+
+def test_render_opposite_bishops_combo_keeps_the_other_specific_tags():
+    line = render_playbook(
+        _situation(
+            margin=MARGIN_WINNING, phase=PHASE_LATE, bishops=BISHOPS_OPPOSITE,
+            pawn=PAWN_PASSED_OUTSIDE_OURS,
+        ),
+        COACH_MODE, chess.WHITE,
+    )
+    combo_at = line.index(_SHIPPED.combo(MARGIN_WINNING, AXIS_BISHOPS, BISHOPS_OPPOSITE))
+    assert combo_at < line.index(_frag(AXIS_PAWN, PAWN_PASSED_OUTSIDE_OURS))
+
+
+def test_render_opposite_bishops_combo_outranks_the_structure_combo():
+    # winning + open alone says "simplification is the win": a draw here.
+    line = render_playbook(
+        _situation(
+            margin=MARGIN_WINNING, phase=PHASE_LATE, structure=STRUCTURE_OPEN,
+            bishops=BISHOPS_OPPOSITE,
+        ),
+        COACH_MODE, chess.WHITE,
+    )
+    assert _SHIPPED.combo(MARGIN_WINNING, AXIS_BISHOPS, BISHOPS_OPPOSITE) in line
+    assert _SHIPPED.combo(MARGIN_WINNING, AXIS_STRUCTURE, STRUCTURE_OPEN) not in line
+    # The tag rules out knights: "bishops over knights" would be moot.
+    assert _frag(AXIS_STRUCTURE, STRUCTURE_OPEN) not in line
+
+
+@pytest.mark.parametrize("margin, bishops", [
+    (MARGIN_BETTER, BISHOPS_OPPOSITE),          # no combo for a small edge
+    (MARGIN_WINNING, BISHOPS_OPPOSITE_QUEENS),  # queens on: attack, not trades
+])
+def test_render_opposite_bishops_without_a_combo_keeps_the_bishops_fragment(margin, bishops):
+    line = render_playbook(
+        _situation(margin=margin, phase=PHASE_ENDGAME, bishops=bishops), COACH_MODE, chess.WHITE,
+    )
+    assert _frag(AXIS_BISHOPS, bishops) in line
+
+
 def test_lost_note_is_coach_only_and_not_in_opening():
     lost = _situation(margin=MARGIN_LOST)
     assert _SHIPPED.text(NOTE_LOST) not in render_playbook(lost, COMMENTATOR_MODE, chess.WHITE)

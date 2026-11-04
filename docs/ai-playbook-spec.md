@@ -272,13 +272,21 @@ first, then per-axis fallback. First draft:
 | `losing` + `endgame`  | king activity and counterplay; seek the drawing fortress or opposite-color bishops before it is too late |
 | `worse` + `opening`   | finish development first; no pawn grabs; castle and consolidate |
 | `better` + `opening`  | keep developing; do not cash in early; punish the lag later |
+| `winning` + `bishops=opposite` | keep the rooks on and pawns on both wings, create a second passed pawn; avoid pawn trades (the bare bishop ending draws) |
+| `losing` + `bishops=opposite`  | trade pawns, blockade on the bishop's color, head for the drawn ending |
 
 `lost` and `crushing` take the `losing` / `winning` combo rows plus their
 own margin fragment (resign note / convert note) appended.
 
-No combo rows for the specific tags yet; pairs to watch live:
-`winning` + `endgame` vs `bishops=opposite`, `worse` + `opening` vs
-`castling=opposite`.
+The bishops combos outrank the phase and structure ones: with
+opposite-colored bishops "trade pieces, not pawns" (`winning` +
+`endgame`) draws. A bishops combo replaces the margin, bishops and
+phase fragments (like a phase combo; "push passed pawns" would
+contradict the drawing plan behind) and drops structure, whose
+knights-vs-bishops clause the tag (no knights) makes moot; the other
+specific tags still follow. No row for `opposite_queens`: with queens on,
+the bishops fragment's attack advice holds. Pair still to watch live:
+`worse` + `opening` vs `castling=opposite`.
 
 ## Grounding
 

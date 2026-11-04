@@ -21,6 +21,7 @@ from ..play.playbook_catalog import (
 )
 from ..play.playbook_tags import (
     AHEAD_MARGINS,
+    AXIS_BISHOPS,
     AXIS_MARGIN,
     AXIS_PHASE,
     AXIS_STRUCTURE,
@@ -68,27 +69,40 @@ def _standing(situation: Situation, subject: str) -> str:
     return f"{subject} {verb} {_MARGIN_WORDS[situation.margin]}{source}"
 
 
-def _specific(situation: Situation, catalog: Catalog) -> list[str]:
-    """Specific-tag fragments in the catalog's composed registry order."""
-    tags = ((axis, getattr(situation, axis)) for axis in catalog.specific_axes)
+def _specific(situation: Situation, catalog: Catalog, skip: str | None = None) -> list[str]:
+    """Specific-tag fragments in the catalog's composed registry order;
+    `skip` names an axis a combo already consumed."""
+    tags = ((axis, getattr(situation, axis)) for axis in catalog.specific_axes if axis != skip)
     return [catalog.fragment(axis, tag) for axis, tag in tags if tag is not None]
+
+
+def _bishops_combo(situation: Situation, base: str, catalog: Catalog) -> str | None:
+    if situation.bishops is None:
+        return None
+    return catalog.combo(base, AXIS_BISHOPS, situation.bishops)
 
 
 def _axis_fragments(situation: Situation, catalog: Catalog) -> list[str]:
     base = BASE_MARGIN.get(situation.margin, situation.margin)
-    combo = catalog.combo(base, AXIS_PHASE, situation.phase)
-    combo_on_phase = combo is not None
+    # A bishops combo outranks the phase / structure ones (opposite-colored
+    # bishops turn "trade pieces" into a draw). Like a phase combo it also
+    # replaces the phase fragment ("push passed pawns" contradicts the
+    # drawing plan behind), and it drops structure, whose knights-vs-bishops
+    # clause the tag (no knights) makes moot.
+    bishops_combo = _bishops_combo(situation, base, catalog)
+    combo = bishops_combo or catalog.combo(base, AXIS_PHASE, situation.phase)
+    combo_replaces_phase = combo is not None
     if combo is None and situation.structure is not None:
         combo = catalog.combo(base, AXIS_STRUCTURE, situation.structure)
     phase = catalog.fragment(AXIS_PHASE, situation.phase)
     structure = (
-        [] if situation.structure is None
+        [] if situation.structure is None or bishops_combo
         else [catalog.fragment(AXIS_STRUCTURE, situation.structure)]
     )
-    specific = _specific(situation, catalog)
+    specific = _specific(situation, catalog, AXIS_BISHOPS if bishops_combo else None)
     # Outside the endgame, phase is the generic fallback: specific tags replace it.
     phase_slot = specific or [phase]
-    if combo_on_phase:
+    if combo_replaces_phase:
         return [combo, *specific, *structure]
     if combo is not None:
         return [combo, *phase_slot]

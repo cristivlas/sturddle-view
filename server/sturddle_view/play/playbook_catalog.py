@@ -20,6 +20,7 @@ from ..env_utils import env_path
 from .formations import FormationMatcher, Pattern, PatternError, example_misses, parse_pattern
 from .matchers import REGISTRY, Matcher
 from .playbook_tags import (
+    AXIS_BISHOPS,
     AXIS_FORMATION,
     AXIS_IMBALANCE,
     AXIS_MARGIN,
@@ -65,7 +66,7 @@ NOTE_FIELDS: Mapping[str, frozenset[str]] = {
 }
 
 # The only partners the renderer looks up next to the margin.
-COMBO_PARTNERS = frozenset({AXIS_PHASE, AXIS_STRUCTURE})
+COMBO_PARTNERS = frozenset({AXIS_BISHOPS, AXIS_PHASE, AXIS_STRUCTURE})
 
 # Margins with no fragment by design: level, or reached by normalization.
 _NO_FRAGMENT = frozenset({(AXIS_MARGIN, MARGIN_EVEN)})
@@ -188,7 +189,7 @@ def _check_when(kind: str, when: When, vocab: Vocabulary) -> None:
     if kind == KIND_COMBO and (
         len(when) != 2 or AXIS_MARGIN not in axes or not axes - {AXIS_MARGIN} <= COMBO_PARTNERS
     ):
-        raise CatalogError("a combo's `when` is margin plus phase or structure")
+        raise CatalogError("a combo's `when` is margin plus bishops, phase or structure")
     if kind == KIND_NOTE and when:
         raise CatalogError("a note has no `when`")
 
