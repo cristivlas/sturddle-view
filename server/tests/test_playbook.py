@@ -89,6 +89,8 @@ _IQP_ENDGAME_FEN = "6k1/8/4p3/8/3P4/8/8/6K1 w - - 0 1"
 # Carlsbad: White a+b vs a+b+c, d4/d5 locked, 7 pawns each.
 _MINORITY_FEN = "6k1/pp3ppp/2p5/3p4/3P4/4P3/PP3PPP/6K1 w - - 0 1"
 _MINORITY_UNEQUAL_FEN = "6k1/pp3pp1/2p5/3p4/3P4/4P3/PP3PPP/6K1 w - - 0 1"
+# Same pawn counts, but a d5 / d6 lock: a Benoni, not a Carlsbad.
+_MINORITY_BENONI_FEN = "6k1/pp3ppp/3p4/2pP4/4P3/8/PP3PPP/6K1 w - - 0 1"
 # Dark c1 bishop vs light c8 bishop.
 _OPP_BISHOPS_QUEENS_FEN = "2bq2k1/pp3ppp/8/8/8/8/PP3PPP/2BQ2K1 w - - 0 1"
 _OPP_BISHOPS_NO_BLACK_QUEEN_FEN = "2b3k1/pp3ppp/8/8/8/8/PP3PPP/2BQ2K1 w - - 0 1"
@@ -263,6 +265,7 @@ def test_symmetric_tags_hold_for_both_colors(fen, field, expected):
     (_IQP_OWN_C_PAWN_FEN, "imbalance"),
     (_IQP_PASSED_FEN, "imbalance"),
     (_MINORITY_UNEQUAL_FEN, "imbalance"),
+    (_MINORITY_BENONI_FEN, "imbalance"),
     (_OPP_BISHOPS_KNIGHT_FEN, "bishops"),
     (_SAME_BISHOPS_FEN, "bishops"),
     (_D_FILE_PASSER_FEN, "pawn"),

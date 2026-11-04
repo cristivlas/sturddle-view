@@ -142,7 +142,7 @@ only; the gate never reads them. Directional values (`_ours` /
 | Tag | Values | Condition | Fires in |
 |-----|--------|-----------|----------|
 | `imbalance` | `iqp_ours` / `iqp_theirs` | one side: exactly one d-pawn, not passed, no c- or e-pawns; the other side: no d-pawn | not endgame |
-| `imbalance` | `minority_ours` / `minority_theirs` | Carlsbad: one side a+b pawns (none on c) vs a+b+c, d-pawns locked, equal pawn totals | not endgame |
+| `imbalance` | `minority_ours` / `minority_theirs` | Carlsbad: one side a+b pawns (none on c) vs a+b+c, d4 locked against d5 (not a d5 / d6 Benoni lock), equal pawn totals | not endgame |
 | `bishops` | `opposite_queens` / `opposite` | one bishop each, opposite-colored squares, no knights; `opposite_queens` while both sides have a queen | every phase |
 | `pawn` | `passed_outside_ours` / `passed_outside_theirs` | exactly one side has a passed pawn on the a-, b-, g- or h-file | every phase |
 | `castling` | `opposite` | kings on opposite wings (files a-c vs g-h), each on its own first two ranks; both queens on | not endgame |

@@ -178,11 +178,13 @@ def _iqp_side(board: chess.Board) -> chess.Color | None:
 
 
 def _minority_side(board: chess.Board) -> chess.Color | None:
-    """Carlsbad shape: the side with a+b pawns against a+b+c, d-pawns locked,
-    equal pawn totals."""
+    """Carlsbad shape: the side with a+b pawns against a+b+c, d4 locked
+    against d5, equal pawn totals."""
     white = board.pieces_mask(chess.PAWN, chess.WHITE)
     black = board.pieces_mask(chess.PAWN, chess.BLACK)
-    if chess.popcount(white) != chess.popcount(black) or not _locked(board) & chess.BB_FILE_D:
+    # d4 against d5 only: a d5 / d6 lock is a Benoni, not a Carlsbad. The
+    # colors-reversed d3 / d4 lock (from the English) is rare; left out on purpose.
+    if chess.popcount(white) != chess.popcount(black) or not _locked(board) & chess.BB_D5:
         return None
     for color, own, enemy in ((chess.WHITE, white, black), (chess.BLACK, black, white)):
         if (

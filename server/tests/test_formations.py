@@ -164,6 +164,12 @@ def test_french_chain_wins_the_tie_with_a_stonewall_against_e5():
         assert classify(board, score_white=None, our_color=color, matchers=matchers).formation == tag
 
 
+def test_benoni_is_not_a_minority_attack():
+    board = chess.Board("rnbq1rk1/pp3pbp/3p1np1/2pP4/4P3/2N2N2/PP2BPPP/R1BQK2R w KQ - 0 9")
+    situation = classify(board, score_white=None, our_color=chess.WHITE, matchers=_shipped().matchers)
+    assert (situation.formation, situation.imbalance) == ("benoni_ours", None)
+
+
 # --- catalog ---------------------------------------------------------------
 
 def test_static_registry_has_no_formations():
