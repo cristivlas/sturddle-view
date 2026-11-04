@@ -946,12 +946,13 @@ def _clause_last_san(text: str, pos: int) -> re.Match | None:
     return sans[-1] if sans else None
 
 
-# A comma clause opening on one of these participles describes the move
-# just before the comma ("10...Nxe3, eliminating the light-squared bishop").
+# A comma clause opening on one of these participles, or on "which",
+# describes the move just before the comma ("10...Nxe3, eliminating the
+# light-squared bishop"; "7.Bg2, which develops the light-squared bishop").
 _PARTICIPLE_HOST_RE = re.compile(
     r"\s*(?:eliminating|removing|capturing|winning|taking|trading|exchanging|"
     r"liquidating|grabbing|netting|picking up|developing|activating|rerouting|"
-    r"relocating)\b",
+    r"relocating|which)\b",
     re.IGNORECASE,
 )
 
