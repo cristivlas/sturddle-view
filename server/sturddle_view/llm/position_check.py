@@ -946,20 +946,33 @@ def _clause_last_san(text: str, pos: int) -> re.Match | None:
     return sans[-1] if sans else None
 
 
-# A comma clause opening on one of these participles, or on "which",
-# describes the move just before the comma ("10...Nxe3, eliminating the
-# light-squared bishop"; "7.Bg2, which develops the light-squared bishop").
+# Verbs whose object is the moved or captured piece, as (participle, "which"
+# form): a comma clause opening on either describes the move just before the
+# comma ("10...Nxe3, eliminating the light-squared bishop"; "7.Bg2, which
+# develops the light-squared bishop"). Other verbs ("which frees the
+# bishop") name another piece and stay unbound.
+_HOST_VERBS = (
+    ("eliminating", "eliminates"), ("removing", "removes"),
+    ("capturing", "captures"), ("winning", "wins"), ("taking", "takes"),
+    ("trading", "trades"), ("exchanging", "exchanges"),
+    ("liquidating", "liquidates"), ("grabbing", "grabs"), ("netting", "nets"),
+    ("picking up", "picks up"), ("developing", "develops"),
+    ("activating", "activates"), ("rerouting", "reroutes"),
+    ("relocating", "relocates"),
+)
 _PARTICIPLE_HOST_RE = re.compile(
-    r"\s*(?:eliminating|removing|capturing|winning|taking|trading|exchanging|"
-    r"liquidating|grabbing|netting|picking up|developing|activating|rerouting|"
-    r"relocating|which)\b",
+    r"\s*(?:"
+    + "|".join(participle for participle, _ in _HOST_VERBS)
+    + r"|which\s+(?:"
+    + "|".join(verb for _, verb in _HOST_VERBS)
+    + r"))\b",
     re.IGNORECASE,
 )
 
 
 def _participle_host_san(text: str, pos: int) -> re.Match | None:
-    """The SAN a participle clause at `pos` describes: the last one in the
-    clause before its comma, when the clause opens on a move participle.
+    """The SAN a host-verb clause at `pos` describes: the last one in the
+    clause before its comma, when the clause opens on a _HOST_VERBS form.
     ", and the bishop will follow" names a new subject and stays unbound."""
     start = _clause_start(text, pos)
     if start == 0 or text[start - 1] != "," or not _PARTICIPLE_HOST_RE.match(text, start):

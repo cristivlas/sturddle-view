@@ -601,6 +601,15 @@ def test_which_clause_correct_color_clears():
     ) == []
 
 
+def test_which_clause_with_a_non_move_verb_stays_unbound():
+    # "frees" is about another bishop, not Bb5's mover: the bare check
+    # clears it (c1 is dark).
+    board = _board(_WILD_G2_FEN)
+    assert find_false_bishop_color_refs(
+        "The recommended move is 7.Bb5, which frees the dark-squared bishop", board,
+    ) == []
+
+
 # From the wild (2026-07-26): "Bxd6 removes the active light-squared bishop"
 # -- d6 is dark. Clause binding caught it, but the semantic judge wrongly
 # cleared the flag; square-bound labels are now judge-exempt (invariant).
