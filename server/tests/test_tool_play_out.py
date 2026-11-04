@@ -9,7 +9,9 @@ Pins the contract the skin-in-the-game design rests on
   live position,
 - a step that drops the mover's eval past PLAY_OUT_MARGIN_CP fails and is not
   kept, yet its first move still counts as played out,
-- a mating move ends the line; the record ranks first moves by eval after.
+- a mating move ends the line; the record ranks first moves by eval after,
+- a search of the live position (the board shows its arrow) is reported as
+  a progress step first, so the panel names the move the arrow shows.
 
 Searches come from a scripted _run_one_search (side-to-move POV), so the
 real SearchCache and step logic run without an engine.
@@ -21,6 +23,7 @@ import pytest
 
 from sturddle_view.events import EVT_ENGINE_SEARCH_START, EventBus
 from sturddle_view.llm.cancel import CancelToken
+from sturddle_view.llm.tool_progress import reporting_progress
 from sturddle_view.play import tools_engine
 from sturddle_view.play.tools_engine import (
     MAX_IDEAS,
@@ -136,6 +139,38 @@ async def test_each_step_starts_a_fresh_search_panel(monkeypatch):
     while not queue.empty():
         kinds.append(queue.get_nowait().kind)
     assert kinds.count(EVT_ENGINE_SEARCH_START) == 1
+
+
+@pytest.mark.asyncio
+async def test_live_position_search_is_reported_before_it_runs(monkeypatch):
+    # The live-position search paints the engine's best (d4) on the board
+    # under a "Playing out e4" row: a step row must name it first. A later
+    # step searches off the board's position, which paints nothing.
+    log: list = []
+    tool, _bus = _tool(monkeypatch, chess.Board(), PlayOutRecord(), calls=log)
+
+    async def progress(name, input_):
+        log.append((name, input_))
+
+        async def finish(output):
+            log.append(("done", name, output))
+
+        return finish
+
+    with reporting_progress(progress):
+        await _step(tool, "e4, aim d4", "e4")
+        first = len(log)
+        await _step(tool, "e4, aim d4", "Nf3")
+
+    best = tools_engine.PROGRESS_ENGINE_BEST
+    depth = min(tools_engine.PLAY_OUT_DEPTH, tools_engine.MAX_DEPTH)
+    assert log[:first] == [
+        (best, {"depth": depth}),
+        (epd_after(), None),
+        ("done", best, {"san": "d4", "score_text": "+0.30", "depth": depth}),
+        (epd_after("e4"), None),
+    ]
+    assert best not in [entry[0] for entry in log[first:]]
 
 
 @pytest.mark.asyncio

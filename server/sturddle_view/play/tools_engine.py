@@ -1872,11 +1872,16 @@ def make_play_out_tool(
             bus=bus, game_id=game_id, cancel_token=cancel_token,
             settings_provider=settings_provider,
         )
+        # A search of the live position paints the engine's best on the
+        # board: name it in the panel. Later steps search off the board.
+        report = skip_progress if line.moves else report_progress
         try:
+            finish = await report(PROGRESS_ENGINE_BEST, {_DEPTH_KEY: limit.depth})
             before_info, cancelled = await _position_search(
                 cache, engine_launcher, line.board, limit, **search_kw,
             )
             if not cancelled:
+                await finish(_step_result(line.board, before_info))
                 after_info, cancelled = await _position_search(
                     cache, engine_launcher, after, limit, **search_kw,
                 )

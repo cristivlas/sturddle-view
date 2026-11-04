@@ -268,6 +268,9 @@ function buildBody() {
   // tool_use_id -> tool-call line DOM node, so a failure event can
   // mark the exact row by id (not by tool name or position).
   root._toolCallNodes = new Map();
+  // Dispatched rows with no result yet, in dispatch order: the last one
+  // owns the search the board shows (see showAiSearchMove).
+  root._runningRows = [];
   return root;
 }
 
@@ -420,6 +423,21 @@ const MOVE_TOOL_VERBS = {
   [TOOL.PLAY_OUT]:       ["Playing out", "Trying", "Testing", "Following", "Tracing", "Unfolding", "Extending"],
 };
 
+// Tools whose label lists the candidates from input.moves ("Comparing Bb5,
+// d4"): their searches put those moves on the board.
+const MOVES_TOOL_VERBS = {
+  [TOOL.TOP_MOVES]: ["Scoping out", "Sizing up", "Comparing", "Weighing up", "Lining up"],
+};
+const MOVES_SEPARATOR = ", ";
+
+function inputMoves(input) {
+  const moves = Array.isArray(input?.moves) ? input.moves : [];
+  return moves
+    .filter((m) => typeof m === "string" && m.trim())
+    .map((m) => m.trim())
+    .join(MOVES_SEPARATOR);
+}
+
 // The dominance check's two steps share one metaphor: the baseline search
 // (the engine's own best) sets the standard, the candidate is measured
 // against it. Each pair is [baseline, candidate]; "{}" is the move slot. One
@@ -434,6 +452,12 @@ const CHECK_STEP_INDEX = { [TOOL.ENGINE_BEST]: 0, [TOOL.SEARCH_MOVE]: 1 };
 // parent row (the recommend_move line) -> its pair; the baseline step picks,
 // the candidate step reuses. Cleared with the tool-call node index.
 const checkStepPairs = new Map();
+
+// True for a tool's progress step (a nested row the server reports), not a
+// tool call of its own.
+export function isAiProgressStep(name) {
+  return name in CHECK_STEP_INDEX;
+}
 
 function checkStepLabel(name, input, parent) {
   const slot = CHECK_STEP_INDEX[name];
@@ -500,6 +524,9 @@ function friendlyToolLabel(name, input, parent = null) {
   const move = input && typeof input.move === "string" ? input.move.trim() : "";
   const verbs = MOVE_TOOL_VERBS[name];
   if (verbs && move) return `${pickVariant(verbs)} ${move}`;
+  const listVerbs = MOVES_TOOL_VERBS[name];
+  const moves = listVerbs ? inputMoves(input) : "";
+  if (moves) return `${pickVariant(listVerbs)} ${moves}`;
   const labels = TOOL_FRIENDLY_LABELS[name];
   if (name === TOOL.PIECE_AT) {
     const square = input && typeof input.square === "string" ? input.square.trim() : "";
@@ -649,6 +676,7 @@ export function resetAi() {
   inst.body._statusTokens.textContent = "";
   inst.body._roundPanels.clear();
   inst.body._toolCallNodes.clear();
+  inst.body._runningRows.length = 0;
   checkStepPairs.clear();
   inst.body._currentRound = null;
   toolLabelLastIndex.clear();
@@ -735,6 +763,8 @@ export function appendAiToolCall({
     label.className = "play-ai-tool-label";
     label.textContent = label.title = friendlyToolLabel(name, input, parent);
     head.append(label);
+    line._label = label;
+    line._baseLabel = label.textContent;
     const args = formatToolArgs(input);
     const raw = args ? `${name}(${args})` : `${name}()`;
     const toggle = document.createElement("span");
@@ -759,6 +789,7 @@ export function appendAiToolCall({
       toggle.classList.toggle("is-open", open);
     });
     container.append(line);
+    inst.body._runningRows.push(line);
     if (toolUseId) {
       // Index by tool_use_id so a subsequent ai_tool_call_failed event
       // can mark this exact row (multiple calls of the same tool in a
@@ -865,12 +896,40 @@ function markCleared(line, output) {
   line.classList.add(toolCallStateClass("cleared"));
 }
 
+// A finished row's nested rows are done too, even one whose step never
+// reported its end (a failed search).
+function finishRow(line) {
+  const rows = inst.body._runningRows;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (line.contains(rows[i])) rows.splice(i, 1);
+  }
+}
+
+// Words of a row label, to tell whether it already names a move.
+const LABEL_WORD_RE = /[\s,]+/;
+// SAN annotation suffixes the model may drop or add ("Qxf7" vs "Qxf7+").
+const SAN_SUFFIX_RE = /[+#!?]+$/;
+const SEARCH_MOVE_SEP = ": ";
+const bareSan = (san) => san.replace(SAN_SUFFIX_RE, "");
+
+// The engine's own best has no name until found: the running row that owns
+// the board's search shows it, unless its label already names it. A
+// finished row keeps the last one.
+export function showAiSearchMove(san) {
+  const line = inst.body?._runningRows.at(-1);
+  if (!line || !san) return;
+  const base = line._baseLabel;
+  const named = base.split(LABEL_WORD_RE).map(bareSan).includes(bareSan(san));
+  line._label.textContent = line._label.title = named ? base : `${base}${SEARCH_MOVE_SEP}${san}`;
+}
+
 // Fill the OUT row with the tool result from ai_tool_call_complete.
 // Idempotent (replay-on-reconnect re-dispatches with the same output).
 export function setAiToolCallResult({ toolUseId, output }) {
   if (!inst.body || !toolUseId || output === undefined) return;
   const line = inst.body._toolCallNodes.get(toolUseId);
   if (!line || !line._outPre) return;
+  finishRow(line);
   withStickyBottom(() => {
     line._outPre.textContent = formatToolOutput(output);
     line._outRow.hidden = false;
@@ -889,6 +948,7 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   if (!inst.body || !toolUseId) return;
   const line = inst.body._toolCallNodes.get(toolUseId);
   if (!line) return;
+  finishRow(line);
   const cls = toolCallStateClass(SUPERSEDED_ERRORS.has(error) ? "superseded" : "failed");
   // Idempotent: replay-on-reconnect can re-dispatch this event for the same
   // row; appending the suffix/gear twice would stack them.
@@ -1330,6 +1390,8 @@ export function markAiDone({
   // Refresh the ticker from the done totals: a replay that delivers only
   // the terminal event (no ai_usage stream) still restores the count.
   if (usage) setAiUsage(usage);
+  // A cancelled turn leaves rows unfinished; no later search is theirs.
+  inst.body._runningRows.length = 0;
   const slot = inst.body._terminal;
   withStickyBottom(() => {
     // Trim trailing whitespace on every round's prose and thinking so a

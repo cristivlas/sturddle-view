@@ -45,6 +45,8 @@ import {
   openAiEngineOnly,
   isAiEngineOnly,
   latestVisibleAiProse,
+  isAiProgressStep,
+  showAiSearchMove,
 } from "../play-ai-window.js";
 import { terminationLabel } from "../format-termination.js";
 import { editAnnotation } from "../annotation-dialog.js";
@@ -529,8 +531,11 @@ function dispatchAiEvent(aiCtx, evt) {
       const p = evt.payload || {};
       setAiToolCallResult({ toolUseId: p.tool_use_id, output: p.output });
       if (p.name === ANALYZE_TOOL_NAME) view.restorePosition({ animate: false });
-      view.clearArrows();
-      view.clearEngineInfo();
+      // A finished step's search stays shown: its tool is still running.
+      if (!isAiProgressStep(p.name)) {
+        view.clearArrows();
+        view.clearEngineInfo();
+      }
       return true;
     }
     case KIND.AI_POSITION_NOTE: {
@@ -2449,6 +2454,7 @@ export const playPerspective = {
       boardStyle: initialBoardStyle,
       fetchLineOpenings: (fen, moves) =>
         ctx.api("POST", "/openings/line", { fen, moves }).then((r) => r.results),
+      onBestMove: showAiSearchMove,
       onMove: async (uci) => {
         // Drop during analysis: exit analysis and play the move. A running
         // session asks first; a finished AI turn exits silently, matching
@@ -2555,7 +2561,6 @@ export const playPerspective = {
     // with no board wired every row would go inert and stay that way.
     setPvLineBoard({
       currentPlacement: view.currentPlacement,
-      showsPosition: view.showsPosition,
       canPlayLine: () => view.canPlayLine(),
       playLine: view.playLine,
       cancelLine: view.cancelLine,

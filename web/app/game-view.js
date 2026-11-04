@@ -14,7 +14,7 @@ import {
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
-import { BEST_RANK, SIDE, FEN_STM, fenSide, stmSide, uciSquares } from "./chess-consts.js";
+import { BEST_RANK, SIDE, FEN_STM, fenSide, firstSanMove, stmSide, uciSquares } from "./chess-consts.js";
 import { fmtClock, fmtCount, fmtMoveNo, fmtScore, markSelectable, rafCoalesce } from "./wb-utils.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { EVAL_GAUGE_HTML, setEvalGauge, setEvalGaugeFlipped } from "./eval-gauge.js";
@@ -888,7 +888,10 @@ function applyEngineInfo(ctx, evt) {
   }
   // The summary fields track the best line only.
   if (rank !== BEST_RANK) return;
-  if (squares) ctx.bestSquares = squares;
+  if (squares) {
+    ctx.bestSquares = squares;
+    ctx.onBestMove?.(firstSanMove(evt.payload.pv?.[0]));
+  }
   setEngineSectionEmpty(ctx, false);
   if (ctx.engineDepth && evt.payload.depth != null) {
     ctx.engineDepth.textContent = evt.payload.depth;
@@ -1223,7 +1226,6 @@ function buildViewApi(ctx) {
     },
     cancelLine() { ctx.board.cancelLine(); },
     currentPlacement() { return ctx.board.currentPlacement(); },
-    showsPosition: (fen) => showsPosition(ctx, fen),
     clearEngineInfo() {
       clearEngineInfoFields(ctx);
       setEvalGauge(ctx.evalGauge, null);
@@ -1304,6 +1306,8 @@ export function mountGameView(container, opts = {}) {
     // (fen, uciMoves) => Promise<(opening|null)[]>: the book opening at each
     // position a played line reaches; see playLineWithOpenings.
     fetchLineOpenings = null,
+    // (san) => void: the best line's first move, each time its arrow is drawn.
+    onBestMove = null,
   } = opts;
   const showClocks = show.clocks !== false;
   const showMoves = show.moves !== false;
@@ -1323,7 +1327,7 @@ export function mountGameView(container, opts = {}) {
   const ready = new Promise((r) => { resolveReady = r; });
 
   const ctx = {
-    onMoveJump, onPlayMoveClick, forkInfoFn, onForkClick, fetchLineOpenings,
+    onMoveJump, onPlayMoveClick, forkInfoFn, onForkClick, fetchLineOpenings, onBestMove,
     interactive, showClocks, showMoves, showEngineInfo,
     ready, resolveReady,
 
