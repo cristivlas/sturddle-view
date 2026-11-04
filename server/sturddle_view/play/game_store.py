@@ -66,7 +66,21 @@ class GameState:
     # restart still points at the parent.
     parent_game_id: str | None = None
     fork_ply: int | None = None
+    # The game's PGN book (BookRef fields), so a restart stays in book.
+    book: dict | None = None
     version: int = SCHEMA_VERSION
+
+
+_BOOK_KEYS = frozenset({"path", "plies", "order", "anchor"})
+
+
+def _book_fields(raw) -> dict | None:
+    """The saved book's fields, or None when absent or malformed."""
+    if not isinstance(raw, dict) or raw.keys() != _BOOK_KEYS:
+        return None
+    if not isinstance(raw["path"], str) or not isinstance(raw["anchor"], int):
+        return None
+    return dict(raw)
 
 
 class GameStore:
@@ -116,6 +130,7 @@ class GameStore:
                 play_root_comment=data.get("play_root_comment"),
                 parent_game_id=data.get("parent_game_id"),
                 fork_ply=None if fork_ply is None else int(fork_ply),
+                book=_book_fields(data.get("book")),
             )
         except (KeyError, TypeError, ValueError):
             log.error("malformed saved game in %s; ignoring", self._path, exc_info=True)

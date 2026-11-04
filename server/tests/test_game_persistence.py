@@ -17,6 +17,7 @@ from sturddle_view.events import EventBus
 from sturddle_view.play.game_store import GameState, GameStore
 from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
 from sturddle_view.play.mode import Mode
+from sturddle_view.play.opening_lines import BookRef
 from sturddle_view.recent_imports import RecentImports
 from .conftest import REGISTRY_FILE
 
@@ -253,6 +254,25 @@ def test_restore_from_replays_moves_and_clocks(tmp_path):
     # Tick is deferred until first client subscribes.
     assert hve._tick_task is None
     assert hve._clock.turn_started_at is None
+
+
+async def test_book_survives_a_restart(tmp_path):
+    hve, store = _make_hve(tmp_path)
+    book = BookRef(path="/books/lines.pgn", plies=None, order="random", anchor=5)
+    await hve.new_game(human_white=True, tc=TimeControl(60.0, 0.0), book=book)
+    restarted, _ = _make_hve(tmp_path)
+    restarted.restore_from(store.load())
+    assert restarted.book_ref() == book
+
+
+def test_store_drops_a_malformed_book(tmp_path):
+    store = GameStore(path=tmp_path / "game.json")
+    store.save(GameState(
+        game_id="g", human_white=True, tc_initial_seconds=60.0,
+        tc_increment_seconds=0.0, white_time=60.0, black_time=60.0,
+        paused=False, book={"path": "/books/lines.pgn"},
+    ))
+    assert store.load().book is None
 
 
 def test_restore_from_imported_position_with_start_fen(tmp_path):
