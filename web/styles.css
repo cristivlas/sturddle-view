@@ -5,6 +5,7 @@
   --muted-bright: #aaa;
   --scrollbar-thumb: rgba(255, 255, 255, 0.18);
   --scrollbar-thumb-min-h: 50px;
+  --scrollbar-track-wallpaper: rgba(0, 0, 0, 0.6);
   --wb-outline: rgba(136, 136, 136, 0.4);
   /* Inline search bar height (.inline-search). */
   --inline-search-h: 48px;
@@ -31,10 +32,12 @@
      page instead. */
   --ribbon-bg: var(--panel-bg);
   --ribbon-bar-bg: transparent;
-  --play-glow-dir: to bottom;
-  --play-glow-color: rgba(120, 144, 168, 0.22);
-  --play-glow-tint-at: 20%;
-  --play-glow-reach: 100%;
+  --view-glow-dir: to bottom;
+  --view-glow-color: rgba(120, 144, 168, 0.22);
+  --view-glow-tint-at: 20%;
+  --view-glow-reach: 100%;
+  /* Play and Studio backdrop: the ribbon color melting into a faint tint. */
+  --view-glow: linear-gradient(var(--view-glow-dir), var(--ribbon-bg), var(--view-glow-color) var(--view-glow-tint-at), transparent var(--view-glow-reach));
   /* Play's vertical rhythm: header line, clocks, board, moves-to-dock grip. */
   --play-gap: 5px;
   /* Minimized-WinBox dock strip; tournament-workspace.js reads it as
@@ -177,6 +180,9 @@ body { -webkit-user-select: none; user-select: none; }
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-thumb) transparent;
   }
+  body:has(.has-wallpaper) *:not(wa-dialog *, [popover], [popover] *) {
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track-wallpaper);
+  }
 }
 *::-webkit-scrollbar { width: 5px; height: 5px; }
 *::-webkit-scrollbar-track { background: transparent; }
@@ -211,6 +217,12 @@ body { -webkit-user-select: none; user-select: none; }
 }
 *::-webkit-scrollbar-thumb:hover { background: var(--wa-color-focus); }
 *::-webkit-scrollbar-corner { background: transparent; }
+/* With a wallpaper, a dark see-through track keeps the thin thumb readable over
+   a busy image (body-mounted windows too; not dialogs or menus, on solid fills). */
+body:has(.has-wallpaper) *:not(wa-dialog *, [popover], [popover] *)::-webkit-scrollbar-track,
+body:has(.has-wallpaper) *:not(wa-dialog *, [popover], [popover] *)::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track-wallpaper);
+}
 /* *::-webkit-scrollbar-button { display: none; } */
 /* Arena only: its page panel plus its body-mounted workspace and board windows. */
 :is(.tournaments-panel, .winbox.sturddle-wb-arena, .winbox.sturddle-wb-live) *::-webkit-scrollbar {
@@ -1235,19 +1247,12 @@ body { display: flex; flex-direction: column; --main-pad: 16px; }
 main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden; }
 /* Studio starts flush under the header's amber line. */
 #perspective-root:has(.studio-panel) { padding-top: 0; }
-/* On main, not #play-perspective, so it spans main's side padding too. */
-#perspective-root:has(#play-perspective) {
-  --play-glow: linear-gradient(var(--play-glow-dir), var(--ribbon-bg), var(--play-glow-color) var(--play-glow-tint-at), transparent var(--play-glow-reach));
-  padding-top: var(--play-gap);
-  background: var(--play-glow);
-}
-/* The glow stays on top of the wallpaper (.has-wallpaper, below). */
-#perspective-root:has(#play-perspective).has-wallpaper {
-  background-image: var(--play-glow), var(--wallpaper-fade-layer), var(--wallpaper);
-  background-size: 100% 100%, 100% 100%, var(--wallpaper-size, cover);
-  background-position: center, center, var(--wallpaper-position, center);
-  background-repeat: no-repeat, no-repeat, var(--wallpaper-repeat, no-repeat);
-}
+/* Every view's backdrop, on main so it spans main's side padding too. :where()
+   keeps it under .has-wallpaper, which layers the same glow over the image.
+   Phones get none (Play's own mobile block also covers short touch screens). */
+:where(#perspective-root) { background: var(--view-glow); }
+@media (max-width: 800px) { :where(#perspective-root) { background: none; } }
+#perspective-root:has(#play-perspective) { padding-top: var(--play-gap); }
 #app-footer {
   flex: 0 0 auto;
   text-align: center;
@@ -3875,16 +3880,15 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   color: var(--muted); text-align: center;
 }
 /* Wallpaper (wallpaper.js): fills a view's region behind its content.
-   Layer 1 is the fade overlay (app background at the fade percent, always
-   full-size), layer 2 the image, sized per data-wallpaper-fit. Play layers
-   its glow over both (its own rule, above). */
+   Layer 1 is the view glow, layer 2 the fade overlay (app background at the
+   fade percent), both full-size; layer 3 the image, sized per data-wallpaper-fit. */
 .has-wallpaper {
   --wallpaper-fade-color: color-mix(in srgb, var(--bg) var(--wallpaper-fade, 0%), transparent);
   --wallpaper-fade-layer: linear-gradient(var(--wallpaper-fade-color), var(--wallpaper-fade-color));
-  background-image: var(--wallpaper-fade-layer), var(--wallpaper);
-  background-size: 100% 100%, var(--wallpaper-size, cover);
-  background-position: center, var(--wallpaper-position, center);
-  background-repeat: no-repeat, var(--wallpaper-repeat, no-repeat);
+  background-image: var(--view-glow), var(--wallpaper-fade-layer), var(--wallpaper);
+  background-size: 100% 100%, 100% 100%, var(--wallpaper-size, cover);
+  background-position: center, center, var(--wallpaper-position, center);
+  background-repeat: no-repeat, no-repeat, var(--wallpaper-repeat, no-repeat);
 }
 [data-wallpaper-fit="contain"] { --wallpaper-size: contain; }
 [data-wallpaper-fit="stretch"] { --wallpaper-size: 100% 100%; }
@@ -3894,6 +3898,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .has-wallpaper :is(.game-view-engine, .game-view-moves, .game-view-meta, .iw-footer, .studio-empty) {
   backdrop-filter: blur(8px) brightness(0.95);
 }
+/* An empty move list has nothing to read. */
+.has-wallpaper .game-view-moves:has(.move-list:empty) { backdrop-filter: none; }
 /* Idle dock grips are solid so the wallpaper doesn't show between slots. */
 .has-wallpaper .dock-grip:not(:hover, .dragging, .play-rail-grip) { background: var(--panel); }
 /* Same for the arena list: each row fills the gap below it. A pseudo, not a
@@ -3903,16 +3909,12 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   content: ""; position: absolute; left: 0; right: 0; top: 100%;
   height: var(--tournaments-row-gap); background: var(--bg); pointer-events: none;
 }
-/* Studio's wallpaper spans the bottom too; each tab group and the chrome stay
-   solid, filled on their own (no fill shared by both groups), so a table's
-   Transparency (panel-fade.js) fades only its group. The bottom row's gap
-   goes to its two groups, each filled up to the column grip's middle (padded,
-   so content keeps its inset), so a group's fade covers its half; the grip
-   overlays that seam, see-through until hovered. Same above them: the groups
-   fill up to the row grip's middle. */
+/* Studio wallpaper: each tab group and the tray stay solid on their own, so a
+   group's fade covers only it. Groups fill to the column grip's middle and under
+   the row grip (padded, content unmoved); the grips stay see-through idle. */
 .has-wallpaper :is(.studio-tabs, .studio-boards-tray) { background: var(--bg); }
-.has-wallpaper .studio-grip-row { margin-bottom: calc(var(--studio-grip-row-h) / -2); }
-.has-wallpaper .studio-tabs { padding-top: calc(var(--studio-grip-row-h) / 2); }
+.has-wallpaper .studio-grip-row { margin-bottom: calc(-1 * var(--studio-grip-row-h)); }
+.has-wallpaper .studio-tabs { padding-top: var(--studio-grip-row-h); }
 .has-wallpaper .studio-bottom { gap: 0; }
 .has-wallpaper .studio-bottom-left .studio-tabs { padding-right: var(--studio-seam); }
 .has-wallpaper .studio-bottom-right .studio-tabs { padding-left: var(--studio-seam); }
