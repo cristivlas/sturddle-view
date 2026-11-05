@@ -9,6 +9,7 @@ docstring is a violation; the stub exists to catch interface drift early.
 Supervisor reads/writes on the protocol object:
     - send_line(line: str)       -- patched by _patch_log; called by cancel
     - line_received(line: str)   -- patched by _patch_log
+    - _ucinewgame(), ping()      -- spawn's new-game handshake
     - configure(options: dict)   -- async; raises chess.engine.EngineError
     - quit()                     -- async; idempotent on supervisor side
     - transport                  -- has .close() (cancel fallback path)
@@ -67,6 +68,12 @@ class _StubEngine:
         self._send_line_orig = lambda line: self.send_lines.append(line)
         self.send_line = self._send_line_orig
         self.line_received = lambda line: None
+
+    def _ucinewgame(self) -> None:
+        pass
+
+    async def ping(self) -> None:
+        pass
 
     async def configure(self, options: dict) -> None:
         if self.configure_error is not None:

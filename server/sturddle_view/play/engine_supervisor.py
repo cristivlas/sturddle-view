@@ -107,6 +107,18 @@ def _settable(
     return settable, skipped
 
 
+async def _new_game_handshake(engine: chess.engine.UciProtocol) -> None:
+    """python-chess's first analysis()/play() on an engine sends
+    `ucinewgame` + `isready` and waits for `readyok`; a cancel in that window
+    makes it send `go` after its own `stop`, leaving the engine searching for
+    nobody. Doing the handshake here means no later command waits on
+    `readyok`. Private API: only `_ucinewgame()` clears `first_game` (a bare
+    `send_line("ucinewgame")` does not); UciProtocol never sets it again
+    (only XBoardProtocol does, on errors)."""
+    engine._ucinewgame()
+    await engine.ping()
+
+
 class EngineSupervisor:
     """Single-engine session manager. One instance per HumanVsEngine."""
 
@@ -199,6 +211,7 @@ class EngineSupervisor:
             transport, engine = await self._popen_uci(
                 command, **_popen_kwargs(self._env, tmp_dir)
             )
+            await _new_game_handshake(engine)
         except FileNotFoundError as e:
             cleanup_spawn_dir(tmp_dir)
             raise FileNotFoundError(self._engine_path) from e
