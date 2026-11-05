@@ -3809,7 +3809,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   list-style: none; padding: 0; margin: 0;
   /* Same line as the menubar's bottom edge, which doubles as this top edge. */
   border: 1px solid var(--wa-color-border-loud, #333); border-top: 0;
-  display: flex; flex-direction: column; gap: 2px;
+  --tournaments-row-gap: 2px;
+  display: flex; flex-direction: column; gap: var(--tournaments-row-gap);
   flex: 1; min-height: 0; overflow-y: auto;
   outline: none;
 }
@@ -3891,6 +3892,15 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 /* Frost keeps see-through panels readable over the wallpaper. */
 .has-wallpaper :is(.game-view-engine, .game-view-moves, .game-view-meta, .iw-footer, .studio-empty) {
   backdrop-filter: blur(8px) brightness(0.95);
+}
+/* Idle dock grips are solid so the wallpaper doesn't show between slots. */
+.has-wallpaper .dock-grip:not(:hover, .dragging, .play-rail-grip) { background: var(--panel); }
+/* Same for the arena list: each row fills the gap below it. A pseudo, not a
+   border, so the lead row's focus ring keeps its size. */
+.has-wallpaper .tournament-row:not(:last-child) { position: relative; }
+.has-wallpaper .tournament-row:not(:last-child)::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 100%;
+  height: var(--tournaments-row-gap); background: var(--bg); pointer-events: none;
 }
 /* Opacity < 1 would cut the wall's panels off from the wallpaper behind. */
 .has-wallpaper .studio-boards-wall { opacity: 1; }
