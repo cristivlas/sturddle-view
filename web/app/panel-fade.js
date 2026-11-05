@@ -6,6 +6,7 @@
 // right-click menu for panels without a menu of their own (which can carry the
 // panel's own actions too).
 
+import { APP_EVT } from "./app-events.js";
 import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import {
   attachMenuNav, focusFirstItem, isContextMenuClaimed, positionMenuAt, sliderRowHtml, submenuHtml, wireSliderRow,
@@ -75,11 +76,11 @@ function lineColors(row) {
 // pct saved under storageKey. A part ({ ownEls(), lineTables }) is a table's
 // share: its extra elements and the tables whose lines fade. It re-reads the
 // backgrounds on rescan() (a part rebuilt its elements), when the panel moved
-// (dock <-> window) or a table's first row came, else repaints on a new pct
-// only. Off on mobile and while hidden. A panel built after its fader (a
-// window's body, which builds its parts) is bound with attach(). Faders
-// never share a filled ancestor (one per window or tab group, none nested), so
-// marks need no owner.
+// (dock <-> window), a table's first row came or a wallpaper came or went
+// (fills with it), else repaints on a new pct only. Off on mobile and while
+// hidden. A panel built after its fader (a window's body, which builds its
+// parts) is bound with attach(). Faders never share a filled ancestor (one per
+// window or tab group, none nested), so marks need no owner.
 export function createPanelFade(panel, { storageKey }) {
   let pct = loadJson(storageKey, 0);
   const parts = new Set();
@@ -116,13 +117,13 @@ export function createPanelFade(panel, { storageKey }) {
       else linesPending.push(table);
     }
   }
-  function apply(rescan = false) {
+  function apply(force = false) {
     if (!panel || !pct || isMobile() || !panel.getClientRects().length) {
       release();
       return;
     }
     const chain = hostChain();
-    if (rescan || !marks.length || !sameEls(chain, hosts) || linesPending.some(lineRow)) {
+    if (force || !marks.length || !sameEls(chain, hosts) || linesPending.some(lineRow)) {
       release();
       hosts = chain;
       scan(chain);
@@ -146,6 +147,8 @@ export function createPanelFade(panel, { storageKey }) {
     }
   };
   MOBILE_QUERIES.forEach((mq) => mq.addEventListener("change", refresh));
+  const rescan = () => apply(true);
+  window.addEventListener(APP_EVT.WALLPAPER_TOGGLED, rescan);
   function attach(el) {
     panel = el;
     observer.observe(panel);
@@ -161,7 +164,7 @@ export function createPanelFade(panel, { storageKey }) {
       apply();
     },
     save() { saveJson(storageKey, pct); },
-    rescan: () => apply(true),
+    rescan,
     // Returns the part's removal.
     addPart(part) {
       parts.add(part);
@@ -176,6 +179,7 @@ export function createPanelFade(panel, { storageKey }) {
     destroy() {
       observer.disconnect();
       MOBILE_QUERIES.forEach((mq) => mq.removeEventListener("change", refresh));
+      window.removeEventListener(APP_EVT.WALLPAPER_TOGGLED, rescan);
       release();
     },
   };

@@ -4,6 +4,7 @@
 // also opened by right-clicking the region's bare background. Content above
 // it simply covers it.
 
+import { APP_EVT } from "./app-events.js";
 import { mqMobile } from "./breakpoints.js";
 import { reportError } from "./dialogs.js";
 import {
@@ -124,6 +125,7 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
   const paint = () => {
     if (!mounted) return;
     const mobile = isMobile();
+    const had = regionEl.classList.contains(WALLPAPER_CLASS);
     if (info?.version != null && !mobile) {
       regionEl.classList.add(WALLPAPER_CLASS);
       regionEl.style.setProperty(URL_VAR, `url("${WALLPAPER_PATH}?v=${info.version}")`);
@@ -131,6 +133,10 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
       setFade(info.fade);
     } else {
       clearPaint();
+    }
+    // Fills under it come and go with it (Studio's tab groups): faders re-read.
+    if (regionEl.classList.contains(WALLPAPER_CLASS) !== had) {
+      window.dispatchEvent(new CustomEvent(APP_EVT.WALLPAPER_TOGGLED));
     }
     // Disabled (not hidden) until info loads: showing it later wouldn't
     // resize the ribbon, so its overflow wouldn't re-fit.
