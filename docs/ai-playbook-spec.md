@@ -50,6 +50,9 @@ candidates that carry the plan out; the engine only vetoes blunders.
   alone. Left to the optional tool, models skipped it (Gemini, Gemma) and
   explained structures wrong (a King's Indian center as queenside play for
   Black).
+- Sacrifice notes (section Speculative sacrifices) ride that line too,
+  even without a specific tag. This is the one concrete move it carries:
+  models that skipped `plan` never tested the sacrifice.
 - The ideas step of the narrator prompt (`_IDEAS_WORKFLOW`) takes the
   themes from that line, or calls `plan` when there is none, and makes at
   least one idea carry the plan out.
@@ -299,7 +302,7 @@ specific tags still follow. No row for `opposite_queens`: with queens on,
 the bishops fragment's attack advice holds. Pair still to watch live:
 `worse` + `opening` vs `castling=opposite`.
 
-## Speculative sacrifices (draft, not shipped)
+## Speculative sacrifices (detection and note shipped; gate pending)
 
 Problem: when a sacrifice is sound but its compensation lies past a
 shallow search's horizon, the search scores it below the quiet best
@@ -316,7 +319,10 @@ Flow:
    `Match` carries only an axis and a tag, and growing it a move payload
    would be a protocol change, which the matchers spec puts out of
    scope. This shape leaves the matcher protocol and the catalog
-   coverage checks untouched. Each pattern has pure-predicate
+   coverage checks untouched. The list is the side to move's, so
+   `classify` fills it only when that side is `our_color`. Otherwise
+   (coach mode with the engine on move) the margin would be the other
+   side's. Each pattern has pure-predicate
    preconditions, and its move must be legal and lose material by
    static exchange. The first stage keeps only forcing sacrifices, whose
    compensation is a concrete line that a deeper search can show: the
@@ -329,7 +335,10 @@ Flow:
    rides outside the fragment cap. The model still decides, and it must
    `play_out` the sacrifice like any other idea. Like `_repeat_note`,
    the note depends on the margin: there is none in `AHEAD_MARGINS`
-   (see Rules).
+   (see Rules). Unlike the repetition note, it also rides the opening
+   message's `Plan:` line (`structural_playbook`). Models seldom call
+   `plan` without that line, and a sacrifice they never see is one they
+   never test. SHIPPED (notes `note.sacrifice_*` in `notes.toml`).
 3. **Verify.** When the move is listed in `sacrifices`, both searches of
    the comparison run at SAC_DEPTH (`SV_AI_SAC_DEPTH`, deeper than the
    verification floor). Comparing a deep restricted search with a

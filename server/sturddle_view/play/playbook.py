@@ -32,6 +32,7 @@ from .playbook_tags import (
     SOURCE_EVAL,
     SOURCE_MATERIAL,
 )
+from .sacrifices import PIECE_VALUES_CP, sacrifice_moves
 
 
 # Margin buckets, centipawns from our side's point of view.
@@ -51,15 +52,6 @@ OPENING_MIN_PAWNS = env_int("SV_AI_PLAYBOOK_OPENING_MIN_PAWNS", _DEFAULT_OPENING
 MIDDLEGAME_MIN_PAWNS = env_int("SV_AI_PLAYBOOK_MIDDLEGAME_MIN_PAWNS", _DEFAULT_MIDDLEGAME_MIN_PAWNS)
 LATE_MIN_PAWNS = env_int("SV_AI_PLAYBOOK_LATE_MIN_PAWNS", _DEFAULT_LATE_MIN_PAWNS)
 
-# Material proxy when no eval is at hand (centipawns per piece type).
-_PIECE_VALUES_CP = {
-    chess.PAWN: 100,
-    chess.KNIGHT: 300,
-    chess.BISHOP: 300,
-    chess.ROOK: 500,
-    chess.QUEEN: 900,
-}
-
 
 @dataclass(frozen=True, slots=True)
 class Situation:
@@ -69,6 +61,8 @@ class Situation:
     structure: str | None = None
     # SAN of the legal moves that repeat an earlier position of the game.
     repeats: tuple[str, ...] = ()
+    # (pattern, SAN) of the known sacrifices our side has, when on move.
+    sacrifices: tuple[tuple[str, str], ...] = ()
     imbalance: str | None = None
     bishops: str | None = None
     pawn: str | None = None
@@ -80,7 +74,8 @@ class Situation:
 
 def _material_cp_white(board: chess.Board) -> int:
     total = 0
-    for piece_type, value in _PIECE_VALUES_CP.items():
+    # Material proxy when no eval is at hand.
+    for piece_type, value in PIECE_VALUES_CP.items():
         total += value * (
             len(board.pieces(piece_type, chess.WHITE))
             - len(board.pieces(piece_type, chess.BLACK))
@@ -154,8 +149,10 @@ def classify(
     """Tags for `board` from `our_color`'s point of view. `score_white` is
     an engine/PGN eval dict ({cp} or {mate}, white POV); None or unusable
     falls back to the material balance. Repetitions come from the board's
-    move stack. `matchers` defaults to the static registry; the catalog's
-    composed registry adds the data-defined ones."""
+    move stack. Sacrifices are the side to move's, so they are listed only
+    when that is `our_color`: the margin must be the mover's. `matchers`
+    defaults to the static registry; the catalog's composed registry adds
+    the data-defined ones."""
     cp_white = _score_cp_white(score_white)
     source = SOURCE_EVAL
     if cp_white is None:
@@ -172,6 +169,7 @@ def classify(
         margin_source=source,
         phase=ctx.phase,
         repeats=repeating_moves(board),
+        sacrifices=sacrifice_moves(board) if board.turn == our_color else (),
         matches=matches,
         **{m.axis: m.tag for m in matches},
     )

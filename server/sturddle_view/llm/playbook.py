@@ -13,9 +13,11 @@ from ..env_utils import env_int
 from ..play.playbook import Situation
 from ..play.playbook_catalog import (
     NOTE_CRUSHING,
+    NOTE_FIELD_MOVE,
     NOTE_LOST,
     NOTE_REPEAT_AHEAD,
     NOTE_REPEAT_BEHIND,
+    SACRIFICE_NOTES,
     Catalog,
     default_catalog,
 )
@@ -142,6 +144,17 @@ def _repeat_note(situation: Situation, catalog: Catalog) -> str:
     return ""
 
 
+def _sacrifice_notes(situation: Situation, catalog: Catalog) -> list[str]:
+    # Outside the fragment cap, like the repetition note. None ahead: the
+    # side with an edge converts and does not gamble.
+    if situation.margin in AHEAD_MARGINS:
+        return []
+    return [
+        catalog.note(SACRIFICE_NOTES[pattern], **{NOTE_FIELD_MOVE: san})
+        for pattern, san in situation.sacrifices
+    ]
+
+
 def render_playbook(
     situation: Situation,
     mode: PromptMode,
@@ -155,19 +168,23 @@ def render_playbook(
         catalog = default_catalog()
     subject = _YOU if mode == COACH_MODE else _SIDE_WORDS[side_to_move]
     body = _NOTE_SEP.join(_fragments(situation, mode, catalog))
-    note = _repeat_note(situation, catalog)
+    notes = [note for note in [_repeat_note(situation, catalog)] if note]
+    notes += _sacrifice_notes(situation, catalog)
     line = f"{PLAYBOOK_LEAD}{_standing(situation, subject)}; {body}"
-    return f"{line}{_NOTE_SEP}{note}" if note else line
+    return _NOTE_SEP.join([line, *notes])
 
 
 def structural_playbook(situation: Situation, catalog: Catalog | None = None) -> str | None:
-    """The structural themes alone (formation, imbalance, bishops, ...) for
-    the opening message, or None without a specific tag. No verdict: the
-    standing, margin and combo text and the repetition note stay behind
-    the `plan` tool, so nothing is concluded before the model looks."""
+    """The structural themes (formation, imbalance, bishops, ...) and the
+    sacrifice notes for the opening message, or None with neither. No
+    verdict: the standing, margin and combo text and the repetition note
+    stay behind the `plan` tool, so nothing is concluded before the model
+    looks. The sacrifice notes ride here too: left to the optional tool,
+    a model that never calls it would never test the sacrifice."""
     if catalog is None:
         catalog = default_catalog()
     fragments = _specific(situation, catalog)[:MAX_FRAGMENTS]
+    fragments += _sacrifice_notes(situation, catalog)
     if not fragments:
         return None
     return PLAYBOOK_LEAD + _NOTE_SEP.join(fragments)

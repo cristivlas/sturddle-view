@@ -629,6 +629,7 @@ def _setup_ai(app: FastAPI) -> None:
             game_id_provider=_ai_game_id_provider,
             settings_provider=_ai_settings_provider,
             search_cache=ai_search_cache,
+            situation_provider=_ai_situation_provider,
         ),
     )
     # top_moves: the narrator's one-call way to rank its candidate moves

@@ -30,6 +30,7 @@ from .playbook_tags import (
     MARGIN_EVEN,
     PHASES,
 )
+from .sacrifices import PATTERN_BISHOP_F7, PATTERN_GREEK_GIFT
 
 log = logging.getLogger(__name__)
 
@@ -58,11 +59,18 @@ NOTE_LOST = "note.lost"
 NOTE_REPEAT_BEHIND = "note.repeat_behind"
 NOTE_REPEAT_AHEAD = "note.repeat_ahead"
 NOTE_FIELD_MOVES = "moves"
+NOTE_FIELD_MOVE = "move"
+# Sacrifice pattern -> its note.
+SACRIFICE_NOTES: Mapping[str, str] = {
+    PATTERN_GREEK_GIFT: "note.sacrifice_greek_gift",
+    PATTERN_BISHOP_F7: "note.sacrifice_bishop_f7",
+}
 NOTE_FIELDS: Mapping[str, frozenset[str]] = {
     NOTE_CRUSHING: frozenset(),
     NOTE_LOST: frozenset(),
     NOTE_REPEAT_BEHIND: frozenset({NOTE_FIELD_MOVES}),
     NOTE_REPEAT_AHEAD: frozenset({NOTE_FIELD_MOVES}),
+    **{note: frozenset({NOTE_FIELD_MOVE}) for note in SACRIFICE_NOTES.values()},
 }
 
 # The only partners the renderer looks up next to the margin.

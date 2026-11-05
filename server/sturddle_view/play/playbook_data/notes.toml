@@ -23,3 +23,13 @@ text = "A repetition is available ($moves): repeating is the drawing try; take i
 id = "note.repeat_ahead"
 kind = "note"
 text = "Do not repeat the position ($moves); make progress."
+
+[[entry]]
+id = "note.sacrifice_greek_gift"
+kind = "note"
+text = "$move is a Greek gift sacrifice: play it out before ruling it out."
+
+[[entry]]
+id = "note.sacrifice_bishop_f7"
+kind = "note"
+text = "$move is a bishop sacrifice against the uncastled king: play it out before ruling it out."

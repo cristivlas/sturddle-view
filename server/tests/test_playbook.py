@@ -29,6 +29,7 @@ from sturddle_view.play.playbook_catalog import (
     NOTE_LOST,
     NOTE_REPEAT_AHEAD,
     NOTE_REPEAT_BEHIND,
+    SACRIFICE_NOTES,
     SHIPPED_DIR,
     load_catalog,
 )
@@ -65,6 +66,7 @@ from sturddle_view.play.playbook_tags import (
     STRUCTURE_CLOSED,
     STRUCTURE_OPEN,
 )
+from sturddle_view.play.sacrifices import PATTERN_BISHOP_F7, PATTERN_GREEK_GIFT
 
 
 # 16 pawns, three locked pairs (d4/d5, e5/e6, f4/f5), no open file.
@@ -108,6 +110,9 @@ _OPP_CASTLING_FEN = "3q2k1/ppp2ppp/8/8/8/8/PPP2PPP/2KQ4 w - - 0 1"
 _SAME_WING_KINGS_FEN = "3q2k1/ppp2ppp/8/8/8/8/PPP2PPP/3Q2K1 w - - 0 1"
 _OPP_CASTLING_NO_BLACK_QUEEN_FEN = "6k1/ppp2ppp/8/8/8/8/PPP2PPP/2KQ4 w - - 0 1"
 _OPP_CASTLING_ENDGAME_FEN = "3q2k1/p6p/8/8/8/8/P6P/2KQ4 w - - 0 1"
+# Bd3, Nf3, Qd1 against a king on g8, g5 safe: the Greek gift Bxh7+.
+_GREEK_GIFT_FEN = "r1b2rk1/ppqn1ppp/2n1p3/2bpP3/8/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - 0 1"
+_GREEK_GIFT = ((PATTERN_GREEK_GIFT, "Bxh7+"),)
 
 
 # Shipped text only: assertions name the fragment a tag selects.
@@ -219,6 +224,56 @@ def test_repeating_moves_lists_the_repeating_san():
     assert len(board.move_stack) == 4
     got = classify(board, score_white=None, our_color=chess.WHITE)
     assert got.repeats == ("Nf3",)
+
+
+def test_classify_lists_the_side_to_move_sacrifices():
+    board = chess.Board(_GREEK_GIFT_FEN)
+    assert classify(board, score_white=None, our_color=chess.WHITE).sacrifices == _GREEK_GIFT
+    # Our side is not on move: the margin is not the mover's, so none.
+    assert classify(board, score_white=None, our_color=chess.BLACK).sacrifices == ()
+
+
+def _sacrifice_note(pattern: str, move: str) -> str:
+    return _SHIPPED.note(SACRIFICE_NOTES[pattern], move=move)
+
+
+def test_every_pattern_has_a_shipped_note():
+    assert set(SACRIFICE_NOTES) == {PATTERN_GREEK_GIFT, PATTERN_BISHOP_F7}
+    for pattern in SACRIFICE_NOTES:
+        assert "Bxh7+" in _sacrifice_note(pattern, "Bxh7+")
+
+
+@pytest.mark.parametrize("margin", [MARGIN_EVEN, MARGIN_WORSE, MARGIN_LOSING, MARGIN_LOST])
+def test_render_sacrifice_note_outside_the_ahead_margins(margin):
+    line = render_playbook(
+        _situation(margin=margin, sacrifices=_GREEK_GIFT), COACH_MODE, chess.WHITE,
+    )
+    assert _sacrifice_note(PATTERN_GREEK_GIFT, "Bxh7+") in line
+
+
+@pytest.mark.parametrize("margin", [MARGIN_BETTER, MARGIN_WINNING, MARGIN_CRUSHING])
+def test_no_sacrifice_note_ahead(margin):
+    situation = _situation(margin=margin, sacrifices=_GREEK_GIFT)
+    assert "Bxh7+" not in render_playbook(situation, COACH_MODE, chess.WHITE)
+    assert structural_playbook(situation) is None
+
+
+def test_render_sacrifice_note_rides_outside_the_cap(monkeypatch):
+    monkeypatch.setattr(playbook_prompts, "MAX_FRAGMENTS", 1)
+    line = render_playbook(
+        _situation(margin=MARGIN_WORSE, structure=STRUCTURE_OPEN, sacrifices=_GREEK_GIFT),
+        COACH_MODE, chess.WHITE,
+    )
+    assert _frag(AXIS_MARGIN, MARGIN_WORSE) in line
+    assert _sacrifice_note(PATTERN_GREEK_GIFT, "Bxh7+") in line
+
+
+def test_structural_playbook_carries_the_sacrifice_note():
+    note = _sacrifice_note(PATTERN_GREEK_GIFT, "Bxh7+")
+    alone = structural_playbook(_situation(sacrifices=_GREEK_GIFT))
+    assert alone == PLAYBOOK_LEAD + note
+    with_tag = structural_playbook(_situation(imbalance=IMBALANCE_IQP_OURS, sacrifices=_GREEK_GIFT))
+    assert with_tag == PLAYBOOK_LEAD + _frag(AXIS_IMBALANCE, IMBALANCE_IQP_OURS) + " " + note
 
 
 def test_structure_never_tagged_in_endgame():
