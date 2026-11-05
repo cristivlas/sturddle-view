@@ -1,21 +1,23 @@
-// Panel transparency: fades a panel's solid backgrounds -- the panel element,
-// its ancestors up to the view root (the window or dock slot holding it) and
-// any extra elements of its own -- plus, optionally, tables' cell lines, so
-// what lies behind (the wallpaper) shows through. Each panel has one fader;
-// a table hands its extras (header cells, lines) to it. Plus the Transparency
-// submenu that sets it, and a right-click menu for panels without a menu
-// (which can carry the panel's own actions too).
+// Panel transparency: fades a panel's solid backgrounds -- the panel element
+// and its ancestors up to the view root (the window, dock slot or tab group
+// holding it) -- plus its tables' header cells and lines, so what lies behind
+// (the wallpaper) shows through. Each panel owns one fader; a table only adds
+// its share to its panel's. Plus the Transparency submenu that sets it, and a
+// right-click menu for panels without a menu of their own (which can carry the
+// panel's own actions too).
 
 import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
-import { attachMenuNav, focusFirstItem, positionMenuAt, sliderRowHtml, submenuHtml, wireSliderRow } from "./menu-nav.js";
+import {
+  attachMenuNav, focusFirstItem, isContextMenuClaimed, positionMenuAt, sliderRowHtml, submenuHtml, wireSliderRow,
+} from "./menu-nav.js";
 import { loadJson, saveJson } from "./storage.js";
 import { escapeHtml, PCT_SUFFIX } from "./wb-utils.js";
 
 const FADE_LABEL = "Transparency";
 const FADE_MAX_PCT = 100;
 const FADE_STEP_PCT = 5;
-// A faded element (valued with its fader's id) and its faded background; a
-// table with faded cell lines and their colors per side (styles.css).
+// A faded element and its faded background; a table with faded cell lines and
+// their colors per side (styles.css).
 const FADE_ATTR = "data-fade";
 const FADE_BG_VAR = "--fade-bg";
 const FADE_LINES_ATTR = "data-fade-lines";
@@ -68,24 +70,24 @@ function lineColors(row) {
   });
 }
 
-let faderSeq = 0;
-// A faded element's own background, for a fader scanning it while another
-// fader's mark still holds it.
-const fadeBase = new WeakMap();
-
-// Fader for `panel` at `pct`; ownEls() lists its extra elements, lineTables
-// the tables whose lines fade. apply(pct, rescan) sets the pct; it re-reads
-// the backgrounds on rescan (the caller rebuilt its elements), when the panel
-// moved (dock <-> window) or a table's first row came, else repaints on a new
-// pct only. Hidden or on mobile, it lets go. Marks carry this fader's id, so
-// another panel's fader on a shared host (a Studio tab group) never clears
-// this one's.
-export function createPanelFade(panel, { pct = 0, ownEls = () => [], lineTables = [] } = {}) {
-  const id = String(++faderSeq);
+// A panel's fader: fades the panel, its ancestors up to the view root (the
+// window, dock slot or tab group holding it) and its parts' elements, at the
+// pct saved under storageKey. A part ({ ownEls(), lineTables }) is a table's
+// share: its extra elements and the tables whose lines fade. It re-reads the
+// backgrounds on rescan() (a part rebuilt its elements), when the panel moved
+// (dock <-> window) or a table's first row came, else repaints on a new pct
+// only. Off on mobile and while hidden. A panel built after its fader (a
+// window's body, which builds its parts) is bound with attach(). Faders
+// never share a filled ancestor (one per window or tab group, none nested), so
+// marks need no owner.
+export function createPanelFade(panel, { storageKey }) {
+  let pct = loadJson(storageKey, 0);
+  const parts = new Set();
   let hosts = [];
   let marks = []; // { el, attr, colors: [[var, el's own color]] }
-  let linesPending = false;
+  let linesPending = []; // tables scanned before their first row came
   let painted = null;
+  const lineTables = () => [...parts].flatMap((p) => p.lineTables ?? []);
   const hostChain = () => {
     const stop = panel.closest(VIEW_ROOT_SEL);
     const els = [];
@@ -94,37 +96,33 @@ export function createPanelFade(panel, { pct = 0, ownEls = () => [], lineTables 
   };
   function release() {
     for (const { el, attr, colors } of marks) {
-      if (el.getAttribute(attr) !== id) continue;
       el.removeAttribute(attr);
       for (const [v] of colors) el.style.removeProperty(v);
-      fadeBase.delete(el);
     }
     marks = [];
     hosts = [];
     painted = null;
   }
   function scan(chain) {
-    for (const el of [...ownEls(), ...chain]) {
-      const bg = (el.hasAttribute(FADE_ATTR) && fadeBase.get(el)) || idleBg(el);
-      if (bg === NO_BG) continue;
-      fadeBase.set(el, bg);
-      marks.push({ el, attr: FADE_ATTR, colors: [[FADE_BG_VAR, bg]] });
+    const own = [...parts].flatMap((p) => p.ownEls?.() ?? []);
+    for (const el of new Set([...own, ...chain])) {
+      const bg = idleBg(el);
+      if (bg !== NO_BG) marks.push({ el, attr: FADE_ATTR, colors: [[FADE_BG_VAR, bg]] });
     }
-    linesPending = false;
-    for (const table of lineTables) {
+    linesPending = [];
+    for (const table of lineTables()) {
       const row = lineRow(table);
       if (row) marks.push({ el: table, attr: FADE_LINES_ATTR, colors: lineColors(row) });
-      else linesPending = true;
+      else linesPending.push(table);
     }
   }
-  function apply(next, rescan = false) {
-    pct = next;
-    if (!pct || isMobile() || !panel.getClientRects().length) {
+  function apply(rescan = false) {
+    if (!panel || !pct || isMobile() || !panel.getClientRects().length) {
       release();
       return;
     }
     const chain = hostChain();
-    if (rescan || !marks.length || !sameEls(chain, hosts) || (linesPending && lineTables.some(lineRow))) {
+    if (rescan || !marks.length || !sameEls(chain, hosts) || linesPending.some(lineRow)) {
       release();
       hosts = chain;
       scan(chain);
@@ -134,17 +132,47 @@ export function createPanelFade(panel, { pct = 0, ownEls = () => [], lineTables 
     painted = pct;
     for (const { el, attr, colors } of marks) {
       for (const [v, c] of colors) el.style.setProperty(v, `color-mix(in srgb, ${c}, transparent ${pct}${PCT_SUFFIX})`);
-      el.setAttribute(attr, id);
+      el.setAttribute(attr, "");
     }
   }
   // A move between hosts resizes the panel, and a table's body resizes as its
   // first rows come.
-  const refresh = () => apply(pct);
+  const refresh = () => apply();
   const observer = new ResizeObserver(refresh);
-  for (const el of [panel, ...lineTables.flatMap((t) => [...t.tBodies])]) observer.observe(el);
+  const watchBodies = (tables, on) => {
+    for (const body of tables.flatMap((t) => [...t.tBodies])) {
+      if (on) observer.observe(body);
+      else observer.unobserve(body);
+    }
+  };
   MOBILE_QUERIES.forEach((mq) => mq.addEventListener("change", refresh));
+  function attach(el) {
+    panel = el;
+    observer.observe(panel);
+    apply(true);
+  }
+  if (panel) attach(panel);
   return {
-    apply,
+    get pct() { return pct; },
+    attach,
+    // Live (a slider drag); save() keeps it.
+    set(next) {
+      pct = next;
+      apply();
+    },
+    save() { saveJson(storageKey, pct); },
+    rescan: () => apply(true),
+    // Returns the part's removal.
+    addPart(part) {
+      parts.add(part);
+      watchBodies(part.lineTables ?? [], true);
+      apply(true);
+      return () => {
+        parts.delete(part);
+        watchBodies(part.lineTables ?? [], false);
+        apply(true);
+      };
+    },
     destroy() {
       observer.disconnect();
       MOBILE_QUERIES.forEach((mq) => mq.removeEventListener("change", refresh));
@@ -154,11 +182,10 @@ export function createPanelFade(panel, { pct = 0, ownEls = () => [], lineTables 
 }
 
 // A panel's right-click menu (a top-layer popover, so no host clips it):
-// actions [{ label, run }] on top, then, with a fadeKey, the panel's own
-// Transparency -- its fader, saved under fadeKey. Returns the teardown.
-export function attachPanelMenu(panel, { fadeKey = null, actions = [] } = {}) {
-  let pct = fadeKey ? loadJson(fadeKey, 0) : 0;
-  const fader = fadeKey ? createPanelFade(panel, { pct }) : null;
+// actions [{ label, run }] on top, then, with a fade (its fader), its
+// Transparency. A right-click a menu inside already took (a table's
+// Columns menu) is left to it. Returns the teardown.
+export function attachPanelMenu(panel, { fade = null, actions = [] } = {}) {
   const menu = document.createElement("ul");
   menu.className = PANEL_MENU_CLASS;
   menu.setAttribute("popover", "auto");
@@ -176,15 +203,13 @@ export function attachPanelMenu(panel, { fadeKey = null, actions = [] } = {}) {
     `<li><button type="button" class="tmb-dd-item" ${ACTION_ATTR}="${i}">${escapeHtml(a.label)}</button></li>`).join("");
 
   function onContextMenu(ev) {
-    const fade = fader ? fadeMenuHtml(pct) : "";
-    const html = actionsHtml + (actionsHtml && fade ? SEPARATOR_HTML : "") + fade;
+    if (isContextMenuClaimed(ev)) return;
+    const fadeHtml = fade ? fadeMenuHtml(fade.pct) : "";
+    const html = actionsHtml + (actionsHtml && fadeHtml ? SEPARATOR_HTML : "") + fadeHtml;
     if (!html) return;
     ev.preventDefault();
     menu.innerHTML = html;
-    wireSliderRow(menu, {
-      onInput: (next) => { pct = next; fader.apply(pct); },
-      onChange: () => saveJson(fadeKey, pct),
-    });
+    wireSliderRow(menu, { onInput: (pct) => fade.set(pct), onChange: () => fade.save() });
     if (!menu.matches(":popover-open")) menu.showPopover();
     positionMenuAt(menu, { top: ev.clientY, bottom: ev.clientY, left: ev.clientX });
     focusFirstItem(menu);
@@ -194,6 +219,5 @@ export function attachPanelMenu(panel, { fadeKey = null, actions = [] } = {}) {
   return () => {
     panel.removeEventListener("contextmenu", onContextMenu);
     menu.remove();
-    fader?.destroy();
   };
 }

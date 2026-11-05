@@ -34,7 +34,7 @@ import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
 import { createEvalBar, EVAL_EMPTY_CLASS } from "./eval-graph.js";
-import { attachPanelMenu } from "./panel-fade.js";
+import { attachPanelMenu, createPanelFade } from "./panel-fade.js";
 import { createPvTable } from "./pv-table.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
@@ -722,8 +722,8 @@ export function createDockableWindow(config) {
     // restoreDebugWindows) while still docking into the shared column, for
     // windows whose open/close is owned by their own state machine.
     selfManaged = false,
-    // Storage key of the body's own Transparency (right-click menu); none for
-    // a body that brings its own (a faded table).
+    // Storage key of the body's Transparency: the window owns its fader (build
+    // gets it, for a table to add its share) and a right-click menu for it.
     fadeKey = null,
   } = config;
   const mainDock = !config.getDockEl && !selfManaged;
@@ -1031,12 +1031,14 @@ export function createDockableWindow(config) {
     if (inst.mounted) { close(); return; }
     persistOpen(true);
     if (!body) {
-      body = build(events, { setOff });
+      const fade = fadeKey ? createPanelFade(null, { storageKey: fadeKey }) : null;
+      body = build(events, { setOff, fade });
       // The window owns its body's fader; its teardown joins the body's.
-      if (fadeKey) {
+      if (fade) {
+        fade.attach(body);
         const builtOff = off;
-        const fadeOff = attachPanelMenu(body, { fadeKey });
-        off = () => { builtOff?.(); fadeOff(); };
+        const menuOff = attachPanelMenu(body, { fade });
+        off = () => { builtOff?.(); menuOff(); fade.destroy(); };
       }
     }
     if (isMobileLayout() && getInlineEl?.()) {
@@ -1275,6 +1277,7 @@ const PV_GEO_KEY       = STORAGE_KEY.PVTABLE_GEO;
 const PV_WIN_STATE_KEY = STORAGE_KEY.PVTABLE_WIN_STATE;
 const PV_DOCKED_KEY    = STORAGE_KEY.PVTABLE_DOCKED;
 const PV_OPEN_KEY      = STORAGE_KEY.PVTABLE_OPEN;
+const PV_FADE_KEY      = STORAGE_KEY.PVTABLE_FADE;
 
 // Set by play.js on mount, cleared on unmount: the live board's line-show
 // primitives, so this module can sample placement per engine_info and drive
@@ -1302,10 +1305,10 @@ function pvTableIsExempt(target) {
 let pvTableApi = null;
 export function clearSearchLines() { pvTableApi?.clear(); }
 
-function buildPvTableBody(events, { setOff }) {
+function buildPvTableBody(events, { setOff, fade }) {
   const pvt = createPvTable({
     layoutKey: STORAGE_KEY.PVTABLE_LAYOUT,
-    fade: true,
+    fade,
     onActivate(handle) {
       return !!pvLineBoard?.playLine(handle.frames, {
         pvUci: handle.pvUci,
@@ -1346,6 +1349,7 @@ const pvTable = createDockableWindow({
   geoKey: PV_GEO_KEY,
   winStateKey: PV_WIN_STATE_KEY,
   dockedKey: PV_DOCKED_KEY,
+  fadeKey: PV_FADE_KEY,
   openKey: PV_OPEN_KEY,
   defaultW: () => rightColumnWidth(560),
   defaultH: 260,

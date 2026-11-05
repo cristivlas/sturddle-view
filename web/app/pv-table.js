@@ -126,8 +126,8 @@ function hasPlayableFrames(tr) {
   return !!st?.pvRow && st.pvRow.frames.length >= MIN_SHOWABLE_FRAMES;
 }
 
-// fade: offer Transparency in the Columns menu.
-export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, currentPlacement, fade = false }) {
+// fade: its panel's fader, for Transparency in the Columns menu.
+export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, currentPlacement, fade = null }) {
   // Showable requires both a playable line AND the board currently willing
   // to play one (not analyzing, not editing) -- gating here, not just at
   // activation, means a row never becomes double-click-able (hover, tooltip)

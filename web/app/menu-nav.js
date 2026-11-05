@@ -222,6 +222,13 @@ export function wireMenuToggle(btn, menu, open) {
   });
 }
 
+// Right-clicks that a menu (a table's Columns menu) already took, so an outer
+// panel menu leaves them be. defaultPrevented can't tell: main.js cancels
+// every contextmenu (no browser menu).
+const claimedContextMenus = new WeakSet();
+export const claimContextMenu = (ev) => { claimedContextMenus.add(ev); };
+export const isContextMenuClaimed = (ev) => claimedContextMenus.has(ev);
+
 // Flyouts open toward the side with more room; call once the menu is placed.
 export function setFlyoutSide(menu) {
   const r = menu.getBoundingClientRect();

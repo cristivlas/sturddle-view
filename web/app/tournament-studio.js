@@ -30,7 +30,7 @@ import { EVENT_LOG_COPY_WHAT, eventLogText, renderEventLogList } from "./tournam
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 import { renderInfoWall } from "./tournament-info.js";
 import { mountWallpaper } from "./wallpaper.js";
-import { attachPanelMenu } from "./panel-fade.js";
+import { attachPanelMenu, createPanelFade } from "./panel-fade.js";
 import { mqMobile, mqMobileH } from "./breakpoints.js";
 import { attachRibbonOverflow } from "./ribbon-overflow.js";
 
@@ -262,7 +262,7 @@ function selectedTournaments(ctx) {
 
 // Activate the bottom-right Standings tab; the wa-tab-show listener persists it.
 function showStandingsTab(ctx) {
-  ctx.bottomRightEl?.querySelector(".studio-tabs")?.setAttribute("active", STUDIO_TAB_STANDINGS);
+  ctx.rightTabsEl?.setAttribute("active", STUDIO_TAB_STANDINGS);
 }
 
 // Games cell: while running, Arena's progress bar (label then bar); otherwise
@@ -307,7 +307,7 @@ function buildTourneyTable(ctx) {
         sortKey: STORAGE_KEY.STUDIO_TOURNEY_SORT,
         stackKey: STORAGE_KEY.STUDIO_TOURNEY_STACK,
       },
-      resize: true, reorder: true, hide: true, fit: true, fade: true,
+      resize: true, reorder: true, hide: true, fit: true, fade: ctx.rightFade,
       // Arrows move the selection; Shift extends the multi-selection from its
       // lead row.
       rowNav: {
@@ -656,7 +656,7 @@ function buildHistoryTable(ctx) {
     minPct: STUDIO_HISTORY_MIN_PCT,
     traits: {
       sort: { sortKey: STORAGE_KEY.STUDIO_HISTORY_SORT, stackKey: STORAGE_KEY.STUDIO_HISTORY_STACK },
-      resize: true, reorder: true, hide: true, fit: true, fade: true, rowNav: {},
+      resize: true, reorder: true, hide: true, fit: true, fade: ctx.rightFade, rowNav: {},
     },
     rowAttrs: (r) => ({
       class: HISTORY_ROW_CLASS,
@@ -1142,7 +1142,7 @@ function restoreBoards(ctx) {
 function wireTabPersistence(ctx) {
   const groups = [
     [ctx.leftTabsEl, STORAGE_KEY.STUDIO_TAB_LEFT, STUDIO_TAB_DEFAULT_LEFT],
-    [ctx.container.querySelector(".studio-bottom-right .studio-tabs"), STORAGE_KEY.STUDIO_TAB_RIGHT, STUDIO_TAB_DEFAULT_RIGHT],
+    [ctx.rightTabsEl, STORAGE_KEY.STUDIO_TAB_RIGHT, STUDIO_TAB_DEFAULT_RIGHT],
   ];
   for (const [el, key, def] of groups) {
     if (!el) continue;
@@ -1314,6 +1314,7 @@ export function mountTournamentStudio({ container, api, events, log }) {
     bottomEl: q(".studio-bottom"),
     bottomLeftEl: q(".studio-bottom-left"),
     leftTabsEl: q(".studio-bottom-left .studio-tabs"),
+    rightTabsEl: q(".studio-bottom-right .studio-tabs"),
     bottomRightEl: q(".studio-bottom-right"),
     gripRowEl: q(".studio-grip-row"),
     gripColEl: q(".studio-grip-col"),
@@ -1346,12 +1347,16 @@ export function mountTournamentStudio({ container, api, events, log }) {
     // Ribbon verbs (shared with Arena) + tournament settings for New/Edit.
     tournSettings: null, ribbonBtns: null, actions: null,
   };
+  // Each tab group owns one fade, shared by its tabs' menus (the fill is on
+  // the group).
+  ctx.leftFade = createPanelFade(ctx.leftTabsEl, { storageKey: STORAGE_KEY.STUDIO_LEFT_FADE });
+  ctx.rightFade = createPanelFade(ctx.rightTabsEl, { storageKey: STORAGE_KEY.STUDIO_RIGHT_FADE });
   // Standings pane reuses the shared resizable-column table; log pane is a
   // plain list the shared renderer fills.
-  ctx.standingsBodyEl = makeStandingsBody({ fade: true });
+  ctx.standingsBodyEl = makeStandingsBody({ fade: ctx.rightFade });
   ctx.standingsPaneEl?.appendChild(ctx.standingsBodyEl);
   // H2H body (build once, resizable columns wired); fill shares standings' cadence.
-  ctx.h2hBodyEl = makeH2HBody();
+  ctx.h2hBodyEl = makeH2HBody({ fade: ctx.rightFade });
   ctx.h2hPaneEl?.appendChild(ctx.h2hBodyEl);
   ctx.logListEl = document.createElement("ul");
   ctx.logListEl.className = "wb-eventlog-list";
@@ -1387,10 +1392,10 @@ export function mountTournamentStudio({ container, api, events, log }) {
     ribbonEls: [ctx.ribbonEl], regionEl: ctx.mainEl,
     isBare: (t) => ctx.boardsEl.contains(t) && !t.closest(".winbox"), api: ctx.api, log: ctx.log,
   });
-  // Playing and Engines share one fade: the fill is on their tab group.
-  ctx.leftMenuOff = attachPanelMenu(ctx.leftTabsEl, { fadeKey: STORAGE_KEY.STUDIO_LEFT_FADE });
+  // Right-click Transparency for the tabs without a Columns menu.
+  ctx.leftMenuOff = attachPanelMenu(ctx.leftTabsEl, { fade: ctx.leftFade });
   ctx.logMenuOff = attachPanelMenu(ctx.logPaneEl, {
-    fadeKey: STORAGE_KEY.STUDIO_LOG_FADE,
+    fade: ctx.rightFade,
     actions: [{ label: COPY_LABEL, run: () => copyToClipboard(eventLogText(logEvents(ctx)), EVENT_LOG_COPY_WHAT) }],
   });
   ctx.ribbonOverflow = attachRibbonOverflow(ctx.ribbonEl);
@@ -1464,7 +1469,9 @@ function unmountStudio(ctx) {
   ctx.wallpaper?.unmount();
   ctx.leftMenuOff?.();
   ctx.logMenuOff?.();
-  ctx.leftMenuOff = ctx.logMenuOff = null;
+  ctx.leftFade?.destroy();
+  ctx.rightFade?.destroy();
+  ctx.leftMenuOff = ctx.logMenuOff = ctx.leftFade = ctx.rightFade = null;
   // stopLive unsubscribes, nulls liveTid (so a pending standings refresh
   // no-ops), and closes the boards.
   stopLive(ctx);
@@ -1472,7 +1479,7 @@ function unmountStudio(ctx) {
   ctx.ribbonOverflow?.detach();
   ctx.panel.remove();
   ctx.panel = ctx.ribbonEl = null;
-  ctx.mainEl = ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.leftTabsEl = ctx.bottomRightEl = null;
+  ctx.mainEl = ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.leftTabsEl = ctx.bottomRightEl = ctx.rightTabsEl = null;
   ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = ctx.tourneyTable = null;
   ctx.enginesPaneEl = ctx.gamesPaneEl = null;
   ctx.standingsPaneEl = ctx.standingsBodyEl = ctx.h2hPaneEl = ctx.h2hBodyEl = ctx.historyPaneEl = ctx.historyTable = ctx.logPaneEl = ctx.logListEl = null;

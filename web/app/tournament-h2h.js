@@ -172,7 +172,8 @@ function bannerHtml(engines) {
 // Build the H2H body once: a banner slot, an empty-state line, and a
 // resize-only table (no sort, no columns menu; arrow-key row cursor) the fill
 // step populates. Mirrors makeStandingsBody.
-export function makeH2HBody() {
+// fade: its panel's fader, for Transparency in the Columns menu.
+export function makeH2HBody({ fade = null } = {}) {
   const el = document.createElement("div");
   el.className = "wb-h2h";
   el.innerHTML = `
@@ -184,7 +185,7 @@ export function makeH2HBody() {
     columns: H2H_COLUMNS,
     layoutKey: STORAGE_KEY.STUDIO_H2H_LAYOUT,
     minPct: H2H_MIN_PCT,
-    traits: { resize: true, reorder: true, fade: true, rowNav: {} },
+    traits: { resize: true, reorder: true, fade, rowNav: {} },
     // Group rows carry no data-id, so the row cursor skips them.
     rowAttrs: (r) => (r.group != null ? { class: GROUP_ROW_CLASS } : { "data-id": `${r.engine}:${r.side}` }),
     fullRow: (r) => (r.group != null ? { html: escapeHtml(r.group) } : null),

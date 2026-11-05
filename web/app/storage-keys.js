@@ -65,6 +65,7 @@ export const STORAGE_KEY = {
   PVTABLE_GEO: "sturddle:pvtable:geo",
   PVTABLE_WIN_STATE: "sturddle:pvtable:winstate",
   PVTABLE_DOCKED: "sturddle:pvtable:docked",
+  PVTABLE_FADE: "sturddle:pvtable:fade",
   PVTABLE_OPEN: "sturddle:pvtable:open",
   // Column layout; the value predates it (saved widths migrate).
   PVTABLE_LAYOUT: "sturddle:pvtable:colWidths",
@@ -81,7 +82,7 @@ export const STORAGE_KEY = {
   STUDIO_TAB_RIGHT: "sturddle:studio:tabRight",
   STUDIO_LEFT_FOLDED: "sturddle:studio:leftFolded",
   STUDIO_LEFT_FADE: "sturddle:studio:leftFade",
-  STUDIO_LOG_FADE: "sturddle:studio:logFade",
+  STUDIO_RIGHT_FADE: "sturddle:studio:rightFade",
   STUDIO_TOURNEY_SORT: "sturddle:studio:tourneySort",
   STUDIO_TOURNEY_STACK: "sturddle:studio:tourneyStack",
   STUDIO_TOURNEY_LAYOUT: "sturddle:studio:tourneyLayout",

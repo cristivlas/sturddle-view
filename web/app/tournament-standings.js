@@ -50,8 +50,8 @@ const STANDINGS_COLUMNS = [
     cell: ({ engine: e }) => ordoCell(e) },
 ];
 
-// fade: offer Transparency in the Columns menu (Studio only).
-export function makeStandingsBody({ fade = false } = {}) {
+// fade: its panel's fader, for Transparency in the Columns menu (Studio only).
+export function makeStandingsBody({ fade = null } = {}) {
   const el = document.createElement("div");
   el.className = "wb-standings";
   el.innerHTML = `

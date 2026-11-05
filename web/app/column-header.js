@@ -14,10 +14,10 @@ import { attachColumnResize } from "./col-resize.js";
 import { ARROW_CLASS, ARROW_DESC, TH_LABEL_CLASS, TH_SORTABLE_CLASS } from "./col-sort.js";
 import { ESCAPE_KEY } from "./keys.js";
 import {
-  attachMenuNav, focusFirstItem, MENU_CHECKED_CLASS, positionMenuAt,
+  attachMenuNav, claimContextMenu, focusFirstItem, MENU_CHECKED_CLASS, positionMenuAt,
   wireMenuToggle, wireSliderRow,
 } from "./menu-nav.js";
-import { createPanelFade, fadeMenuHtml } from "./panel-fade.js";
+import { fadeMenuHtml } from "./panel-fade.js";
 import { applySplitColWidths, wireSplitScroll } from "./split-table.js";
 import { escapeHtml } from "./wb-utils.js";
 
@@ -73,7 +73,7 @@ const syncRegistry = new Map(); // layoutKey -> Set<reload fn>
 
 const sum = (sizes) => sizes.reduce((s, w) => s + w, 0);
 
-// Saved { unit, order, hidden, widths, fade } fit to the current columns. Widths in
+// Saved { unit, order, hidden, widths } fit to the current columns. Widths in
 // another unit (none = pct) drop; without reorder the declared order wins,
 // so a varying column list (one per engine) doesn't append new keys last.
 function reconcileLayout(columns, saved, fixedOrder, unit) {
@@ -94,7 +94,7 @@ function reconcileLayout(columns, saved, fixedOrder, unit) {
     const w = savedWidths?.[c.key];
     widths[c.key] = Number.isFinite(w) && w > 0 ? w : c.width;
   }
-  return { order: ordered, hidden, widths, fade: Number.isFinite(saved.fade) ? saved.fade : 0 };
+  return { order: ordered, hidden, widths };
 }
 
 // Column widths (% of the body) from each column's natural (max-content) px
@@ -210,7 +210,7 @@ function menuHtml(layout, byKey, traits, visibleCount) {
   const action = (name, label) =>
     `<li>${menuBtnHtml(name, "tmb-dd-item", label, { attrs: ` data-action="${name}"` })}</li>`;
   const sep = `<li class="tmb-separator"></li>`;
-  const fade = traits.fade ? fadeMenuHtml(layout.fade) : "";
+  const fade = traits.fade ? fadeMenuHtml(traits.fade.pct) : "";
   return items + sep + (traits.fit ? action(MENU_ACTION.FIT, FIT_LABEL) : "")
     + action(MENU_ACTION.RESET, RESET_LABEL) + (fade ? sep + fade : "");
 }
@@ -516,6 +516,7 @@ function createColumnsMenu({ wrap, thead, html, onAction, onFade }) {
   wrap.addEventListener("contextmenu", (ev) => {
     if (menu.contains(ev.target)) return;
     ev.preventDefault();
+    claimContextMenu(ev);
     open({ top: ev.clientY, bottom: ev.clientY, left: ev.clientX });
   });
 
@@ -539,7 +540,7 @@ export function createColumnHeader({
   classes,           // { wrap, headScroll, headTable, bodyScroll, bodyTable }
   unit = WIDTH_UNIT.PCT, // px needs a pinEnd column to fill the rest
   minPct,            // pct floor per column
-  traits = {},       // { resize?, reorder?, hide?, fit?, fade? }
+  traits = {},       // { resize?, reorder?, hide?, fit?, fade? (its panel's fader) }
   dragLineHeight,    // see attachColumnResize
   onLayout,          // (shownCols) after every header rebuild
   onSizes,           // () after widths are applied, drags included
@@ -585,7 +586,7 @@ export function createColumnHeader({
   const visibleCols = () => layout.order.filter((k) => !layout.hidden.has(k)).map((k) => byKey.get(k));
   const saveLayout = () => {
     saveJson(layoutKey, {
-      unit, order: layout.order, hidden: [...layout.hidden], widths: layout.widths, fade: layout.fade,
+      unit, order: layout.order, hidden: [...layout.hidden], widths: layout.widths,
     });
     if (!sync) return;
     for (const reload of syncRegistry.get(layoutKey)) if (reload !== reloadFromSaved) reload();
@@ -628,14 +629,12 @@ export function createColumnHeader({
   }
   const roomObserver = hasMenu ? new ResizeObserver(refreshButtonRoom) : null;
   roomObserver?.observe(headTable);
-  // The table's wrap is the faded panel; its header cells and lines join it.
-  const fader = traits.fade
-    ? createPanelFade(wrap, {
-      pct: layout.fade,
-      ownEls: () => [headScroll, headTable, bodyScroll, bodyTable, ...thead.querySelectorAll("th")],
-      lineTables: [headTable, bodyTable],
-    })
-    : null;
+  // The table's share of its panel's fade: its own backgrounds, header cells
+  // and lines.
+  const removeFadePart = traits.fade?.addPart({
+    ownEls: () => [wrap, headScroll, headTable, bodyScroll, bodyTable, ...thead.querySelectorAll("th")],
+    lineTables: [headTable, bodyTable],
+  });
   // Floors per shown column; the first also keeps its button room.
   const minAt = (i) => (unit === WIDTH_UNIT.PX ? MIN_COL_PX : minPct) + (i ? 0 : buttonRoom);
 
@@ -695,7 +694,7 @@ export function createColumnHeader({
       });
     }
     // The header cells are new.
-    fader?.apply(layout.fade, true);
+    traits.fade?.rescan();
     menu?.refresh();
     onLayout?.(cols);
   }
@@ -730,9 +729,9 @@ export function createColumnHeader({
     ? createColumnsMenu({
       wrap, thead, onAction: applyMenuAction,
       html: () => menuHtml(layout, byKey, traits, visibleCols().length),
-      onFade: fader && {
-        onInput: (pct) => { layout.fade = pct; fader.apply(pct); },
-        onChange: () => saveLayout(),
+      onFade: traits.fade && {
+        onInput: (pct) => traits.fade.set(pct),
+        onChange: () => traits.fade.save(),
       },
     })
     : null;
@@ -750,7 +749,7 @@ export function createColumnHeader({
     destroy() {
       resizeCtrl?.destroy();
       roomObserver?.disconnect();
-      fader?.destroy();
+      removeFadePart?.();
       if (!sync) return;
       const set = syncRegistry.get(layoutKey);
       set.delete(reloadFromSaved);
