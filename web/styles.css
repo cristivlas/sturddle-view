@@ -5238,31 +5238,16 @@ wa-dialog.tournament-info-dialog::part(body) {
    it collapses to a normal divider in every layout. */
 .ribbon-sep--push { flex: 0 0 auto; }
 
-/* UCI log window. The toolbar is a fixed (non-scrolling) header above its own
-   scroll container, so the lines' scrollbar track starts below it instead of
-   a sticky header sharing the body's scrollbar. The negative margin cancels
-   wb-body's default 8px/12px padding so the toolbar spans edge-to-edge; the
-   scroll container keeps that padding for the lines below it. */
+/* UCI log window (actions in its right-click menu). The scroll container
+   cancels wb-body's 8px/12px padding with a negative margin, so its scrollbar
+   sits at the window's edge, and keeps that padding for the lines. */
 .wb-uci-log { height: 100%; display: flex; flex-direction: column; min-height: 0; }
 .winbox.sturddle-wb-uci-log .wb-body,
 .dock-slot-body:has(> .wb-uci-log) { overflow: hidden; }
-.wb-uci-log-toolbar {
-  display: flex; align-items: center; gap: 12px;
-  flex: 0 0 auto;
-  padding: 4px 8px; margin: -8px -12px 0;
-  border-bottom: 1px solid var(--border-subtle); font-size: 0.8125rem;
-  background: var(--panel);
-}
-.wb-uci-log-toolbar button {
-  background: var(--nav-btn-bg); color: var(--fg);
-  border: 1px solid var(--border-subtle); border-radius: 3px;
-  padding: 2px 8px; cursor: pointer; font-size: 0.75rem;
-}
-.wb-uci-log-toolbar button:hover { background: var(--nav-btn-bg-hover); }
 .wb-uci-log-scroll {
   flex: 1 1 auto; min-height: 0;
   overflow: auto;
-  margin: 0 -12px -8px; padding: 8px 12px;
+  margin: -8px -12px; padding: 8px 12px;
 }
 .wb-uci-log-line {
   font-family: var(--wa-font-family-code); font-size: 0.75rem; line-height: 1.5;

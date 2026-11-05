@@ -30,7 +30,7 @@ import { EVENT_LOG_COPY_WHAT, eventLogText, renderEventLogList } from "./tournam
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 import { renderInfoWall } from "./tournament-info.js";
 import { mountWallpaper } from "./wallpaper.js";
-import { attachPanelMenu, createPanelFade } from "./panel-fade.js";
+import { attachPanelMenu, COPY_LABEL, createPanelFade } from "./panel-fade.js";
 import { mqMobile, mqMobileH } from "./breakpoints.js";
 import { attachRibbonOverflow } from "./ribbon-overflow.js";
 
@@ -39,7 +39,6 @@ const TOURNAMENT_SETTINGS_ENDPOINT = "/api/tournament-settings";
 const SETTINGS_ENDPOINT = "/settings";
 const LOAD_FAIL_MSG = "Loading tournaments failed";
 const NO_ENGINES_MSG = "No active engines.";
-const COPY_LABEL = "Copy";
 const NO_GAMES_MSG = "No games in play.";
 const REVIEW_FAIL_MSG = "Review failed";
 // Coalesce bursty WS events into one list reload.

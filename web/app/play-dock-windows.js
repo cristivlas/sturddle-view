@@ -34,7 +34,7 @@ import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
 import { createEvalBar, EVAL_EMPTY_CLASS } from "./eval-graph.js";
-import { attachPanelMenu, createPanelFade } from "./panel-fade.js";
+import { attachPanelMenu, COPY_LABEL, createPanelFade } from "./panel-fade.js";
 import { createPvTable } from "./pv-table.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
@@ -723,7 +723,8 @@ export function createDockableWindow(config) {
     // windows whose open/close is owned by their own state machine.
     selfManaged = false,
     // Storage key of the body's Transparency: the window owns its fader (build
-    // gets it, for a table to add its share) and a right-click menu for it.
+    // gets it, for a table to add its share), shown in its right-click menu
+    // under any actions build passes to setActions.
     fadeKey = null,
   } = config;
   const mainDock = !config.getDockEl && !selfManaged;
@@ -1032,14 +1033,24 @@ export function createDockableWindow(config) {
     persistOpen(true);
     if (!body) {
       const fade = fadeKey ? createPanelFade(null, { storageKey: fadeKey }) : null;
-      body = build(events, { setOff, fade });
-      // The window owns its body's fader; its teardown joins the body's.
-      if (fade) {
-        fade.attach(body);
-        const builtOff = off;
-        const menuOff = attachPanelMenu(body, { fade });
-        off = () => { builtOff?.(); menuOff(); fade.destroy(); };
-      }
+      // The body may hand its own actions to the window's right-click menu,
+      // at any time: the menu reads this list at each open. A window with
+      // neither actions nor a fade gets no menu.
+      const actions = [];
+      let menuOff = null;
+      // This build's body: a late call from a torn-down one attaches nothing.
+      let own = null;
+      const ensureMenu = () => { menuOff ??= attachPanelMenu(own, { fade, actions }); };
+      const setActions = (list) => {
+        actions.splice(0, actions.length, ...list);
+        if (own && own === body && actions.length) ensureMenu();
+      };
+      body = own = build(events, { setOff, fade, setActions });
+      // The window owns its body's fader and menu; their teardown joins the body's.
+      fade?.attach(body);
+      if (fade || actions.length) ensureMenu();
+      const builtOff = off;
+      off = () => { builtOff?.(); menuOff?.(); fade?.destroy(); };
     }
     if (isMobileLayout() && getInlineEl?.()) {
       inline();
@@ -1185,6 +1196,21 @@ const UCI_WIN_STATE_KEY = STORAGE_KEY.UCILOG_WIN_STATE;
 const UCI_DOCKED_KEY    = STORAGE_KEY.UCILOG_DOCKED;
 const UCI_OPEN_KEY      = STORAGE_KEY.UCILOG_OPEN;
 const UCI_FADE_KEY      = STORAGE_KEY.UCILOG_FADE;
+const UCI_PAUSE_LABEL = "Pause";
+const UCI_CLEAR_LABEL = "Clear";
+// copyToClipboard's toast subject.
+const UCI_COPY_WHAT = "UCI log";
+// Shown in the title's parens in place of the engine name while paused.
+const UCI_PAUSED_TAG = "paused";
+
+// Title state: the engine named by setUciLogEngine, and the log's Pause.
+let uciEngineName = "";
+let uciPaused = false;
+function syncUciTitle() {
+  const tag = uciPaused ? UCI_PAUSED_TAG : uciEngineName;
+  uciLog.setTitle(tag ? `${UCI_LOG_TITLE} (${tag})` : UCI_LOG_TITLE);
+}
+const setUciPaused = (on) => { uciPaused = on; syncUciTitle(); };
 
 // Clear entry point ({clear}) or null while the window is closed. play.js
 // calls it when analysis starts and when the engine's (non-analysis) turn
@@ -1192,15 +1218,11 @@ const UCI_FADE_KEY      = STORAGE_KEY.UCILOG_FADE;
 let uciLogApi = null;
 export function clearUciLog() { uciLogApi?.clear(); }
 
-function buildUciLogBody(events, { setOff }) {
+// Pause / Copy / Clear live in the window's right-click menu.
+function buildUciLogBody(events, { setOff, setActions }) {
   const body = document.createElement("div");
   body.className = "wb-uci-log";
   body.innerHTML = `
-    <div class="wb-uci-log-toolbar">
-      <label><input type="checkbox" class="uci-log-pause"> Pause</label>
-      <button type="button" class="uci-log-copy" title="Copy to clipboard">Copy</button>
-      <button type="button" class="uci-log-clear">Clear</button>
-    </div>
     <div class="wb-uci-log-scroll">
       <div class="wb-uci-log-lines"></div>
     </div>
@@ -1208,24 +1230,24 @@ function buildUciLogBody(events, { setOff }) {
 
   const lines = body.querySelector(".wb-uci-log-lines");
   markSelectable(lines);
-  const pauseChk = body.querySelector(".uci-log-pause");
-  const copyBtn = body.querySelector(".uci-log-copy");
-  const clearBtn = body.querySelector(".uci-log-clear");
   let lineCount = 0;
-  let paused = false;
 
-  const clear = () => { lines.textContent = ""; lineCount = 0; copyBtn.disabled = true; };
+  const clear = () => { lines.textContent = ""; lineCount = 0; };
 
-  copyBtn.disabled = true;
-  pauseChk.addEventListener("change", () => { paused = pauseChk.checked; });
-  copyBtn.addEventListener("click", () => copyToClipboard(
-    Array.from(lines.children).map(d => d.textContent).join("\n"), "UCI log"));
-  clearBtn.addEventListener("click", clear);
+  setActions([
+    { label: UCI_PAUSE_LABEL, checked: () => uciPaused, run: () => setUciPaused(!uciPaused) },
+    {
+      label: COPY_LABEL, disabled: () => !lines.firstChild,
+      run: () => copyToClipboard(
+        Array.from(lines.children).map(d => d.textContent).join("\n"), UCI_COPY_WHAT),
+    },
+    { label: UCI_CLEAR_LABEL, run: clear },
+  ]);
 
   // Autoscroll only when the user is already pinned to the bottom; otherwise
   // they're inspecting earlier output and new lines must not yank them away.
   const off = events.on((evt) => {
-    if (evt.kind !== "uci_log" || paused) return;
+    if (evt.kind !== "uci_log" || uciPaused) return;
     const { dir, line } = evt.payload;
     const scroller = body.querySelector(".wb-uci-log-scroll");
     const pinned = isPinnedToBottom(scroller, AUTOSCROLL_SLACK_LINE_PX);
@@ -1233,7 +1255,6 @@ function buildUciLogBody(events, { setOff }) {
     div.className = `wb-uci-log-line ${dir === ">" ? "uci-out" : "uci-in"}`;
     div.textContent = `${dir} ${line}`;
     lines.appendChild(div);
-    if (copyBtn.disabled) copyBtn.disabled = false;
     lineCount++;
     if (lineCount > UCI_LOG_MAX_LINES) {
       for (let i = 0; i < UCI_LOG_TRIM_CHUNK && lines.firstChild; i++) {
@@ -1245,7 +1266,8 @@ function buildUciLogBody(events, { setOff }) {
   });
 
   uciLogApi = { clear };
-  setOff(() => { off(); uciLogApi = null; });
+  // A closed log reopens unpaused.
+  setOff(() => { off(); uciLogApi = null; setUciPaused(false); });
 
   return body;
 }
@@ -1475,7 +1497,8 @@ export const isPvTableOpen = () => pvTable.mounted;
 // Caller resolves the right engine (analysis engine while analyzing, play engine
 // otherwise). Empty/falsy reverts to the bare title.
 export function setUciLogEngine(name) {
-  uciLog.setTitle(name ? `${UCI_LOG_TITLE} (${name})` : UCI_LOG_TITLE);
+  uciEngineName = name || "";
+  syncUciTitle();
 }
 
 export function closeDebugWindows() {

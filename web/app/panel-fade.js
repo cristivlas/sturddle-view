@@ -10,10 +10,13 @@ import { APP_EVT } from "./app-events.js";
 import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import {
   attachMenuNav, focusFirstItem, isContextMenuClaimed, isKeyboardContextMenu, makeMenuHost,
-  positionMenuAt, sliderRowHtml, submenuHtml, wireSliderRow,
+  MENU_CHECKED_CLASS, positionMenuAt, sliderRowHtml, submenuHtml, wireSliderRow,
 } from "./menu-nav.js";
 import { loadJson, saveJson } from "./storage.js";
 import { escapeHtml, PCT_SUFFIX } from "./wb-utils.js";
+
+// Panel-menu action labels shared across panels.
+export const COPY_LABEL = "Copy";
 
 const FADE_LABEL = "Transparency";
 const FADE_MAX_PCT = 100;
@@ -187,9 +190,10 @@ export function createPanelFade(panel, { storageKey }) {
 }
 
 // A panel's right-click menu (a top-layer popover, so no host clips it):
-// actions [{ label, run }] on top, then, with a fade (its fader), its
-// Transparency. A right-click a menu inside already took (a table's
-// Columns menu) is left to it. Returns the teardown.
+// actions [{ label, run, checked?, disabled? }] on top (checked/disabled are
+// read at each open), then, with a fade (its fader), its Transparency. A
+// right-click a menu inside already took (a table's Columns menu) is left to
+// it. Returns the teardown.
 export function attachPanelMenu(panel, { fade = null, actions = [] } = {}) {
   const menu = document.createElement("ul");
   menu.className = PANEL_MENU_CLASS;
@@ -209,11 +213,16 @@ export function attachPanelMenu(panel, { fade = null, actions = [] } = {}) {
   });
   document.body.append(menu);
 
-  const actionsHtml = actions.map((a, i) =>
-    `<li><button type="button" class="tmb-dd-item" ${ACTION_ATTR}="${i}">${escapeHtml(a.label)}</button></li>`).join("");
+  const actionHtml = (a, i) => {
+    const cls = a.checked?.() ? ` ${MENU_CHECKED_CLASS}` : "";
+    const dis = a.disabled?.() ? " disabled" : "";
+    return `<li><button type="button" class="tmb-dd-item${cls}" ${ACTION_ATTR}="${i}"${dis}>`
+      + `${escapeHtml(a.label)}</button></li>`;
+  };
 
   function onContextMenu(ev) {
     if (isContextMenuClaimed(ev)) return;
+    const actionsHtml = actions.map(actionHtml).join("");
     const fadeHtml = fade ? fadeMenuHtml(fade.pct) : "";
     const html = actionsHtml + (actionsHtml && fadeHtml ? SEPARATOR_HTML : "") + fadeHtml;
     if (!html) return;
