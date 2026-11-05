@@ -34,6 +34,7 @@ import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
 import { createEvalBar, EVAL_EMPTY_CLASS } from "./eval-graph.js";
+import { attachFadeMenu } from "./panel-fade.js";
 import { createPvTable } from "./pv-table.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
@@ -721,6 +722,9 @@ export function createDockableWindow(config) {
     // restoreDebugWindows) while still docking into the shared column, for
     // windows whose open/close is owned by their own state machine.
     selfManaged = false,
+    // Storage key of the body's own Transparency (right-click menu); none for
+    // a body that brings its own (a faded table).
+    fadeKey = null,
   } = config;
   const mainDock = !config.getDockEl && !selfManaged;
 
@@ -1026,7 +1030,15 @@ export function createDockableWindow(config) {
   function toggle(events) {
     if (inst.mounted) { close(); return; }
     persistOpen(true);
-    if (!body) body = build(events, { setOff });
+    if (!body) {
+      body = build(events, { setOff });
+      // The window owns its body's fader; its teardown joins the body's.
+      if (fadeKey) {
+        const builtOff = off;
+        const fadeOff = attachFadeMenu(body, fadeKey);
+        off = () => { builtOff?.(); fadeOff(); };
+      }
+    }
     if (isMobileLayout() && getInlineEl?.()) {
       inline();
     } else if (isDocked(dockedKey) && resolveDockEl()) {
@@ -1170,6 +1182,7 @@ const UCI_GEO_KEY       = STORAGE_KEY.UCILOG_GEO;
 const UCI_WIN_STATE_KEY = STORAGE_KEY.UCILOG_WIN_STATE;
 const UCI_DOCKED_KEY    = STORAGE_KEY.UCILOG_DOCKED;
 const UCI_OPEN_KEY      = STORAGE_KEY.UCILOG_OPEN;
+const UCI_FADE_KEY      = STORAGE_KEY.UCILOG_FADE;
 
 // Clear entry point ({clear}) or null while the window is closed. play.js
 // calls it when analysis starts and when the engine's (non-analysis) turn
@@ -1241,6 +1254,7 @@ const uciLog = createDockableWindow({
   geoKey: UCI_GEO_KEY,
   winStateKey: UCI_WIN_STATE_KEY,
   dockedKey: UCI_DOCKED_KEY,
+  fadeKey: UCI_FADE_KEY,
   openKey: UCI_OPEN_KEY,
   defaultW: () => rightColumnWidth(480),
   defaultH: 320,
@@ -1349,6 +1363,7 @@ const EVAL_TOOLTIP = "Evaluation from the engine's point of view";
 const EVAL_GEO_KEY       = STORAGE_KEY.EVALBAR_GEO;
 const EVAL_WIN_STATE_KEY = STORAGE_KEY.EVALBAR_WIN_STATE;
 const EVAL_DOCKED_KEY    = STORAGE_KEY.EVALBAR_DOCKED;
+const EVAL_FADE_KEY      = STORAGE_KEY.EVALBAR_FADE;
 
 // Cache of the play_show_eval_graph server setting, which owns whether this
 // window is open. play.js primes it from /settings on mount and on every
@@ -1402,6 +1417,7 @@ export const evalBar = createDockableWindow({
   geoKey: EVAL_GEO_KEY,
   winStateKey: EVAL_WIN_STATE_KEY,
   dockedKey: EVAL_DOCKED_KEY,
+  fadeKey: EVAL_FADE_KEY,
   defaultW: () => rightColumnWidth(480),
   defaultH: 140,
   defaultY: (h) => {

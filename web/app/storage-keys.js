@@ -42,6 +42,7 @@ export const STORAGE_KEY = {
   AI_DOCKED: "sturddle:ai:docked",
   AI_TITLE_MODEL: "sturddle:ai:title-model",
   AI_THINKING_OPEN: "sturddle:ai:thinking-open",
+  AI_FADE: "sturddle:ai:fade",
 
   // Commentary window state.
   COMMENTARY_GEO: "sturddle:commentary:geo",
@@ -55,10 +56,12 @@ export const STORAGE_KEY = {
   EVALBAR_GEO: "sturddle:evalbar:geo",
   EVALBAR_WIN_STATE: "sturddle:evalbar:winstate",
   EVALBAR_DOCKED: "sturddle:evalbar:docked",
+  EVALBAR_FADE: "sturddle:evalbar:fade",
   UCILOG_GEO: "sturddle:ucilog:geo",
   UCILOG_WIN_STATE: "sturddle:ucilog:winstate",
   UCILOG_DOCKED: "sturddle:ucilog:docked",
   UCILOG_OPEN: "sturddle:ucilog:open",
+  UCILOG_FADE: "sturddle:ucilog:fade",
   PVTABLE_GEO: "sturddle:pvtable:geo",
   PVTABLE_WIN_STATE: "sturddle:pvtable:winstate",
   PVTABLE_DOCKED: "sturddle:pvtable:docked",

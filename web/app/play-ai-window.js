@@ -33,6 +33,7 @@ import {
 const GEO_KEY       = STORAGE_KEY.AI_GEO;
 const WIN_STATE_KEY = STORAGE_KEY.AI_WIN_STATE;
 const DOCKED_KEY    = STORAGE_KEY.AI_DOCKED;
+const FADE_KEY      = STORAGE_KEY.AI_FADE;
 // Last model name shown in the panel title. Pinned at analyze-start;
 // reload restores so the title reflects what last ran, not what is
 // currently selected in Settings.
@@ -559,6 +560,7 @@ const inst = createDockableWindow({
   geoKey: GEO_KEY,
   winStateKey: WIN_STATE_KEY,
   dockedKey: DOCKED_KEY,
+  fadeKey: FADE_KEY,
   defaultW: () => DEFAULT_WIN_W,
   defaultH: DEFAULT_WIN_H,
   defaultY: () => DEFAULT_WIN_Y,

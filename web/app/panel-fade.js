@@ -3,10 +3,11 @@
 // any extra elements of its own -- plus, optionally, tables' cell lines, so
 // what lies behind (the wallpaper) shows through. Each panel has one fader;
 // a table hands its extras (header cells, lines) to it. Plus the Transparency
-// submenu that sets it.
+// submenu that sets it, and a right-click menu for panels without a menu.
 
 import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
-import { sliderRowHtml, submenuHtml } from "./menu-nav.js";
+import { attachMenuNav, focusFirstItem, positionMenuAt, sliderRowHtml, submenuHtml, wireSliderRow } from "./menu-nav.js";
+import { loadJson, saveJson } from "./storage.js";
 import { PCT_SUFFIX } from "./wb-utils.js";
 
 const FADE_LABEL = "Transparency";
@@ -17,6 +18,7 @@ const FADE_STEP_PCT = 5;
 const FADE_ATTR = "data-fade";
 const FADE_BG_VAR = "--fade-bg";
 const FADE_LINES_ATTR = "data-fade-lines";
+const PANEL_MENU_CLASS = "tmb-dropdown panel-fade-menu";
 const FADE_LINE_VAR = Object.freeze({
   top: "--fade-line-t", right: "--fade-line-r", bottom: "--fade-line-b", left: "--fade-line-l",
 });
@@ -144,5 +146,40 @@ export function createPanelFade(panel, { pct = 0, ownEls = () => [], lineTables 
       MOBILE_QUERIES.forEach((mq) => mq.removeEventListener("change", refresh));
       release();
     },
+  };
+}
+
+// A panel's own Transparency: its fader, saved under storageKey, set from a
+// right-click menu (a top-layer popover, so no host clips it). Returns the
+// teardown.
+export function attachFadeMenu(panel, storageKey) {
+  let pct = loadJson(storageKey, 0);
+  const fader = createPanelFade(panel, { pct });
+  const menu = document.createElement("ul");
+  menu.className = PANEL_MENU_CLASS;
+  menu.setAttribute("popover", "auto");
+  const close = () => { if (menu.matches(":popover-open")) menu.hidePopover(); };
+  attachMenuNav(menu, { close });
+  document.body.append(menu);
+
+  function onContextMenu(ev) {
+    const html = fadeMenuHtml(pct);
+    if (!html) return;
+    ev.preventDefault();
+    menu.innerHTML = html;
+    wireSliderRow(menu, {
+      onInput: (next) => { pct = next; fader.apply(pct); },
+      onChange: () => saveJson(storageKey, pct),
+    });
+    if (!menu.matches(":popover-open")) menu.showPopover();
+    positionMenuAt(menu, { top: ev.clientY, bottom: ev.clientY, left: ev.clientX });
+    focusFirstItem(menu);
+  }
+  panel.addEventListener("contextmenu", onContextMenu);
+
+  return () => {
+    panel.removeEventListener("contextmenu", onContextMenu);
+    menu.remove();
+    fader.destroy();
   };
 }

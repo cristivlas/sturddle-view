@@ -3528,16 +3528,16 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 
 /* column-header.js columns menu, ribbon-overflow.js and header-menu.js ellipsis
-   menus, wallpaper.js menu: top-layer popovers reusing the .tmb-dropdown
-   look. Must follow .tmb-dropdown: same specificity, fixed placement (JS sets
-   top/left) overrides its absolute one. */
-.dt-menu, .ribbon-more-menu, .header-more-menu, .wallpaper-menu {
+   menus, wallpaper.js and panel-fade.js menus: top-layer popovers reusing the
+   .tmb-dropdown look. Must follow .tmb-dropdown: same specificity, fixed
+   placement (JS sets top/left) overrides its absolute one. */
+.dt-menu, .ribbon-more-menu, .header-more-menu, .wallpaper-menu, .panel-fade-menu {
   position: fixed; inset: auto; color: var(--fg);
   /* JS max-height (viewport room) includes padding/border; tall menus scroll. */
   box-sizing: border-box; overflow-y: auto;
 }
 .dt-menu:popover-open, .ribbon-more-menu:popover-open, .header-more-menu:popover-open,
-.wallpaper-menu:popover-open { display: block; }
+.wallpaper-menu:popover-open, .panel-fade-menu:popover-open { display: block; }
 /* Vertical ribbon overflow (ribbon-overflow.js): items keep their size, so a
    short rail overflows into the ellipsis menu instead of squashing them. */
 .ribbon-overflow-managed > * { flex-shrink: 0; }
@@ -3919,8 +3919,9 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 /* Never scrolls, so its flyouts aren't clipped. */
 .wallpaper-menu { overflow: visible; }
 /* The Columns menu scrolls (one row per column), so its flyout is fixed,
-   escaping the clip; menu-nav.js places it. */
-.dt-menu .tmb-dd-submenu > .tmb-dropdown { position: fixed; }
+   escaping the clip; menu-nav.js places it. Same for the panel menu (it
+   shares the scrolling base rule). */
+:is(.dt-menu, .panel-fade-menu) .tmb-dd-submenu > .tmb-dropdown { position: fixed; }
 .flyout-left .tmb-dd-submenu > .tmb-dropdown { left: auto; right: 100%; }
 /* Slider flyout rows (menu-nav.js). Outranks .tmb-dropdown > li's zero padding. */
 .tmb-dropdown > li.menu-slider { display: flex; align-items: center; gap: 12px; padding: 12px 18px; }
@@ -3931,12 +3932,17 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
    Outranks their own and WinBox's inline backgrounds; a hovered header cell
    and a reorder drag's copy keep their own look. */
 [data-fade]:not(th:hover, .dt-drag-ghost th) { background-color: var(--fade-bg) !important; }
-/* Its cell lines, colored per side off the table's first row. */
+/* A faded table's cell lines, colored per side off its first row. */
 [data-fade-lines] :is(th, td) {
   border-top-color: var(--fade-line-t) !important;
   border-right-color: var(--fade-line-r) !important;
   border-bottom-color: var(--fade-line-b) !important;
   border-left-color: var(--fade-line-l) !important;
+}
+/* AI Analysis fills that match its panel (the status bar, prose covering the
+   timeline rule) take the faded host color; a revision's light card stays. */
+[data-fade] :is(.play-ai-status, .play-ai-prose, .play-ai-engine-only):not(.play-ai-revision-body > *) {
+  background-color: var(--fade-bg);
 }
 
 /* Footer spans the wall: progress/tally left, created stamp hard right. */
