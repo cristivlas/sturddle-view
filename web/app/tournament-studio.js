@@ -30,6 +30,7 @@ import { renderEventLogList } from "./tournament-eventlog.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 import { renderInfoWall } from "./tournament-info.js";
 import { mountWallpaper } from "./wallpaper.js";
+import { attachFadeMenu } from "./panel-fade.js";
 import { mqMobile, mqMobileH } from "./breakpoints.js";
 import { attachRibbonOverflow } from "./ribbon-overflow.js";
 
@@ -1135,7 +1136,7 @@ function restoreBoards(ctx) {
 // Restore each bottom group's active tab and persist changes.
 function wireTabPersistence(ctx) {
   const groups = [
-    [ctx.container.querySelector(".studio-bottom-left .studio-tabs"), STORAGE_KEY.STUDIO_TAB_LEFT, STUDIO_TAB_DEFAULT_LEFT],
+    [ctx.leftTabsEl, STORAGE_KEY.STUDIO_TAB_LEFT, STUDIO_TAB_DEFAULT_LEFT],
     [ctx.container.querySelector(".studio-bottom-right .studio-tabs"), STORAGE_KEY.STUDIO_TAB_RIGHT, STUDIO_TAB_DEFAULT_RIGHT],
   ];
   for (const [el, key, def] of groups) {
@@ -1154,7 +1155,7 @@ const UNFOLDED_ICON = "minus";
 // Phone landscape: the +/- button folds the Playing | Engines panel down to
 // its tabs (CSS shows the button and applies the fold only there).
 function wireLeftTabsFold(ctx) {
-  const group = ctx.container.querySelector(".studio-bottom-left .studio-tabs");
+  const group = ctx.leftTabsEl;
   const btn = group?.querySelector(".studio-fold");
   if (!btn) return;
   const apply = (folded) => {
@@ -1307,6 +1308,7 @@ export function mountTournamentStudio({ container, api, events, log }) {
     boardsTrayEl: q(".studio-boards-tray"),
     bottomEl: q(".studio-bottom"),
     bottomLeftEl: q(".studio-bottom-left"),
+    leftTabsEl: q(".studio-bottom-left .studio-tabs"),
     bottomRightEl: q(".studio-bottom-right"),
     gripRowEl: q(".studio-grip-row"),
     gripColEl: q(".studio-grip-col"),
@@ -1380,6 +1382,8 @@ export function mountTournamentStudio({ container, api, events, log }) {
     ribbonEls: [ctx.ribbonEl], regionEl: ctx.mainEl,
     isBare: (t) => ctx.boardsEl.contains(t) && !t.closest(".winbox"), api: ctx.api, log: ctx.log,
   });
+  // Playing and Engines share one fade: the fill is on their tab group.
+  ctx.leftFadeOff = attachFadeMenu(ctx.leftTabsEl, STORAGE_KEY.STUDIO_LEFT_FADE);
   ctx.ribbonOverflow = attachRibbonOverflow(ctx.ribbonEl);
   announceRibbon(ctx.ribbonEl);
 
@@ -1449,6 +1453,8 @@ function unmountStudio(ctx) {
   window.removeEventListener("resize", ctx.onBoardResize);
   mqMobile.removeEventListener("change", ctx.onMqMobile);
   ctx.wallpaper?.unmount();
+  ctx.leftFadeOff?.();
+  ctx.leftFadeOff = null;
   // stopLive unsubscribes, nulls liveTid (so a pending standings refresh
   // no-ops), and closes the boards.
   stopLive(ctx);
@@ -1456,7 +1462,7 @@ function unmountStudio(ctx) {
   ctx.ribbonOverflow?.detach();
   ctx.panel.remove();
   ctx.panel = ctx.ribbonEl = null;
-  ctx.mainEl = ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
+  ctx.mainEl = ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.leftTabsEl = ctx.bottomRightEl = null;
   ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = ctx.tourneyTable = null;
   ctx.enginesPaneEl = ctx.gamesPaneEl = null;
   ctx.standingsPaneEl = ctx.standingsBodyEl = ctx.h2hPaneEl = ctx.h2hBodyEl = ctx.historyPaneEl = ctx.historyTable = ctx.logPaneEl = ctx.logListEl = null;

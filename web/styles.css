@@ -3840,6 +3840,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   /* The resizer grip is the only separation between board area and bottom
      row -- no extra gap. */
   gap: 0;
+  --studio-grip-row-h: 4px;
 }
 /* Boards (top) vs bottom tab row: the vertical split. Boards are WinBoxes
    rooted here (position:relative); the region scrolls, and the canvas spacer
@@ -3904,16 +3905,18 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 }
 /* Studio's wallpaper spans the bottom too; each tab group and the chrome stay
    solid, filled on their own (no fill shared by both groups), so a table's
-   Transparency (panel-fade.js) fades only its group. The column grip's
-   side borders take over the bottom row's gaps; its hover tint stays inside. */
+   Transparency (panel-fade.js) fades only its group. The bottom row's gap
+   goes to its two groups, each filled up to the column grip's middle (padded,
+   so content keeps its inset), so a group's fade covers its half; the grip
+   overlays that seam, see-through until hovered. Same above them: the groups
+   fill up to the row grip's middle. */
 .has-wallpaper :is(.studio-tabs, .studio-boards-tray) { background: var(--bg); }
-.has-wallpaper :is(.studio-grip-row, .studio-grip-col):not(:hover, .dragging) { background: var(--bg); }
+.has-wallpaper .studio-grip-row { margin-bottom: calc(var(--studio-grip-row-h) / -2); }
+.has-wallpaper .studio-tabs { padding-top: calc(var(--studio-grip-row-h) / 2); }
 .has-wallpaper .studio-bottom { gap: 0; }
-.has-wallpaper .studio-grip-col {
-  box-sizing: content-box;
-  border-inline: var(--studio-bottom-gap) solid var(--bg);
-}
-.has-wallpaper :is(.studio-grip-col:hover, .studio-grip-col.dragging) { background-clip: padding-box; }
+.has-wallpaper .studio-bottom-left .studio-tabs { padding-right: var(--studio-seam); }
+.has-wallpaper .studio-bottom-right .studio-tabs { padding-left: var(--studio-seam); }
+.has-wallpaper .studio-grip-col { margin-inline: calc(var(--studio-grip-col-w) / -2); }
 /* Opacity < 1 would cut the wall's panels off from the wallpaper behind. */
 .has-wallpaper .studio-boards-wall { opacity: 1; }
 /* Never scrolls, so its flyouts aren't clipped. */
@@ -4050,6 +4053,9 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .winbox.sturddle-wb-studio .wb-drag { cursor: default; }
 .studio-bottom {
   --studio-bottom-gap: 6px;
+  --studio-grip-col-w: 4px;
+  /* A group's side, gap included, up to the column grip's middle. */
+  --studio-seam: calc(var(--studio-bottom-gap) + var(--studio-grip-col-w) / 2);
   flex: 1 1 0; min-height: 0; display: flex; gap: var(--studio-bottom-gap);
   /* Single rule separating the board area from the bottom tab groups. */
   border-top: 1px solid var(--border-subtle);
@@ -4061,10 +4067,10 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 /* Resizer grips: invisible until hovered/dragged, then tinted like a
    selected row. */
 .studio-grip-row {
-  flex: 0 0 4px; cursor: row-resize; background: transparent; z-index: 1;
+  flex: 0 0 var(--studio-grip-row-h); cursor: row-resize; background: transparent; z-index: 1;
 }
 .studio-grip-col {
-  flex: 0 0 4px; cursor: col-resize; background: transparent; z-index: 1;
+  flex: 0 0 var(--studio-grip-col-w); cursor: col-resize; background: transparent; z-index: 1;
 }
 .studio-grip-row:hover, .studio-grip-row.dragging,
 .studio-grip-col:hover, .studio-grip-col.dragging {

@@ -80,6 +80,7 @@ export const STORAGE_KEY = {
   STUDIO_TAB_LEFT: "sturddle:studio:tabLeft",
   STUDIO_TAB_RIGHT: "sturddle:studio:tabRight",
   STUDIO_LEFT_FOLDED: "sturddle:studio:leftFolded",
+  STUDIO_LEFT_FADE: "sturddle:studio:leftFade",
   STUDIO_TOURNEY_SORT: "sturddle:studio:tourneySort",
   STUDIO_TOURNEY_STACK: "sturddle:studio:tourneyStack",
   STUDIO_TOURNEY_LAYOUT: "sturddle:studio:tourneyLayout",
