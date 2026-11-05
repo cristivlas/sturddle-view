@@ -86,6 +86,8 @@
   --status-ok-bg:  rgba(46, 160, 67, 0.12);
   --status-err-fg: #ff8a80;
   --status-err-bg: rgba(220, 50, 50, 0.15);
+  /* SPRT meter marker once H1 is accepted. */
+  --sprt-h1-mark: #7fb37f;
   --play-ai-warning-bg: rgba(255, 255, 255, 0.18);
   --play-ai-prose-final-border: rgba(255, 255, 255, 0.6);
 
@@ -1396,7 +1398,7 @@ wa-dialog:has(.import-pos-form)::part(body) {
   line-height: 1.4;
   word-break: break-word;
 }
-.import-pos-status.ok { color: var(--text); background: var(--row-bg-selected); }
+.import-pos-status.ok { color: var(--fg); background: var(--row-bg-selected); }
 .import-pos-status.err { color: var(--status-err-fg); background: var(--status-err-bg); }
 .import-pos-status.muted { background: transparent; color: var(--muted); }
 .import-pos-playas { display: flex; align-items: center; gap: 12px; }
@@ -2927,7 +2929,6 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
 }
 .engines-list-item {
   cursor: pointer; user-select: none;
-  /* background: linear-gradient(to right, var(--row-bg), var(--bg) 75%); */
 }
 .engines-list-item td {
   padding: 12px 12px;
@@ -2958,7 +2959,7 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   font-size: 0.875rem;
 }
 .engines-list-path {
-  color: var(--text);
+  color: var(--fg);
   font-size: 0.75rem;
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
@@ -3456,11 +3457,11 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 :where(:not(.dt-kbd) > tbody) > .fs-entry:hover > td { background: var(--nav-btn-bg); }
 .fs-entry.dim { color: var(--muted); }
-.fs-entry.selected > td { background: var(--row-bg-selected); color: var(--text); }
+.fs-entry.selected > td { background: var(--row-bg-selected); color: var(--fg); }
 .fs-entry.selected > td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
 .fs-entry.dim.selected > td { color: var(--muted); }
 .fs-entry .fs-name-cell wa-icon { font-size: 0.875rem; vertical-align: middle; margin-right: 8px; color: var(--wa-color-brand-95); }
-.fs-entry.selected .fs-name-cell wa-icon { color: var(--text); }
+.fs-entry.selected .fs-name-cell wa-icon { color: var(--fg); }
 .fs-entry .fs-name { vertical-align: middle; }
 .fs-entry .fs-date { color: inherit; }
 .fs-entry .fs-size { color: inherit; text-align: right; }
@@ -3861,7 +3862,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .studio-boards-canvas { width: 1px; height: 0; pointer-events: none; }
 
 /* Info wall: the selected tourney's progress footer, pinned to the bottom of
-   the empty Boards region; recedes behind boards when present. */
+   the empty Boards region; boards cover it when present. */
 .studio-boards-wall {
   position: absolute; inset: 0; z-index: 0;
   display: flex; flex-direction: column; justify-content: center; align-items: stretch;
@@ -3869,12 +3870,10 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   overflow: hidden;
   pointer-events: none;
   color: var(--muted-bright);
-  opacity: 0.85;
 }
 .studio-boards-wall > * { width: 100%; }
-/* Empty state: the wall hosts a clickable New-tournament CTA, so undo the
-   backdrop fade and re-enable pointer events. */
-.studio-boards-wall.is-empty { opacity: 1; pointer-events: auto; }
+/* Empty state: the wall hosts a clickable New-tournament CTA. */
+.studio-boards-wall.is-empty { pointer-events: auto; }
 .studio-empty {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   color: var(--muted); text-align: center;
@@ -3919,8 +3918,6 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .has-wallpaper .studio-bottom-left .studio-tabs { padding-right: var(--studio-seam); }
 .has-wallpaper .studio-bottom-right .studio-tabs { padding-left: var(--studio-seam); }
 .has-wallpaper .studio-grip-col { margin-inline: calc(var(--studio-grip-col-w) / -2); }
-/* Opacity < 1 would cut the wall's panels off from the wallpaper behind. */
-.has-wallpaper .studio-boards-wall { opacity: 1; }
 /* Never scrolls, so its flyouts aren't clipped. */
 .wallpaper-menu { overflow: visible; }
 /* The Columns menu scrolls (one row per column), so its flyout is fixed,
@@ -3950,22 +3947,21 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   background-color: var(--fade-bg);
 }
 
-/* Footer spans the wall: progress/tally left, created stamp hard right. */
+/* Footer spans the wall: the progress bar / LLR meter fills it; a tally sits left. */
 .iw-footer {
-  display: flex; align-items: center; justify-content: space-between;
-  flex-wrap: wrap; gap: 12px;
+  display: flex; align-items: center;
   /* Pinned to the wall's bottom. */
   margin-top: auto;
 }
-.iw-progress { display: flex; align-items: center; gap: 12px; flex: 1 1 280px; max-width: 75%; padding: 8px 12px; }
+.iw-progress { display: flex; align-items: center; gap: 12px; flex: 1 1 auto; padding: 8px 12px; }
 .iw-progress .tournament-progress { flex: 1 1 auto; }
 
 /* SPRT LLR meter: H0 ---[marker]--- H1, the verdict gauge. */
 .iw-llr {
   display: flex; align-items: center; gap: 10px;
-  flex: 1 1 320px; max-width: 75%;
+  flex: 1 1 auto;
   font-family: var(--wa-font-family-code); font-weight: 700;
-  font-size: 12px; letter-spacing: 0.12em; color: var(--muted);
+  font-size: 12px; letter-spacing: 0.12em; color: var(--fg);
 }
 /* Thin rail like the progress bar: muted rounded track, a slim marker walking
    it, a faint center pip at the H0/H1 pivot. */
@@ -3986,17 +3982,13 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   box-shadow: 0 0 4px rgba(var(--accent-rgb), 0.6);
   transform: translate(-50%, -50%);
 }
-.iw-llr-val { color: var(--muted-bright); }
-/* Concluded verdicts tint the marker + value (H1 affirms, H0 mutes). */
-.iw-llr--h1 .iw-llr-mark { background: #7fb37f; }
-.iw-llr--h1 .iw-llr-val { color: #7fb37f; }
+/* Concluded verdicts tint the marker (H1 affirms, H0 mutes). */
+.iw-llr--h1 .iw-llr-mark { background: var(--sprt-h1-mark); }
 .iw-llr--h0 .iw-llr-mark { background: var(--muted); }
-.iw-llr--h0 .iw-llr-val { color: var(--muted); }
 .iw-tally {
   font-family: var(--wa-font-family-code); font-weight: 700;
   font-size: 14px; color: var(--muted-bright);
 }
-.iw-created { font-size: 12px; color: var(--muted); }
 /* Minimize tray: a strip below the Boards region, outside its scroll area, so
    chips stay at the visible bottom regardless of scroll. Native minimize is
    hidden; each minimized board gets a restore chip. */
@@ -4407,7 +4399,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .tournament-progress-label {
   flex: 0 0 auto;
   font-size: 0.75rem;
-  color: var(--text);
+  color: var(--fg);
   white-space: nowrap;
   letter-spacing: 0.3px;
 }
@@ -4543,7 +4535,7 @@ wa-dialog.tournament-info-dialog::part(body) {
 .ne-list:focus, .ne-list:focus-visible { outline: none; }
 .ne-item:hover { background: var(--nav-btn-bg); }
 .ne-item.selected {
-  background: var(--row-bg-selected); color: var(--text);
+  background: var(--row-bg-selected); color: var(--fg);
   box-shadow: inset 3px 0 0 var(--accent-line);
 }
 .ne-controls, .ne-reorder {
@@ -5238,7 +5230,7 @@ wa-dialog.tournament-info-dialog::part(body) {
   border: 1px solid var(--border-subtle);
   border-radius: 3px;
   background: var(--row-bg-selected);
-  color: var(--text);
+  color: var(--fg);
 }
 .wb-sched-list .wb-engine-idle .wb-engine-state {
   background: var(--wa-color-surface-border);

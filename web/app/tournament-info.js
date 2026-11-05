@@ -5,7 +5,6 @@
 import { progressBarHtml, progressLabelHtml, totalGames } from "./tournament-row.js";
 import { STATUS, sprtVerdict } from "./tournament-events.js";
 import { escapeHtml } from "./wb-utils.js";
-import { formatStamp } from "./tournament-format.js";
 
 // Verdict labels parked at the SPRT meter ends.
 const SPRT_H0_LABEL = "H0";
@@ -24,11 +23,11 @@ function llrMeterHtml(sprt) {
     `<span class="iw-llr-end">${SPRT_H0_LABEL}</span>` +
     `<span class="iw-llr-track"><span class="iw-llr-mark" style="left:${(frac * 100).toFixed(1)}%"></span></span>` +
     `<span class="iw-llr-end">${SPRT_H1_LABEL}</span>` +
-    `<span class="iw-llr-val">${LLR_PREFIX}${llr.toFixed(2)}</span></div>`;
+    `<span>${LLR_PREFIX}${llr.toFixed(2)}</span></div>`;
 }
 
 // Footer: SPRT LLR meter when available, else a live progress bar with a known
-// total, else a games tally. Created stamp sits opposite, muted.
+// total, else a games tally.
 function footerHtml(t) {
   const played = t.standings?.games ?? 0;
   const total = totalGames(t);
@@ -44,9 +43,7 @@ function footerHtml(t) {
       : (played ? `${played} game${played === 1 ? "" : "s"}` : "");
     lead = `<div class="iw-tally">${escapeHtml(tally)}</div>`;
   }
-  const created = formatStamp(t.created_at);
-  const stamp = created ? `<div class="iw-created">created ${escapeHtml(created)}</div>` : "";
-  return `<div class="iw-footer">${lead}${stamp}</div>`;
+  return `<div class="iw-footer">${lead}</div>`;
 }
 
 // Paint (or clear) the wall for a tournament. el is the wall host; t is a
