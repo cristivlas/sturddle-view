@@ -3887,6 +3887,12 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 [data-wallpaper-fit="stretch"] { --wallpaper-size: 100% 100%; }
 [data-wallpaper-fit="center"] { --wallpaper-size: auto; }
 [data-wallpaper-fit="tile"] { --wallpaper-size: auto; --wallpaper-position: top left; --wallpaper-repeat: repeat; }
+/* Frost keeps see-through panels readable over the wallpaper. */
+.has-wallpaper :is(.game-view-engine, .game-view-moves, .game-view-meta, .iw-footer, .studio-empty) {
+  backdrop-filter: blur(6px) brightness(0.8);
+}
+/* Opacity < 1 would cut the wall's panels off from the wallpaper behind. */
+.has-wallpaper .studio-boards-wall { opacity: 1; }
 /* Never scrolls, so its flyouts aren't clipped. */
 .wallpaper-menu { overflow: visible; }
 .wallpaper-menu.flyout-left .tmb-dd-submenu > .tmb-dropdown { left: auto; right: 100%; }
