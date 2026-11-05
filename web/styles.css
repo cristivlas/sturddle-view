@@ -5,7 +5,6 @@
   --muted-bright: #aaa;
   --scrollbar-thumb: rgba(255, 255, 255, 0.18);
   --scrollbar-thumb-min-h: 50px;
-  --scrollbar-track-wallpaper: rgba(0, 0, 0, 0.6);
   --wb-outline: rgba(136, 136, 136, 0.4);
   /* Inline search bar height (.inline-search). */
   --inline-search-h: 48px;
@@ -182,9 +181,6 @@ body { -webkit-user-select: none; user-select: none; }
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-thumb) transparent;
   }
-  body:has(.has-wallpaper) *:not(wa-dialog *, [popover], [popover] *) {
-    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track-wallpaper);
-  }
 }
 *::-webkit-scrollbar { width: 5px; height: 5px; }
 *::-webkit-scrollbar-track { background: transparent; }
@@ -219,12 +215,6 @@ body { -webkit-user-select: none; user-select: none; }
 }
 *::-webkit-scrollbar-thumb:hover { background: var(--wa-color-focus); }
 *::-webkit-scrollbar-corner { background: transparent; }
-/* With a wallpaper, a dark see-through track keeps the thin thumb readable over
-   a busy image (body-mounted windows too; not dialogs or menus, on solid fills). */
-body:has(.has-wallpaper) *:not(wa-dialog *, [popover], [popover] *)::-webkit-scrollbar-track,
-body:has(.has-wallpaper) *:not(wa-dialog *, [popover], [popover] *)::-webkit-scrollbar-corner {
-  background: var(--scrollbar-track-wallpaper);
-}
 /* *::-webkit-scrollbar-button { display: none; } */
 /* Arena only: its page panel plus its body-mounted workspace and board windows. */
 :is(.tournaments-panel, .winbox.sturddle-wb-arena, .winbox.sturddle-wb-live) *::-webkit-scrollbar {
