@@ -3904,7 +3904,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 }
 /* Studio's wallpaper spans the bottom too; each tab group and the chrome stay
    solid, filled on their own (no fill shared by both groups), so a table's
-   Transparency (column-header.js) fades only its group. The column grip's
+   Transparency (panel-fade.js) fades only its group. The column grip's
    side borders take over the bottom row's gaps; its hover tint stays inside. */
 .has-wallpaper :is(.studio-tabs, .studio-boards-tray) { background: var(--bg); }
 .has-wallpaper :is(.studio-grip-row, .studio-grip-col):not(:hover, .dragging) { background: var(--bg); }
@@ -3927,16 +3927,16 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .menu-slider wa-slider { flex: 1 1 auto; min-width: 140px; --thumb-width: 1.15em; --thumb-height: 1.15em; }
 .menu-slider wa-slider::part(track) { background: var(--panel-accent); }
 .menu-slider-val { min-width: 3.5ch; text-align: right; color: var(--muted); }
-/* Columns-menu Transparency (column-header.js): a faded table host or header
-   cell. Outranks their own and WinBox's inline backgrounds; a hovered header
-   cell and a reorder drag's copy keep their own look. */
-[data-dt-fade]:not(th:hover, .dt-drag-ghost th) { background-color: var(--dt-fade-bg) !important; }
+/* Panel Transparency (panel-fade.js): a faded panel, host or header cell.
+   Outranks their own and WinBox's inline backgrounds; a hovered header cell
+   and a reorder drag's copy keep their own look. */
+[data-fade]:not(th:hover, .dt-drag-ghost th) { background-color: var(--fade-bg) !important; }
 /* Its cell lines, colored per side off the table's first row. */
-[data-dt-fade-lines] :is(th, td) {
-  border-top-color: var(--dt-fade-line-t) !important;
-  border-right-color: var(--dt-fade-line-r) !important;
-  border-bottom-color: var(--dt-fade-line-b) !important;
-  border-left-color: var(--dt-fade-line-l) !important;
+[data-fade-lines] :is(th, td) {
+  border-top-color: var(--fade-line-t) !important;
+  border-right-color: var(--fade-line-r) !important;
+  border-bottom-color: var(--fade-line-b) !important;
+  border-left-color: var(--fade-line-l) !important;
 }
 
 /* Footer spans the wall: progress/tally left, created stamp hard right. */
