@@ -169,9 +169,9 @@ function bannerHtml(engines) {
   );
 }
 
-// Build the H2H body once: a banner slot, an empty-state line, and a
-// resize-only table (no sort, no columns menu; arrow-key row cursor) the fill
-// step populates. Mirrors makeStandingsBody.
+// Build the H2H body once: a banner slot, an empty-state line, and an
+// unsorted table (resize/reorder, Columns menu, arrow-key row cursor) the
+// fill step populates. Mirrors makeStandingsBody.
 // fade: its panel's fader, for Transparency in the Columns menu.
 export function makeH2HBody({ fade = null } = {}) {
   const el = document.createElement("div");
