@@ -36,3 +36,4 @@ r1b1k2r/ppqn1ppp/2n1p3/2bpP3/8/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - id "greek_gift_unc
 r1bq1rk1/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQ1RK1 w - - id "bxf7_castled_king"; c0 "Bxf7+: not listed: the king is castled, Bxf7+ is not the uncastled-king pattern";
 r1bk1bnr/pppn1pp1/7p/4p3/2B1P3/5N2/PPP2PPP/RNBQK2R w KQ - id "bxf7_f7_hanging"; c0 "Bxf7: not listed: king on d8, f7 is a free pawn";
 r1b2rk1/ppq2ppp/2n1pn2/2bp4/4P3/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - id "greek_gift_diagonal_blocked"; c0 "not listed: the e4 pawn blocks the d3-h7 diagonal, Bxh7 is not even legal";
+r4rk1/pp3p1p/4p1p1/2P3P1/1q2BP2/4Q3/2P5/2KR3R w - - id "rook_h7_king_zone"; c0 "Rxh7: listed: king_zone, a sound rook sacrifice (Kxh7 Qh3+ then Qh8)";
