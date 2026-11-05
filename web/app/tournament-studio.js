@@ -16,7 +16,7 @@ import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, loadSortDir, nextDir, scr
 import { createTable, RENDER_REASON } from "./data-table.js";
 import { ACTIVATE_KEYS } from "./keys.js";
 import { formatStamp } from "./tournament-format.js";
-import { reportError, toast } from "./dialogs.js";
+import { copyToClipboard, reportError, toast } from "./dialogs.js";
 import { debounce, escapeHtml, flashWindow, markSelectable, rafCoalesce, roveTabStop, setStartTab, suppressModifierClickSelect, syncRovingTabStop, WB_EDGE_RIGHT_CLASS, WB_NO_SHADOW_CLASS, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
 import { createMultiSelect, selectionTargets } from "./multi-select.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS, STATUS_RANK } from "./tournament-events.js";
@@ -26,11 +26,11 @@ import { addLogEntry, applyEventKind, backfillEvent, createLiveState, seedFromDe
 import { closeAllLiveGames, getLiveWindows, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow, replayTournamentGame, syncWaitingOverlays } from "./tournament-live-game.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { makeH2HBody, renderH2H } from "./tournament-h2h.js";
-import { renderEventLogList } from "./tournament-eventlog.js";
+import { EVENT_LOG_COPY_WHAT, eventLogText, renderEventLogList } from "./tournament-eventlog.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 import { renderInfoWall } from "./tournament-info.js";
 import { mountWallpaper } from "./wallpaper.js";
-import { attachFadeMenu } from "./panel-fade.js";
+import { attachPanelMenu } from "./panel-fade.js";
 import { mqMobile, mqMobileH } from "./breakpoints.js";
 import { attachRibbonOverflow } from "./ribbon-overflow.js";
 
@@ -39,6 +39,7 @@ const TOURNAMENT_SETTINGS_ENDPOINT = "/api/tournament-settings";
 const SETTINGS_ENDPOINT = "/settings";
 const LOAD_FAIL_MSG = "Loading tournaments failed";
 const NO_ENGINES_MSG = "No active engines.";
+const COPY_LABEL = "Copy";
 const NO_GAMES_MSG = "No games in play.";
 const REVIEW_FAIL_MSG = "Review failed";
 // Coalesce bursty WS events into one list reload.
@@ -690,11 +691,15 @@ function renderHistory(ctx) {
   })));
 }
 
+// The selected tournament's event log: live while it runs, else as loaded.
+function logEvents(ctx) {
+  const running = ctx.selectedId && ctx.selectedId === ctx.activeId;
+  return (running && ctx.live) ? ctx.live.eventLog : (ctx.selEvents || []);
+}
+
 function renderLogPane(ctx) {
   if (!ctx.logListEl) return;
-  const running = ctx.selectedId && ctx.selectedId === ctx.activeId;
-  const events = (running && ctx.live) ? ctx.live.eventLog : (ctx.selEvents || []);
-  renderEventLogList(ctx.logListEl, events, ctx.logPaneEl);
+  renderEventLogList(ctx.logListEl, logEvents(ctx), ctx.logPaneEl);
 }
 
 function renderLivePanes(ctx) {
@@ -1343,7 +1348,7 @@ export function mountTournamentStudio({ container, api, events, log }) {
   };
   // Standings pane reuses the shared resizable-column table; log pane is a
   // plain list the shared renderer fills.
-  ctx.standingsBodyEl = makeStandingsBody();
+  ctx.standingsBodyEl = makeStandingsBody({ fade: true });
   ctx.standingsPaneEl?.appendChild(ctx.standingsBodyEl);
   // H2H body (build once, resizable columns wired); fill shares standings' cadence.
   ctx.h2hBodyEl = makeH2HBody();
@@ -1383,7 +1388,11 @@ export function mountTournamentStudio({ container, api, events, log }) {
     isBare: (t) => ctx.boardsEl.contains(t) && !t.closest(".winbox"), api: ctx.api, log: ctx.log,
   });
   // Playing and Engines share one fade: the fill is on their tab group.
-  ctx.leftFadeOff = attachFadeMenu(ctx.leftTabsEl, STORAGE_KEY.STUDIO_LEFT_FADE);
+  ctx.leftMenuOff = attachPanelMenu(ctx.leftTabsEl, { fadeKey: STORAGE_KEY.STUDIO_LEFT_FADE });
+  ctx.logMenuOff = attachPanelMenu(ctx.logPaneEl, {
+    fadeKey: STORAGE_KEY.STUDIO_LOG_FADE,
+    actions: [{ label: COPY_LABEL, run: () => copyToClipboard(eventLogText(logEvents(ctx)), EVENT_LOG_COPY_WHAT) }],
+  });
   ctx.ribbonOverflow = attachRibbonOverflow(ctx.ribbonEl);
   announceRibbon(ctx.ribbonEl);
 
@@ -1453,8 +1462,9 @@ function unmountStudio(ctx) {
   window.removeEventListener("resize", ctx.onBoardResize);
   mqMobile.removeEventListener("change", ctx.onMqMobile);
   ctx.wallpaper?.unmount();
-  ctx.leftFadeOff?.();
-  ctx.leftFadeOff = null;
+  ctx.leftMenuOff?.();
+  ctx.logMenuOff?.();
+  ctx.leftMenuOff = ctx.logMenuOff = null;
   // stopLive unsubscribes, nulls liveTid (so a pending standings refresh
   // no-ops), and closes the boards.
   stopLive(ctx);

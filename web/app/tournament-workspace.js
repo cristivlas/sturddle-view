@@ -45,7 +45,7 @@ import {
 } from "./tournament-live-state.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { makeCrosstableBody, renderCrosstable } from "./tournament-crosstable.js";
-import { eventLogText, renderEventLogList } from "./tournament-eventlog.js";
+import { EVENT_LOG_COPY_WHAT, eventLogText, renderEventLogList } from "./tournament-eventlog.js";
 import { engineRowEntries, ICON_ENGINE_ROW, ICON_GAME_ROW, LOADING_MSG, markEngineRow } from "./tournament-row.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 import { createWinBox } from "./winbox-factory.js";
@@ -1268,7 +1268,6 @@ const SORT_ASC_CTRL = "wb-sort-asc-ctrl";
 const SORT_DESC_CTRL = "wb-sort-desc-ctrl";
 const LOG_COPY_CTRL = "wb-log-copy-ctrl";
 const LOG_COPY_LABEL = "Copy event log";
-const LOG_COPY_WHAT = "Event log";
 
 // A-Z / Z-A title-bar buttons on Engine Instances: the same toggle pair as the
 // Engines page (click the lit one to clear), persisted across workspaces.
@@ -1367,7 +1366,7 @@ function buildWindowSpecs(ctx) {
       setBody: (b) => { ctx.logBody = b; },
       render: () => renderEventLog(ctx),
       postCreate: (wb) => addTitleControl(wb, LOG_COPY_CTRL, LOG_COPY_LABEL,
-        () => copyToClipboard(eventLogText(ctx.eventLog), LOG_COPY_WHAT)),
+        () => copyToClipboard(eventLogText(ctx.eventLog), EVENT_LOG_COPY_WHAT)),
     },
   };
 }

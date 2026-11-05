@@ -34,7 +34,7 @@ import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
 import { createEvalBar, EVAL_EMPTY_CLASS } from "./eval-graph.js";
-import { attachFadeMenu } from "./panel-fade.js";
+import { attachPanelMenu } from "./panel-fade.js";
 import { createPvTable } from "./pv-table.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
@@ -1035,7 +1035,7 @@ export function createDockableWindow(config) {
       // The window owns its body's fader; its teardown joins the body's.
       if (fadeKey) {
         const builtOff = off;
-        const fadeOff = attachFadeMenu(body, fadeKey);
+        const fadeOff = attachPanelMenu(body, { fadeKey });
         off = () => { builtOff?.(); fadeOff(); };
       }
     }

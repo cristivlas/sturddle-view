@@ -4,9 +4,10 @@
 // layout. The body is the caller's: it fills the tbody and re-lays its rows
 // out in onLayout(cols), which runs after every header rebuild.
 //
-// Column descriptor: { key, label, width, colClass?, thClass?, alwaysOn?,
-// defaultHidden?, pinEnd? }. A pinEnd column stays last and shown; in px mode
-// it is the auto-width column that takes the remaining space.
+// Column descriptor: { key, label, width, menuLabel?, colClass?, thClass?,
+// alwaysOn?, defaultHidden?, pinEnd? }. menuLabel names a column in the
+// Columns menu when its header label is blank. A pinEnd column stays last and
+// shown; in px mode it is the auto-width column that takes the remaining space.
 
 import { loadJson, saveJson } from "./storage.js";
 import { attachColumnResize } from "./col-resize.js";
@@ -192,16 +193,17 @@ function menuHtml(layout, byKey, traits, visibleCount) {
   const items = layout.order.map((key, i) => {
     const col = byKey.get(key);
     const shown = !layout.hidden.has(key);
+    const name = col.menuLabel ?? col.label;
     const lockToggle = !traits.hide || col.alwaysOn || col.pinEnd || (shown && visibleCount === 1);
     const move = (dir, icon) => {
-      const label = escapeHtml(`${MOVE_LABEL[dir]} ${col.label || key}`);
+      const label = escapeHtml(`${MOVE_LABEL[dir]} ${name || key}`);
       return menuBtnHtml(`${key}:${dir}`, "dt-menu-move", `<wa-icon name="${icon}"></wa-icon>`,
         { disabled: moveTarget(layout, byKey, i, dir) < 0, attrs: ` data-dir="${dir}" aria-label="${label}" title="${label}"` });
     };
     const moves = !traits.reorder ? ""
       : col.pinEnd ? PIN_HTML : move(MOVE.UP, UP_ICON) + move(MOVE.DOWN, DOWN_ICON);
     const toggle = menuBtnHtml(`${key}:${MENU_ACTION.TOGGLE}`,
-      `tmb-dd-item dt-menu-toggle${shown ? ` ${MENU_CHECKED_CLASS}` : ""}`, escapeHtml(col.label),
+      `tmb-dd-item dt-menu-toggle${shown ? ` ${MENU_CHECKED_CLASS}` : ""}`, escapeHtml(name),
       { disabled: lockToggle, attrs: ` data-action="${MENU_ACTION.TOGGLE}"` });
     return `<li class="${MENU_COL_CLASS}" data-key="${escapeHtml(key)}">${toggle}${moves}</li>`;
   }).join("");

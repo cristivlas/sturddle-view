@@ -133,7 +133,7 @@ export const fmtWdl = (r) => `+${r.wins} =${r.draws} -${r.losses}`;
 // Detail-line columns: side label, score, percent, W-D-L, and (color rows
 // only, `withElo`) Elo + LOS. The Overall row leaves the Elo/LOS cells blank.
 const H2H_COLUMNS = [
-  { key: "side", label: "", width: 18, tdClass: "h2h-side", cell: (r) => r.side },
+  { key: "side", label: "", menuLabel: "Side", width: 18, tdClass: "h2h-side", cell: (r) => r.side },
   { key: "score", label: "Score", width: 16, cell: (r) => `${fmtPts(statPts(r))}/${statN(r)}` },
   { key: "pct", label: "%", width: 12,
     cell: (r) => `${(statN(r) ? (statPts(r) / statN(r)) * 100 : 0).toFixed(1)}%` },
@@ -184,7 +184,7 @@ export function makeH2HBody() {
     columns: H2H_COLUMNS,
     layoutKey: STORAGE_KEY.STUDIO_H2H_LAYOUT,
     minPct: H2H_MIN_PCT,
-    traits: { resize: true, rowNav: {} },
+    traits: { resize: true, reorder: true, fade: true, rowNav: {} },
     // Group rows carry no data-id, so the row cursor skips them.
     rowAttrs: (r) => (r.group != null ? { class: GROUP_ROW_CLASS } : { "data-id": `${r.engine}:${r.side}` }),
     fullRow: (r) => (r.group != null ? { html: escapeHtml(r.group) } : null),

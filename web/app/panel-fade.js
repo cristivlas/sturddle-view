@@ -3,12 +3,13 @@
 // any extra elements of its own -- plus, optionally, tables' cell lines, so
 // what lies behind (the wallpaper) shows through. Each panel has one fader;
 // a table hands its extras (header cells, lines) to it. Plus the Transparency
-// submenu that sets it, and a right-click menu for panels without a menu.
+// submenu that sets it, and a right-click menu for panels without a menu
+// (which can carry the panel's own actions too).
 
 import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import { attachMenuNav, focusFirstItem, positionMenuAt, sliderRowHtml, submenuHtml, wireSliderRow } from "./menu-nav.js";
 import { loadJson, saveJson } from "./storage.js";
-import { PCT_SUFFIX } from "./wb-utils.js";
+import { escapeHtml, PCT_SUFFIX } from "./wb-utils.js";
 
 const FADE_LABEL = "Transparency";
 const FADE_MAX_PCT = 100;
@@ -19,6 +20,9 @@ const FADE_ATTR = "data-fade";
 const FADE_BG_VAR = "--fade-bg";
 const FADE_LINES_ATTR = "data-fade-lines";
 const PANEL_MENU_CLASS = "tmb-dropdown panel-fade-menu";
+// A panel-menu action's index in its actions.
+const ACTION_ATTR = "data-action-i";
+const SEPARATOR_HTML = `<li class="tmb-separator"></li>`;
 const FADE_LINE_VAR = Object.freeze({
   top: "--fade-line-t", right: "--fade-line-r", bottom: "--fade-line-b", left: "--fade-line-l",
 });
@@ -149,27 +153,37 @@ export function createPanelFade(panel, { pct = 0, ownEls = () => [], lineTables 
   };
 }
 
-// A panel's own Transparency: its fader, saved under storageKey, set from a
-// right-click menu (a top-layer popover, so no host clips it). Returns the
-// teardown.
-export function attachFadeMenu(panel, storageKey) {
-  let pct = loadJson(storageKey, 0);
-  const fader = createPanelFade(panel, { pct });
+// A panel's right-click menu (a top-layer popover, so no host clips it):
+// actions [{ label, run }] on top, then, with a fadeKey, the panel's own
+// Transparency -- its fader, saved under fadeKey. Returns the teardown.
+export function attachPanelMenu(panel, { fadeKey = null, actions = [] } = {}) {
+  let pct = fadeKey ? loadJson(fadeKey, 0) : 0;
+  const fader = fadeKey ? createPanelFade(panel, { pct }) : null;
   const menu = document.createElement("ul");
   menu.className = PANEL_MENU_CLASS;
   menu.setAttribute("popover", "auto");
   const close = () => { if (menu.matches(":popover-open")) menu.hidePopover(); };
   attachMenuNav(menu, { close });
+  menu.addEventListener("click", (ev) => {
+    const btn = ev.target.closest(`button[${ACTION_ATTR}]`);
+    if (!btn) return;
+    close();
+    actions[btn.getAttribute(ACTION_ATTR)].run();
+  });
   document.body.append(menu);
 
+  const actionsHtml = actions.map((a, i) =>
+    `<li><button type="button" class="tmb-dd-item" ${ACTION_ATTR}="${i}">${escapeHtml(a.label)}</button></li>`).join("");
+
   function onContextMenu(ev) {
-    const html = fadeMenuHtml(pct);
+    const fade = fader ? fadeMenuHtml(pct) : "";
+    const html = actionsHtml + (actionsHtml && fade ? SEPARATOR_HTML : "") + fade;
     if (!html) return;
     ev.preventDefault();
     menu.innerHTML = html;
     wireSliderRow(menu, {
       onInput: (next) => { pct = next; fader.apply(pct); },
-      onChange: () => saveJson(storageKey, pct),
+      onChange: () => saveJson(fadeKey, pct),
     });
     if (!menu.matches(":popover-open")) menu.showPopover();
     positionMenuAt(menu, { top: ev.clientY, bottom: ev.clientY, left: ev.clientX });
@@ -180,6 +194,6 @@ export function attachFadeMenu(panel, storageKey) {
   return () => {
     panel.removeEventListener("contextmenu", onContextMenu);
     menu.remove();
-    fader.destroy();
+    fader?.destroy();
   };
 }
