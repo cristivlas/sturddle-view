@@ -40,8 +40,8 @@ A refactor with no behavior change:
   keep their meaning (which fragment, in which order); no test is
   dropped.
 
-Out of scope here: aggression / speculative sacrifices (own spec, see
-Later stages), any new tag, any new content source.
+Out of scope here: speculative sacrifices (docs/ai-playbook-spec.md,
+section Speculative sacrifices), any new tag, any new content source.
 
 ## Vocabulary
 
@@ -420,10 +420,8 @@ pawn on the hole", so load order decides.
   human classics -- to be chosen by experiment. Plans can be extracted
   by running the matchers over a game and recording what followed
   (pawn breaks, piece routes, trades).
-- **Aggression / speculative sacrifices.** Separate spec: the model
-  proposes a sacrifice by pattern, the engine verifies that one move with
-  a focused deep search (`searchmoves`), accepted within a wider margin.
-  Addresses sacs a shallow full search misses.
+- **Speculative sacrifices.** Drafted in docs/ai-playbook-spec.md,
+  section Speculative sacrifices.
 
 ## Testing
 

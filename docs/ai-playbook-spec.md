@@ -299,6 +299,106 @@ specific tags still follow. No row for `opposite_queens`: with queens on,
 the bishops fragment's attack advice holds. Pair still to watch live:
 `worse` + `opening` vs `castling=opposite`.
 
+## Speculative sacrifices (draft, not shipped)
+
+Problem: when a sacrifice is sound but its compensation lies past a
+shallow search's horizon, the search scores it below the quiet best
+move. `play_out` (a step that drops more than PLAY_OUT_MARGIN_CP) and
+`recommend_move` (dominance, RECOMMEND_MARGIN_CP) then reject it before
+the compensation shows.
+
+Flow:
+
+1. **Detect.** Detection follows `repeats` exactly. `classify` calls a
+   pure function of the board (`sacrifice_moves`, beside
+   `repeating_moves`), and the result goes on a `sacrifices` tuple of
+   (pattern name, SAN) pairs on the `Situation`. It is not a matcher:
+   `Match` carries only an axis and a tag, and growing it a move payload
+   would be a protocol change, which the matchers spec puts out of
+   scope. This shape leaves the matcher protocol and the catalog
+   coverage checks untouched. Each pattern has pure-predicate
+   preconditions, and its move must be legal and lose material by
+   static exchange. The first stage keeps only forcing sacrifices, whose
+   compensation is a concrete line that a deeper search can show: the
+   Greek gift (Bxh7+ / ...Bxh2+ with a knight that reaches g5 and a
+   queen that reaches the h-file) and Bxf7+ against an uncastled king.
+2. **Propose.** The renderer turns `sacrifices` into a note beside the
+   repetition note, naming the move and the pattern ("Bxh7+, a Greek
+   gift: test it"). This is an exception to the rule that fragments name
+   plans: like the repetition note, it names a concrete move, and it
+   rides outside the fragment cap. The model still decides, and it must
+   `play_out` the sacrifice like any other idea. Like `_repeat_note`,
+   the note depends on the margin: there is none in `AHEAD_MARGINS`
+   (see Rules).
+3. **Verify.** When the move is listed in `sacrifices`, both searches of
+   the comparison run at SAC_DEPTH (`SV_AI_SAC_DEPTH`, deeper than the
+   verification floor). Comparing a deep restricted search with a
+   shallow free one would measure the depth as much as the move, and a
+   deeper search favors the forcing move almost by construction.
+   `recommend_move` picks the depth before `_dominance_searches`. In
+   `play_out`, the before and after searches of a listed step both
+   run at SAC_DEPTH, because the drop is also a comparison of two
+   searches. A `play_out` step qualifies only when its line is still
+   empty (`line.moves`). The list describes the live position, so a
+   SAN match deeper in a line is a coincidence: in "Ng5, then Bxh7+",
+   the second step's Bxh7+ was never checked by the list.
+4. **Accept.** With both searches at the same depth, the sacrifice
+   passes within SAC_MARGIN_CP (`SV_AI_SAC_MARGIN`) of the engine's
+   best. For the forcing patterns, the margin only has to cover
+   compensation that is genuinely unclear, so it stays modest, somewhat
+   wider than RECOMMEND_MARGIN_CP and PLAY_OUT_MARGIN_CP. The
+   acceptance follows the fallback path's shape, where a dominated move
+   comes back flagged `weaker_than_best` with a `note` (`_WEAKER_NOTE`).
+   Here the flag is `speculative` and the note says how to present the
+   move ("a sacrifice for compensation, not a win; say so"). The note is
+   what steers the narration; a bare flag tells the model nothing. The
+   end-of-turn verifier reports the deep score as usual.
+
+Rules:
+
+- Only a listed move gets the wider margin. Any other move, including
+  the same move when it is not listed, keeps the normal margins.
+- There is no note and no widening in `AHEAD_MARGINS` (`better`,
+  `winning`, `crushing`): the side ahead converts and does not gamble.
+  `sacrifices` stays pure and reads the board only, in `classify`. The
+  renderer and the gate each read the margin from the same `Situation`
+  against `AHEAD_MARGINS`, the set `_repeat_note` already uses (a side
+  with an edge to protect does not volunteer the draw or the gamble), so
+  the note cannot invite a sacrifice that the gate then judges at
+  normal margins. The deep search depends on the move being listed,
+  not on the margin: ahead, a listed move still gets the SAC_DEPTH
+  comparison and passes at the normal margins when its compensation is
+  real.
+- Cost: `SearchCache` serves any later request at or below a cached
+  depth, so the deep free search replaces the normal-depth one for the
+  rest of the turn instead of adding to it. The extra cost is the gap
+  between the normal depth and SAC_DEPTH on one free search, plus the
+  one restricted search. If a normal-depth free search already ran
+  earlier in the turn, the deep one is a re-search, and the engine's
+  hash keeps most of that work.
+- The verifier never sees the note; the prose check keeps its usual
+  claims.
+
+Testing: `sacrifice_moves` FEN tables per pattern, including
+near-misses; the gate accepts a listed sacrifice within SAC_MARGIN_CP,
+flagged `speculative` with its note, and rejects the same move
+unlisted; both searches of a listed move's comparison (in
+`recommend_move` and in a `play_out` step) run at SAC_DEPTH; a later
+`play_out` step with the same SAN keeps the normal margin; ahead there
+is no note and no widening, but a listed move still gets the SAC_DEPTH
+comparison.
+
+Open: positional sacrifices such as the exchange sacrifice on c3 / c6.
+After Rxc3 bxc3 the engine has the sacrificer about a pawn down for
+many moves at any depth. The payoff is a shattered king cover and play
+on the dark squares, not a sequence. A margin modest enough to be safe
+rejects such a sacrifice every time, and a margin wide enough to admit
+it also admits a bad Greek gift. Adding positional sacrifices needs a
+margin per pattern, carried in each pattern's definition. Also open:
+the SAC_DEPTH and SAC_MARGIN_CP values; a generic trigger (a checking
+capture near the king that loses material by static exchange) in place
+of named patterns.
+
 ## Grounding
 
 - Fragments name plans, never concrete tactics on the board; the model
@@ -315,7 +415,8 @@ the bishops fragment's attack advice holds. Pair still to watch live:
 - Fragments steer the pick, never instruct the model to skip tools or the
   red-team hold (unlike `BOOK_REPLY_GUIDANCE`).
 - Verifier never sees them; the gate's margin never widens with
-  standing, and mate scores ignore it.
+  standing, and mate scores ignore it. The exception is a listed
+  sacrifice (section Speculative sacrifices).
 - Total plan length stays small (target < 80 words) so it does not
   crowd out the position itself.
 
