@@ -14,8 +14,8 @@ import { attachColumnResize } from "./col-resize.js";
 import { ARROW_CLASS, ARROW_DESC, TH_LABEL_CLASS, TH_SORTABLE_CLASS } from "./col-sort.js";
 import { ESCAPE_KEY } from "./keys.js";
 import {
-  attachMenuNav, claimContextMenu, focusFirstItem, MENU_CHECKED_CLASS, positionMenuAt,
-  wireMenuToggle, wireSliderRow,
+  attachMenuNav, claimContextMenu, focusFirstItem, isKeyboardContextMenu, makeMenuHost,
+  MENU_CHECKED_CLASS, positionMenuAt, wireMenuToggle, wireSliderRow,
 } from "./menu-nav.js";
 import { fadeMenuHtml } from "./panel-fade.js";
 import { applySplitColWidths, wireSplitScroll } from "./split-table.js";
@@ -510,7 +510,6 @@ function createColumnsMenu({ wrap, thead, html, onAction, onFade }) {
     render();
     if (!isOpen()) menu.showPopover();
     positionMenuAt(menu, anchor);
-    focusFirstItem(menu);
   }
 
   wrap.addEventListener("contextmenu", (ev) => {
@@ -518,13 +517,19 @@ function createColumnsMenu({ wrap, thead, html, onAction, onFade }) {
     ev.preventDefault();
     claimContextMenu(ev);
     open({ top: ev.clientY, bottom: ev.clientY, left: ev.clientX });
+    if (isKeyboardContextMenu(ev)) focusFirstItem(menu);
   });
+  // The table's own element, so no undo: it goes with the table.
+  makeMenuHost(wrap);
 
   return {
     // The click bubbles on (col-sort skips th controls), so document-level
     // listeners such as other menus' close-on-click still see it.
     wire(btn) {
-      wireMenuToggle(btn, menu, () => open(btn.getBoundingClientRect()));
+      wireMenuToggle(btn, menu, () => {
+        open(btn.getBoundingClientRect());
+        focusFirstItem(menu);
+      });
     },
     // A layout change from elsewhere (a synced table) shows in an open menu.
     refresh() {

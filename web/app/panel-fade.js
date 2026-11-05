@@ -9,7 +9,8 @@
 import { APP_EVT } from "./app-events.js";
 import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import {
-  attachMenuNav, focusFirstItem, isContextMenuClaimed, positionMenuAt, sliderRowHtml, submenuHtml, wireSliderRow,
+  attachMenuNav, focusFirstItem, isContextMenuClaimed, isKeyboardContextMenu, makeMenuHost,
+  positionMenuAt, sliderRowHtml, submenuHtml, wireSliderRow,
 } from "./menu-nav.js";
 import { loadJson, saveJson } from "./storage.js";
 import { escapeHtml, PCT_SUFFIX } from "./wb-utils.js";
@@ -195,6 +196,11 @@ export function attachPanelMenu(panel, { fade = null, actions = [] } = {}) {
   menu.setAttribute("popover", "auto");
   const close = () => { if (menu.matches(":popover-open")) menu.hidePopover(); };
   attachMenuNav(menu, { close });
+  // Where focus returns when the menu closes with it inside (Esc).
+  let returnFocus = null;
+  menu.addEventListener("beforetoggle", (ev) => {
+    if (ev.newState === "closed" && menu.contains(document.activeElement)) returnFocus?.focus();
+  });
   menu.addEventListener("click", (ev) => {
     const btn = ev.target.closest(`button[${ACTION_ATTR}]`);
     if (!btn) return;
@@ -214,14 +220,19 @@ export function attachPanelMenu(panel, { fade = null, actions = [] } = {}) {
     ev.preventDefault();
     menu.innerHTML = html;
     wireSliderRow(menu, { onInput: (pct) => fade.set(pct), onChange: () => fade.save() });
-    if (!menu.matches(":popover-open")) menu.showPopover();
+    if (!menu.matches(":popover-open")) {
+      returnFocus = document.activeElement;
+      menu.showPopover();
+    }
     positionMenuAt(menu, { top: ev.clientY, bottom: ev.clientY, left: ev.clientX });
-    focusFirstItem(menu);
+    if (isKeyboardContextMenu(ev)) focusFirstItem(menu);
   }
   panel.addEventListener("contextmenu", onContextMenu);
+  const unhost = makeMenuHost(panel);
 
   return () => {
     panel.removeEventListener("contextmenu", onContextMenu);
+    unhost();
     menu.remove();
   };
 }

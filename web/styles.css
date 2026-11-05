@@ -3528,6 +3528,10 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .tmb-dd-item.tmb-active::before { content: "\2713"; position: absolute; left: 8px; }
 /* Inset ring: a scrolling dropdown (columns menu) clips outer outlines. */
 .tmb-dropdown button:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* Click-focusable for the Menu key (menu-nav.js makeMenuHost); never ringed. */
+[data-menu-host]:focus-visible { outline: none; }
+/* Mouse-driven (menu-nav.js): hover focuses items, the highlight shows it. */
+.tmb-dropdown.menu-pointer :focus-visible { outline: none; }
 .tmb-separator {
   border-top: 1px solid var(--wa-color-border-loud, #333);
   margin: 4px 0;

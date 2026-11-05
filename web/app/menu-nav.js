@@ -27,6 +27,13 @@ const FLYOUT_LEFT_CLASS = "flyout-left";
 const SLIDER_ROW_CLASS = "menu-slider";
 const SLIDER_VAL_CLASS = "menu-slider-val";
 const FIXED_POSITION = "fixed";
+// On a menu the mouse is driving: styles.css drops its focus ring (hover
+// focuses items); a key press brings it back.
+const POINTER_CLASS = "menu-pointer";
+const MOUSE_RIGHT_BUTTON = 2;
+const TABINDEX_ATTR = "tabindex";
+// Marks a makeMenuHost element; styles.css keeps it ringless.
+const MENU_HOST_ATTR = "data-menu-host";
 const DIR = Object.freeze({ ArrowRight: 1, ArrowLeft: -1 });
 
 const rowButtons = (li) => Array.from(li.querySelectorAll(":scope > button"));
@@ -163,10 +170,34 @@ export function attachMenuNav(menu, { close }) {
     if (ev.pointerType !== "mouse") return;
     const btn = ev.target.closest("button");
     if (!btn || !isEnabled(btn)) return;
+    menu.classList.add(POINTER_CLASS);
     syncSubmenusToHover(menu, btn);
     if (btn !== document.activeElement) btn.focus({ preventScroll: true });
   });
+  // Opened with nothing focused (a click, a right-click): the first row key
+  // enters the menu instead of moving whatever sits beneath it.
+  const onOutsideKey = (ev) => {
+    // Removed while open: no closing beforetoggle fired.
+    if (!menu.matches(":popover-open")) {
+      document.removeEventListener("keydown", onOutsideKey, true);
+      return;
+    }
+    if (!ROW_KEYS.has(ev.key) || menu.contains(document.activeElement)) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    menu.classList.remove(POINTER_CLASS);
+    focusFirstItem(menu);
+  };
+  menu.addEventListener("beforetoggle", (ev) => {
+    if (ev.newState === "open") {
+      menu.classList.remove(POINTER_CLASS);
+      document.addEventListener("keydown", onOutsideKey, true);
+    } else {
+      document.removeEventListener("keydown", onOutsideKey, true);
+    }
+  });
   menu.addEventListener("keydown", (ev) => {
+    menu.classList.remove(POINTER_CLASS);
     const handled = handleMenuKey(ev, menu, close);
     if (handled === HANDLED.NO) return;
     if (handled === HANDLED.YES) ev.preventDefault();
@@ -228,6 +259,17 @@ export function wireMenuToggle(btn, menu, open) {
 const claimedContextMenus = new WeakSet();
 export const claimContextMenu = (ev) => { claimedContextMenus.add(ev); };
 export const isContextMenuClaimed = (ev) => claimedContextMenus.has(ev);
+// The Menu key (or Shift+F10), not a right-click: its menu opens focused.
+export const isKeyboardContextMenu = (ev) => ev.button !== MOUSE_RIGHT_BUTTON;
+
+// The Menu key fires at the focused element: make el take focus on a click
+// (not Tab), so its contextmenu listener hears it. Returns the undo.
+export function makeMenuHost(el) {
+  if (el.hasAttribute(TABINDEX_ATTR)) return () => {};
+  el.tabIndex = -1;
+  el.setAttribute(MENU_HOST_ATTR, "");
+  return () => { el.removeAttribute(TABINDEX_ATTR); el.removeAttribute(MENU_HOST_ATTR); };
+}
 
 // Flyouts open toward the side with more room; call once the menu is placed.
 export function setFlyoutSide(menu) {
