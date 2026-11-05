@@ -22,7 +22,7 @@ rnbq1rk1/1p2bppp/p2p1n2/4p3/4P3/1NN5/PPP1BPPP/R1BQ1RK1 w - - id "open_sicilian_o
 r1bq1b1r/ppp3pp/3k4/3Bp3/3n4/P1N2Q2/1P1P1PPP/R1BK3R w - - id "repeats_qf7"; c0 "needs the move stack: reach it by 1.e4 e5 2.Nf3 Nc6 3.Bc4 Nf6 4.Ng5 d5 5.exd5 Nxd5 6.Nxf7 Kxf7 7.Qf3+ Ke6 8.Nc3 Ncb4 9.a3 Nxc2+ 10.Kd1 Nd4 11.Bxd5+ Kd6 12.Qf7 Qe7 13.Qf3 Qd8 14.Qf7 Qe7 15.Qf3 Qd8; then Qf7 repeats -> repeats=(Qf7,)";
 
 # Part 2: speculative sacrifices (draft). 'listed' = sacrifice_moves should return the move; 'not listed' = a near-miss.
-r1b2rk1/ppqn1ppp/2n1p3/2bpP3/8/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - id "greek_gift_white"; c0 "Bxh7+: listed: Koltanowski Greek gift, Bxh7+ Kxh7 Ng5+ then Qh5";
+r1b2rk1/ppqn1ppp/2n1p3/2bpP3/8/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - id "greek_gift_white"; c0 "Bxh7+: listed: Koltanowski Greek gift, Bxh7+ Kxh7 Ng5+ then Qh5. Also the later-step case: in the idea Ng5 first then Bxh7+, step two reaches Bxh7+ with a non-empty line, same SAN, normal margin";
 r1bq1rk1/pp1n1ppp/2pb1n2/8/2BPp3/2N1P3/PPQN1PPP/R1B2RK1 b - - id "greek_gift_black"; c0 "Bxh2+: listed: same position with colors reversed";
 r1bqkbnr/pppn1pp1/7p/4p3/2B1P3/5N2/PPP2PPP/RNBQK2R w KQkq - id "bxf7_white"; c0 "Bxf7+: listed: Philidor Hanham trap, Bxf7+ Kxf7 Nxe5+ and Qh5+";
 rnbqk2r/ppp2ppp/5n2/2b1p3/4P3/7P/PPPN1PP1/R1BQKBNR b KQkq - id "bxf2_black"; c0 "Bxf2+: listed: same with colors reversed";
@@ -35,5 +35,4 @@ r1b1k2r/ppqn1ppp/2n1p3/2bpP3/8/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - id "greek_gift_unc
 2b2rk1/ppqn1ppp/2n1p3/2bpP3/8/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - id "greek_gift_ahead"; c0 "Bxh7+: listed, but White is a rook up (margin from material): no note, no widening, SAC_DEPTH comparison still runs";
 r1bq1rk1/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQ1RK1 w - - id "bxf7_castled_king"; c0 "Bxf7+: not listed: the king is castled, Bxf7+ is not the uncastled-king pattern";
 r1bk1bnr/pppn1pp1/7p/4p3/2B1P3/5N2/PPP2PPP/RNBQK2R w KQ - id "bxf7_f7_hanging"; c0 "Bxf7: not listed: king on d8, f7 is a free pawn";
-r1b2rk1/ppqn1ppp/2n1p3/2bpP3/8/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - id "greek_gift_later_step"; c0 "play_out gate: the idea Ng5 first then Bxh7+ reaches Bxh7+ at step two with a non-empty line; same SAN, normal margin";
 r1b2rk1/ppq2ppp/2n1pn2/2bp4/4P3/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - id "greek_gift_diagonal_blocked"; c0 "not listed: the e4 pawn blocks the d3-h7 diagonal, Bxh7 is not even legal";
