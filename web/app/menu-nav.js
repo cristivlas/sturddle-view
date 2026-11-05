@@ -57,8 +57,24 @@ function stepInRow(btns, i, dir) {
   return null;
 }
 
-function openSubmenu(li) {
+// Lifts an open submenu's pane (CSS top: 0, level with its trigger) just
+// enough to keep its bottom inside the viewport, never past the top edge.
+function fitSubmenuToViewport(li) {
+  const sub = submenuOf(li);
+  sub.style.top = "";
+  const r = sub.getBoundingClientRect();
+  const overflow = r.bottom - (window.innerHeight - MENU_EDGE_PX);
+  if (overflow > 0) sub.style.top = -Math.min(overflow, Math.max(0, r.top - MENU_EDGE_PX)) + "px";
+}
+
+function showSubmenu(li) {
+  if (li.classList.contains(MENU_OPEN_CLASS)) return;
   li.classList.add(MENU_OPEN_CLASS);
+  fitSubmenuToViewport(li);
+}
+
+function openSubmenu(li) {
+  showSubmenu(li);
   focusFirstItem(submenuOf(li));
 }
 
@@ -117,7 +133,7 @@ function syncSubmenusToHover(menu, btn) {
   for (const li of menu.querySelectorAll(`li.${MENU_OPEN_CLASS}`)) {
     if (!keep.has(li)) li.classList.remove(MENU_OPEN_CLASS);
   }
-  keep.forEach((li) => li.classList.add(MENU_OPEN_CLASS));
+  keep.forEach(showSubmenu);
 }
 
 // Wire the menu's own keys. `menu` is the top-level list element. Mouse
