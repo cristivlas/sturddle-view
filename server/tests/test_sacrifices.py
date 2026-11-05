@@ -7,9 +7,11 @@ from __future__ import annotations
 import chess
 import pytest
 
+from sturddle_view.play import sacrifices
 from sturddle_view.play.sacrifices import (
     PATTERN_BISHOP_F7,
     PATTERN_GREEK_GIFT,
+    PATTERN_KING_ZONE,
     sacrifice_moves,
     static_exchange,
 )
@@ -73,6 +75,54 @@ def test_bishop_f7_fires_for_black():
 ])
 def test_bishop_f7_near_misses(fen):
     assert all(pattern != PATTERN_BISHOP_F7 for pattern, _ in _moves(fen))
+
+
+# Bxg7 Kxg7, then Qg4+ along the opened g-file.
+_ZONE_CHECK = "r4rk1/ppp1qppp/8/8/8/8/PBP2PPP/3Q1RK1 w - - 0 1"
+# Nxf7 opens the b2 bishop's diagonal onto g7 / f6 (a lift), no check.
+_ZONE_LIFT = "r4rk1/ppp2ppp/8/4N3/8/8/PBP2PPP/6K1 w - - 0 1"
+
+
+def test_king_zone_sacrifice_with_a_check_after_the_recapture():
+    assert _moves(_ZONE_CHECK) == ((PATTERN_KING_ZONE, "Bxg7"),)
+
+
+def test_king_zone_sacrifice_that_lifts_a_line_onto_the_king():
+    assert _moves(_ZONE_LIFT) == ((PATTERN_KING_ZONE, "Nxf7"),)
+
+
+@pytest.mark.parametrize("fen", [
+    # Carlsbad: after Bxh7+ Nxh7 the c2 queen only hits the recapturing
+    # knight; a line onto the recapture square is no lift.
+    "r1bqrnk1/pp2bppp/2p2n2/3p2B1/3P4/2NBPN2/PPQ2PPP/R4RK1 w - - 0 1",
+    # A Greek gift shape the named pattern rejects (no knight for g5) is
+    # not re-listed by the generic trigger on a bare Qh5+.
+    "r1b2rk1/ppqn1ppp/2n1p3/2bpP3/8/1NPB4/PP1N1PPP/R1BQ1RK1 w - - 0 1",
+    # No queen: no check follows, and the rook stays behind f2.
+    "r4rk1/ppp1qppp/8/8/8/8/PBP2PPP/5RK1 w - - 0 1",
+    # A pawn on d4 still blocks the bishop after Nxf7.
+    "r4rk1/ppp2ppp/8/4N3/3P4/8/PBP2PPP/6K1 w - - 0 1",
+])
+def test_king_zone_needs_a_follow_up(fen):
+    assert all(pattern != PATTERN_KING_ZONE for pattern, _ in _moves(fen))
+
+
+def test_king_zone_is_capped(monkeypatch):
+    # Nxh7, Nxf7 and Bxg7 all qualify.
+    fen = "r4rk1/ppp1qppp/8/6N1/8/8/PBP2PPP/3Q1RK1 w - - 0 1"
+    assert len(_moves(fen)) > 1
+    monkeypatch.setattr(sacrifices, "KING_ZONE_MAX", 1)
+    assert len(_moves(fen)) == 1
+
+
+def test_king_zone_rook_sacrifice_with_a_queen_check():
+    # Rxh7 Kxh7 Qh3+ and Qh8: outside the named patterns.
+    fen = "r4rk1/pp3p1p/4p1p1/2P3P1/1q2BP2/4Q3/2P5/2KR3R w - - 0 1"
+    assert (PATTERN_KING_ZONE, "Rxh7") in _moves(fen)
+
+
+def test_a_named_pattern_is_not_listed_twice():
+    assert [san for _, san in _moves(_GREEK_GIFT)].count("Bxh7+") == 1
 
 
 def test_start_position_has_none():

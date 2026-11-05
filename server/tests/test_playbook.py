@@ -66,7 +66,11 @@ from sturddle_view.play.playbook_tags import (
     STRUCTURE_CLOSED,
     STRUCTURE_OPEN,
 )
-from sturddle_view.play.sacrifices import PATTERN_BISHOP_F7, PATTERN_GREEK_GIFT
+from sturddle_view.play.sacrifices import (
+    PATTERN_BISHOP_F7,
+    PATTERN_GREEK_GIFT,
+    PATTERN_KING_ZONE,
+)
 
 
 # 16 pawns, three locked pairs (d4/d5, e5/e6, f4/f5), no open file.
@@ -238,7 +242,7 @@ def _sacrifice_note(pattern: str, move: str) -> str:
 
 
 def test_every_pattern_has_a_shipped_note():
-    assert set(SACRIFICE_NOTES) == {PATTERN_GREEK_GIFT, PATTERN_BISHOP_F7}
+    assert set(SACRIFICE_NOTES) == {PATTERN_GREEK_GIFT, PATTERN_BISHOP_F7, PATTERN_KING_ZONE}
     for pattern in SACRIFICE_NOTES:
         assert "Bxh7+" in _sacrifice_note(pattern, "Bxh7+")
 

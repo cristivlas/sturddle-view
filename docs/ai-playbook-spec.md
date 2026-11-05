@@ -328,6 +328,20 @@ Flow:
    compensation is a concrete line that a deeper search can show: the
    Greek gift (Bxh7+ / ...Bxh2+ with a knight that reaches g5 and a
    queen that reaches the h-file) and Bxf7+ against an uncastled king.
+   A generic king-zone trigger adds `king_zone`: any capture onto a
+   square next to the enemy king that loses material by static exchange,
+   checking or quiet. It is kept only when every legal recapture leaves
+   a follow-up, one ply of pure predicates: a check by a rook or queen,
+   or one landing next to the king, that does not lose the checking
+   piece; or a lift, where a bishop, rook or queen now attacks a square
+   next to the king that it did not attack before. A line onto the
+   sacrifice square itself only hits the recapturing piece, so it does
+   not count. At most KING_ZONE_MAX (`SV_AI_SAC_KING_ZONE_MAX`, 2) are
+   listed per turn, worst exchange first. A capture with a named
+   pattern's shape (a bishop onto h7 against a king on g8, or onto f7
+   against a king on e8) is left to that pattern, even when the pattern
+   rejects it: a bare queen check would otherwise re-list a Greek gift
+   with no knight for g5.
 2. **Propose.** The renderer turns `sacrifices` into a note beside the
    repetition note, naming the move and the pattern ("Bxh7+, a Greek
    gift: test it"). This is an exception to the rule that fragments name
@@ -404,9 +418,9 @@ on the dark squares, not a sequence. A margin modest enough to be safe
 rejects such a sacrifice every time, and a margin wide enough to admit
 it also admits a bad Greek gift. Adding positional sacrifices needs a
 margin per pattern, carried in each pattern's definition. Also open:
-the SAC_DEPTH and SAC_MARGIN_CP values; a generic trigger (a checking
-capture near the king that loses material by static exchange) in place
-of named patterns.
+the SAC_DEPTH and SAC_MARGIN_CP values; patterns as data in TOML (name,
+piece, target square relative to the king, follow-up kind), like the
+formations, once more patterns need it.
 
 ## Grounding
 

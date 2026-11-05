@@ -3,17 +3,30 @@ Speculative sacrifices) -- pure functions, no engine.
 
 Like `repeating_moves`, not a matcher: the result names concrete moves.
 The first stage keeps forcing patterns only, whose compensation a deeper
-search can show. Squares are written from White's side and mirrored for
+search can show: two named ones, and a generic king-zone trigger backed
+by a one-ply follow-up (a check or a lift). Squares are written from White's side and mirrored for
 Black.
 """
 from __future__ import annotations
 
 import chess
 
+from ..env_utils import env_int
+
 
 PATTERN_GREEK_GIFT = "greek_gift"
 # Bishop takes the f-pawn next to an uncastled king (Bxf7+ / ...Bxf2+).
 PATTERN_BISHOP_F7 = "bishop_f7"
+# Any losing capture next to the enemy king that a follow-up backs.
+PATTERN_KING_ZONE = "king_zone"
+
+# King-zone sacrifices listed per turn, worst exchange first.
+_DEFAULT_KING_ZONE_MAX = 2
+KING_ZONE_MAX = env_int("SV_AI_SAC_KING_ZONE_MAX", _DEFAULT_KING_ZONE_MAX)
+_HEAVY_PIECES = (chess.ROOK, chess.QUEEN)
+# (bishop target, enemy king square) of the named patterns, White's side.
+_NAMED_SHAPES = ((chess.H7, chess.G8), (chess.F7, chess.E8))
+_SLIDERS = (chess.BISHOP, chess.ROOK, chess.QUEEN)
 
 # Centipawns per piece type; the king outweighs any exchange.
 PIECE_VALUES_CP = {
@@ -146,17 +159,92 @@ def _bishop_f7(board: chess.Board) -> list[chess.Move]:
     return _bishop_checks_onto(board, _relative(chess.F7, us))
 
 
-_PATTERNS = (
+def _king_zone_mask(board: chess.Board, color: chess.Color) -> chess.Bitboard:
+    """`color`'s king square and its neighbors."""
+    king = board.king(color)
+    return chess.BB_EMPTY if king is None else chess.BB_KING_ATTACKS[king] | chess.BB_SQUARES[king]
+
+
+def _has_check(board: chess.Board) -> bool:
+    """The side to move has a check that does not lose the checking piece:
+    by a rook or queen, or landing next to the enemy king."""
+    zone = _king_zone_mask(board, not board.turn)
+    return any(
+        board.gives_check(move)
+        and (board.piece_type_at(move.from_square) in _HEAVY_PIECES
+             or chess.BB_SQUARES[move.to_square] & zone)
+        and static_exchange(board, move) >= 0
+        for move in board.legal_moves
+    )
+
+
+def _has_lift(before: chess.Board, after: chess.Board, target: chess.Square) -> bool:
+    """A line piece of the side to move in `after` attacks a square next to
+    the enemy king that it did not attack in `before`: a file or diagonal
+    opened onto the king. The sacrifice square `target` does not count: a
+    line onto it only hits the recapturing piece."""
+    us = after.turn
+    zone = _king_zone_mask(after, not us) & ~chess.BB_SQUARES[target]
+    for piece_type in _SLIDERS:
+        for square in after.pieces(piece_type, us):
+            was = before.attacks_mask(square) if before.piece_at(square) == after.piece_at(square) else 0
+            if after.attacks_mask(square) & zone & ~was:
+                return True
+    return False
+
+
+def _king_zone(board: chess.Board) -> list[chess.Move]:
+    """Captures next to the enemy king that lose material by static
+    exchange, where every legal recapture leaves a check or a lift."""
+    zone = _king_zone_mask(board, not board.turn)
+    found: list[tuple[int, chess.Move]] = []
+    for move in board.legal_moves:
+        if not (board.is_capture(move) and chess.BB_SQUARES[move.to_square] & zone):
+            continue
+        if board.piece_type_at(move.from_square) == chess.KING or _named_shape(board, move):
+            continue
+        exchange = static_exchange(board, move)
+        if exchange >= 0:
+            continue
+        after = board.copy(stack=False)
+        after.push(move)
+        recaptures = [m for m in after.legal_moves if m.to_square == move.to_square]
+        if recaptures and all(_follows_up(board, after, r) for r in recaptures):
+            found.append((exchange, move))
+    found.sort(key=lambda pair: pair[0])
+    return [move for _, move in found[:KING_ZONE_MAX]]
+
+
+def _follows_up(before: chess.Board, after: chess.Board, recapture: chess.Move) -> bool:
+    board = after.copy(stack=False)
+    board.push(recapture)
+    return _has_check(board) or _has_lift(before, board, recapture.to_square)
+
+
+def _named_shape(board: chess.Board, move: chess.Move) -> bool:
+    """`move` has a named pattern's shape (a bishop onto h7 against a king
+    on g8, onto f7 against one on e8): that pattern decides it, even when
+    it rejects the move."""
+    us = board.turn
+    if board.piece_type_at(move.from_square) != chess.BISHOP:
+        return False
+    king = board.king(not us)
+    return any(
+        move.to_square == _relative(target, us) and king == _relative(king_square, us)
+        for target, king_square in _NAMED_SHAPES
+    )
+
+
+_NAMED_PATTERNS = (
     (PATTERN_GREEK_GIFT, _greek_gift),
     (PATTERN_BISHOP_F7, _bishop_f7),
 )
 
 
 def sacrifice_moves(board: chess.Board) -> tuple[tuple[str, str], ...]:
-    """(pattern, SAN) for each known sacrifice the side to move has, in
-    pattern order."""
-    return tuple(
-        (name, board.san(move))
-        for name, detect in _PATTERNS
-        for move in detect(board)
-    )
+    """(pattern, SAN) for each sacrifice the side to move has: the named
+    patterns first, then king-zone ones they do not already name."""
+    named = [(name, move) for name, detect in _NAMED_PATTERNS for move in detect(board)]
+    seen = {move for _, move in named}
+    generic = [(PATTERN_KING_ZONE, move) for move in _king_zone(board) if move not in seen]
+    return tuple((name, board.san(move)) for name, move in named + generic)

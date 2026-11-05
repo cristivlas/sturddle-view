@@ -30,7 +30,7 @@ from .playbook_tags import (
     MARGIN_EVEN,
     PHASES,
 )
-from .sacrifices import PATTERN_BISHOP_F7, PATTERN_GREEK_GIFT
+from .sacrifices import PATTERN_BISHOP_F7, PATTERN_GREEK_GIFT, PATTERN_KING_ZONE
 
 log = logging.getLogger(__name__)
 
@@ -64,6 +64,7 @@ NOTE_FIELD_MOVE = "move"
 SACRIFICE_NOTES: Mapping[str, str] = {
     PATTERN_GREEK_GIFT: "note.sacrifice_greek_gift",
     PATTERN_BISHOP_F7: "note.sacrifice_bishop_f7",
+    PATTERN_KING_ZONE: "note.sacrifice_king_zone",
 }
 NOTE_FIELDS: Mapping[str, frozenset[str]] = {
     NOTE_CRUSHING: frozenset(),

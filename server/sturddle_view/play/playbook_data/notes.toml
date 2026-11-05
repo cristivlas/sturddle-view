@@ -33,3 +33,8 @@ text = "$move is a Greek gift sacrifice: play it out before ruling it out."
 id = "note.sacrifice_bishop_f7"
 kind = "note"
 text = "$move is a bishop sacrifice against the uncastled king: play it out before ruling it out."
+
+[[entry]]
+id = "note.sacrifice_king_zone"
+kind = "note"
+text = "$move is a sacrifice against the king's cover: play it out before ruling it out."
