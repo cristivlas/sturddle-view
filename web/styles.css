@@ -3902,16 +3902,42 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   content: ""; position: absolute; left: 0; right: 0; top: 100%;
   height: var(--tournaments-row-gap); background: var(--bg); pointer-events: none;
 }
+/* Studio's wallpaper spans the bottom too; each tab group and the chrome stay
+   solid, filled on their own (no fill shared by both groups), so a table's
+   Transparency (column-header.js) fades only its group. The column grip's
+   side borders take over the bottom row's gaps; its hover tint stays inside. */
+.has-wallpaper :is(.studio-tabs, .studio-boards-tray) { background: var(--bg); }
+.has-wallpaper :is(.studio-grip-row, .studio-grip-col):not(:hover, .dragging) { background: var(--bg); }
+.has-wallpaper .studio-bottom { gap: 0; }
+.has-wallpaper .studio-grip-col {
+  box-sizing: content-box;
+  border-inline: var(--studio-bottom-gap) solid var(--bg);
+}
+.has-wallpaper :is(.studio-grip-col:hover, .studio-grip-col.dragging) { background-clip: padding-box; }
 /* Opacity < 1 would cut the wall's panels off from the wallpaper behind. */
 .has-wallpaper .studio-boards-wall { opacity: 1; }
 /* Never scrolls, so its flyouts aren't clipped. */
 .wallpaper-menu { overflow: visible; }
-.wallpaper-menu.flyout-left .tmb-dd-submenu > .tmb-dropdown { left: auto; right: 100%; }
-/* Outranks .tmb-dropdown > li's zero padding. */
-.tmb-dropdown > li.wallpaper-fade { display: flex; align-items: center; gap: 12px; padding: 12px 18px; }
-.wallpaper-fade wa-slider { flex: 1 1 auto; min-width: 140px; --thumb-width: 1.15em; --thumb-height: 1.15em; }
-.wallpaper-fade wa-slider::part(track) { background: var(--panel-accent); }
-.wallpaper-fade-val { min-width: 3.5ch; text-align: right; color: var(--muted); }
+/* The Columns menu scrolls (one row per column), so its flyout is fixed,
+   escaping the clip; menu-nav.js places it. */
+.dt-menu .tmb-dd-submenu > .tmb-dropdown { position: fixed; }
+.flyout-left .tmb-dd-submenu > .tmb-dropdown { left: auto; right: 100%; }
+/* Slider flyout rows (menu-nav.js). Outranks .tmb-dropdown > li's zero padding. */
+.tmb-dropdown > li.menu-slider { display: flex; align-items: center; gap: 12px; padding: 12px 18px; }
+.menu-slider wa-slider { flex: 1 1 auto; min-width: 140px; --thumb-width: 1.15em; --thumb-height: 1.15em; }
+.menu-slider wa-slider::part(track) { background: var(--panel-accent); }
+.menu-slider-val { min-width: 3.5ch; text-align: right; color: var(--muted); }
+/* Columns-menu Transparency (column-header.js): a faded table host or header
+   cell. Outranks their own and WinBox's inline backgrounds; a hovered header
+   cell and a reorder drag's copy keep their own look. */
+[data-dt-fade]:not(th:hover, .dt-drag-ghost th) { background-color: var(--dt-fade-bg) !important; }
+/* Its cell lines, colored per side off the table's first row. */
+[data-dt-fade-lines] :is(th, td) {
+  border-top-color: var(--dt-fade-line-t) !important;
+  border-right-color: var(--dt-fade-line-r) !important;
+  border-bottom-color: var(--dt-fade-line-b) !important;
+  border-left-color: var(--dt-fade-line-l) !important;
+}
 
 /* Footer spans the wall: progress/tally left, created stamp hard right. */
 .iw-footer {
@@ -4017,7 +4043,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .winbox.sturddle-wb-studio { position: absolute; transition: none; }
 .winbox.sturddle-wb-studio .wb-drag { cursor: default; }
 .studio-bottom {
-  flex: 1 1 0; min-height: 0; display: flex; gap: 6px;
+  --studio-bottom-gap: 6px;
+  flex: 1 1 0; min-height: 0; display: flex; gap: var(--studio-bottom-gap);
   /* Single rule separating the board area from the bottom tab groups. */
   border-top: 1px solid var(--border-subtle);
   box-sizing: border-box;

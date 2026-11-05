@@ -9,7 +9,7 @@
 // Callers focusFirstItem() on open, so keys land here from the start.
 // Also the popover menus' shared opener, placement and mirrored-button rows.
 
-import { escapeHtml, nextNavIndex } from "./wb-utils.js";
+import { escapeHtml, nextNavIndex, PCT_SUFFIX } from "./wb-utils.js";
 import { ACTIVATE_KEYS } from "./keys.js";
 
 // Marks an open (sub)menu's <li>; callers' CSS shows its nested list.
@@ -22,6 +22,11 @@ const MENU_GAP_PX = 4;
 const MENU_EDGE_PX = 8;
 // A mirrored button's toggled-on state; its menu row gets MENU_CHECKED_CLASS.
 const BTN_ACTIVE_CLASS = "is-active";
+// On a menu in the viewport's right half: its flyouts open leftward.
+const FLYOUT_LEFT_CLASS = "flyout-left";
+const SLIDER_ROW_CLASS = "menu-slider";
+const SLIDER_VAL_CLASS = "menu-slider-val";
+const FIXED_POSITION = "fixed";
 const DIR = Object.freeze({ ArrowRight: 1, ArrowLeft: -1 });
 
 const rowButtons = (li) => Array.from(li.querySelectorAll(":scope > button"));
@@ -57,10 +62,24 @@ function stepInRow(btns, i, dir) {
   return null;
 }
 
+// A fixed pane (a scrolling menu's, which would clip an absolute one) goes
+// beside its trigger, right if it fits else left, inside the viewport.
+function placeFixedSubmenu(li, sub) {
+  const r = li.getBoundingClientRect();
+  const w = sub.offsetWidth;
+  const left = r.right + w <= window.innerWidth - MENU_EDGE_PX ? r.right : Math.max(MENU_EDGE_PX, r.left - w);
+  sub.style.left = left + "px";
+  sub.style.top = Math.max(MENU_EDGE_PX, Math.min(r.top, window.innerHeight - MENU_EDGE_PX - sub.offsetHeight)) + "px";
+}
+
 // Lifts an open submenu's pane (CSS top: 0, level with its trigger) just
 // enough to keep its bottom inside the viewport, never past the top edge.
 function fitSubmenuToViewport(li) {
   const sub = submenuOf(li);
+  if (getComputedStyle(sub).position === FIXED_POSITION) {
+    placeFixedSubmenu(li, sub);
+    return;
+  }
   sub.style.top = "";
   const r = sub.getBoundingClientRect();
   const overflow = r.bottom - (window.innerHeight - MENU_EDGE_PX);
@@ -153,6 +172,10 @@ export function attachMenuNav(menu, { close }) {
     if (handled === HANDLED.YES) ev.preventDefault();
     ev.stopPropagation();
   });
+  // A scrolled menu moves its triggers; fixed flyouts follow.
+  menu.addEventListener("scroll", () => {
+    for (const li of menu.querySelectorAll(`li.${MENU_OPEN_CLASS}`)) fitSubmenuToViewport(li);
+  });
 }
 
 export function positionMenu(menu, btn) {
@@ -197,6 +220,38 @@ export function wireMenuToggle(btn, menu, open) {
     if (!close) open(ev);
     else if (isOpen()) menu.hidePopover();
   });
+}
+
+// Flyouts open toward the side with more room; call once the menu is placed.
+export function setFlyoutSide(menu) {
+  const r = menu.getBoundingClientRect();
+  menu.classList.toggle(FLYOUT_LEFT_CLASS, r.left + r.width / 2 > window.innerWidth / 2);
+}
+
+// A submenu row: trigger button plus its flyout list.
+export function submenuHtml(label, inner, disabled = false) {
+  return `<li class="tmb-dd-submenu"><button type="button" class="tmb-dd-item"${disabled ? " disabled" : ""}>${label}</button>`
+    + `<ul class="tmb-dropdown">${inner}</ul></li>`;
+}
+
+// A slider flyout row with its live % readout.
+export function sliderRowHtml({ max, step, value }) {
+  return `<li class="${SLIDER_ROW_CLASS}">`
+    + `<wa-slider size="small" min="0" max="${max}" step="${step}" value="${value}"></wa-slider>`
+    + `<span class="${SLIDER_VAL_CLASS}">${value}${PCT_SUFFIX}</span></li>`;
+}
+
+// Wires the slider row in `menu`, if it has one: onInput(pct) while dragging,
+// onChange(pct) on release.
+export function wireSliderRow(menu, { onInput, onChange }) {
+  const slider = menu.querySelector(`.${SLIDER_ROW_CLASS} wa-slider`);
+  if (!slider) return;
+  const val = menu.querySelector(`.${SLIDER_VAL_CLASS}`);
+  slider.addEventListener("input", () => {
+    onInput(Number(slider.value));
+    val.textContent = `${slider.value}${PCT_SUFFIX}`;
+  });
+  slider.addEventListener("change", () => onChange(Number(slider.value)));
 }
 
 // Menu rows mirroring real buttons (icon + aria-label or title), by index in

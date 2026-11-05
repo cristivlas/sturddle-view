@@ -1291,6 +1291,7 @@ export function clearSearchLines() { pvTableApi?.clear(); }
 function buildPvTableBody(events, { setOff }) {
   const pvt = createPvTable({
     layoutKey: STORAGE_KEY.PVTABLE_LAYOUT,
+    fade: true,
     onActivate(handle) {
       return !!pvLineBoard?.playLine(handle.frames, {
         pvUci: handle.pvUci,

@@ -107,7 +107,7 @@ function buildTable(el, n) {
     minPct: XT_MIN_PCT,
     traits: {
       sort: { sortKey: STORAGE_KEY.TOURNAMENTS_CROSSTABLE_SORT, single: true },
-      resize: true, hide: true, fit: true, rowNav: {},
+      resize: true, hide: true, fit: true, fade: true, rowNav: {},
     },
     rowAttrs: (r) => ({ "data-id": r.engine.name }),
     onRender: () => titleRankHeaders(el),

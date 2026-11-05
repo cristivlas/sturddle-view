@@ -70,7 +70,7 @@ export function makeStandingsBody() {
         stackKey: STORAGE_KEY.TOURNAMENTS_STANDINGS_STACK,
         defaultState: { key: "pct", dir: SORT_DIR.DESC },
       },
-      resize: true, reorder: true, hide: true, fit: true, rowNav: {},
+      resize: true, reorder: true, hide: true, fit: true, fade: true, rowNav: {},
     },
     rowAttrs: (r) => ({ "data-id": r.name }),
   });

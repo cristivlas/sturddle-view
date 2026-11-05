@@ -6,20 +6,20 @@
 
 import { mqMobile } from "./breakpoints.js";
 import { reportError } from "./dialogs.js";
-import { attachMenuNav, focusFirstItem, MENU_CHECKED_CLASS, positionMenu, positionMenuAt, wireMenuToggle } from "./menu-nav.js";
+import {
+  attachMenuNav, focusFirstItem, MENU_CHECKED_CLASS, positionMenu, positionMenuAt,
+  setFlyoutSide, sliderRowHtml, submenuHtml, wireMenuToggle, wireSliderRow,
+} from "./menu-nav.js";
 import { ribbonAnchor } from "./ribbon-overflow.js";
-import { escapeHtml } from "./wb-utils.js";
+import { escapeHtml, PCT_SUFFIX, WALLPAPER_CLASS } from "./wb-utils.js";
 
 const WALLPAPER_PATH = "/wallpaper";
 const INFO_PATH = `${WALLPAPER_PATH}/info`;
 const STYLE_PATH = `${WALLPAPER_PATH}/style`;
 const ACCEPT_TYPES = "image/png,image/jpeg,image/webp";
-const HAS_CLASS = "has-wallpaper";
 const URL_VAR = "--wallpaper";
 const FADE_VAR = "--wallpaper-fade";
 const FIT_ATTR = "data-wallpaper-fit";
-// On the menu when it sits in the viewport's right half: flyouts open leftward.
-const FLYOUT_LEFT_CLASS = "flyout-left";
 const BTN_LABEL = "Wallpaper";
 const ICON = "image";
 const ITEM = Object.freeze({ CHOOSE: "choose", REMOVE: "remove" });
@@ -27,7 +27,6 @@ const ITEM_LABEL = Object.freeze({ [ITEM.CHOOSE]: "Choose image...", [ITEM.REMOV
 const FIT_LABEL = "Fit";
 const FADE_LABEL = "Fade";
 const FADE_STEP_PCT = 5;
-const PCT_SUFFIX = "%";
 const SET_FAIL_MSG = "Set wallpaper failed";
 const REMOVE_FAIL_MSG = "Remove wallpaper failed";
 const LOAD_FAIL_MSG = "Load wallpaper failed";
@@ -48,13 +47,9 @@ async function uploadImage(file) {
   return r.json();
 }
 
-// A submenu row: trigger button plus its flyout list. Disabled without an
-// image, since its settings would show nothing (styles.css keeps it shut).
-function submenuHtml(label, inner, info) {
-  const disabled = info.version == null ? " disabled" : "";
-  return `<li class="tmb-dd-submenu"><button type="button" class="tmb-dd-item"${disabled}>${label}</button>`
-    + `<ul class="tmb-dropdown">${inner}</ul></li>`;
-}
+// A style submenu. Disabled without an image, since its settings would show
+// nothing (styles.css keeps it shut).
+const styleSubmenuHtml = (label, inner, info) => submenuHtml(label, inner, info.version == null);
 
 function itemHtml(item, disabled) {
   return `<li><button type="button" class="tmb-dd-item" data-item="${item}"${disabled ? " disabled" : ""}>`
@@ -68,14 +63,13 @@ function fitHtml(info) {
     return `<li><button type="button" class="tmb-dd-item${cls}" data-fit="${escapeHtml(f)}">`
       + `${escapeHtml(capitalize(f))}</button></li>`;
   }).join("");
-  return submenuHtml(FIT_LABEL, opts, info);
+  return styleSubmenuHtml(FIT_LABEL, opts, info);
 }
 
 // Fade flyout: the slider and its live value.
 function fadeHtml(info) {
-  return submenuHtml(FADE_LABEL, `<li class="wallpaper-fade">`
-    + `<wa-slider size="small" min="0" max="${info.fade_max}" step="${FADE_STEP_PCT}" value="${info.fade}"></wa-slider>`
-    + `<span class="wallpaper-fade-val">${info.fade}${PCT_SUFFIX}</span></li>`, info);
+  return styleSubmenuHtml(FADE_LABEL,
+    sliderRowHtml({ max: info.fade_max, step: FADE_STEP_PCT, value: info.fade }), info);
 }
 
 function ribbonButton(ribbonEl) {
@@ -120,7 +114,7 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
   const closeMenu = () => { if (menu.matches(":popover-open")) menu.hidePopover(); };
   const setFade = (pct) => regionEl.style.setProperty(FADE_VAR, `${pct}${PCT_SUFFIX}`);
   const clearPaint = () => {
-    regionEl.classList.remove(HAS_CLASS);
+    regionEl.classList.remove(WALLPAPER_CLASS);
     regionEl.style.removeProperty(URL_VAR);
     regionEl.style.removeProperty(FADE_VAR);
     regionEl.removeAttribute(FIT_ATTR);
@@ -131,7 +125,7 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
     if (!mounted) return;
     const mobile = isMobile();
     if (info?.version != null && !mobile) {
-      regionEl.classList.add(HAS_CLASS);
+      regionEl.classList.add(WALLPAPER_CLASS);
       regionEl.style.setProperty(URL_VAR, `url("${WALLPAPER_PATH}?v=${info.version}")`);
       regionEl.setAttribute(FIT_ATTR, info.fit);
       setFade(info.fade);
@@ -159,18 +153,10 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
   const openMenu = (place, keyboard) => {
     menu.innerHTML = itemHtml(ITEM.CHOOSE, false) + itemHtml(ITEM.REMOVE, info.version == null)
       + `<li class="tmb-separator"></li>` + fitHtml(info) + fadeHtml(info);
-    const slider = menu.querySelector("wa-slider");
-    const val = menu.querySelector(".wallpaper-fade-val");
-    slider.addEventListener("input", () => {
-      setFade(slider.value);
-      val.textContent = `${slider.value}${PCT_SUFFIX}`;
-    });
-    slider.addEventListener("change", () => putStyle({ fade: Number(slider.value) }));
-    menu.classList.remove(FLYOUT_LEFT_CLASS);
+    wireSliderRow(menu, { onInput: setFade, onChange: (fade) => putStyle({ fade }) });
     menu.showPopover();
     place(menu);
-    const r = menu.getBoundingClientRect();
-    menu.classList.toggle(FLYOUT_LEFT_CLASS, r.left + r.width / 2 > window.innerWidth / 2);
+    setFlyoutSide(menu);
     if (keyboard) focusFirstItem(menu);
   };
   for (const { btn } of buttons) {

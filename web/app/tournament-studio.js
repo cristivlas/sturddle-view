@@ -305,7 +305,7 @@ function buildTourneyTable(ctx) {
         sortKey: STORAGE_KEY.STUDIO_TOURNEY_SORT,
         stackKey: STORAGE_KEY.STUDIO_TOURNEY_STACK,
       },
-      resize: true, reorder: true, hide: true, fit: true,
+      resize: true, reorder: true, hide: true, fit: true, fade: true,
       // Arrows move the selection; Shift extends the multi-selection from its
       // lead row.
       rowNav: {
@@ -654,7 +654,7 @@ function buildHistoryTable(ctx) {
     minPct: STUDIO_HISTORY_MIN_PCT,
     traits: {
       sort: { sortKey: STORAGE_KEY.STUDIO_HISTORY_SORT, stackKey: STORAGE_KEY.STUDIO_HISTORY_STACK },
-      resize: true, reorder: true, hide: true, fit: true, rowNav: {},
+      resize: true, reorder: true, hide: true, fit: true, fade: true, rowNav: {},
     },
     rowAttrs: (r) => ({
       class: HISTORY_ROW_CLASS,
@@ -1300,6 +1300,7 @@ export function mountTournamentStudio({ container, api, events, log }) {
     api, events, log, container,
     panel: q(".studio-panel"),
     ribbonEl: q(".studio-ribbon"),
+    mainEl: q(".studio-main"),
     boardsEl: q(".studio-boards"),
     boardsCanvasEl: q(".studio-boards-canvas"),
     boardsWallEl: q(".studio-boards-wall"),
@@ -1373,9 +1374,11 @@ export function mountTournamentStudio({ container, api, events, log }) {
   wireLeftTabsFold(ctx);
   wireRibbonActions(ctx);
   // Before overflow attaches, so its first fit check counts the wallpaper button.
-  // Board windows live inside the region; right-clicks on them are theirs.
+  // Spans boards and bottom panes; only the boards area's bare background
+  // opens the menu (board windows' and panes' right-clicks are theirs).
   ctx.wallpaper = mountWallpaper({
-    ribbonEls: [ctx.ribbonEl], regionEl: ctx.boardsEl, isBare: (t) => !t.closest(".winbox"), api: ctx.api, log: ctx.log,
+    ribbonEls: [ctx.ribbonEl], regionEl: ctx.mainEl,
+    isBare: (t) => ctx.boardsEl.contains(t) && !t.closest(".winbox"), api: ctx.api, log: ctx.log,
   });
   ctx.ribbonOverflow = attachRibbonOverflow(ctx.ribbonEl);
   announceRibbon(ctx.ribbonEl);
@@ -1453,7 +1456,7 @@ function unmountStudio(ctx) {
   ctx.ribbonOverflow?.detach();
   ctx.panel.remove();
   ctx.panel = ctx.ribbonEl = null;
-  ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
+  ctx.mainEl = ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
   ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = ctx.tourneyTable = null;
   ctx.enginesPaneEl = ctx.gamesPaneEl = null;
   ctx.standingsPaneEl = ctx.standingsBodyEl = ctx.h2hPaneEl = ctx.h2hBodyEl = ctx.historyPaneEl = ctx.historyTable = ctx.logPaneEl = ctx.logListEl = null;
