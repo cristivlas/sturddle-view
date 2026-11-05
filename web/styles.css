@@ -77,6 +77,7 @@
   --row-bg-selected: #2a3a4a;
   --border-subtle: #2e3138;
   --border-faint: #26282e;  /* row separators: fainter than --border-subtle */
+  --pvtable-line: #3a3e46;  /* Search Lines cell grid: a notch above --border-subtle */
 
   /* Status callouts (import dialog and similar). Pinned because webawesome's
      --wa-color-{success,danger}-50 are dark-mode tuned and clash with dark
@@ -5279,7 +5280,10 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-pvtable-head-tbl th:last-child:hover {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
 }
-.wb-pvtable-tbl td { overflow: hidden; text-overflow: ellipsis; text-align: right; border-right: 1px solid var(--border-subtle); }
+.wb-pvtable-tbl td {
+  overflow: hidden; text-overflow: ellipsis; text-align: right;
+  border-right: 1px solid var(--pvtable-line); border-bottom-color: var(--pvtable-line);
+}
 .wb-pvtable-tbl td:last-child { border-right: none; }
 .wb-pvtable-head-tbl th { text-align: center; }
 .wb-pvtable-tbl td.wb-pvtable-pv,
