@@ -1856,7 +1856,7 @@ body .side-popover.popover-floating {
 .dock-ghost {
   flex: 1 1 0;
   min-height: 0;
-  background: color-mix(in srgb, color-mix(in srgb, var(--row-bg-selected), white 15%), transparent 65%);
+  background: color-mix(in srgb, color-mix(in srgb, var(--row-bg-selected), white 15%), transparent 55%);
   border-top: 2px solid color-mix(in srgb, var(--row-bg-selected), white 40%);
   pointer-events: none;
 }
@@ -3920,7 +3920,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   /* Pinned to the wall's bottom. */
   margin-top: auto;
 }
-.iw-progress { display: flex; align-items: center; gap: 12px; flex: 1 1 280px; max-width: 75%; }
+.iw-progress { display: flex; align-items: center; gap: 12px; flex: 1 1 280px; max-width: 75%; padding: 8px 12px; }
 .iw-progress .tournament-progress { flex: 1 1 auto; }
 
 /* SPRT LLR meter: H0 ---[marker]--- H1, the verdict gauge. */
