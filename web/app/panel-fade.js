@@ -220,8 +220,9 @@ export function attachPanelMenu(panel, { fade = null, actions = [] } = {}) {
       + `${escapeHtml(a.label)}</button></li>`;
   };
 
+  // Desktop only: on a phone a long-press would pop it.
   function onContextMenu(ev) {
-    if (isContextMenuClaimed(ev)) return;
+    if (isContextMenuClaimed(ev) || isMobile()) return;
     const actionsHtml = actions.map(actionHtml).join("");
     const fadeHtml = fade ? fadeMenuHtml(fade.pct) : "";
     const html = actionsHtml + (actionsHtml && fadeHtml ? SEPARATOR_HTML : "") + fadeHtml;

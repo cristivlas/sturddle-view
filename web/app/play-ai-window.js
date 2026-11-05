@@ -24,6 +24,7 @@ import { ACTIVATE_KEYS } from "./keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import {
   deepLink,
+  OPEN_AI_SETTINGS_ARIA,
   openSettings,
   SETTINGS_TAB_ANALYSIS,
   errorActionsFor,
@@ -564,7 +565,8 @@ const inst = createDockableWindow({
   defaultW: () => DEFAULT_WIN_W,
   defaultH: DEFAULT_WIN_H,
   defaultY: () => DEFAULT_WIN_Y,
-  build() {
+  build(_events, { setActions }) {
+    setActions([{ label: SETTINGS_MENU_LABEL, run: openAiSettings }]);
     return buildBody();
   },
   dockOrder: DOCK_ORDER.AI_ANALYSIS,
@@ -620,14 +622,20 @@ export function isAiOpen() {
 const ENGINE_ONLY_LEAD = "Engine analysis appears in ";
 const ENGINE_ONLY_MID = ". To use AI, switch providers in ";
 const SETTINGS_LINK = "Settings";
+// The window's right-click entry: it opens a dialog.
+const SETTINGS_MENU_LABEL = `${SETTINGS_LINK}...`;
 const SETTINGS_ICON = "gear";
 const ENGINE_ONLY_CLASS = "play-ai-engine-only";
+
+function openAiSettings() {
+  openSettings(SETTINGS_TAB_ANALYSIS);
+}
 
 // Gear inside the link: same target, so no second tab stop.
 function settingsLink() {
   const gear = document.createElement("wa-icon");
   gear.name = SETTINGS_ICON;
-  const link = deepLink(SETTINGS_LINK, () => openSettings(SETTINGS_TAB_ANALYSIS));
+  const link = deepLink(SETTINGS_LINK, openAiSettings);
   link.prepend(gear);
   return link;
 }
@@ -1347,11 +1355,10 @@ function _roundCapNote(message) {
   gear.className = "play-ai-roundcap-gear";
   gear.setAttribute("role", "button");
   gear.setAttribute("tabindex", "0");
-  gear.setAttribute("aria-label", "Open AI settings");
-  const open = () => openSettings(SETTINGS_TAB_ANALYSIS);
-  gear.addEventListener("click", open);
+  gear.setAttribute("aria-label", OPEN_AI_SETTINGS_ARIA);
+  gear.addEventListener("click", openAiSettings);
   gear.addEventListener("keydown", (e) => {
-    if (ACTIVATE_KEYS.has(e.key)) { e.preventDefault(); open(); }
+    if (ACTIVATE_KEYS.has(e.key)) { e.preventDefault(); openAiSettings(); }
   });
   note.append(text, gear);
   return note;

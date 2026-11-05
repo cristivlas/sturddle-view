@@ -629,6 +629,7 @@ export const SETTINGS_TAB_RECENTS = "recents";
 export const SETTINGS_TAB_TOURNAMENT = "tournament";
 export const SETTINGS_TAB_DISPLAY = "display";
 export const SETTINGS_TAB_PLAY = "play";
+export const OPEN_AI_SETTINGS_ARIA = "Open AI settings";
 
 // Deep-link focus target: class on the extended-thinking control, shared
 // with the tab that builds it so the selector has one source of truth.
@@ -703,7 +704,7 @@ export const OPEN_ENGINES_ACTION =
 /** Canonical "open the Analysis settings tab" toast action, for failures
  *  the user fixes among the AI settings. */
 export const OPEN_ANALYSIS_ACTION =
-  openSettingsAction(SETTINGS_TAB_ANALYSIS, "Open AI settings");
+  openSettingsAction(SETTINGS_TAB_ANALYSIS, OPEN_AI_SETTINGS_ARIA);
 
 /** Canonical "open the Tournament settings tab" toast action, for a
  *  start that failed on the fastchess binary. */
@@ -843,7 +844,7 @@ export function reportVerboseError(text, { variant = "danger" } = {}) {
 // says how to fix them.
 const AI_ERROR_ACTIONS = {
   ThinkingUnsupported: [
-    openSettingsAction(SETTINGS_TAB_ANALYSIS, "Open AI settings", AI_THINKING_MODE_CLASS),
+    openSettingsAction(SETTINGS_TAB_ANALYSIS, OPEN_AI_SETTINGS_ARIA, AI_THINKING_MODE_CLASS),
   ],
 };
 
