@@ -1856,7 +1856,7 @@ body .side-popover.popover-floating {
 .dock-ghost {
   flex: 1 1 0;
   min-height: 0;
-  background: color-mix(in srgb, var(--row-bg-selected), white 15%);
+  background: color-mix(in srgb, color-mix(in srgb, var(--row-bg-selected), white 15%), transparent 65%);
   border-top: 2px solid color-mix(in srgb, var(--row-bg-selected), white 40%);
   pointer-events: none;
 }
