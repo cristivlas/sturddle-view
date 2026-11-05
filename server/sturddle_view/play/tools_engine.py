@@ -1832,10 +1832,9 @@ SACRIFICE_HOLDS_NOTE = (
 def _is_listed_sacrifice(
     board: chess.Board, first: chess.Move, situation: Situation | None,
 ) -> bool:
-    """`first` (from the live `board`) is a sacrifice the playbook lists,
-    outside the ahead margins (docs/ai-playbook-spec.md, Speculative
-    sacrifices)."""
-    if situation is None or situation.margin in AHEAD_MARGINS:
+    """`first` (from the live `board`) is a sacrifice the playbook lists
+    (docs/ai-playbook-spec.md, Speculative sacrifices)."""
+    if situation is None:
         return False
     return board.san(first) in {san for _, san in situation.sacrifices}
 

@@ -337,6 +337,13 @@ async def test_listed_sacrifice_that_holds_says_so(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_listed_sacrifice_ahead_says_so_too(monkeypatch):
+    tool = _gift_tool(monkeypatch, _gift_situation(margin=MARGIN_BETTER))
+    out = await _step(tool, "Greek gift", "Bxh7+")
+    assert out["note"] == SACRIFICE_HOLDS_NOTE
+
+
+@pytest.mark.asyncio
 async def test_sacrifice_that_sinks_past_the_margin_gets_no_note(monkeypatch):
     # Each step stays within the margin, the line does not: 20 -> -45.
     tool = _gift_tool(monkeypatch, _gift_situation(), after_ng5=45)
@@ -349,10 +356,9 @@ async def test_sacrifice_that_sinks_past_the_margin_gets_no_note(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("situation", [
     _gift_situation(sacrifices=()),
-    _gift_situation(margin=MARGIN_BETTER),
     None,
 ])
-async def test_unlisted_or_ahead_sacrifice_gets_no_note(monkeypatch, situation):
+async def test_unlisted_sacrifice_gets_no_note(monkeypatch, situation):
     tool = _gift_tool(monkeypatch, situation)
     out = await _step(tool, "Greek gift", "Bxh7+")
     assert "note" not in out

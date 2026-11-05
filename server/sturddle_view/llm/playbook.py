@@ -145,10 +145,9 @@ def _repeat_note(situation: Situation, catalog: Catalog) -> str:
 
 
 def _sacrifice_notes(situation: Situation, catalog: Catalog) -> list[str]:
-    # Outside the fragment cap, like the repetition note. None ahead: the
-    # side with an edge converts and does not gamble.
-    if situation.margin in AHEAD_MARGINS:
-        return []
+    # Outside the fragment cap, like the repetition note. Every margin: a
+    # sound sacrifice is often why the eval is ahead, and the gate keeps
+    # the normal margins there.
     return [
         catalog.note(SACRIFICE_NOTES[pattern], **{NOTE_FIELD_MOVE: san})
         for pattern, san in situation.sacrifices

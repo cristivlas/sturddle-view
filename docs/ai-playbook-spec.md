@@ -347,9 +347,8 @@ Flow:
    gift: test it"). This is an exception to the rule that fragments name
    plans: like the repetition note, it names a concrete move, and it
    rides outside the fragment cap. The model still decides, and it must
-   `play_out` the sacrifice like any other idea. Like `_repeat_note`,
-   the note depends on the margin: there is none in `AHEAD_MARGINS`
-   (see Rules). Unlike the repetition note, it also rides the opening
+   `play_out` the sacrifice like any other idea. The note shows at
+   every margin (see Rules). Unlike the repetition note, it also rides the opening
    message's `Plan:` line (`structural_playbook`). Models seldom call
    `plan` without that line, and a sacrifice they never see is one they
    never test. SHIPPED (notes `note.sacrifice_*` in `notes.toml`).
@@ -381,14 +380,13 @@ Rules:
 
 - Only a listed move gets the wider margin. Any other move, including
   the same move when it is not listed, keeps the normal margins.
-- There is no note and no widening in `AHEAD_MARGINS` (`better`,
-  `winning`, `crushing`): the side ahead converts and does not gamble.
-  `sacrifices` stays pure and reads the board only, in `classify`. The
-  renderer and the gate each read the margin from the same `Situation`
-  against `AHEAD_MARGINS`, the set `_repeat_note` already uses (a side
-  with an edge to protect does not volunteer the draw or the gamble), so
-  the note cannot invite a sacrifice that the gate then judges at
-  normal margins. The deep search depends on the move being listed,
+- There is no widening in `AHEAD_MARGINS` (`better`, `winning`,
+  `crushing`): the side ahead converts and does not gamble, the same set
+  `_repeat_note` uses. The note still shows there: a sound sacrifice is
+  often why the eval is ahead, and the note only asks for a play-out, which
+  the gate judges at the normal margins. `sacrifices` stays pure and
+  reads the board only, in `classify`. The deep search depends on the
+  move being listed,
   not on the margin: ahead, a listed move still gets the SAC_DEPTH
   comparison and passes at the normal margins when its compensation is
   real.
@@ -407,9 +405,9 @@ near-misses; the gate accepts a listed sacrifice within SAC_MARGIN_CP,
 flagged `speculative` with its note, and rejects the same move
 unlisted; both searches of a listed move's comparison (in
 `recommend_move` and in a `play_out` step) run at SAC_DEPTH; a later
-`play_out` step with the same SAN keeps the normal margin; ahead there
-is no note and no widening, but a listed move still gets the SAC_DEPTH
-comparison.
+`play_out` step with the same SAN keeps the normal margin; ahead the
+note shows but there is no widening, and a listed move still gets the
+SAC_DEPTH comparison.
 
 Open: positional sacrifices such as the exchange sacrifice on c3 / c6.
 After Rxc3 bxc3 the engine has the sacrificer about a pawn down for

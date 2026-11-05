@@ -256,10 +256,13 @@ def test_render_sacrifice_note_outside_the_ahead_margins(margin):
 
 
 @pytest.mark.parametrize("margin", [MARGIN_BETTER, MARGIN_WINNING, MARGIN_CRUSHING])
-def test_no_sacrifice_note_ahead(margin):
+def test_sacrifice_note_ahead_too(margin):
+    # A sound sacrifice is often why the eval is ahead: the note stays, the
+    # gate keeps the normal margins.
     situation = _situation(margin=margin, sacrifices=_GREEK_GIFT)
-    assert "Bxh7+" not in render_playbook(situation, COACH_MODE, chess.WHITE)
-    assert structural_playbook(situation) is None
+    note = _sacrifice_note(PATTERN_GREEK_GIFT, "Bxh7+")
+    assert note in render_playbook(situation, COACH_MODE, chess.WHITE)
+    assert structural_playbook(situation) == PLAYBOOK_LEAD + note
 
 
 def test_render_sacrifice_note_rides_outside_the_cap(monkeypatch):
