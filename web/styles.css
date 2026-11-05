@@ -3867,6 +3867,13 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   color: var(--muted-bright);
 }
 .studio-boards-wall > * { width: 100%; }
+/* Boards laid out (tournament-studio.js fitWallToStrip): the wall is the strip
+   under the centered grid; its footer centers there, unpadded so it fits thin
+   strips, hidden below 20px (about one 12px text line, the tallest row part). */
+.studio-boards-wall.in-strip { padding-block: 0; container: studio-strip / size; }
+.studio-boards-wall.in-strip .iw-footer { margin-block: auto; }
+.studio-boards-wall.in-strip .iw-progress { padding-block: 0; }
+@container studio-strip (max-height: 20px) { .iw-footer { visibility: hidden; } }
 /* Empty state: the wall hosts a clickable New-tournament CTA. */
 .studio-boards-wall.is-empty { pointer-events: auto; }
 .studio-empty {
@@ -3903,12 +3910,11 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   content: ""; position: absolute; left: 0; right: 0; top: 100%;
   height: var(--tournaments-row-gap); background: var(--bg); pointer-events: none;
 }
-/* Studio wallpaper: each tab group and the tray stay solid on their own, so a
-   group's fade covers only it. Groups fill to the column grip's middle and under
-   the row grip (padded, content unmoved); the grips stay see-through idle. */
-.has-wallpaper :is(.studio-tabs, .studio-boards-tray) { background: var(--bg); }
+/* Studio wallpaper: each tab group stays solid on its own, so a group's fade
+   covers only it. Groups fill to the column grip's middle and under the row
+   grip (padded, content unmoved); the grips and the tray stay see-through. */
+.has-wallpaper .studio-tabs { background: var(--bg); padding-top: var(--studio-grip-row-h); }
 .has-wallpaper .studio-grip-row { margin-bottom: calc(-1 * var(--studio-grip-row-h)); }
-.has-wallpaper .studio-tabs { padding-top: var(--studio-grip-row-h); }
 .has-wallpaper .studio-bottom { gap: 0; }
 .has-wallpaper .studio-bottom-left .studio-tabs { padding-right: var(--studio-seam); }
 .has-wallpaper .studio-bottom-right .studio-tabs { padding-left: var(--studio-seam); }

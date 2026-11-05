@@ -62,6 +62,8 @@ const READY_TIMEOUT_MS = 4000;
 // edge: their right/bottom borders are the seams (see the CSS).
 const STUDIO_COLS = 4;
 const STUDIO_BOARD_CLASS = `sturddle-wb-studio no-move no-resize ${WB_NO_SHADOW_CLASS}`;
+// On the info wall while it fills only the strip under the board grid.
+const WALL_STRIP_CLASS = "in-strip";
 // Minimized boards live in the tray (display:none), so they are not cells.
 const BOARD_SEL = ".winbox.sturddle-wb-studio:not(.min)";
 // The board grid roves one tab stop, so the "current" board is the one Tab
@@ -79,7 +81,6 @@ const BOARD_CONTROLS = [
 const CHIP_SEL = ".studio-tray-chip";
 const CHIP_CURRENT_SEL = `${CHIP_SEL}[tabindex="0"]`;
 const CHIP_CLOSE_SEL = ".wb-close";
-const BOARD_RESIZE_DEBOUNCE_MS = 120;
 // Default active tab per bottom group (first tab) when none is remembered.
 const STUDIO_TAB_DEFAULT_LEFT = "livegames";
 const STUDIO_TAB_DEFAULT_RIGHT = "tourneys";
@@ -782,24 +783,36 @@ function studioCols() {
 // Height is whole device px off the narrowest column (snapped widths vary by
 // 1px), so no board's own square cap (width + chrome) trims it shorter.
 // x0/dpr: the region's page x and the device pixel ratio, for slotRect.
-function boardCell(ctx) {
+// y0: desktop centers a grid shorter than the region (whole device px);
+// gridBottom: where the grid ends, for the info wall's strip below it.
+// pending: boards not yet open but about to take slots.
+function boardCell(ctx, pending = 0) {
   const cols = studioCols();
   const el = ctx.boardsEl;
   const dpr = window.devicePixelRatio;
   const fit = (el?.clientWidth ?? 0) / cols;
   const cw = Math.max(LIVE_MIN_WIDTH, fit);
   const chDev = Math.floor(cw * dpr) + Math.floor((LIVE_MIN_HEIGHT() - LIVE_MIN_WIDTH) * dpr);
-  return { cw, ch: chDev / dpr, cols, overflowX: cw > fit, x0: el?.getBoundingClientRect().left ?? 0, dpr };
+  const ch = chDev / dpr;
+  const laidOut = getLiveWindows().filter((wb) => !wb.min && !wb.max).length + pending;
+  const gridH = Math.ceil(laidOut / cols) * ch;
+  const centered = !mqMobile.matches && !ctx._maxWb;
+  const spare = centered ? Math.max(0, (el?.clientHeight ?? 0) - gridH) : 0;
+  const y0 = Math.floor((spare / 2) * dpr) / dpr;
+  return {
+    cw, ch, cols, overflowX: cw > fit, x0: el?.getBoundingClientRect().left ?? 0, dpr,
+    y0, gridBottom: y0 + gridH,
+  };
 }
 
 // Edges land on whole device pixels (columns in page coordinates), so the
 // seam two boards share always rounds to the same pixel at any DPR. The last
 // column's right edge is left to CSS (WB_EDGE_RIGHT_CLASS).
-function slotRect(i, { cw, ch, cols, x0, dpr }) {
+function slotRect(i, { cw, ch, cols, x0, dpr, y0 }) {
   const col = i % cols, row = Math.floor(i / cols);
   const colEdge = (c) => Math.round((x0 + c * cw) * dpr) / dpr - x0;
   const x = colEdge(col);
-  return { x, y: row * ch, w: colEdge(col + 1) - x, h: ch };
+  return { x, y: y0 + row * ch, w: colEdge(col + 1) - x, h: ch };
 }
 
 // Reposition every open board into its slot; size the scroll canvas to the
@@ -817,9 +830,12 @@ function regridBoards(ctx) {
     wb.g?.classList.toggle(WB_EDGE_RIGHT_CLASS, lastCol);
     if (wb.max) { fillRegion(ctx, wb); continue; }
     const r = slotRect(slot++, cell);
-    wb.resize(r.w, r.h).move(r.x, r.y);
+    // Same size (a height-only region change): skip the board's resize work.
+    if (wb.width !== r.w || wb.height !== r.h) wb.resize(r.w, r.h);
+    wb.move(r.x, r.y);
   }
   sizeCanvas(ctx, slot, cell);
+  fitWallToStrip(ctx, slot, cell);
   syncRovingTabStop(ctx.boardsEl, BOARD_SEL, BOARD_CONTROL_SELS);
   // Single source of truth for board presence (laid-out or maximized).
   const hasBoards = anyBoardsShown();
@@ -886,6 +902,16 @@ function sizeCanvas(ctx, count, cell) {
   const bottom = slotRect(count - 1, cell);
   ctx.boardsCanvasEl.style.width = cell.overflowX ? `${right.x + right.w}px` : "0";
   ctx.boardsCanvasEl.style.height = `${bottom.y + bottom.h}px`;
+}
+
+// Desktop with laid-out boards: the wall is only the strip below the
+// (centered) grid, its footer centered there (hidden when too short).
+function fitWallToStrip(ctx, count, cell) {
+  const wall = ctx.boardsWallEl;
+  if (!wall) return;
+  const inStrip = count > 0 && !mqMobile.matches && !ctx._maxWb;
+  wall.style.top = inStrip ? `${cell.gridBottom}px` : "";
+  wall.classList.toggle(WALL_STRIP_CLASS, inStrip);
 }
 
 // Size a board to fill the visible region, pinned to its top-left. CSS
@@ -979,8 +1005,9 @@ function renderTray(ctx) {
   syncRovingTabStop(tray, CHIP_SEL, [CHIP_CLOSE_SEL]);
 }
 
-function studioSlotRect(ctx, i) {
-  return slotRect(i, boardCell(ctx));
+// pending: boards about to be laid out, counted in the grid's centering.
+function studioSlotRect(ctx, i, pending = 0) {
+  return slotRect(i, boardCell(ctx, pending));
 }
 
 // Sync every watch control's state to the open boards. Called when a board
@@ -1034,7 +1061,7 @@ function remaximize(wb) {
 
 // Next laid-out slot index (minimized/maximized boards don't occupy slots).
 function nextSlotRect(ctx) {
-  return studioSlotRect(ctx, getLiveWindows().filter((wb) => !wb.min && !wb.max).length);
+  return studioSlotRect(ctx, getLiveWindows().filter((wb) => !wb.min && !wb.max).length, 1);
 }
 
 // Shared post-open: wire hooks, re-grid, repaint tray, persist.
@@ -1417,7 +1444,8 @@ export function mountTournamentStudio({ container, api, events, log }) {
     refreshWatchButtons(ctx);
     saveBoards(ctx);
   };
-  ctx.onBoardResize = debounce(() => regridBoards(ctx), BOARD_RESIZE_DEBOUNCE_MS);
+  // Once per frame, so a grip drag recenters the grid live.
+  ctx.onBoardResize = rafCoalesce(() => regridBoards(ctx));
   // Re-pin/re-grid immediately when the mobile breakpoint flips (cols and
   // board-area height change between desktop and mobile).
   ctx.onMqMobile = () => regridBoards(ctx);
@@ -1428,7 +1456,9 @@ export function mountTournamentStudio({ container, api, events, log }) {
     saveBoards(ctx);
   };
   window.addEventListener(APP_EVT.LIVEGAME_RESOLVED, ctx.onBoardResolved);
-  window.addEventListener("resize", ctx.onBoardResize);
+  // The region, not the window: a grip drag resizes it too (the grid recenters).
+  ctx.boardsResizeObs = new ResizeObserver(ctx.onBoardResize);
+  ctx.boardsResizeObs.observe(ctx.boardsEl);
   mqMobile.addEventListener("change", ctx.onMqMobile);
 
   // Reload the list on any tournament event (coalesced); initial load now.
@@ -1463,7 +1493,8 @@ function unmountStudio(ctx) {
   // teardown doesn't re-save (and wipe) the board set.
   window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onBoardClosed);
   window.removeEventListener(APP_EVT.LIVEGAME_RESOLVED, ctx.onBoardResolved);
-  window.removeEventListener("resize", ctx.onBoardResize);
+  ctx.boardsResizeObs?.disconnect();
+  ctx.onBoardResize?.cancel();
   mqMobile.removeEventListener("change", ctx.onMqMobile);
   ctx.wallpaper?.unmount();
   ctx.leftMenuOff?.();
@@ -1479,7 +1510,7 @@ function unmountStudio(ctx) {
   ctx.panel.remove();
   ctx.panel = ctx.ribbonEl = null;
   ctx.mainEl = ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.leftTabsEl = ctx.bottomRightEl = ctx.rightTabsEl = null;
-  ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = ctx.tourneyTable = null;
+  ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = ctx.tourneyTable = ctx.boardsResizeObs = null;
   ctx.enginesPaneEl = ctx.gamesPaneEl = null;
   ctx.standingsPaneEl = ctx.standingsBodyEl = ctx.h2hPaneEl = ctx.h2hBodyEl = ctx.historyPaneEl = ctx.historyTable = ctx.logPaneEl = ctx.logListEl = null;
   ctx.ribbonBtns = ctx.actions = null;
