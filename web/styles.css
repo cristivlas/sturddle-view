@@ -1237,8 +1237,16 @@ main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden
 #perspective-root:has(.studio-panel) { padding-top: 0; }
 /* On main, not #play-perspective, so it spans main's side padding too. */
 #perspective-root:has(#play-perspective) {
+  --play-glow: linear-gradient(var(--play-glow-dir), var(--ribbon-bg), var(--play-glow-color) var(--play-glow-tint-at), transparent var(--play-glow-reach));
   padding-top: var(--play-gap);
-  background: linear-gradient(var(--play-glow-dir), var(--ribbon-bg), var(--play-glow-color) var(--play-glow-tint-at), transparent var(--play-glow-reach));
+  background: var(--play-glow);
+}
+/* The glow stays on top of the wallpaper (.has-wallpaper, below). */
+#perspective-root:has(#play-perspective).has-wallpaper {
+  background-image: var(--play-glow), var(--wallpaper-fade-layer), var(--wallpaper);
+  background-size: 100% 100%, 100% 100%, var(--wallpaper-size, cover);
+  background-position: center, center, var(--wallpaper-position, center);
+  background-repeat: no-repeat, no-repeat, var(--wallpaper-repeat, no-repeat);
 }
 #app-footer {
   flex: 0 0 auto;
@@ -3519,16 +3527,16 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 
 /* column-header.js columns menu, ribbon-overflow.js and header-menu.js ellipsis
-   menus, studio-wallpaper.js menu: top-layer popovers reusing the .tmb-dropdown
+   menus, wallpaper.js menu: top-layer popovers reusing the .tmb-dropdown
    look. Must follow .tmb-dropdown: same specificity, fixed placement (JS sets
    top/left) overrides its absolute one. */
-.dt-menu, .ribbon-more-menu, .header-more-menu, .studio-wallpaper-menu {
+.dt-menu, .ribbon-more-menu, .header-more-menu, .wallpaper-menu {
   position: fixed; inset: auto; color: var(--fg);
   /* JS max-height (viewport room) includes padding/border; tall menus scroll. */
   box-sizing: border-box; overflow-y: auto;
 }
 .dt-menu:popover-open, .ribbon-more-menu:popover-open, .header-more-menu:popover-open,
-.studio-wallpaper-menu:popover-open { display: block; }
+.wallpaper-menu:popover-open { display: block; }
 /* Vertical ribbon overflow (ribbon-overflow.js): items keep their size, so a
    short rail overflows into the ellipsis menu instead of squashing them. */
 .ribbon-overflow-managed > * { flex-shrink: 0; }
@@ -3863,34 +3871,30 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   display: flex; align-items: center; justify-content: center; gap: 6px;
   color: var(--muted); text-align: center;
 }
-/* Wallpaper (studio-wallpaper.js): fills the region behind the wall and the
-   boards. Layer 1 is the fade overlay (app background at the fade percent,
-   always full-size), layer 2 the image, sized per data-wallpaper-fit. */
-.studio-boards.has-wallpaper {
-  --studio-wallpaper-fade-color: color-mix(in srgb, var(--bg) var(--studio-wallpaper-fade, 0%), transparent);
-  background-image:
-    linear-gradient(var(--studio-wallpaper-fade-color), var(--studio-wallpaper-fade-color)),
-    var(--studio-wallpaper);
-  background-size: 100% 100%, cover;
-  background-position: center;
-  background-repeat: no-repeat;
+/* Wallpaper (wallpaper.js): fills a view's region behind its content.
+   Layer 1 is the fade overlay (app background at the fade percent, always
+   full-size), layer 2 the image, sized per data-wallpaper-fit. Play layers
+   its glow over both (its own rule, above). */
+.has-wallpaper {
+  --wallpaper-fade-color: color-mix(in srgb, var(--bg) var(--wallpaper-fade, 0%), transparent);
+  --wallpaper-fade-layer: linear-gradient(var(--wallpaper-fade-color), var(--wallpaper-fade-color));
+  background-image: var(--wallpaper-fade-layer), var(--wallpaper);
+  background-size: 100% 100%, var(--wallpaper-size, cover);
+  background-position: center, var(--wallpaper-position, center);
+  background-repeat: no-repeat, var(--wallpaper-repeat, no-repeat);
 }
-.studio-boards[data-wallpaper-fit="contain"] { background-size: 100% 100%, contain; }
-.studio-boards[data-wallpaper-fit="stretch"] { background-size: 100% 100%, 100% 100%; }
-.studio-boards[data-wallpaper-fit="center"] { background-size: 100% 100%, auto; }
-.studio-boards[data-wallpaper-fit="tile"] {
-  background-size: 100% 100%, auto;
-  background-position: center, top left;
-  background-repeat: no-repeat, repeat;
-}
+[data-wallpaper-fit="contain"] { --wallpaper-size: contain; }
+[data-wallpaper-fit="stretch"] { --wallpaper-size: 100% 100%; }
+[data-wallpaper-fit="center"] { --wallpaper-size: auto; }
+[data-wallpaper-fit="tile"] { --wallpaper-size: auto; --wallpaper-position: top left; --wallpaper-repeat: repeat; }
 /* Never scrolls, so its flyouts aren't clipped. */
-.studio-wallpaper-menu { overflow: visible; }
-.studio-wallpaper-menu.flyout-left .tmb-dd-submenu > .tmb-dropdown { left: auto; right: 100%; }
+.wallpaper-menu { overflow: visible; }
+.wallpaper-menu.flyout-left .tmb-dd-submenu > .tmb-dropdown { left: auto; right: 100%; }
 /* Outranks .tmb-dropdown > li's zero padding. */
-.tmb-dropdown > li.studio-wallpaper-fade { display: flex; align-items: center; gap: 12px; padding: 12px 18px; }
-.studio-wallpaper-fade wa-slider { flex: 1 1 auto; min-width: 140px; --thumb-width: 1.15em; --thumb-height: 1.15em; }
-.studio-wallpaper-fade wa-slider::part(track) { background: var(--panel-accent); }
-.studio-wallpaper-fade-val { min-width: 3.5ch; text-align: right; color: var(--muted); }
+.tmb-dropdown > li.wallpaper-fade { display: flex; align-items: center; gap: 12px; padding: 12px 18px; }
+.wallpaper-fade wa-slider { flex: 1 1 auto; min-width: 140px; --thumb-width: 1.15em; --thumb-height: 1.15em; }
+.wallpaper-fade wa-slider::part(track) { background: var(--panel-accent); }
+.wallpaper-fade-val { min-width: 3.5ch; text-align: right; color: var(--muted); }
 
 /* Footer spans the wall: progress/tally left, created stamp hard right. */
 .iw-footer {

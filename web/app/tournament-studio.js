@@ -29,7 +29,7 @@ import { makeH2HBody, renderH2H } from "./tournament-h2h.js";
 import { renderEventLogList } from "./tournament-eventlog.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 import { renderInfoWall } from "./tournament-info.js";
-import { mountStudioWallpaper } from "./studio-wallpaper.js";
+import { mountWallpaper } from "./wallpaper.js";
 import { mqMobile, mqMobileH } from "./breakpoints.js";
 import { attachRibbonOverflow } from "./ribbon-overflow.js";
 
@@ -1373,7 +1373,10 @@ export function mountTournamentStudio({ container, api, events, log }) {
   wireLeftTabsFold(ctx);
   wireRibbonActions(ctx);
   // Before overflow attaches, so its first fit check counts the wallpaper button.
-  ctx.wallpaper = mountStudioWallpaper({ ribbonEl: ctx.ribbonEl, boardsEl: ctx.boardsEl, api: ctx.api, log: ctx.log });
+  // Board windows live inside the region; right-clicks on them are theirs.
+  ctx.wallpaper = mountWallpaper({
+    ribbonEls: [ctx.ribbonEl], regionEl: ctx.boardsEl, isBare: (t) => !t.closest(".winbox"), api: ctx.api, log: ctx.log,
+  });
   ctx.ribbonOverflow = attachRibbonOverflow(ctx.ribbonEl);
   announceRibbon(ctx.ribbonEl);
 

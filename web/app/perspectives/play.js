@@ -52,6 +52,8 @@ import { terminationLabel } from "../format-termination.js";
 import { editAnnotation } from "../annotation-dialog.js";
 import { collapseWhitespace } from "../text-utils.js";
 import { attachRibbonOverflow } from "../ribbon-overflow.js";
+import { mountWallpaper } from "../wallpaper.js";
+import { mqMobile, mqMobileHPlay } from "../breakpoints.js";
 import { ENGINES_NO_PROBE_PATH } from "../engines.js";
 
 // Tool name the AI uses to inspect hypothetical positions; the live
@@ -639,6 +641,9 @@ function adoptRemoteAiSession(state, ai, aiCtx, evt) {
   refreshSettings(state).then(() => setAiTitle(state.aiTitleModel));
   rehydrateAiPanel(ai, aiCtx, { adopt: true });
 }
+
+// Layout boxes only: a right-click there hits the wallpaper, not content.
+const PLAY_BARE_SEL = "#perspective-root, #play-perspective, .play-grid, .play-board-host, .game-view-board";
 
 const PLAY_PERSPECTIVE_HTML = `
   <section id="play-perspective">
@@ -2387,6 +2392,12 @@ export const playPerspective = {
     const editCastleBtn = root.querySelector("#edit-castle-btn");
     const editCastlePopover = root.querySelector("#edit-castle-popover");
     const editCastlePopoverWrap = editCastlePopover.parentElement;
+    // Before overflow attaches, so its first fit check counts the wallpaper button.
+    const wallpaper = mountWallpaper({
+      ribbonEls: [playRibbon, viewRibbon], regionEl: root, isBare: (t) => t.matches(PLAY_BARE_SEL),
+      // Play's mobile layout (isMobileLayout) also covers short touch screens.
+      mobileQueries: [mqMobile, mqMobileHPlay], api: ctx.api, log: ctx.log,
+    });
     // Short window: a vertical ribbon's spare buttons move into a "more" menu.
     const ribbonOverflows = [playRibbon, viewRibbon, editRibbon].map(attachRibbonOverflow);
     const editCastleCb = {
@@ -2835,6 +2846,7 @@ export const playPerspective = {
         }
         closeDebugWindows();
         ribbonOverflows.forEach((o) => o.detach());
+        wallpaper.unmount();
         // Announce no active ribbon so the global float manager unmounts it.
         window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: null } }));
         // Before the dock containers go (setDockContainer/RailDockContainer

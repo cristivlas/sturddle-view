@@ -15,6 +15,7 @@ import { baseCompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { rankCmp } from "./sort-stack.js";
 import { wireInlineSearch } from "./inline-search.js";
 import { attachRibbonOverflow } from "./ribbon-overflow.js";
+import { mountWallpaper } from "./wallpaper.js";
 import { attachMenuNav, focusFirstItem, MENU_CHECKED_CLASS, MENU_OPEN_CLASS } from "./menu-nav.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
@@ -1595,8 +1596,12 @@ function wireMenus(ctx) {
   }
 }
 
+// Layout boxes only: a right-click there hits the wallpaper, not content.
+const ARENA_BARE_SEL = "#perspective-root, #engines-perspective, .tournaments-panel, .tournaments-body, .tournaments-body-main, .tournaments-list";
+
 // oversized-ok removed: factory decomposed into module-level helpers below.
-export function mountTournaments({ container, api, events, log }) {
+// wallpaperEl: the region the wallpaper paints behind.
+export function mountTournaments({ container, wallpaperEl, api, events, log }) {
   container.innerHTML = PANEL_HTML;
 
   const ctx = {
@@ -1676,7 +1681,12 @@ export function mountTournaments({ container, api, events, log }) {
   ctx.actions = guardedVerbs(ctx);
 
   wireRibbon(ctx);
-  const ribbonOverflow = attachRibbonOverflow(container.querySelector(".tournaments-ribbon"));
+  const ribbonEl = container.querySelector(".tournaments-ribbon");
+  // Before overflow attaches, so its first fit check counts the wallpaper button.
+  const wallpaper = mountWallpaper({
+    ribbonEls: [ribbonEl], regionEl: wallpaperEl, isBare: (t) => t.matches(ARENA_BARE_SEL), api, log,
+  });
+  const ribbonOverflow = attachRibbonOverflow(ribbonEl);
   const stopSearch = setupTournamentSearch(ctx);
   wireListKeyboard(ctx);
   wireMenus(ctx);
@@ -1756,6 +1766,7 @@ export function mountTournaments({ container, api, events, log }) {
       document.removeEventListener("contextmenu", ctx.onMenuDocClick, true);
       stopSearch();
       ribbonOverflow.detach();
+      wallpaper.unmount();
       dismissSortToastNow(ctx);
       // Hide (don't close) so the workspace survives perspective
       // navigation; it'll be re-shown when the user returns.
