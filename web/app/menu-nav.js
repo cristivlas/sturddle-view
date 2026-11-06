@@ -28,6 +28,7 @@ const SLIDER_ROW_CLASS = "menu-slider";
 const SLIDER_VAL_CLASS = "menu-slider-val";
 const SLIDER_KEY_ATTR = "data-slider";
 const FIXED_POSITION = "fixed";
+const SCROLL_OVERFLOW = "auto";
 // On a menu the mouse is driving: styles.css drops its focus ring (hover
 // focuses items); a key press brings it back.
 const POINTER_CLASS = "menu-pointer";
@@ -80,11 +81,23 @@ function placeFixedSubmenu(li, sub) {
   sub.style.top = Math.max(MENU_EDGE_PX, Math.min(r.top, window.innerHeight - MENU_EDGE_PX - sub.offsetHeight)) + "px";
 }
 
+// Caps a pane's content at the viewport room less its padding and border;
+// only a pane that then overflows scrolls (a scrolling pane clips any
+// nested flyout).
+function capSubmenuHeight(sub, cs) {
+  sub.style.maxHeight = sub.style.overflowY = "";
+  const chrome = sub.offsetHeight - sub.clientHeight + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  sub.style.maxHeight = window.innerHeight - 2 * MENU_EDGE_PX - chrome + "px";
+  if (sub.scrollHeight > sub.clientHeight) sub.style.overflowY = SCROLL_OVERFLOW;
+}
+
 // Lifts an open submenu's pane (CSS top: 0, level with its trigger) just
 // enough to keep its bottom inside the viewport, never past the top edge.
 function fitSubmenuToViewport(li) {
   const sub = submenuOf(li);
-  if (getComputedStyle(sub).position === FIXED_POSITION) {
+  const cs = getComputedStyle(sub);
+  capSubmenuHeight(sub, cs);
+  if (cs.position === FIXED_POSITION) {
     placeFixedSubmenu(li, sub);
     return;
   }
@@ -279,6 +292,8 @@ export function setFlyoutSide(menu) {
   const r = menu.getBoundingClientRect();
   menu.classList.toggle(FLYOUT_LEFT_CLASS, r.left + r.width / 2 > window.innerWidth / 2);
 }
+
+export const MENU_SEPARATOR_HTML = `<li class="tmb-separator"></li>`;
 
 // A submenu row: trigger button plus its flyout list.
 export function submenuHtml(label, inner, disabled = false) {

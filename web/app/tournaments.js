@@ -16,7 +16,7 @@ import { rankCmp } from "./sort-stack.js";
 import { wireInlineSearch } from "./inline-search.js";
 import { attachRibbonOverflow } from "./ribbon-overflow.js";
 import { mountWallpaper } from "./wallpaper.js";
-import { attachMenuNav, focusFirstItem, MENU_CHECKED_CLASS, MENU_OPEN_CLASS } from "./menu-nav.js";
+import { attachMenuNav, focusFirstItem, MENU_CHECKED_CLASS, MENU_OPEN_CLASS, MENU_SEPARATOR_HTML } from "./menu-nav.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import {
@@ -151,15 +151,15 @@ const PANEL_HTML = `
                 <li><button class="tmb-dd-item tmb-sys-crosstable">Crosstable</button></li>
                 <li><button class="tmb-dd-item tmb-sys-schedule">Live Games</button></li>
                 <li><button class="tmb-dd-item tmb-sys-engines">Engines</button></li>
-                <li class="tmb-separator"></li>
+                ${MENU_SEPARATOR_HTML}
                 <li><button class="tmb-dd-item tmb-sys-log">Event Log</button></li>
               </ul>
             </li>
-            <li class="tmb-separator"></li>
+            ${MENU_SEPARATOR_HTML}
             <li><button class="tmb-dd-item tmb-snap">Snap</button></li>
             <li><button class="tmb-dd-item tmb-tile">Tile</button></li>
             <li><button class="tmb-dd-item tmb-tidy">Clean</button></li>
-            <li class="tmb-separator"></li>
+            ${MENU_SEPARATOR_HTML}
             <li><button class="tmb-dd-item tmb-closeall">Close All</button></li>
           </ul>
         </li>

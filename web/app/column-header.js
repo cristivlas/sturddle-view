@@ -15,7 +15,7 @@ import { ARROW_CLASS, ARROW_DESC, TH_LABEL_CLASS, TH_SORTABLE_CLASS } from "./co
 import { ESCAPE_KEY } from "./keys.js";
 import {
   attachMenuNav, claimContextMenu, focusFirstItem, isKeyboardContextMenu, makeMenuHost,
-  MENU_CHECKED_CLASS, positionMenuAt, wireMenuToggle, wireSliderRow,
+  MENU_CHECKED_CLASS, MENU_SEPARATOR_HTML, positionMenuAt, wireMenuToggle, wireSliderRow,
 } from "./menu-nav.js";
 import { fadeMenuHtml, RESET_LABEL } from "./panel-fade.js";
 import { applySplitColWidths, wireSplitScroll } from "./split-table.js";
@@ -208,10 +208,9 @@ function menuHtml(layout, byKey, traits, visibleCount) {
   }).join("");
   const action = (name, label) =>
     `<li>${menuBtnHtml(name, "tmb-dd-item", label, { attrs: ` data-action="${name}"` })}</li>`;
-  const sep = `<li class="tmb-separator"></li>`;
   const fade = traits.fade ? fadeMenuHtml(traits.fade.pct) : "";
-  return items + sep + (traits.fit ? action(MENU_ACTION.FIT, FIT_LABEL) : "")
-    + action(MENU_ACTION.RESET, RESET_LABEL) + (fade ? sep + fade : "");
+  return items + MENU_SEPARATOR_HTML + (traits.fit ? action(MENU_ACTION.FIT, FIT_LABEL) : "")
+    + action(MENU_ACTION.RESET, RESET_LABEL) + (fade ? MENU_SEPARATOR_HTML + fade : "");
 }
 
 // Visible boundary nearest x: 0 = before the first column, n = after the

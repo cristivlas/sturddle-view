@@ -6,6 +6,7 @@ version the client cache-busts the image URL with. The display style (fade,
 fit) lives beside it in ``style.json`` and survives image changes. A theme is
 an image under the themes dir plus an optional ``<name>.json`` preset tuned
 for it: its fit/fade set the style here, the rest is the client's to apply.
+The applied theme's name lives in ``theme.txt`` until the image changes.
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from .. import app_data_dir
-from .._atomic import atomic_write_bytes, atomic_write_json
+from .._atomic import atomic_write_bytes, atomic_write_json, atomic_write_text
 from ..auth import require_token
 from ..config import WEB_DIR
 from ..env_utils import env_int, env_path
@@ -51,6 +52,9 @@ _THEMES_DIRNAME = "themes"
 _PRESET_EXT = ".json"
 _THEMES_KEY = "themes"
 _PRESET_KEY = "preset"
+# The applied theme's name, beside the image; any other image change drops it.
+_THEME_FILENAME = "theme.txt"
+_THEME_KEY = "theme"
 
 
 def _root() -> Path:
@@ -97,10 +101,24 @@ def _stored() -> Path | None:
 
 
 def _remove_all(keep: str | None = None) -> None:
-    """Delete the stored image(s), sparing the ``keep`` extension."""
+    """Delete the stored image(s), sparing the ``keep`` extension, and the
+    applied theme's name."""
     for ext in _TYPE_BY_EXT:
         if ext != keep:
             (_root() / f"{_STEM}{ext}").unlink(missing_ok=True)
+    (_root() / _THEME_FILENAME).unlink(missing_ok=True)
+
+
+def _current_theme(themes: dict[str, Path]) -> str | None:
+    """The applied theme's name, or None when none is or it is gone."""
+    try:
+        name = (_root() / _THEME_FILENAME).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError:
+        log.warning("ignoring unreadable wallpaper theme name", exc_info=True)
+        return None
+    return name if name in themes else None
 
 
 def _store(data: bytes, ext: str) -> None:
@@ -130,12 +148,14 @@ def _style() -> dict:
 
 def _info() -> dict:
     path = _stored()
+    themes = _themes()
     return {
         _VERSION_KEY: path.stat().st_mtime_ns if path else None,
         **_style(),
         _FADE_MAX_KEY: MAX_FADE_PCT,
         _FITS_KEY: list(FITS),
-        _THEMES_KEY: list(_themes()),
+        _THEMES_KEY: list(themes),
+        _THEME_KEY: _current_theme(themes) if path else None,
     }
 
 
@@ -195,7 +215,8 @@ def put_theme(name: str) -> dict:
     if image is None:
         raise not_found(f"no theme {name!r}")
     _store(image.read_bytes(), image.suffix.lower())
-    preset = _read_json(image.with_suffix(_PRESET_EXT), "theme preset")
+    atomic_write_text(_root() / _THEME_FILENAME, name)
+    preset =_read_json(image.with_suffix(_PRESET_EXT), "theme preset")
     preset = preset if isinstance(preset, dict) else {}
     style = _valid_style(preset)
     if style:

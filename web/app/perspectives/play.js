@@ -8,7 +8,7 @@ import { KIND, AI_KIND_PREFIX } from "../game-events.js";
 import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
 import { sidePovScore } from "../wb-utils.js";
-import { alert as showAlert, apiErrorObject, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportAiError, reportError, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
+import { alert as showAlert, apiErrorObject, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportAiError, reportError, SETTINGS_PATH, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, revealPvTableWindow, isUciLogOpen, isPvTableOpen, UCI_LOG_TITLE, PV_TABLE_TITLE, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, clearUciLog, clearSearchLines, isMobileLayout, setPvLineBoard } from "../play-dock-windows.js";
 import {
@@ -165,7 +165,7 @@ const SETTING_SHOW_EVAL_GRAPH = "play_show_eval_graph";
 // X on a settings-backed dock window is the same gesture as flipping its
 // Display-tab switch off.
 function putSettingOff(ctx, key) {
-  ctx.api("PUT", "/settings", { [key]: false })
+  ctx.api("PUT", SETTINGS_PATH, { [key]: false })
     .catch((e) => reportError(ctx, MSG.SETTING_SAVE_FAILED, e));
 }
 
@@ -1236,7 +1236,7 @@ function editDocClickClose(state, ev) {
 // only apply next game. Refreshes the TC snapshot when no game is active.
 async function refreshSettings(state, { notifyOnDrift = false } = {}) {
   try {
-    const s = await state.ctx.api("GET", "/settings");
+    const s = await state.ctx.api("GET", SETTINGS_PATH);
     state.allowTakeback = s.allow_takeback !== false;
     state.showPgnComments = s[SETTING_SHOW_PGN_COMMENTS] !== false;
     state.aiEnabled = !!s.ai_enabled;
@@ -1603,7 +1603,7 @@ async function onNewGameImpl(state) {
     // Snapshot the TC settings used for THIS game so a later mid-game
     // edit can detect drift.
     try {
-      const s = await state.ctx.api("GET", "/settings");
+      const s = await state.ctx.api("GET", SETTINGS_PATH);
       state.gameTcInitial = Number(s.tc_initial_seconds);
       state.gameTcIncrement = Number(s.tc_increment_seconds);
     } catch {
@@ -1698,7 +1698,7 @@ async function onPlayFromHereImpl(state) {
     state.view.setGameId(r.game_id);
     // Snapshot TC for drift detection (mirrors onNewGame).
     try {
-      const s = await state.ctx.api("GET", "/settings");
+      const s = await state.ctx.api("GET", SETTINGS_PATH);
       state.gameTcInitial = Number(s.tc_initial_seconds);
       state.gameTcIncrement = Number(s.tc_increment_seconds);
     } catch {
@@ -1834,7 +1834,7 @@ function showAnalysisToastImpl(state) {
 // resolve_analysis: the pinned analysis_engine_id, else the active engine.
 async function resolveAnalysisEngineName(state) {
   const [s, e] = await Promise.all([
-    state.ctx.api("GET", "/settings"),
+    state.ctx.api("GET", SETTINGS_PATH),
     state.ctx.api("GET", ENGINES_NO_PROBE_PATH),
   ]);
   const engines = e.engines || [];
@@ -2451,7 +2451,7 @@ export const playPerspective = {
     // Fetch settings before mount so the board picks up the saved style.
     let initialBoardStyle = null;
     try {
-      const s0 = await ctx.api("GET", "/settings");
+      const s0 = await ctx.api("GET", SETTINGS_PATH);
       initialBoardStyle = s0.board_style || null;
     } catch {
       // ignore -- fall back to default style

@@ -1,4 +1,4 @@
-import { showDialog } from "./dialogs.js";
+import { SETTINGS_PATH, showDialog } from "./dialogs.js";
 import { KIND } from "./game-events.js";
 
 const CONNECT_SUMMARY = "Connect from mobile";
@@ -73,7 +73,7 @@ function buildConnectSection(api) {
 }
 
 export async function openAboutDialog({ api, events }) {
-  const settings = await fetchOrNull(api, "GET", "/settings");
+  const settings = await fetchOrNull(api, "GET", SETTINGS_PATH);
   const version = settings?.version || "";
   const copyright = settings?.copyright || "";
 

@@ -1,15 +1,16 @@
 // Wallpaper: one global image (server-stored), shared by every view that
 // mounts it, painted behind a view's region on desktop. Picked from the
-// user's machine or a bundled theme's, through a ribbon button's menu (Themes,
-// Choose / Remove, Fit, Fade), also opened by right-clicking the region's bare
-// background. Content above it simply covers it.
+// user's machine or a bundled theme's, through a ribbon button's Appearance
+// menu (Theme / None, Custom image, Fit, Fade), also opened by right-clicking
+// the region's bare background. Content above it simply covers it.
 
 import { APP_EVT } from "./app-events.js";
 import { mqMobile } from "./breakpoints.js";
 import { reportError } from "./dialogs.js";
 import {
   attachMenuNav, focusFirstItem, isContextMenuClaimed, isKeyboardContextMenu, makeMenuHost, MENU_CHECKED_CLASS,
-  positionMenu, positionMenuAt, setFlyoutSide, sliderRowHtml, submenuHtml, wireMenuToggle, wireSliderRow,
+  MENU_SEPARATOR_HTML, positionMenu, positionMenuAt, setFlyoutSide, sliderRowHtml, submenuHtml, wireMenuToggle,
+  wireSliderRow,
 } from "./menu-nav.js";
 import { ribbonAnchor } from "./ribbon-overflow.js";
 import { applyThemePreset } from "./theme.js";
@@ -23,13 +24,13 @@ const ACCEPT_TYPES = "image/png,image/jpeg,image/webp";
 const URL_VAR = "--wallpaper";
 const FADE_VAR = "--wallpaper-fade";
 const FIT_ATTR = "data-wallpaper-fit";
-const BTN_LABEL = "Wallpaper";
+const BTN_LABEL = "Appearance";
 const ICON = "image";
 const ITEM = Object.freeze({ CHOOSE: "choose", REMOVE: "remove" });
-const ITEM_LABEL = Object.freeze({ [ITEM.CHOOSE]: "Choose image...", [ITEM.REMOVE]: "Remove" });
+const ITEM_LABEL = Object.freeze({ [ITEM.CHOOSE]: "Custom image...", [ITEM.REMOVE]: "None" });
 const FIT_LABEL = "Fit";
 const FADE_LABEL = "Fade";
-const THEMES_LABEL = "Themes";
+const THEMES_LABEL = "Theme";
 const FADE_STEP_PCT = 5;
 const SET_FAIL_MSG = "Set wallpaper failed";
 const THEME_FAIL_MSG = "Set theme failed";
@@ -61,11 +62,17 @@ function itemHtml(item, disabled) {
     + `${ITEM_LABEL[item]}</button></li>`;
 }
 
-// Themes submenu, one item per theme; disabled when none is bundled.
+// Theme submenu: one item per theme, then None (no image, theme's or custom);
+// disabled when it has nothing to offer.
 function themesHtml(info) {
-  const items = info.themes.map((t) => `<li><button type="button" class="tmb-dd-item" `
-    + `data-theme="${escapeHtml(t)}">${escapeHtml(t)}</button></li>`).join("");
-  return submenuHtml(THEMES_LABEL, items, !info.themes.length);
+  const none = info.version == null;
+  const items = info.themes.map((t) => {
+    const cls = t === info.theme ? ` ${MENU_CHECKED_CLASS}` : "";
+    return `<li><button type="button" class="tmb-dd-item${cls}" `
+      + `data-theme="${escapeHtml(t)}">${escapeHtml(t)}</button></li>`;
+  }).join("");
+  return submenuHtml(THEMES_LABEL, items + (items ? MENU_SEPARATOR_HTML : "") + itemHtml(ITEM.REMOVE, none),
+    !items && none);
 }
 
 // Fit submenu, the current fit checked.
@@ -168,9 +175,8 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
 
   // Render and show the menu; place(menu) positions it once laid out.
   const openMenu = (place, keyboard) => {
-    menu.innerHTML = themesHtml(info)
-      + itemHtml(ITEM.CHOOSE, false) + itemHtml(ITEM.REMOVE, info.version == null)
-      + `<li class="tmb-separator"></li>` + fitHtml(info) + fadeHtml(info);
+    menu.innerHTML = themesHtml(info) + itemHtml(ITEM.CHOOSE, false)
+      + MENU_SEPARATOR_HTML + fitHtml(info) + fadeHtml(info);
     wireSliderRow(menu, { onInput: setFade, onChange: (fade) => putStyle({ fade }) });
     menu.showPopover();
     place(menu);
@@ -202,10 +208,10 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
     if (item.dataset.fit) {
       putStyle({ fit: item.dataset.fit });
     } else if (item.dataset.theme) {
-      api("PUT", `${THEME_PATH}/${encodeURIComponent(item.dataset.theme)}`).then(({ preset, ...next }) => {
-        applyThemePreset(preset);
-        apply(next);
-      }, (e) => reportError(errCtx, THEME_FAIL_MSG, e));
+      // A reload paints the new wallpaper itself; painting first would show twice.
+      api("PUT", `${THEME_PATH}/${encodeURIComponent(item.dataset.theme)}`).then(async ({ preset, ...next }) => {
+        if (!await applyThemePreset(preset, api)) apply(next);
+      }).catch((e) => reportError(errCtx, THEME_FAIL_MSG, e));
     } else if (item.dataset.item === ITEM.CHOOSE) {
       input.click();
     } else {

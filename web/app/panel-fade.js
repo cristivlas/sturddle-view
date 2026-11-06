@@ -10,7 +10,8 @@ import { APP_EVT } from "./app-events.js";
 import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import {
   attachMenuNav, claimContextMenu, focusFirstItem, isContextMenuClaimed, isKeyboardContextMenu,
-  makeMenuHost, MENU_CHECKED_CLASS, positionMenuAt, sliderRowHtml, submenuHtml, wireSliderRow,
+  makeMenuHost, MENU_CHECKED_CLASS, MENU_SEPARATOR_HTML, positionMenuAt, sliderRowHtml, submenuHtml,
+  wireSliderRow,
 } from "./menu-nav.js";
 import { loadJson, saveJson } from "./storage.js";
 import { escapeHtml, PCT_SUFFIX } from "./wb-utils.js";
@@ -31,7 +32,6 @@ const FADE_LINES_ATTR = "data-fade-lines";
 const PANEL_MENU_CLASS = "tmb-dropdown panel-fade-menu";
 // A panel-menu action's index in its actions.
 const ACTION_ATTR = "data-action-i";
-const SEPARATOR_HTML = `<li class="tmb-separator"></li>`;
 const FADE_LINE_VAR = Object.freeze({
   top: "--fade-line-t", right: "--fade-line-r", bottom: "--fade-line-b", left: "--fade-line-l",
 });
@@ -278,7 +278,7 @@ export function attachPanelMenu(panel, {
       actions.map(actionHtml).join(""),
       allSliders.map((s, i) => sliderSubmenuHtml(s, s.get(), i)).join(""),
       tailActions.map((a, i) => actionHtml(a, actions.length + i)).join(""),
-    ].filter(Boolean).join(SEPARATOR_HTML);
+    ].filter(Boolean).join(MENU_SEPARATOR_HTML);
     if (!html) return;
     ev.preventDefault();
     // Taken: an outer menu (the wallpaper's, on a bare region) leaves it be.

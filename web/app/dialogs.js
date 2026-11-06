@@ -620,6 +620,7 @@ export function shakeField(el) {
   el.addEventListener("animationend", () => el.classList.remove(FIELD_SHAKE_CLASS), { once: true });
 }
 
+export const SETTINGS_PATH = "/settings";
 // Typing pause before a settings field persists.
 export const SETTINGS_PUT_DEBOUNCE_MS = 400;
 

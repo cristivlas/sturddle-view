@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -18,6 +20,10 @@ JPEG = "image/jpeg"
 PNG_BYTES = b"\x89PNG fake png"
 JPEG_BYTES = b"\xff\xd8 fake jpeg"
 SMALL_CAP = 8
+THEME_URL = "/wallpaper/theme"
+THEME_NAME = "dusk"
+WEBP_BYTES = b"RIFF fake webp"
+THEME_PRESET = {"fit": "contain", "fade": 30, "frost": {"blur": 4}}
 
 
 @pytest.fixture
@@ -44,7 +50,7 @@ def test_info_without_wallpaper_reports_defaults(client):
     assert info == {
         "version": None, "fade": 0, "fit": wallpaper_api.FITS[0],
         "fade_max": wallpaper_api.MAX_FADE_PCT, "fits": list(wallpaper_api.FITS),
-        "themes": [],
+        "themes": [], "theme": None,
     }
     assert client.get(URL).status_code == 404
 
@@ -134,6 +140,41 @@ def test_unreadable_style_file_reads_as_defaults(client, wallpaper_dir):
     (wallpaper_dir / "style.json").write_text("{not json", encoding="utf-8")
     info = client.get(INFO_URL).json()
     assert (info["fade"], info["fit"]) == (0, wallpaper_api.FITS[0])
+
+
+@pytest.fixture
+def theme(tmp_path):
+    """A bundled theme (conftest roots SV_THEMES_DIR here) with a preset."""
+    themes = tmp_path / "themes"
+    themes.mkdir()
+    (themes / f"{THEME_NAME}.webp").write_bytes(WEBP_BYTES)
+    (themes / f"{THEME_NAME}.json").write_text(json.dumps(THEME_PRESET), encoding="utf-8")
+    return THEME_NAME
+
+
+def test_put_theme_sets_image_style_and_current_theme(client, theme):
+    r = client.put(f"{THEME_URL}/{theme}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["preset"] == THEME_PRESET
+    assert (body["fade"], body["fit"], body["theme"]) == (THEME_PRESET["fade"], THEME_PRESET["fit"], theme)
+    assert client.get(URL).content == WEBP_BYTES
+    assert client.get(INFO_URL).json()["themes"] == [theme]
+
+
+@pytest.mark.parametrize("change", [
+    lambda c: _put_image(c, PNG_BYTES, PNG),
+    lambda c: c.delete(URL),
+])
+def test_other_image_change_clears_current_theme(client, theme, change):
+    client.put(f"{THEME_URL}/{theme}")
+    assert change(client).json()["theme"] is None
+    assert client.get(INFO_URL).json()["theme"] is None
+
+
+def test_put_unknown_theme_is_404(client, theme):
+    assert client.put(f"{THEME_URL}/nope").status_code == 404
+    assert client.get(INFO_URL).json()["theme"] is None
 
 
 def test_endpoints_require_token(client):
