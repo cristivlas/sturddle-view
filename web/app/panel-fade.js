@@ -21,6 +21,7 @@ export const RESET_LABEL = "Reset";
 
 const FADE_LABEL = "Transparency";
 const FADE_MAX_PCT = 100;
+const FADE_DEFAULT_PCT = 0;
 const FADE_STEP_PCT = 5;
 // A faded element and its faded background; a table with faded cell lines and
 // their colors per side (styles.css).
@@ -110,7 +111,7 @@ function lineColors(row) {
 // parts) is bound with attach(). Faders never share a filled ancestor (one per
 // window or tab group, none nested), so marks need no owner.
 export function createPanelFade(panel, { storageKey }) {
-  let pct = loadJson(storageKey, 0);
+  let pct = loadJson(storageKey, FADE_DEFAULT_PCT);
   const parts = new Set();
   let hosts = [];
   let marks = []; // { el, attr, colors: [[var, el's own color]] }
@@ -192,6 +193,10 @@ export function createPanelFade(panel, { storageKey }) {
       apply();
     },
     save() { saveJson(storageKey, pct); },
+    reset() {
+      this.set(FADE_DEFAULT_PCT);
+      this.save();
+    },
     rescan,
     // Returns the part's removal.
     addPart(part) {

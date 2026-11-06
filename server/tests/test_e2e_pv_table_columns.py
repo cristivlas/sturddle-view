@@ -167,3 +167,37 @@ async def test_legacy_widths_migrate_with_button_room(server, make_page):
     await page.wait_for_function(
         f"() => ({WIDTHS})().btnPx > 0 && Math.abs(({WIDTHS})().depthPx - {LEGACY_DEPTH_PX} - ({WIDTHS})().btnPx) <= {PX_TOLERANCE}")
     assert_no_page_errors(errors)
+
+
+FADE_KEY = "sv-test:pvtable:fade"
+SAVED_FADE_PCT = 40
+# One table on LAYOUT_KEY whose panel fader starts at SAVED_FADE_PCT;
+# the fader is exposed on window.
+MOUNT_FADED = f"""async () => {{
+  localStorage.setItem('{FADE_KEY}', '{SAVED_FADE_PCT}');
+  const {{ createPvTable }} = await import('/ui/app/pv-table.js');
+  const {{ createPanelFade }} = await import('/ui/app/panel-fade.js');
+  const host = document.createElement('div');
+  host.setAttribute('{HOST_ATTR}', '0');
+  host.style.cssText = 'position:fixed;z-index:{HOST_Z};top:0;left:0;width:{HOST_PX}px;height:{HOST_PX // 2}px';
+  document.body.appendChild(host);
+  window.__fade = createPanelFade(host, {{ storageKey: '{FADE_KEY}' }});
+  host.appendChild(createPvTable({{ layoutKey: '{LAYOUT_KEY}', fade: window.__fade }}).el);
+}}"""
+# The fader's live pct and its stored one.
+FADE_STATE = f"() => [window.__fade.pct, JSON.parse(localStorage.getItem('{FADE_KEY}'))]"
+
+
+@pytest.mark.asyncio
+async def test_reset_clears_transparency(server, make_page):
+    """Reset restores the table's defaults, Transparency (its panel's fade)
+    included, live and saved."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await page.goto(server + "/")
+    await page.evaluate(MOUNT_FADED)
+    assert await page.evaluate(FADE_STATE) == [SAVED_FADE_PCT, SAVED_FADE_PCT]
+    await _open_menu(page)
+    await page.click(f'{MENU} [data-action="reset"]')
+    assert await page.evaluate(FADE_STATE) == [0, 0]
+    assert_no_page_errors(errors)

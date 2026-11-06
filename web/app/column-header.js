@@ -724,7 +724,10 @@ export function createColumnHeader({
     if (dir !== null) moveColumn(layout, byKey, key, dir);
     else if (action === MENU_ACTION.TOGGLE) toggleColumn(layout, key, visibleCols().length);
     else if (action === MENU_ACTION.FIT) fitColumns();
-    else layout = reconcileLayout(columns, {}, !traits.reorder, unit);
+    else {
+      layout = reconcileLayout(columns, {}, !traits.reorder, unit);
+      traits.fade?.reset();
+    }
     saveLayout();
     relayout();
   }
