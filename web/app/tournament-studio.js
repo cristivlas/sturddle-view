@@ -67,6 +67,7 @@ const STUDIO_BOARD_CLASS = `sturddle-wb-studio no-move no-resize ${WB_NO_SHADOW_
 const WALL_STRIP_CLASS = "in-strip";
 // The wall's frosted parts (styles.css), which carry the frost menu.
 const WALL_FROSTED_SEL = ".iw-footer, .studio-empty";
+const STUDIO_PANE_SEL = ".studio-pane";
 // Minimized boards live in the tray (display:none), so they are not cells.
 const BOARD_SEL = ".winbox.sturddle-wb-studio:not(.min)";
 // The board grid roves one tab stop, so the "current" board is the one Tab
@@ -1422,7 +1423,10 @@ export function mountTournamentStudio({ container, api, events, log }) {
     isBare: (t) => ctx.boardsEl.contains(t) && !t.closest(".winbox"), api: ctx.api, log: ctx.log,
   });
   // Right-click Transparency for the tabs without a Columns menu.
-  ctx.leftMenuOff = attachPanelMenu(ctx.leftTabsEl, { fade: ctx.leftFade });
+  // The group is a shadow host, so its panes take the Menu key's focus.
+  ctx.leftMenuOff = attachPanelMenu(ctx.leftTabsEl, {
+    fade: ctx.leftFade, hosts: [...ctx.leftTabsEl.querySelectorAll(STUDIO_PANE_SEL)],
+  });
   ctx.logMenuOff = attachPanelMenu(ctx.logPaneEl, {
     fade: ctx.rightFade,
     actions: [{ label: COPY_LABEL, run: () => copyToClipboard(eventLogText(logEvents(ctx)), EVENT_LOG_COPY_WHAT) }],

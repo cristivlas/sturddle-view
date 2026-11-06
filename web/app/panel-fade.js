@@ -204,9 +204,11 @@ export function createPanelFade(panel, { storageKey }) {
 // sliders [{ label, min?, max, step, unit?, get, set, save }] (set while
 // dragging, save on release), then tailActions; separators between. Opens
 // only while shown(ev) holds. A right-click a menu inside already took (a
-// table's Columns menu) is left to it. Returns the teardown.
+// table's Columns menu) is left to it. hosts take focus on a click so the
+// Menu key reaches the menu: the panel, or its parts when it is a shadow host
+// (makeMenuHost). Returns the teardown.
 export function attachPanelMenu(panel, {
-  fade = null, actions = [], sliders = [], tailActions = [], shown = () => true,
+  fade = null, actions = [], sliders = [], tailActions = [], shown = () => true, hosts = [panel],
 } = {}) {
   const allSliders = fade ? [{
     ...FADE_SLIDER, get: () => fade.pct, set: (pct) => fade.set(pct), save: () => fade.save(),
@@ -271,11 +273,11 @@ export function attachPanelMenu(panel, {
     if (isKeyboardContextMenu(ev)) focusFirstItem(menu);
   }
   panel.addEventListener("contextmenu", onContextMenu);
-  const unhost = makeMenuHost(panel);
+  const unhosts = hosts.map(makeMenuHost);
 
   return () => {
     panel.removeEventListener("contextmenu", onContextMenu);
-    unhost();
+    unhosts.forEach((undo) => undo());
     menu.remove();
   };
 }

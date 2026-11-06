@@ -264,9 +264,11 @@ export const isContextMenuClaimed = (ev) => claimedContextMenus.has(ev);
 export const isKeyboardContextMenu = (ev) => ev.button !== MOUSE_RIGHT_BUTTON;
 
 // The Menu key fires at the focused element: make el take focus on a click
-// (not Tab), so its contextmenu listener hears it. Returns the undo.
+// (not Tab), so its contextmenu listener hears it. Never on a shadow host (a
+// wa-tab-group): a negative tabindex drops its slotted subtree from Tab order.
+// Returns the undo.
 export function makeMenuHost(el) {
-  if (el.hasAttribute(TABINDEX_ATTR)) return () => {};
+  if (el.hasAttribute(TABINDEX_ATTR) || el.shadowRoot) return () => {};
   el.tabIndex = -1;
   el.setAttribute(MENU_HOST_ATTR, "");
   return () => { el.removeAttribute(TABINDEX_ATTR); el.removeAttribute(MENU_HOST_ATTR); };
