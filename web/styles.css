@@ -2426,12 +2426,21 @@ body .side-popover.popover-floating {
 .clock-row[data-color="black"].active { background: #111; color: #e8e8e8; }
 .clock-row.clock-disabled { opacity: 0.5; }
 
-/* Engine "thinking" arrow: navy. */
-.cm-chessboard .arrow-success .arrow-head { fill: #1e3a8a; }
-.cm-chessboard .arrow-success .arrow-line { stroke: #1e3a8a; opacity: 0.55; }
-/* AI recommendation arrow: purple. */
-.cm-chessboard .arrow-secondary .arrow-head { fill: #7c3aed; }
-.cm-chessboard .arrow-secondary .arrow-line { stroke: #7c3aed; opacity: 0.55; }
+/* Arrow colors, per board style below: --sb-arrow the engine's line,
+   --sb-arrow-secondary the AI's pick, --sb-arrow-alt its book alternatives. */
+.cm-chessboard { --sb-arrow: #1e3a8a; --sb-arrow-secondary: #334155; --sb-arrow-alt: #0f766e; }
+.cm-chessboard.green { --sb-arrow-secondary: #1f2937; --sb-arrow-alt: #c2410c; }
+.cm-chessboard.blue { --sb-arrow: #9a3412; --sb-arrow-secondary: #1e3a8a; --sb-arrow-alt: #15803d; }
+.cm-chessboard.black-and-white { --sb-arrow-secondary: #15803d; }
+/* One end shape: the vendor's butt-ended secondary would leave a stacked
+   round end showing. */
+.cm-chessboard .arrow .arrow-line { stroke-linecap: round; }
+.cm-chessboard .arrow-success .arrow-head { fill: var(--sb-arrow); }
+.cm-chessboard .arrow-success .arrow-line { stroke: var(--sb-arrow); opacity: 0.75; }
+.cm-chessboard .arrow-secondary .arrow-head { fill: var(--sb-arrow-secondary); }
+.cm-chessboard .arrow-secondary .arrow-line { stroke: var(--sb-arrow-secondary); opacity: 0.75; }
+.cm-chessboard .arrow-info .arrow-head { fill: var(--sb-arrow-alt); }
+.cm-chessboard .arrow-info .arrow-line { stroke: var(--sb-arrow-alt); opacity: 0.75; }
 /* MultiPV line number on its arrow (numbered-arrows.js). */
 .cm-chessboard .arrow-badge { pointer-events: none; }
 .cm-chessboard .arrow-badge circle { fill: #111; }
@@ -2451,13 +2460,9 @@ body .side-popover.popover-floating {
 .cm-chessboard.sturddle-board .coordinates .coordinate { fill: var(--sb-dark); }
 .cm-chessboard.sturddle-board .coordinates .coordinate.black { fill: var(--sb-light); }
 .cm-chessboard.sturddle-board .coordinates .coordinate.white { fill: var(--sb-dark); }
-/* Markers/arrows, readable on both square colors. */
+/* Markers, readable on both square colors. */
 .cm-chessboard.sturddle-board .markers .marker.marker-frame { stroke: var(--sb-marker); }
 .cm-chessboard.sturddle-board .markers .marker.marker-dot { stroke: var(--sb-marker); fill: var(--sb-marker); opacity: 0.65; }
-.cm-chessboard.sturddle-board .arrow-success .arrow-head { fill: var(--sb-arrow); }
-.cm-chessboard.sturddle-board .arrow-success .arrow-line { stroke: var(--sb-arrow); opacity: 0.75; }
-.cm-chessboard.sturddle-board .arrow-secondary .arrow-head { fill: var(--sb-arrow-secondary); }
-.cm-chessboard.sturddle-board .arrow-secondary .arrow-line { stroke: var(--sb-arrow-secondary); opacity: 0.75; }
 
 /* Staunty: staunty pieces (set in board-styles.js) over navy squares. Dark =
    the tournament selected-row color; light is that navy lifted to slate. */
@@ -2467,14 +2472,16 @@ body .side-popover.popover-floating {
   --sb-marker: turquoise;
   --sb-arrow: turquoise;
   --sb-arrow-secondary: rgb(18, 82, 179);
+  --sb-arrow-alt: #f59e0b;
 }
 
 /* Wine: classic pieces over a darkish wine board. */
 .cm-chessboard.sturddle-wine {
   --sb-dark: #743042;
   --sb-light: #c3a3aa;
-  --sb-arrow: #FF4500;
-  --sb-arrow-secondary: darkorchid;
+  --sb-arrow: #facc15;
+  --sb-arrow-secondary: #d97706;
+  --sb-arrow-alt: #a3e635;
   --sb-marker: var(--sb-arrow);
 }
 .clock-row .clock-name {
