@@ -66,8 +66,11 @@ const STUDIO_BOARD_CLASS = `sturddle-wb-studio no-move no-resize ${WB_NO_SHADOW_
 // On the info wall while it fills only the strip under the board grid.
 const WALL_STRIP_CLASS = "in-strip";
 // The wall's frosted parts (styles.css), which carry the frost menu.
-const WALL_FROSTED_SEL = ".iw-footer, .studio-empty";
+// The info wall's progress footer, which styles.css hides in a strip too short.
+const IW_FOOTER_SEL = ".iw-footer";
+const WALL_FROSTED_SEL = `${IW_FOOTER_SEL}, .studio-empty`;
 const STUDIO_PANE_SEL = ".studio-pane";
+const HIDDEN_VISIBILITY = "hidden";
 const OVERFLOW_SCROLL = "scroll";
 const OVERFLOW_HIDDEN = "hidden";
 // Minimized boards live in the tray (display:none), so they are not cells.
@@ -181,8 +184,9 @@ function restoreSplit(key, a, b) {
 
 // Generic two-pane splitter: dragging the grip trades flex-grow between
 // sibling panes a and b. Total grow maps linearly to total pixels, so the
-// drag tracks the pointer 1:1. Mirrors the play-dock grip math.
-function attachSplitter(grip, a, b, axis, persistKey) {
+// drag tracks the pointer 1:1. Mirrors the play-dock grip math. snap(aPx):
+// where a release settles a (px), or null to leave it.
+function attachSplitter(grip, a, b, axis, persistKey, snap = null) {
   grip.addEventListener("pointerdown", (eDown) => {
     if (eDown.button !== 0) return;
     eDown.preventDefault();
@@ -199,17 +203,20 @@ function attachSplitter(grip, a, b, axis, persistKey) {
     const p0 = vert ? eDown.clientY : eDown.clientX;
     const a0 = vert ? aRect.height : aRect.width;
 
-    const onMove = (e) => {
-      const d = (vert ? e.clientY : e.clientX) - p0;
-      const aPx = Math.max(0, Math.min(a0 + d, pxRange));
+    const setA = (px) => {
+      const aPx = Math.max(0, Math.min(px, pxRange));
       a.style.flexGrow = String((aPx / pxRange) * sumG);
       b.style.flexGrow = String(((pxRange - aPx) / pxRange) * sumG);
     };
+    const onMove = (e) => setA(a0 + (vert ? e.clientY : e.clientX) - p0);
     const onUp = () => {
       grip.classList.remove("dragging");
       grip.removeEventListener("pointermove", onMove);
       grip.removeEventListener("pointerup", onUp);
       grip.removeEventListener("pointercancel", onUp);
+      const r = a.getBoundingClientRect();
+      const snapped = snap?.(vert ? r.height : r.width);
+      if (snapped != null) setA(snapped);
       persistSplit(persistKey, a, b);
     };
     grip.addEventListener("pointermove", onMove);
@@ -866,12 +873,16 @@ function syncScrollbar(ctx) {
     el.style.overflowX = el.style.overflowY = "";
     return;
   }
+  // Exact (fractional) size: offset/client sizes round to whole px.
   const cs = getComputedStyle(el);
-  const fullW = el.offsetWidth - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth);
-  const fullH = el.offsetHeight - parseFloat(cs.borderTopWidth) - parseFloat(cs.borderBottomWidth);
+  const r = el.getBoundingClientRect();
+  const fullW = r.width - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth);
+  const fullH = r.height - parseFloat(cs.borderTopWidth) - parseFloat(cs.borderBottomWidth);
   const full = boardCell(ctx, 0, fullW);
+  // Under a device px over (a snapped grip's rounding) clips unseen.
+  const over = full.gridBottom - full.y0 - fullH;
   el.style.overflowX = full.overflowX ? OVERFLOW_SCROLL : OVERFLOW_HIDDEN;
-  el.style.overflowY = full.gridBottom - full.y0 > fullH ? OVERFLOW_SCROLL : OVERFLOW_HIDDEN;
+  el.style.overflowY = over >= 1 / full.dpr ? OVERFLOW_SCROLL : OVERFLOW_HIDDEN;
 }
 
 // Any board occupying the region (laid-out or maximized; minimized don't count).
@@ -928,6 +939,20 @@ function sizeCanvas(ctx, count, cell) {
   const bottom = slotRect(count - 1, cell);
   ctx.boardsCanvasEl.style.width = cell.overflowX ? `${right.x + right.w}px` : "0";
   ctx.boardsCanvasEl.style.height = `${bottom.y + bottom.h}px`;
+}
+
+// A grip release (region px tall) that leaves the strip under the centered
+// grid too short for the progress bar (styles.css hides it) snaps the region
+// to the grid's height.
+function snapToGrid(ctx, px) {
+  if (mqMobile.matches || ctx._maxWb || !anyBoardsShown()) return null;
+  // The last move's regrid waits for the next frame: place the strip now.
+  regridBoards(ctx);
+  const footer = ctx.boardsWallEl?.querySelector(IW_FOOTER_SEL);
+  if (!footer || getComputedStyle(footer).visibility !== HIDDEN_VISIBILITY) return null;
+  const { y0, gridBottom } = boardCell(ctx);
+  const gridH = gridBottom - y0;
+  return px > gridH ? gridH : null;
 }
 
 // Desktop with laid-out boards: the wall is only the strip below the
@@ -1345,7 +1370,8 @@ function wireSplitters(ctx) {
     maxed.restore();
     ctx._restoreViaGrip = false;
   }, true);
-  attachSplitter(ctx.gripRowEl, ctx.boardsEl, ctx.bottomEl, AXIS.Y, STORAGE_KEY.STUDIO_SPLIT_ROW);
+  attachSplitter(ctx.gripRowEl, ctx.boardsEl, ctx.bottomEl, AXIS.Y, STORAGE_KEY.STUDIO_SPLIT_ROW,
+    (px) => snapToGrid(ctx, px));
   attachSplitter(ctx.gripColEl, ctx.bottomLeftEl, ctx.bottomRightEl, AXIS.X, STORAGE_KEY.STUDIO_SPLIT_COL);
 }
 
