@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Build a self-contained standalone desktop exe via PyInstaller.
 
 Steps:
