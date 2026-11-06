@@ -2025,7 +2025,6 @@ body .side-popover.popover-floating {
   flex: 0 0 var(--white-share, 50%);
   background: var(--eval-gauge-white);
 }
-.eval-gauge.is-empty { opacity: 0.4; }
 /* 800px = --bp-mobile, 680px = --bp-mobile-h-play. Media queries can't read
    custom props; keep these literals in sync with :root. Height gate is
    touch-only so short laptops keep the desktop layout. */
