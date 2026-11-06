@@ -16,7 +16,7 @@ const NO_FILTER = "none";
 // Slider specs (panel menu) keyed by their stored field.
 const SLIDERS = Object.freeze({
   blur: { label: "Blur", min: 0, max: 20, step: 1, unit: PX_SUFFIX, initial: 2 },
-  brightness: { label: "Brightness", min: 20, max: 120, step: 5, unit: PCT_SUFFIX, initial: 60 },
+  brightness: { label: "Brightness", min: 20, max: 120, step: 1, unit: PCT_SUFFIX, initial: 60 },
 });
 
 const inRange = (v, { min, max }) => Number.isFinite(v) && v >= min && v <= max;

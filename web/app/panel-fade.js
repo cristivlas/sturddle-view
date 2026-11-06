@@ -23,7 +23,7 @@ export const RESET_LABEL = "Reset";
 const FADE_LABEL = "Transparency";
 const FADE_MAX_PCT = 100;
 const FADE_DEFAULT_PCT = 0;
-const FADE_STEP_PCT = 5;
+const FADE_STEP_PCT = 1;
 // A faded element and its faded background; a table with faded cell lines and
 // their colors per side (styles.css).
 const FADE_ATTR = "data-fade";

@@ -3932,7 +3932,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .tmb-dropdown > li.menu-slider { display: flex; align-items: center; gap: 12px; padding: 12px 18px; }
 .menu-slider wa-slider { flex: 1 1 auto; min-width: 140px; --thumb-width: 1.15em; --thumb-height: 1.15em; }
 .menu-slider wa-slider::part(track) { background: var(--panel-accent); }
-.menu-slider-val { min-width: 3.5ch; text-align: right; color: var(--muted); }
+/* Room for "100%", so the flyout never widens mid-drag. */
+.menu-slider-val { min-width: 4.5ch; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 /* Panel Transparency (panel-fade.js): a faded panel, host or header cell.
    Outranks their own and WinBox's inline backgrounds; a hovered header cell
    and a reorder drag's copy keep their own look. */
