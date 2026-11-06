@@ -21,9 +21,9 @@ PNG_BYTES = b"\x89PNG fake png"
 JPEG_BYTES = b"\xff\xd8 fake jpeg"
 SMALL_CAP = 8
 THEME_URL = "/wallpaper/theme"
-THEME_NAME = "dusk"
+THEME_ID = "dusk-01"
 WEBP_BYTES = b"RIFF fake webp"
-THEME_PRESET = {"fit": "contain", "fade": 30, "frost": {"blur": 4}}
+THEME_PRESET = {"name": "Dusk", "fit": "contain", "fade": 30, "frost": {"blur": 4}}
 
 
 @pytest.fixture
@@ -147,9 +147,9 @@ def theme(tmp_path):
     """A bundled theme (conftest roots SV_THEMES_DIR here) with a preset."""
     themes = tmp_path / "themes"
     themes.mkdir()
-    (themes / f"{THEME_NAME}.webp").write_bytes(WEBP_BYTES)
-    (themes / f"{THEME_NAME}.json").write_text(json.dumps(THEME_PRESET), encoding="utf-8")
-    return THEME_NAME
+    (themes / f"{THEME_ID}.webp").write_bytes(WEBP_BYTES)
+    (themes / f"{THEME_ID}.json").write_text(json.dumps(THEME_PRESET), encoding="utf-8")
+    return THEME_ID
 
 
 def test_put_theme_sets_image_style_and_current_theme(client, theme):
@@ -159,7 +159,18 @@ def test_put_theme_sets_image_style_and_current_theme(client, theme):
     assert body["preset"] == THEME_PRESET
     assert (body["fade"], body["fit"], body["theme"]) == (THEME_PRESET["fade"], THEME_PRESET["fit"], theme)
     assert client.get(URL).content == WEBP_BYTES
-    assert client.get(INFO_URL).json()["themes"] == [theme]
+    assert client.get(INFO_URL).json()["themes"] == [{"id": theme, "name": THEME_PRESET["name"]}]
+
+
+@pytest.mark.parametrize("preset", [None, {}, {**THEME_PRESET, "name": 7}, {**THEME_PRESET, "name": "  "}])
+def test_image_without_named_preset_is_no_theme(client, theme, tmp_path, preset):
+    path = tmp_path / "themes" / f"{theme}.json"
+    if preset is None:
+        path.unlink()
+    else:
+        path.write_text(json.dumps(preset), encoding="utf-8")
+    assert client.get(INFO_URL).json()["themes"] == []
+    assert client.put(f"{THEME_URL}/{theme}").status_code == 404
 
 
 @pytest.mark.parametrize("change", [

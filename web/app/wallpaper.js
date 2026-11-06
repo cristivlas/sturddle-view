@@ -66,10 +66,10 @@ function itemHtml(item, disabled) {
 // disabled when it has nothing to offer.
 function themesHtml(info) {
   const none = info.version == null;
-  const items = info.themes.map((t) => {
-    const cls = t === info.theme ? ` ${MENU_CHECKED_CLASS}` : "";
+  const items = info.themes.map(({ id, name }) => {
+    const cls = id === info.theme ? ` ${MENU_CHECKED_CLASS}` : "";
     return `<li><button type="button" class="tmb-dd-item${cls}" `
-      + `data-theme="${escapeHtml(t)}">${escapeHtml(t)}</button></li>`;
+      + `data-theme="${escapeHtml(id)}">${escapeHtml(name)}</button></li>`;
   }).join("");
   return submenuHtml(THEMES_LABEL, items + (items ? MENU_SEPARATOR_HTML : "") + itemHtml(ITEM.REMOVE, none),
     !items && none);

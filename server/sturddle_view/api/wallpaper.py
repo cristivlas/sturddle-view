@@ -4,9 +4,10 @@ or a bundled theme's.
 Stored as a single ``image.<ext>`` under the app data dir; its mtime is the
 version the client cache-busts the image URL with. The display style (fade,
 fit) lives beside it in ``style.json`` and survives image changes. A theme is
-an image under the themes dir plus an optional ``<name>.json`` preset tuned
-for it: its fit/fade set the style here, the rest is the client's to apply.
-The applied theme's name lives in ``theme.txt`` until the image changes.
+an image under the themes dir plus its ``<id>.json`` preset tuned for it:
+its required name is the menu's label, its fit/fade set the style here, the
+rest is the client's to apply. The applied theme's id lives in ``theme.txt``
+until the image changes.
 """
 from __future__ import annotations
 
@@ -52,7 +53,10 @@ _THEMES_DIRNAME = "themes"
 _PRESET_EXT = ".json"
 _THEMES_KEY = "themes"
 _PRESET_KEY = "preset"
-# The applied theme's name, beside the image; any other image change drops it.
+# A theme's id (file stem) and display name (its preset's).
+_ID_KEY = "id"
+_NAME_KEY = "name"
+# The applied theme's id, beside the image; any other image change drops it.
 _THEME_FILENAME = "theme.txt"
 _THEME_KEY = "theme"
 
@@ -61,15 +65,23 @@ def _root() -> Path:
     return env_path(_DIR_ENV, app_data_dir() / _DIRNAME)
 
 
-def _themes() -> dict[str, Path]:
-    """Bundled theme images by name (file stem), sorted."""
+def _themes() -> dict[str, tuple[Path, dict]]:
+    """Bundled themes by id (file stem), sorted: image and preset. An image
+    without a preset naming it is no theme (logged)."""
     root = env_path(_THEMES_ENV, WEB_DIR / _THEMES_DIRNAME)
     if not root.is_dir():
         return {}
-    return {
-        p.stem: p for p in sorted(root.iterdir())
-        if p.suffix.lower() in _TYPE_BY_EXT and p.is_file()
-    }
+    themes = {}
+    for p in sorted(root.iterdir()):
+        if p.suffix.lower() not in _TYPE_BY_EXT or not p.is_file():
+            continue
+        preset = _read_json(p.with_suffix(_PRESET_EXT), "theme preset")
+        name = preset.get(_NAME_KEY) if isinstance(preset, dict) else None
+        if isinstance(name, str) and name.strip():
+            themes[p.stem] = (p, preset)
+        else:
+            log.warning("skipping theme %s: its preset has no %s", p.stem, _NAME_KEY)
+    return themes
 
 
 def _read_json(path: Path, what: str):
@@ -102,23 +114,23 @@ def _stored() -> Path | None:
 
 def _remove_all(keep: str | None = None) -> None:
     """Delete the stored image(s), sparing the ``keep`` extension, and the
-    applied theme's name."""
+    applied theme's id."""
     for ext in _TYPE_BY_EXT:
         if ext != keep:
             (_root() / f"{_STEM}{ext}").unlink(missing_ok=True)
     (_root() / _THEME_FILENAME).unlink(missing_ok=True)
 
 
-def _current_theme(themes: dict[str, Path]) -> str | None:
-    """The applied theme's name, or None when none is or it is gone."""
+def _current_theme(themes: dict[str, tuple[Path, dict]]) -> str | None:
+    """The applied theme's id, or None when none is or it is gone."""
     try:
-        name = (_root() / _THEME_FILENAME).read_text(encoding="utf-8")
+        theme_id = (_root() / _THEME_FILENAME).read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
     except OSError:
-        log.warning("ignoring unreadable wallpaper theme name", exc_info=True)
+        log.warning("ignoring unreadable wallpaper theme id", exc_info=True)
         return None
-    return name if name in themes else None
+    return theme_id if theme_id in themes else None
 
 
 def _store(data: bytes, ext: str) -> None:
@@ -154,7 +166,7 @@ def _info() -> dict:
         **_style(),
         _FADE_MAX_KEY: MAX_FADE_PCT,
         _FITS_KEY: list(FITS),
-        _THEMES_KEY: list(themes),
+        _THEMES_KEY: [{_ID_KEY: tid, _NAME_KEY: preset[_NAME_KEY]} for tid, (_image, preset) in themes.items()],
         _THEME_KEY: _current_theme(themes) if path else None,
     }
 
@@ -207,17 +219,16 @@ async def put_wallpaper(request: Request) -> dict:
     return _info()
 
 
-@router.put("/theme/{name}")
-def put_theme(name: str) -> dict:
+@router.put("/theme/{theme_id}")
+def put_theme(theme_id: str) -> dict:
     """Set a theme: its image becomes the wallpaper and its preset's fit/fade
-    the style; returns the info plus the whole preset (empty when none)."""
-    image = _themes().get(name)
-    if image is None:
-        raise not_found(f"no theme {name!r}")
+    the style; returns the info plus the whole preset."""
+    theme = _themes().get(theme_id)
+    if theme is None:
+        raise not_found(f"no theme {theme_id!r}")
+    image, preset = theme
     _store(image.read_bytes(), image.suffix.lower())
-    atomic_write_text(_root() / _THEME_FILENAME, name)
-    preset =_read_json(image.with_suffix(_PRESET_EXT), "theme preset")
-    preset = preset if isinstance(preset, dict) else {}
+    atomic_write_text(_root() / _THEME_FILENAME, theme_id)
     style = _valid_style(preset)
     if style:
         atomic_write_json(_root() / _STYLE_FILENAME, {**_style(), **style})
