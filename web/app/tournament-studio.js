@@ -31,6 +31,7 @@ import { appendWatchControls, refreshWatchControls } from "./tournament-watch-co
 import { renderInfoWall } from "./tournament-info.js";
 import { mountWallpaper } from "./wallpaper.js";
 import { attachPanelMenu, COPY_LABEL, createPanelFade } from "./panel-fade.js";
+import { attachFrostMenu } from "./frost.js";
 import { mqMobile, mqMobileH } from "./breakpoints.js";
 import { attachRibbonOverflow } from "./ribbon-overflow.js";
 
@@ -64,6 +65,8 @@ const STUDIO_COLS = 4;
 const STUDIO_BOARD_CLASS = `sturddle-wb-studio no-move no-resize ${WB_NO_SHADOW_CLASS}`;
 // On the info wall while it fills only the strip under the board grid.
 const WALL_STRIP_CLASS = "in-strip";
+// The wall's frosted parts (styles.css), which carry the frost menu.
+const WALL_FROSTED_SEL = ".iw-footer, .studio-empty";
 // Minimized boards live in the tray (display:none), so they are not cells.
 const BOARD_SEL = ".winbox.sturddle-wb-studio:not(.min)";
 // The board grid roves one tab stop, so the "current" board is the one Tab
@@ -1424,6 +1427,7 @@ export function mountTournamentStudio({ container, api, events, log }) {
     fade: ctx.rightFade,
     actions: [{ label: COPY_LABEL, run: () => copyToClipboard(eventLogText(logEvents(ctx)), EVENT_LOG_COPY_WHAT) }],
   });
+  ctx.wallFrostOff = attachFrostMenu(ctx.boardsWallEl, WALL_FROSTED_SEL);
   ctx.ribbonOverflow = attachRibbonOverflow(ctx.ribbonEl);
   announceRibbon(ctx.ribbonEl);
 
@@ -1499,9 +1503,10 @@ function unmountStudio(ctx) {
   ctx.wallpaper?.unmount();
   ctx.leftMenuOff?.();
   ctx.logMenuOff?.();
+  ctx.wallFrostOff?.();
   ctx.leftFade?.destroy();
   ctx.rightFade?.destroy();
-  ctx.leftMenuOff = ctx.logMenuOff = ctx.leftFade = ctx.rightFade = null;
+  ctx.leftMenuOff = ctx.logMenuOff = ctx.wallFrostOff = ctx.leftFade = ctx.rightFade = null;
   // stopLive unsubscribes, nulls liveTid (so a pending standings refresh
   // no-ops), and closes the boards.
   stopLive(ctx);

@@ -9,14 +9,15 @@
 import { APP_EVT } from "./app-events.js";
 import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import {
-  attachMenuNav, focusFirstItem, isContextMenuClaimed, isKeyboardContextMenu, makeMenuHost,
-  MENU_CHECKED_CLASS, positionMenuAt, sliderRowHtml, submenuHtml, wireSliderRow,
+  attachMenuNav, claimContextMenu, focusFirstItem, isContextMenuClaimed, isKeyboardContextMenu,
+  makeMenuHost, MENU_CHECKED_CLASS, positionMenuAt, sliderRowHtml, submenuHtml, wireSliderRow,
 } from "./menu-nav.js";
 import { loadJson, saveJson } from "./storage.js";
 import { escapeHtml, PCT_SUFFIX } from "./wb-utils.js";
 
 // Panel-menu action labels shared across panels.
 export const COPY_LABEL = "Copy";
+export const RESET_LABEL = "Reset";
 
 const FADE_LABEL = "Transparency";
 const FADE_MAX_PCT = 100;
@@ -43,10 +44,18 @@ const VIEW_ROOT_SEL = "#perspective-root";
 const MOBILE_QUERIES = [mqMobile, mqMobileHPlay];
 const isMobile = () => MOBILE_QUERIES.some((mq) => mq.matches);
 
+// Transparency's slider: its label and range.
+const FADE_SLIDER = Object.freeze({ label: FADE_LABEL, max: FADE_MAX_PCT, step: FADE_STEP_PCT });
+
+// A slider submenu: { label, min?, max, step, unit? } at `value`; key tells
+// a menu's sliders apart.
+function sliderSubmenuHtml({ label, min, max, step, unit }, value, key = null) {
+  return submenuHtml(label, sliderRowHtml({ min, max, step, unit, value, key }));
+}
+
 // The Transparency submenu at `pct`; "" where fading is off (mobile).
 export function fadeMenuHtml(pct) {
-  if (isMobile()) return "";
-  return submenuHtml(FADE_LABEL, sliderRowHtml({ max: FADE_MAX_PCT, step: FADE_STEP_PCT, value: pct }));
+  return isMobile() ? "" : sliderSubmenuHtml(FADE_SLIDER, pct);
 }
 
 const sameEls = (a, b) => a.length === b.length && a.every((el, i) => el === b[i]);
@@ -191,10 +200,17 @@ export function createPanelFade(panel, { storageKey }) {
 
 // A panel's right-click menu (a top-layer popover, so no host clips it):
 // actions [{ label, run, checked?, disabled? }] on top (checked/disabled are
-// read at each open), then, with a fade (its fader), its Transparency. A
-// right-click a menu inside already took (a table's Columns menu) is left to
-// it. Returns the teardown.
-export function attachPanelMenu(panel, { fade = null, actions = [] } = {}) {
+// read at each open), then, with a fade (its fader), its Transparency, then
+// sliders [{ label, min?, max, step, unit?, get, set, save }] (set while
+// dragging, save on release), then tailActions; separators between. Opens
+// only while shown(ev) holds. A right-click a menu inside already took (a
+// table's Columns menu) is left to it. Returns the teardown.
+export function attachPanelMenu(panel, {
+  fade = null, actions = [], sliders = [], tailActions = [], shown = () => true,
+} = {}) {
+  const allSliders = fade ? [{
+    ...FADE_SLIDER, get: () => fade.pct, set: (pct) => fade.set(pct), save: () => fade.save(),
+  }, ...sliders] : sliders;
   const menu = document.createElement("ul");
   menu.className = PANEL_MENU_CLASS;
   menu.setAttribute("popover", "auto");
@@ -209,7 +225,7 @@ export function attachPanelMenu(panel, { fade = null, actions = [] } = {}) {
     const btn = ev.target.closest(`button[${ACTION_ATTR}]`);
     if (!btn) return;
     close();
-    actions[btn.getAttribute(ACTION_ATTR)].run();
+    [...actions, ...tailActions][btn.getAttribute(ACTION_ATTR)].run();
   });
   document.body.append(menu);
 
@@ -220,16 +236,33 @@ export function attachPanelMenu(panel, { fade = null, actions = [] } = {}) {
       + `${escapeHtml(a.label)}</button></li>`;
   };
 
+  function syncActionStates() {
+    const all = [...actions, ...tailActions];
+    for (const btn of menu.querySelectorAll(`button[${ACTION_ATTR}]`)) {
+      const a = all[btn.getAttribute(ACTION_ATTR)];
+      btn.disabled = !!a.disabled?.();
+      btn.classList.toggle(MENU_CHECKED_CLASS, !!a.checked?.());
+    }
+  }
+
   // Desktop only: on a phone a long-press would pop it.
   function onContextMenu(ev) {
-    if (isContextMenuClaimed(ev) || isMobile()) return;
-    const actionsHtml = actions.map(actionHtml).join("");
-    const fadeHtml = fade ? fadeMenuHtml(fade.pct) : "";
-    const html = actionsHtml + (actionsHtml && fadeHtml ? SEPARATOR_HTML : "") + fadeHtml;
+    if (isContextMenuClaimed(ev) || isMobile() || !shown(ev)) return;
+    const html = [
+      actions.map(actionHtml).join(""),
+      allSliders.map((s, i) => sliderSubmenuHtml(s, s.get(), i)).join(""),
+      tailActions.map((a, i) => actionHtml(a, actions.length + i)).join(""),
+    ].filter(Boolean).join(SEPARATOR_HTML);
     if (!html) return;
     ev.preventDefault();
+    // Taken: an outer menu (the wallpaper's, on a bare region) leaves it be.
+    claimContextMenu(ev);
     menu.innerHTML = html;
-    wireSliderRow(menu, { onInput: (pct) => fade.set(pct), onChange: () => fade.save() });
+    // A drag can flip an action's state (a Reset at defaults): re-read it live.
+    const onInput = (s) => (v) => { s.set(v); syncActionStates(); };
+    allSliders.forEach((s, i) => wireSliderRow(menu, {
+      key: i, unit: s.unit, onInput: onInput(s), onChange: s.save,
+    }));
     if (!menu.matches(":popover-open")) {
       returnFocus = document.activeElement;
       menu.showPopover();

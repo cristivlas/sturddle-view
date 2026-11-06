@@ -19,6 +19,7 @@ import { fmtClock, fmtCount, fmtMoveNo, fmtScore, markSelectable, rafCoalesce } 
 import { STORAGE_KEY } from "./storage-keys.js";
 import { EVAL_GAUGE_HTML, setEvalGauge, setEvalGaugeFlipped } from "./eval-gauge.js";
 import { loadRaw, saveRaw } from "./storage.js";
+import { attachFrostMenu } from "./frost.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 // The `analyze` tool's alias for the initial position (a preview's FEN).
@@ -46,6 +47,8 @@ const RAIL_EDGE_GAP_REM = 1; // viewport-edge breathing room beside the rail
 const RAIL_WIDTH_FRACTION = 0.18;
 const DEFAULT_LEFT_RAIL_EMPTY_RATIO = 0.4;
 const DOCK_GLIDE_CLASS = "dock-glide";
+// Panels frosted over the wallpaper (styles.css); each gets the frost menu.
+const FROSTED_SEL = ".game-view-meta, .game-view-engine, .game-view-moves";
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 const EVENT_POINTERDOWN = "pointerdown";
 const EVENT_POINTERMOVE = "pointermove";
@@ -1286,6 +1289,7 @@ function buildViewApi(ctx) {
       document.removeEventListener(EVENT_VISIBILITYCHANGE, ctx.onVisibilityChange);
       window.removeEventListener(EVENT_FOCUS, ctx.onWindowFocus);
       ctx.scheduleRecompute?.cancel();
+      ctx.frostMenuOffs.forEach((off) => off());
       if (deferredGlideCtx === ctx) deferredGlideCtx = null;
     },
   };
@@ -1381,6 +1385,9 @@ export function mountGameView(container, opts = {}) {
   };
 
   queryRefs(ctx, container, sideHost);
+  // The side rail may live outside the container (or be it): each panel once.
+  const frosted = [...container.querySelectorAll(FROSTED_SEL), ...sideHost.querySelectorAll(FROSTED_SEL)];
+  ctx.frostMenuOffs = [...new Set(frosted)].map((el) => attachFrostMenu(el));
   if (ctx.moveListEl) {
     markSelectable(ctx.moveListEl, { rows: ".move-row" });
   }

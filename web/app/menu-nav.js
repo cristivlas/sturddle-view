@@ -26,6 +26,7 @@ const BTN_ACTIVE_CLASS = "is-active";
 const FLYOUT_LEFT_CLASS = "flyout-left";
 const SLIDER_ROW_CLASS = "menu-slider";
 const SLIDER_VAL_CLASS = "menu-slider-val";
+const SLIDER_KEY_ATTR = "data-slider";
 const FIXED_POSITION = "fixed";
 // On a menu the mouse is driving: styles.css drops its focus ring (hover
 // focuses items); a key press brings it back.
@@ -283,22 +284,26 @@ export function submenuHtml(label, inner, disabled = false) {
     + `<ul class="tmb-dropdown">${inner}</ul></li>`;
 }
 
-// A slider flyout row with its live % readout.
-export function sliderRowHtml({ max, step, value }) {
-  return `<li class="${SLIDER_ROW_CLASS}">`
-    + `<wa-slider size="small" min="0" max="${max}" step="${step}" value="${value}"></wa-slider>`
-    + `<span class="${SLIDER_VAL_CLASS}">${value}${PCT_SUFFIX}</span></li>`;
+// A slider flyout row with its live readout (value + unit). key tells a
+// menu's several slider rows apart for wireSliderRow.
+export function sliderRowHtml({ min = 0, max, step, value, unit = PCT_SUFFIX, key = null }) {
+  const keyAttr = key == null ? "" : ` ${SLIDER_KEY_ATTR}="${key}"`;
+  return `<li class="${SLIDER_ROW_CLASS}"${keyAttr}>`
+    + `<wa-slider size="small" min="${min}" max="${max}" step="${step}" value="${value}"></wa-slider>`
+    + `<span class="${SLIDER_VAL_CLASS}">${value}${unit}</span></li>`;
 }
 
-// Wires the slider row in `menu`, if it has one: onInput(pct) while dragging,
-// onChange(pct) on release.
-export function wireSliderRow(menu, { onInput, onChange }) {
-  const slider = menu.querySelector(`.${SLIDER_ROW_CLASS} wa-slider`);
+// Wires a slider row in `menu` (the one with `key`, else the first), if
+// there is one: onInput(value) while dragging, onChange(value) on release.
+export function wireSliderRow(menu, { onInput, onChange, unit = PCT_SUFFIX, key = null }) {
+  const keySel = key == null ? "" : `[${SLIDER_KEY_ATTR}="${key}"]`;
+  const row = menu.querySelector(`.${SLIDER_ROW_CLASS}${keySel}`);
+  const slider = row?.querySelector("wa-slider");
   if (!slider) return;
-  const val = menu.querySelector(`.${SLIDER_VAL_CLASS}`);
+  const val = row.querySelector(`.${SLIDER_VAL_CLASS}`);
   slider.addEventListener("input", () => {
     onInput(Number(slider.value));
-    val.textContent = `${slider.value}${PCT_SUFFIX}`;
+    val.textContent = `${slider.value}${unit}`;
   });
   slider.addEventListener("change", () => onChange(Number(slider.value)));
 }

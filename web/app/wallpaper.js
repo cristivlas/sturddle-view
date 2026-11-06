@@ -8,7 +8,7 @@ import { APP_EVT } from "./app-events.js";
 import { mqMobile } from "./breakpoints.js";
 import { reportError } from "./dialogs.js";
 import {
-  attachMenuNav, focusFirstItem, isKeyboardContextMenu, makeMenuHost, MENU_CHECKED_CLASS,
+  attachMenuNav, focusFirstItem, isContextMenuClaimed, isKeyboardContextMenu, makeMenuHost, MENU_CHECKED_CLASS,
   positionMenu, positionMenuAt, setFlyoutSide, sliderRowHtml, submenuHtml, wireMenuToggle, wireSliderRow,
 } from "./menu-nav.js";
 import { ribbonAnchor } from "./ribbon-overflow.js";
@@ -175,7 +175,7 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
   const onContextMenu = (ev) => {
     // The region itself: the Menu key with focus on it (a bare-spot click).
     const bare = (isKeyboardContextMenu(ev) && ev.target === regionEl) || isBare(ev.target);
-    if (!info || isMobile() || menu.contains(ev.target) || !bare) return;
+    if (!info || isMobile() || menu.contains(ev.target) || !bare || isContextMenuClaimed(ev)) return;
     closeMenu();
     returnFocus = document.activeElement;
     openMenu((m) => positionMenuAt(m, { top: ev.clientY, bottom: ev.clientY, left: ev.clientX }),

@@ -17,7 +17,7 @@ import {
   attachMenuNav, claimContextMenu, focusFirstItem, isKeyboardContextMenu, makeMenuHost,
   MENU_CHECKED_CLASS, positionMenuAt, wireMenuToggle, wireSliderRow,
 } from "./menu-nav.js";
-import { fadeMenuHtml } from "./panel-fade.js";
+import { fadeMenuHtml, RESET_LABEL } from "./panel-fade.js";
 import { applySplitColWidths, wireSplitScroll } from "./split-table.js";
 import { escapeHtml } from "./wb-utils.js";
 
@@ -26,7 +26,6 @@ export const WIDTH_UNIT = Object.freeze({ PCT: "pct", PX: "px" });
 const MENU_ICON = "sliders";
 const MENU_BTN_LABEL = "Columns";
 const FIT_LABEL = "Auto-fit";
-const RESET_LABEL = "Reset";
 const UP_ICON = "arrow-up-long";
 const DOWN_ICON = "arrow-down-long";
 const PIN_ICON = "thumbtack";

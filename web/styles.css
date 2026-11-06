@@ -3876,6 +3876,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 @container studio-strip (max-height: 20px) { .iw-footer { visibility: hidden; } }
 /* Empty state: the wall hosts a clickable New-tournament CTA. */
 .studio-boards-wall.is-empty { pointer-events: auto; }
+/* The footer takes right-clicks too (its frost menu, tournament-studio.js). */
+.studio-boards-wall .iw-footer { pointer-events: auto; }
 .studio-empty {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   color: var(--muted); text-align: center;
@@ -3897,7 +3899,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 [data-wallpaper-fit="tile"] { --wallpaper-size: auto; --wallpaper-position: top left; --wallpaper-repeat: repeat; }
 /* Frost keeps see-through panels readable over the wallpaper. */
 .has-wallpaper :is(.game-view-engine, .game-view-moves, .game-view-meta, .iw-footer, .studio-empty) {
-  backdrop-filter: blur(8px) brightness(0.95);
+  /* frost.js sets both on <html> when imported (by every view with frost). */
+  backdrop-filter: blur(var(--frost-blur)) brightness(var(--frost-brightness));
 }
 /* An empty move list has nothing to read. */
 .has-wallpaper .game-view-moves:has(.move-list:empty) { backdrop-filter: none; }
@@ -3953,6 +3956,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   display: flex; align-items: center;
   /* Pinned to the wall's bottom. */
   margin-top: auto;
+  /* Its frost (with a wallpaper) reads as a rounded panel, like the windows. */
+  border-radius: var(--wb-radius);
 }
 .iw-progress { display: flex; align-items: center; gap: 12px; flex: 1 1 auto; padding: 8px 12px; }
 .iw-progress .tournament-progress { flex: 1 1 auto; }
