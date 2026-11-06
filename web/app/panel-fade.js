@@ -21,9 +21,10 @@ export const COPY_LABEL = "Copy";
 export const RESET_LABEL = "Reset";
 
 const FADE_LABEL = "Transparency";
-const FADE_MAX_PCT = 100;
-const FADE_DEFAULT_PCT = 0;
-const FADE_STEP_PCT = 1;
+const FADE_MIN_PCT = 0;
+export const FADE_MAX_PCT = 100;
+export const FADE_DEFAULT_PCT = 0;
+export const FADE_STEP_PCT = 1;
 // A faded element and its faded background; a table with faded cell lines and
 // their colors per side (styles.css).
 const FADE_ATTR = "data-fade";
@@ -62,7 +63,7 @@ export function fadeMenuHtml(pct) {
 // Live faders by storage key, so a theme's preset repaints them.
 const liveFaders = new Map();
 
-const isFadePct = (v) => Number.isInteger(v) && v >= 0 && v <= FADE_MAX_PCT;
+export const isFadePct = (v) => Number.isInteger(v) && v >= FADE_MIN_PCT && v <= FADE_MAX_PCT;
 
 // Set and save the pct under each storage key (a theme's preset), repainting
 // its live faders; a pct out of range is skipped.

@@ -14,5 +14,6 @@
     "studioLeft": 15,
     "studioRight": 15
   },
-  "board": "classic"
+  "board": "classic",
+  "boardFade": 0
 }

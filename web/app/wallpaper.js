@@ -1,10 +1,12 @@
 // Wallpaper: one global image (server-stored), shared by every view that
 // mounts it, painted behind a view's region on desktop. Picked from the
 // user's machine or a bundled theme's, through a ribbon button's Appearance
-// menu (Theme / None, Custom image, Fit, Fade), also opened by right-clicking
-// the region's bare background. Content above it simply covers it.
+// menu (Theme / None, Custom image, Background: Fit / Fade, Board), also
+// opened by right-clicking the region's bare background. Content above it
+// simply covers it.
 
 import { APP_EVT } from "./app-events.js";
+import { boardFadePct, paintBoardFade, saveBoardFade } from "./board-fade.js";
 import { mqMobile } from "./breakpoints.js";
 import { reportError } from "./dialogs.js";
 import {
@@ -12,6 +14,7 @@ import {
   MENU_SEPARATOR_HTML, positionMenu, positionMenuAt, setFlyoutSide, sliderRowHtml, submenuHtml, wireMenuToggle,
   wireSliderRow,
 } from "./menu-nav.js";
+import { FADE_MAX_PCT, FADE_STEP_PCT } from "./panel-fade.js";
 import { ribbonAnchor } from "./ribbon-overflow.js";
 import { applyThemePreset } from "./theme.js";
 import { escapeHtml, PCT_SUFFIX, WALLPAPER_CLASS } from "./wb-utils.js";
@@ -28,10 +31,13 @@ const BTN_LABEL = "Appearance";
 const ICON = "image";
 const ITEM = Object.freeze({ CHOOSE: "choose", REMOVE: "remove" });
 const ITEM_LABEL = Object.freeze({ [ITEM.CHOOSE]: "Custom image...", [ITEM.REMOVE]: "None" });
+const BACKGROUND_LABEL = "Background";
 const FIT_LABEL = "Fit";
 const FADE_LABEL = "Fade";
 const THEMES_LABEL = "Theme";
-const FADE_STEP_PCT = 1;
+const BOARD_LABEL = "Board";
+// The menu's two sliders, told apart.
+const SLIDER_KEY = Object.freeze({ FADE: "fade", BOARD: "board" });
 const SET_FAIL_MSG = "Set wallpaper failed";
 const THEME_FAIL_MSG = "Set theme failed";
 const REMOVE_FAIL_MSG = "Remove wallpaper failed";
@@ -82,13 +88,22 @@ function fitHtml(info) {
     return `<li><button type="button" class="tmb-dd-item${cls}" data-fit="${escapeHtml(f)}">`
       + `${escapeHtml(capitalize(f))}</button></li>`;
   }).join("");
-  return styleSubmenuHtml(FIT_LABEL, opts, info);
+  return submenuHtml(FIT_LABEL, opts);
 }
 
 // Fade flyout: the slider and its live value.
 function fadeHtml(info) {
-  return styleSubmenuHtml(FADE_LABEL,
-    sliderRowHtml({ max: info.fade_max, step: FADE_STEP_PCT, value: info.fade }), info);
+  return submenuHtml(FADE_LABEL,
+    sliderRowHtml({ max: info.fade_max, step: FADE_STEP_PCT, value: info.fade, key: SLIDER_KEY.FADE }));
+}
+
+// Background flyout: the image's Fit and Fade.
+const backgroundHtml = (info) => styleSubmenuHtml(BACKGROUND_LABEL, fitHtml(info) + fadeHtml(info), info);
+
+// Board flyout: the squares' transparency (board-fade.js).
+function boardHtml(info) {
+  return styleSubmenuHtml(BOARD_LABEL,
+    sliderRowHtml({ max: FADE_MAX_PCT, step: FADE_STEP_PCT, value: boardFadePct(), key: SLIDER_KEY.BOARD }), info);
 }
 
 function ribbonButton(ribbonEl) {
@@ -176,8 +191,9 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
   // Render and show the menu; place(menu) positions it once laid out.
   const openMenu = (place, keyboard) => {
     menu.innerHTML = themesHtml(info) + itemHtml(ITEM.CHOOSE, false)
-      + MENU_SEPARATOR_HTML + fitHtml(info) + fadeHtml(info);
-    wireSliderRow(menu, { onInput: setFade, onChange: (fade) => putStyle({ fade }) });
+      + MENU_SEPARATOR_HTML + backgroundHtml(info) + boardHtml(info);
+    wireSliderRow(menu, { key: SLIDER_KEY.FADE, onInput: setFade, onChange: (fade) => putStyle({ fade }) });
+    wireSliderRow(menu, { key: SLIDER_KEY.BOARD, onInput: paintBoardFade, onChange: saveBoardFade });
     menu.showPopover();
     place(menu);
     setFlyoutSide(menu);

@@ -109,6 +109,8 @@ BOARD_SQUARE_VARS = ("--sb-light", "--sb-dark")
 PANELS = {"ai": -25, "evalbar": -25, "ucilog": -25, "pvtable": -25, "studioLeft": -30, "studioRight": -30}
 # Frost brightness offset (pct points) on the tuned value, by eye.
 FROST_BRIGHTNESS_OFFSET = 5
+# Board transparency (pct): opaque; readability over the board is not modeled.
+BOARD_FADE = 0
 
 
 def slug(stem: str) -> str:
@@ -345,6 +347,7 @@ def main() -> None:
                   "brightness": min(BRIGHTNESS_RANGE[1], t["brightness"] + FROST_BRIGHTNESS_OFFSET)},
         "panels": {p: max(0, t["panel_fade"] + off) for p, off in PANELS.items()},
         "board": board,
+        "boardFade": BOARD_FADE,
     }
     preset_path.write_text(json.dumps(preset, indent=2) + "\n", encoding="utf-8")
     flag = "" if t["readable"] else "  UNREADABLE: hand-tune"

@@ -2274,8 +2274,10 @@ body .side-popover.popover-floating {
   min-height: 0;
 }
 .game-view-board .board {
-  background: #2a2a2a;
-  border: var(--board-border-w) solid #333;
+  --board-bg: #2a2a2a;
+  --board-edge: #333;
+  background: var(--board-bg);
+  border: var(--board-border-w) solid var(--board-edge);
   width: var(--board-max-px, 100%);
   height: auto;
   align-self: center;
@@ -3900,6 +3902,17 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .has-wallpaper :is(.game-view-engine, .game-view-moves, .game-view-meta, .iw-footer, .studio-empty) {
   /* frost.js sets both on <html> when imported (by every view with frost). */
   backdrop-filter: blur(var(--frost-blur)) brightness(var(--frost-brightness));
+}
+/* Board transparency (board-fade.js): the board, its box and the tournament
+   windows holding one. The SVG group fades as one layer: its full-size border
+   rect lies under every square. */
+:root:has(.has-wallpaper) .cm-chessboard g.board { opacity: var(--board-opacity, 100%); }
+:root:has(.has-wallpaper) .game-view-board .board {
+  background: color-mix(in srgb, var(--board-bg) var(--board-opacity, 100%), transparent);
+  border-color: color-mix(in srgb, var(--board-edge) var(--board-opacity, 100%), transparent);
+}
+:root:has(.has-wallpaper) :is(.winbox.sturddle-wb-live, .winbox.sturddle-wb-live .wb-body) {
+  background: color-mix(in srgb, var(--panel) var(--board-opacity, 100%), transparent);
 }
 /* An empty move list has nothing to read. */
 .has-wallpaper .game-view-moves:has(.move-list:empty) { backdrop-filter: none; }

@@ -14,5 +14,6 @@
     "studioLeft": 10,
     "studioRight": 10
   },
-  "board": "chess-club"
+  "board": "chess-club",
+  "boardFade": 0
 }
