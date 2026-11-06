@@ -96,6 +96,7 @@ export const STORAGE_KEY = {
   WORKSPACE_PREFIX: "sturddle:workspace:",
   // Column layout; the value predates it (saved widths migrate).
   LIVE_PVTABLE_LAYOUT: "sturddle:live:pvtable:colWidths",
+  LIVE_INFO: "sturddle:live:info",
   TOURNAMENTS_STANDINGS_LAYOUT: "sturddle:tournaments:standingsLayout",
   TOURNAMENTS_STANDINGS_SORT: "sturddle:tournaments:standingsSort",
   TOURNAMENTS_STANDINGS_STACK: "sturddle:tournaments:standingsStack",

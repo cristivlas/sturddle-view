@@ -61,6 +61,10 @@ _STUDIO_SELECTED_ID_KEY = "sturddle:studio:selectedId"
 _STUDIO_BOARDS_PREFIX = "sturddle:studio:boards:"
 _WORKSPACE_PREFIX = "sturddle:workspace:"
 _PROXY_WS_PATTERN = "**/ws/tournament/proxy/**"
+_PLAY_BUTTON = 'button[data-perspective="play"]'
+_ENGINES_BUTTON = 'button[data-perspective="engines"]'
+_PLAY_ROOT = "#play-perspective"
+_STUDIO_PANEL = ".studio-panel"
 _SETTINGS_PATH = "/settings"
 _GET = "GET"
 # Any style but the client default, so a board mounted before the
@@ -343,7 +347,7 @@ async def _load_studio(page, base, t, board):
         f" {json.dumps(json.dumps([board]))});"
     )
     await page.goto(f"{base}/")
-    await page.wait_for_selector(".studio-panel")
+    await page.wait_for_selector(_STUDIO_PANEL)
     await wait_perspective_ready(page)
 
 
@@ -357,9 +361,9 @@ async def _load_arena(page, base, t, board, before_open=None):
         f" {json.dumps(json.dumps(saved))});"
     )
     await page.goto(f"{base}/")
-    await page.wait_for_selector("#play-perspective")
+    await page.wait_for_selector(_PLAY_ROOT)
     await wait_perspective_ready(page)
-    await page.click('button[data-perspective="engines"]')
+    await page.click(_ENGINES_BUTTON)
     await page.click(".tournament-row")
     if before_open is not None:
         before_open()
@@ -449,6 +453,91 @@ async def test_reload_resolves_board_whose_reconcile_left_history(
             "gameN": 1, "result": _RECONCILED_RESULT, "termination": UNKNOWN_TERMINATION,
         }
         assert page_errors == [], page_errors
+
+
+_OWN_SCORE = ".wb-livegame .lg-eval-score-bottom"
+_OPP_SCORE = ".wb-livegame .lg-eval-score-top"
+_OPP_NAME = ".wb-livegame .lg-top-name"
+_GO = "go wtime 300000 btime 300000"
+_SCORE_SHOWN = "(sel) => !!document.querySelector(sel)?.textContent"
+
+
+def _saved_proxy_board():
+    return {
+        "proxyId": LIVE_PROXY_ID, "gameId": None,
+        "label": f"{LIVE_ENGINE_A} vs {LIVE_ENGINE_B}", "engineName": LIVE_ENGINE_A,
+        "min": False, "max": False,
+    }
+
+
+async def _board_with_both_scores(page, base, t, secret, load_ui):
+    """Watch the white proxy of a confirmed pair until both eval rows show a
+    score; return (own score, opp score, opp name). The opponent's info
+    streams only after the board attached, so no subscribe snapshot can
+    replay it."""
+    await post_proxy(base, secret, [], proxy_id=_PROXY_ID_BLACK, engine_name=LIVE_ENGINE_B)
+    await post_proxy(base, secret, [
+        "position startpos", _GO, "info depth 12 score cp 35 pv e2e4", "bestmove e2e4",
+    ])
+    await post_proxy(base, secret, ["position startpos moves e2e4", _GO], proxy_id=_PROXY_ID_BLACK)
+    await load_ui(page, base, t, _saved_proxy_board())
+    # Own score comes from the subscribe snapshot: the socket is attached.
+    await page.wait_for_function(_SCORE_SHOWN, arg=_OWN_SCORE)
+    await post_proxy(base, secret, ["info depth 10 score cp -20 pv e7e5"], proxy_id=_PROXY_ID_BLACK)
+    await page.wait_for_function(_SCORE_SHOWN, arg=_OPP_SCORE)
+    shown = await _shown_info(page)
+    assert shown[2] == LIVE_ENGINE_B, shown
+    return shown
+
+
+async def _shown_info(page):
+    return (
+        await page.text_content(_OWN_SCORE),
+        await page.text_content(_OPP_SCORE),
+        await page.text_content(_OPP_NAME),
+    )
+
+
+async def _rebuilt_scores(page):
+    """Both rows' texts and the opponent name once the rebuilt board's own
+    score has painted."""
+    await page.wait_for_function(_SCORE_SHOWN, arg=_OWN_SCORE)
+    return await _shown_info(page)
+
+
+@_LOADERS
+@pytest.mark.asyncio
+async def test_perspective_round_trip_keeps_both_eval_rows(tmp_path, monkeypatch, make_page, load_ui):
+    """Leaving for Play and coming back rebuilds the board; both rows must
+    repaint at once, not wait for each engine's next search."""
+    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+        page, page_errors = await _open_page(make_page)
+        scores = await _board_with_both_scores(page, base, t, secret, load_ui)
+
+        await page.click(_PLAY_BUTTON)
+        await page.wait_for_selector(_PLAY_ROOT)
+        await wait_perspective_ready(page)
+        await page.click(_ENGINES_BUTTON)
+        await wait_perspective_ready(page)
+
+        assert await _rebuilt_scores(page) == scores
+        assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
+
+
+@pytest.mark.asyncio
+async def test_reload_keeps_both_eval_rows(tmp_path, monkeypatch, make_page):
+    """Board-style and theme changes reload the page; both rows must
+    repaint from the saved cache."""
+    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+        page, page_errors = await _open_page(make_page)
+        scores = await _board_with_both_scores(page, base, t, secret, _load_studio)
+
+        await page.reload()
+        await page.wait_for_selector(_STUDIO_PANEL)
+        await wait_perspective_ready(page)
+
+        assert await _rebuilt_scores(page) == scores
+        assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
 
 
 @pytest.mark.asyncio
