@@ -1,0 +1,18 @@
+{
+  "name": "Convent",
+  "fit": "cover",
+  "fade": 30,
+  "frost": {
+    "blur": 2,
+    "brightness": 65
+  },
+  "panels": {
+    "ai": 20,
+    "evalbar": 20,
+    "ucilog": 20,
+    "pvtable": 20,
+    "studioLeft": 15,
+    "studioRight": 15
+  },
+  "board": "classic"
+}

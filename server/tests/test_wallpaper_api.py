@@ -163,14 +163,14 @@ def test_put_theme_sets_image_style_and_current_theme(client, theme):
 
 
 @pytest.mark.parametrize("preset", [None, {}, {**THEME_PRESET, "name": 7}, {**THEME_PRESET, "name": "  "}])
-def test_image_without_named_preset_is_no_theme(client, theme, tmp_path, preset):
+def test_theme_without_preset_name_shows_its_id(client, theme, tmp_path, preset):
     path = tmp_path / "themes" / f"{theme}.json"
     if preset is None:
         path.unlink()
     else:
         path.write_text(json.dumps(preset), encoding="utf-8")
-    assert client.get(INFO_URL).json()["themes"] == []
-    assert client.put(f"{THEME_URL}/{theme}").status_code == 404
+    assert client.get(INFO_URL).json()["themes"] == [{"id": theme, "name": theme}]
+    assert client.put(f"{THEME_URL}/{theme}").status_code == 200
 
 
 @pytest.mark.parametrize("change", [

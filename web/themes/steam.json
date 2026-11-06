@@ -1,0 +1,18 @@
+{
+  "name": "Steam",
+  "fit": "cover",
+  "fade": 0,
+  "frost": {
+    "blur": 3,
+    "brightness": 85
+  },
+  "panels": {
+    "ai": 10,
+    "evalbar": 10,
+    "ucilog": 10,
+    "pvtable": 10,
+    "studioLeft": 20,
+    "studioRight": 20
+  },
+  "board": "black-and-white"
+}
