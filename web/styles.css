@@ -2155,7 +2155,8 @@ body .side-popover.popover-floating {
 .game-view-side {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  /* The board's gap to it (.play-grid). */
+  gap: var(--grid-gap);
   min-height: 0;
   height: 100%;
 }
@@ -2199,8 +2200,10 @@ body .side-popover.popover-floating {
   border-color: transparent;
   padding: 0;
 }
-.game-view-engine:not(.is-empty) + .game-view-moves {
-  margin-top: 14px;
+/* Mobile spaces the side panels wider. */
+@media (max-width: 800px) {
+  .game-view-side { gap: 16px; }
+  .game-view-engine:not(.is-empty) + .game-view-moves { margin-top: 14px; }
 }
 .game-view-moves .move-list {
   flex: 1 1 auto;
