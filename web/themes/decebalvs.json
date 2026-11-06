@@ -4,15 +4,15 @@
   "fade": 35,
   "frost": {
     "blur": 2,
-    "brightness": 55
+    "brightness": 75
   },
   "panels": {
     "ai": 10,
     "evalbar": 10,
     "ucilog": 10,
     "pvtable": 10,
-    "studioLeft": 5,
-    "studioRight": 5
+    "studioLeft": 10,
+    "studioRight": 10
   },
   "board": "chess-club"
 }
