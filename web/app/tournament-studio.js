@@ -68,6 +68,8 @@ const WALL_STRIP_CLASS = "in-strip";
 // The wall's frosted parts (styles.css), which carry the frost menu.
 const WALL_FROSTED_SEL = ".iw-footer, .studio-empty";
 const STUDIO_PANE_SEL = ".studio-pane";
+const OVERFLOW_SCROLL = "scroll";
+const OVERFLOW_HIDDEN = "hidden";
 // Minimized boards live in the tray (display:none), so they are not cells.
 const BOARD_SEL = ".winbox.sturddle-wb-studio:not(.min)";
 // The board grid roves one tab stop, so the "current" board is the one Tab
@@ -789,12 +791,13 @@ function studioCols() {
 // x0/dpr: the region's page x and the device pixel ratio, for slotRect.
 // y0: desktop centers a grid shorter than the region (whole device px);
 // gridBottom: where the grid ends, for the info wall's strip below it.
-// pending: boards not yet open but about to take slots.
-function boardCell(ctx, pending = 0) {
+// pending: boards not yet open but about to take slots. width: the region's
+// content width to fit (default: as laid out now).
+function boardCell(ctx, pending = 0, width = ctx.boardsEl?.clientWidth ?? 0) {
   const cols = studioCols();
   const el = ctx.boardsEl;
   const dpr = window.devicePixelRatio;
-  const fit = (el?.clientWidth ?? 0) / cols;
+  const fit = width / cols;
   const cw = Math.max(LIVE_MIN_WIDTH, fit);
   const chDev = Math.floor(cw * dpr) + Math.floor((LIVE_MIN_HEIGHT() - LIVE_MIN_WIDTH) * dpr);
   const ch = chDev / dpr;
@@ -824,6 +827,7 @@ function slotRect(i, { cw, ch, cols, x0, dpr, y0 }) {
 // minimized windows keep their dock geometry.
 function regridBoards(ctx) {
   if (!ctx.boardsEl) return;
+  syncScrollbar(ctx);
   const cell = boardCell(ctx);
   // Only laid-out boards take slots; minimized (trayed) and maximized boards
   // are skipped so visible boards pack with no gaps.
@@ -850,6 +854,24 @@ function regridBoards(ctx) {
   // are no boards rather than reserve a blank strip. Desktop lets the flex
   // split govern the height.
   ctx.boardsEl.style.height = mqMobile.matches ? (hasBoards ? `${slotRect(0, cell).h}px` : "0") : "";
+}
+
+// The region's scrollbars, decided from the grid at the region's full size,
+// never from their own presence: one that shrank the region enough for the
+// grid to fit would hide, regrow it past fitting and show again, every frame.
+// (Near both thresholds at once a board may clip by a scrollbar's width.)
+function syncScrollbar(ctx) {
+  const el = ctx.boardsEl;
+  if (!anyBoardsShown()) {
+    el.style.overflowX = el.style.overflowY = "";
+    return;
+  }
+  const cs = getComputedStyle(el);
+  const fullW = el.offsetWidth - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth);
+  const fullH = el.offsetHeight - parseFloat(cs.borderTopWidth) - parseFloat(cs.borderBottomWidth);
+  const full = boardCell(ctx, 0, fullW);
+  el.style.overflowX = full.overflowX ? OVERFLOW_SCROLL : OVERFLOW_HIDDEN;
+  el.style.overflowY = full.gridBottom - full.y0 > fullH ? OVERFLOW_SCROLL : OVERFLOW_HIDDEN;
 }
 
 // Any board occupying the region (laid-out or maximized; minimized don't count).
