@@ -11,8 +11,8 @@
     "evalbar": 10,
     "ucilog": 10,
     "pvtable": 10,
-    "studioLeft": 20,
-    "studioRight": 20
+    "studioLeft": 16,
+    "studioRight": 16
   },
   "board": "black-and-white"
 }
