@@ -441,6 +441,7 @@ def e2e_env(tmp_path: Path) -> dict[str, str]:
         "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
         "SV_AI_PLAYBOOK_DIR": str(tmp_path / "playbook"),
         "SV_WALLPAPER_DIR": str(tmp_path / "wallpaper"),
+        "SV_THEMES_DIR": str(tmp_path / "themes"),
     }
 
 
@@ -1230,6 +1231,7 @@ def _isolate_user_config(tmp_path, monkeypatch):
     monkeypatch.setattr(tournaments_api, "default_root", lambda: fake_root)
     monkeypatch.setenv("SV_ENGINE_TMP_ROOT", str(tmp_path / "engine-tmp"))
     monkeypatch.setenv("SV_WALLPAPER_DIR", str(tmp_path / "wallpaper"))
+    monkeypatch.setenv("SV_THEMES_DIR", str(tmp_path / "themes"))
     # Shipped playbook text only: never the developer's own overrides.
     monkeypatch.setattr(pc_mod, "default_user_dir", lambda: tmp_path / "playbook")
     pc_mod.default_catalog.cache_clear()

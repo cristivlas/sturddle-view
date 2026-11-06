@@ -1,8 +1,11 @@
-"""Studio wallpaper: one global image the user uploads from their machine.
+"""Studio wallpaper: one global image the user uploads from their machine,
+or a bundled theme's.
 
 Stored as a single ``image.<ext>`` under the app data dir; its mtime is the
 version the client cache-busts the image URL with. The display style (fade,
-fit) lives beside it in ``style.json`` and survives image changes.
+fit) lives beside it in ``style.json`` and survives image changes. A theme is
+an image under the themes dir plus an optional ``<name>.json`` preset tuned
+for it: its fit/fade set the style here, the rest is the client's to apply.
 """
 from __future__ import annotations
 
@@ -16,6 +19,7 @@ from fastapi.responses import FileResponse
 from .. import app_data_dir
 from .._atomic import atomic_write_bytes, atomic_write_json
 from ..auth import require_token
+from ..config import WEB_DIR
 from ..env_utils import env_int, env_path
 from ._http import bad_request, not_found
 
@@ -42,10 +46,45 @@ _FITS_KEY = "fits"
 _CONTENT_TYPE_HEADER = "content-type"
 _CONTENT_LENGTH_HEADER = "content-length"
 _NO_WALLPAPER = "no wallpaper"
+_THEMES_ENV = "SV_THEMES_DIR"
+_THEMES_DIRNAME = "themes"
+_PRESET_EXT = ".json"
+_THEMES_KEY = "themes"
+_PRESET_KEY = "preset"
 
 
 def _root() -> Path:
     return env_path(_DIR_ENV, app_data_dir() / _DIRNAME)
+
+
+def _themes() -> dict[str, Path]:
+    """Bundled theme images by name (file stem), sorted."""
+    root = env_path(_THEMES_ENV, WEB_DIR / _THEMES_DIRNAME)
+    if not root.is_dir():
+        return {}
+    return {
+        p.stem: p for p in sorted(root.iterdir())
+        if p.suffix.lower() in _TYPE_BY_EXT and p.is_file()
+    }
+
+
+def _read_json(path: Path, what: str):
+    """The file's JSON, or None when missing or unreadable (logged)."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        log.warning("ignoring unreadable %s %s", what, path, exc_info=True)
+        return None
+
+
+def _valid_style(fields: dict) -> dict:
+    """The fields that are valid style keys and values."""
+    return {
+        k: fields[k] for k, check in _STYLE_CHECKS.items()
+        if k in fields and check(fields[k]) is None
+    }
 
 
 def _stored() -> Path | None:
@@ -64,6 +103,12 @@ def _remove_all(keep: str | None = None) -> None:
             (_root() / f"{_STEM}{ext}").unlink(missing_ok=True)
 
 
+def _store(data: bytes, ext: str) -> None:
+    """Replace the stored image with data, an ``ext`` image."""
+    atomic_write_bytes(_root() / f"{_STEM}{ext}", data)
+    _remove_all(keep=ext)
+
+
 def _fade_error(v) -> str | None:
     if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= MAX_FADE_PCT:
         return f"{_FADE_KEY} must be an integer 0..{MAX_FADE_PCT}"
@@ -79,20 +124,8 @@ _STYLE_CHECKS = {_FADE_KEY: _fade_error, _FIT_KEY: _fit_error}
 
 def _style() -> dict:
     """Stored style over the defaults; a missing/bad file or field reads as default."""
-    style = dict(_DEFAULT_STYLE)
-    path = _root() / _STYLE_FILENAME
-    try:
-        stored = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return style
-    except (OSError, ValueError):
-        log.warning("ignoring unreadable wallpaper style %s", path, exc_info=True)
-        return style
-    if isinstance(stored, dict):
-        for key, check in _STYLE_CHECKS.items():
-            if key in stored and check(stored[key]) is None:
-                style[key] = stored[key]
-    return style
+    stored = _read_json(_root() / _STYLE_FILENAME, "wallpaper style")
+    return {**_DEFAULT_STYLE, **(_valid_style(stored) if isinstance(stored, dict) else {})}
 
 
 def _info() -> dict:
@@ -102,6 +135,7 @@ def _info() -> dict:
         **_style(),
         _FADE_MAX_KEY: MAX_FADE_PCT,
         _FITS_KEY: list(FITS),
+        _THEMES_KEY: list(_themes()),
     }
 
 
@@ -149,9 +183,24 @@ async def put_wallpaper(request: Request) -> dict:
     data = await _read_capped(request)
     if not data:
         raise bad_request("empty image")
-    atomic_write_bytes(_root() / f"{_STEM}{ext}", data)
-    _remove_all(keep=ext)
+    _store(data, ext)
     return _info()
+
+
+@router.put("/theme/{name}")
+def put_theme(name: str) -> dict:
+    """Set a theme: its image becomes the wallpaper and its preset's fit/fade
+    the style; returns the info plus the whole preset (empty when none)."""
+    image = _themes().get(name)
+    if image is None:
+        raise not_found(f"no theme {name!r}")
+    _store(image.read_bytes(), image.suffix.lower())
+    preset = _read_json(image.with_suffix(_PRESET_EXT), "theme preset")
+    preset = preset if isinstance(preset, dict) else {}
+    style = _valid_style(preset)
+    if style:
+        atomic_write_json(_root() / _STYLE_FILENAME, {**_style(), **style})
+    return {**_info(), _PRESET_KEY: preset}
 
 
 @router.delete("")

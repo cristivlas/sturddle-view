@@ -39,6 +39,15 @@ apply();
 
 const save = () => saveJson(STORAGE_KEY.FROST, frost);
 
+// Set and save the fields given (a theme's preset); an out-of-range one is skipped.
+export function setFrost(values) {
+  for (const [key, spec] of Object.entries(SLIDERS)) {
+    if (inRange(values[key], spec)) frost[key] = values[key];
+  }
+  apply();
+  save();
+}
+
 const sliders = Object.entries(SLIDERS).map(([key, spec]) => ({
   ...spec,
   get: () => frost[key],

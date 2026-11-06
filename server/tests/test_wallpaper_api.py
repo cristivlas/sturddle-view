@@ -44,6 +44,7 @@ def test_info_without_wallpaper_reports_defaults(client):
     assert info == {
         "version": None, "fade": 0, "fit": wallpaper_api.FITS[0],
         "fade_max": wallpaper_api.MAX_FADE_PCT, "fits": list(wallpaper_api.FITS),
+        "themes": [],
     }
     assert client.get(URL).status_code == 404
 

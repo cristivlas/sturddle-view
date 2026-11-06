@@ -58,6 +58,21 @@ export function fadeMenuHtml(pct) {
   return isMobile() ? "" : sliderSubmenuHtml(FADE_SLIDER, pct);
 }
 
+// Live faders by storage key, so a theme's preset repaints them.
+const liveFaders = new Map();
+
+const isFadePct = (v) => Number.isInteger(v) && v >= 0 && v <= FADE_MAX_PCT;
+
+// Set and save the pct under each storage key (a theme's preset), repainting
+// its live faders; a pct out of range is skipped.
+export function setPanelFades(pctByKey) {
+  for (const [key, pct] of Object.entries(pctByKey)) {
+    if (!isFadePct(pct)) continue;
+    saveJson(key, pct);
+    liveFaders.get(key)?.forEach((f) => f.set(pct));
+  }
+}
+
 const sameEls = (a, b) => a.length === b.length && a.every((el, i) => el === b[i]);
 
 // An element's own background; a hovered header cell's is read off an
@@ -168,7 +183,7 @@ export function createPanelFade(panel, { storageKey }) {
     apply(true);
   }
   if (panel) attach(panel);
-  return {
+  const fader = {
     get pct() { return pct; },
     attach,
     // Live (a slider drag); save() keeps it.
@@ -193,9 +208,13 @@ export function createPanelFade(panel, { storageKey }) {
       observer.disconnect();
       MOBILE_QUERIES.forEach((mq) => mq.removeEventListener("change", refresh));
       window.removeEventListener(APP_EVT.WALLPAPER_TOGGLED, rescan);
+      liveFaders.get(storageKey).delete(fader);
       release();
     },
   };
+  if (!liveFaders.has(storageKey)) liveFaders.set(storageKey, new Set());
+  liveFaders.get(storageKey).add(fader);
+  return fader;
 }
 
 // A panel's right-click menu (a top-layer popover, so no host clips it):

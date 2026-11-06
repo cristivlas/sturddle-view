@@ -1,8 +1,8 @@
 // Wallpaper: one global image (server-stored), shared by every view that
 // mounts it, painted behind a view's region on desktop. Picked from the
-// user's machine through a ribbon button's menu (Choose / Remove, Fit, Fade),
-// also opened by right-clicking the region's bare background. Content above
-// it simply covers it.
+// user's machine or a bundled theme's, through a ribbon button's menu (Themes,
+// Choose / Remove, Fit, Fade), also opened by right-clicking the region's bare
+// background. Content above it simply covers it.
 
 import { APP_EVT } from "./app-events.js";
 import { mqMobile } from "./breakpoints.js";
@@ -12,11 +12,13 @@ import {
   positionMenu, positionMenuAt, setFlyoutSide, sliderRowHtml, submenuHtml, wireMenuToggle, wireSliderRow,
 } from "./menu-nav.js";
 import { ribbonAnchor } from "./ribbon-overflow.js";
+import { applyThemePreset } from "./theme.js";
 import { escapeHtml, PCT_SUFFIX, WALLPAPER_CLASS } from "./wb-utils.js";
 
 const WALLPAPER_PATH = "/wallpaper";
 const INFO_PATH = `${WALLPAPER_PATH}/info`;
 const STYLE_PATH = `${WALLPAPER_PATH}/style`;
+const THEME_PATH = `${WALLPAPER_PATH}/theme`;
 const ACCEPT_TYPES = "image/png,image/jpeg,image/webp";
 const URL_VAR = "--wallpaper";
 const FADE_VAR = "--wallpaper-fade";
@@ -27,8 +29,10 @@ const ITEM = Object.freeze({ CHOOSE: "choose", REMOVE: "remove" });
 const ITEM_LABEL = Object.freeze({ [ITEM.CHOOSE]: "Choose image...", [ITEM.REMOVE]: "Remove" });
 const FIT_LABEL = "Fit";
 const FADE_LABEL = "Fade";
+const THEMES_LABEL = "Themes";
 const FADE_STEP_PCT = 5;
 const SET_FAIL_MSG = "Set wallpaper failed";
+const THEME_FAIL_MSG = "Set theme failed";
 const REMOVE_FAIL_MSG = "Remove wallpaper failed";
 const LOAD_FAIL_MSG = "Load wallpaper failed";
 const STYLE_FAIL_MSG = "Save wallpaper style failed";
@@ -55,6 +59,13 @@ const styleSubmenuHtml = (label, inner, info) => submenuHtml(label, inner, info.
 function itemHtml(item, disabled) {
   return `<li><button type="button" class="tmb-dd-item" data-item="${item}"${disabled ? " disabled" : ""}>`
     + `${ITEM_LABEL[item]}</button></li>`;
+}
+
+// Themes submenu, one item per theme; disabled when none is bundled.
+function themesHtml(info) {
+  const items = info.themes.map((t) => `<li><button type="button" class="tmb-dd-item" `
+    + `data-theme="${escapeHtml(t)}">${escapeHtml(t)}</button></li>`).join("");
+  return submenuHtml(THEMES_LABEL, items, !info.themes.length);
 }
 
 // Fit submenu, the current fit checked.
@@ -157,7 +168,8 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
 
   // Render and show the menu; place(menu) positions it once laid out.
   const openMenu = (place, keyboard) => {
-    menu.innerHTML = itemHtml(ITEM.CHOOSE, false) + itemHtml(ITEM.REMOVE, info.version == null)
+    menu.innerHTML = themesHtml(info)
+      + itemHtml(ITEM.CHOOSE, false) + itemHtml(ITEM.REMOVE, info.version == null)
       + `<li class="tmb-separator"></li>` + fitHtml(info) + fadeHtml(info);
     wireSliderRow(menu, { onInput: setFade, onChange: (fade) => putStyle({ fade }) });
     menu.showPopover();
@@ -184,11 +196,16 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
   regionEl.addEventListener("contextmenu", onContextMenu);
   const unhost = makeMenuHost(regionEl);
   menu.addEventListener("click", (ev) => {
-    const item = ev.target.closest("button[data-item], button[data-fit]");
+    const item = ev.target.closest("button[data-item], button[data-fit], button[data-theme]");
     if (!item || item.disabled) return;
     closeMenu();
     if (item.dataset.fit) {
       putStyle({ fit: item.dataset.fit });
+    } else if (item.dataset.theme) {
+      api("PUT", `${THEME_PATH}/${encodeURIComponent(item.dataset.theme)}`).then(({ preset, ...next }) => {
+        applyThemePreset(preset);
+        apply(next);
+      }, (e) => reportError(errCtx, THEME_FAIL_MSG, e));
     } else if (item.dataset.item === ITEM.CHOOSE) {
       input.click();
     } else {
