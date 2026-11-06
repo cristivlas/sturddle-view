@@ -2339,6 +2339,7 @@ body .side-popover.popover-floating {
   flex-direction: column;
   gap: 2px;
   font-size: 0.75rem;
+  border-radius: var(--wb-radius);
   /* Reserve space for the FEN + opening + tablebase lines so the page doesn't
      reflow when they appear; FEN renders slightly larger, hence the split. */
   min-height: calc(2 * 1.4em + 13px * 1.4 + 4px);
