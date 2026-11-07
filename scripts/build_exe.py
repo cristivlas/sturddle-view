@@ -72,6 +72,10 @@ _COLLECT_ALL: list[str] = [
 ]
 
 
+# Unused by the app, but importable from the Linux build venv's system
+# site-packages, so optional imports in dependencies would bundle it.
+_EXCLUDE_MODULES: list[str] = ["numpy"]
+
 # GTK's hooks otherwise copy every icon theme, GTK theme and translation
 # installed on the build machine (~1 GB). Adwaita + hicolor are GTK's icon
 # fallbacks; its default theme is built in. The app is English-only.
@@ -148,6 +152,8 @@ def _makespec_cmd(python: Path, exe_name: str, icon: Path, console: bool = False
         cmd.append(f"--hidden-import={imp}")
     for pkg in _COLLECT_ALL:
         cmd.append(f"--collect-all={pkg}")
+    for mod in _EXCLUDE_MODULES:
+        cmd.append(f"--exclude-module={mod}")
     cmd.append(str(ENTRY_POINT))
     return cmd
 
