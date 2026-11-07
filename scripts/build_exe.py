@@ -22,6 +22,7 @@ Run from the repository root:
 """
 from __future__ import annotations
 
+import ctypes.util
 import hashlib
 import os
 import shutil
@@ -37,6 +38,9 @@ VENV_DIR = ROOT / "build_venv"
 BUILDS_DIR = ROOT / "dist"
 IS_LINUX = sys.platform.startswith("linux")
 LINUX_WEBVIEWS = ("gtk", "qt", "system")
+# Qt 6.5+'s xcb plugin needs it; bundled only if the build machine has it.
+_QT_XCB_CURSOR_LIB = "xcb-cursor"
+_QT_XCB_CURSOR_HINT = "Qt needs libxcb-cursor to bundle: sudo apt install libxcb-cursor0"
 # The backend a venv was built for: --reuse-venv must not mix them.
 _WEBVIEW_MARKER = VENV_DIR / ".linux-webview"
 _RUNTIME_HOOKS = {
@@ -210,6 +214,8 @@ def main() -> None:
     args = parser.parse_args()
     webview = args.linux_webview if IS_LINUX else None
     system_site = webview == "gtk"
+    if webview == "qt" and ctypes.util.find_library(_QT_XCB_CURSOR_LIB) is None:
+        sys.exit(_QT_XCB_CURSOR_HINT)
 
     version = _read_version()
     exe_name = f"sturddle-view-{version}"
