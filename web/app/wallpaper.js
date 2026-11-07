@@ -100,10 +100,13 @@ function fadeHtml(info) {
 // Background flyout: the image's Fit and Fade.
 const backgroundHtml = (info) => styleSubmenuHtml(BACKGROUND_LABEL, fitHtml(info) + fadeHtml(info), info);
 
-// Board flyout: the squares' transparency (board-fade.js).
+// The Board slider shows opacity; board-fade.js keeps transparency.
+const flipPct = (pct) => FADE_MAX_PCT - pct;
+
+// Board flyout: the squares' opacity.
 function boardHtml(info) {
   return styleSubmenuHtml(BOARD_LABEL,
-    sliderRowHtml({ max: FADE_MAX_PCT, step: FADE_STEP_PCT, value: boardFadePct(), key: SLIDER_KEY.BOARD }), info);
+    sliderRowHtml({ max: FADE_MAX_PCT, step: FADE_STEP_PCT, value: flipPct(boardFadePct()), key: SLIDER_KEY.BOARD }), info);
 }
 
 function ribbonButton(ribbonEl) {
@@ -193,7 +196,9 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
     menu.innerHTML = themesHtml(info) + itemHtml(ITEM.CHOOSE, false)
       + MENU_SEPARATOR_HTML + backgroundHtml(info) + boardHtml(info);
     wireSliderRow(menu, { key: SLIDER_KEY.FADE, onInput: setFade, onChange: (fade) => putStyle({ fade }) });
-    wireSliderRow(menu, { key: SLIDER_KEY.BOARD, onInput: paintBoardFade, onChange: saveBoardFade });
+    wireSliderRow(menu, {
+      key: SLIDER_KEY.BOARD, onInput: (opacity) => paintBoardFade(flipPct(opacity)), onChange: saveBoardFade,
+    });
     menu.showPopover();
     place(menu);
     setFlyoutSide(menu);
