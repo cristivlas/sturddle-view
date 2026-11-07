@@ -3,7 +3,8 @@
 
 Steps:
   1. Read version from server/sturddle_view/__init__.py.
-  2. Delete and recreate build_venv/ with a stock pip.
+  2. Delete and recreate build_venv/ with a stock pip (Linux: seeing the
+     system site-packages, for the distro's PyGObject).
   3. Install .[desktop] + pyinstaller.
   4. Run PyInstaller --onefile --windowed with full data + hidden imports.
   5. Write dist/<name>.sha256 next to the exe.
@@ -25,6 +26,10 @@ ROOT = Path(__file__).resolve().parent.parent
 ENTRY_POINT = ROOT / "scripts" / "_exe_entry.py"
 PLAYBOOK_DATA = ROOT / "server" / "sturddle_view" / "play" / "playbook_data"
 VENV_DIR = ROOT / "build_venv"
+# Linux: pywebview's GTK backend needs PyGObject (gi), which only the distro
+# ships (python3-gi), so the build venv sees system site-packages; pip then
+# installs over them so the bundle doesn't pick up stale distro packages.
+SYSTEM_SITE = sys.platform.startswith("linux")
 BUILDS_DIR = ROOT / "dist"
 
 # uvicorn resolves protocol/loop implementations at runtime via importlib.
@@ -87,7 +92,7 @@ def _make_venv() -> Path:
     print(f"Creating venv at {VENV_DIR} (may take a minute) ...")
     sys.stdout.flush()
     subprocess.run(
-        [sys.executable, "-m", "venv", str(VENV_DIR)],
+        [sys.executable, "-m", "venv", *(["--system-site-packages"] if SYSTEM_SITE else []), str(VENV_DIR)],
         check=True,
         env={**os.environ, "PYTHONUNBUFFERED": "1"},
     )
@@ -101,7 +106,7 @@ def _make_venv() -> Path:
 def _pip(python: Path, *args: str) -> None:
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     subprocess.run(
-        [str(python), "-m", "pip", "install", *args],
+        [str(python), "-m", "pip", "install", *(["--ignore-installed"] if SYSTEM_SITE else []), *args],
         check=True,
         env=env,
     )
