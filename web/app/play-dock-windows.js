@@ -50,6 +50,7 @@ import {
   rafCoalesce,
   ribbonWidthPx,
   scrollToBottom,
+  scrollToRight,
 } from "./wb-utils.js";
 import { createWinBox } from "./winbox-factory.js";
 
@@ -726,8 +727,8 @@ export function createDockableWindow(config) {
     // gets it, for a table to add its share), shown in its right-click menu
     // under any actions build passes to setActions.
     fadeKey = null,
-    // Called with the body when restore() revives a kept one: reattaching
-    // resets its scroll positions.
+    // Called with the body when toggle() revives one kept by a nav detach:
+    // reattaching resets its scroll positions.
     onRestore = null,
   } = config;
   const mainDock = !config.getDockEl && !selfManaged;
@@ -1034,6 +1035,7 @@ export function createDockableWindow(config) {
   function toggle(events) {
     if (inst.mounted) { close(); return; }
     persistOpen(true);
+    const kept = body;
     if (!body) {
       const fade = fadeKey ? createPanelFade(null, { storageKey: fadeKey }) : null;
       // The body may hand its own actions to the window's right-click menu,
@@ -1062,6 +1064,7 @@ export function createDockableWindow(config) {
     } else {
       openFloat();
     }
+    if (kept) onRestore?.(kept);
   }
 
   function closeForNav() {
@@ -1071,9 +1074,7 @@ export function createDockableWindow(config) {
 
   function restore(events) {
     if (inst.mounted) return; // already open from a prior call
-    const kept = body;
     if (body || saved || openState()) toggle(events);
-    if (kept && inst.mounted) onRestore?.(kept);
   }
 
   // Open the window, or draw the eye to it where it already sits.
@@ -1461,6 +1462,8 @@ export const evalBar = createDockableWindow({
     return botTop - h - WIN_MARGIN;
   },
   build: buildEvalBarBody,
+  // Back at the newest bar; the body is the scroller.
+  onRestore: scrollToRight,
   dockOrder: DOCK_ORDER.ENGINE_EVAL,
   // Closable, with the Display settings switch as the way back. Open state is
   // the play_show_eval_graph setting, not localStorage placement state.
