@@ -2433,6 +2433,7 @@ body .side-popover.popover-floating {
 .cm-chessboard.green { --sb-arrow-secondary: #1f2937; --sb-arrow-alt: #c2410c; }
 .cm-chessboard.blue { --sb-arrow: #1e3a8a; --sb-arrow-secondary: darkgreen; --sb-arrow-alt: #15803d; }
 .cm-chessboard.black-and-white { --sb-arrow-secondary: #15803d; }
+.cm-chessboard.chess-club { --sb-arrow: #334155; --sb-arrow-secondary: #1e3a8a; }
 /* One end shape: the vendor's butt-ended secondary would leave a stacked
    round end showing. */
 .cm-chessboard .arrow .arrow-line { stroke-linecap: round; }
