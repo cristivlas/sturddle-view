@@ -726,6 +726,9 @@ export function createDockableWindow(config) {
     // gets it, for a table to add its share), shown in its right-click menu
     // under any actions build passes to setActions.
     fadeKey = null,
+    // Called with the body when restore() revives a kept one: reattaching
+    // resets its scroll positions.
+    onRestore = null,
   } = config;
   const mainDock = !config.getDockEl && !selfManaged;
 
@@ -1068,7 +1071,9 @@ export function createDockableWindow(config) {
 
   function restore(events) {
     if (inst.mounted) return; // already open from a prior call
+    const kept = body;
     if (body || saved || openState()) toggle(events);
+    if (kept && inst.mounted) onRestore?.(kept);
   }
 
   // Open the window, or draw the eye to it where it already sits.
@@ -1218,6 +1223,8 @@ const setUciPaused = (on) => { uciPaused = on; syncUciTitle(); };
 let uciLogApi = null;
 export function clearUciLog() { uciLogApi?.clear(); }
 
+const UCI_LOG_SCROLL_SEL = ".wb-uci-log-scroll";
+
 // Pause / Copy / Clear live in the window's right-click menu.
 function buildUciLogBody(events, { setOff, setActions }) {
   const body = document.createElement("div");
@@ -1249,7 +1256,7 @@ function buildUciLogBody(events, { setOff, setActions }) {
   const off = events.on((evt) => {
     if (evt.kind !== "uci_log" || uciPaused) return;
     const { dir, line } = evt.payload;
-    const scroller = body.querySelector(".wb-uci-log-scroll");
+    const scroller = body.querySelector(UCI_LOG_SCROLL_SEL);
     const pinned = isPinnedToBottom(scroller, AUTOSCROLL_SLACK_LINE_PX);
     const div = document.createElement("div");
     div.className = `wb-uci-log-line ${dir === ">" ? "uci-out" : "uci-in"}`;
@@ -1288,6 +1295,8 @@ const uciLog = createDockableWindow({
     return botTop - h - WIN_MARGIN;
   },
   build: buildUciLogBody,
+  // Back at the tail, like a rebuilt log (the studio event log).
+  onRestore: (body) => scrollToBottom(body.querySelector(UCI_LOG_SCROLL_SEL)),
   dockOrder: DOCK_ORDER.UCI_LOG,
   closable: true,
   railDockable: true,
