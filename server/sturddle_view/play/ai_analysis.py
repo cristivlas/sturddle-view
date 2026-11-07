@@ -1336,6 +1336,9 @@ class AIAnalysisCoordinator:
         # Monotonic per-turn sequence stamped on each emitted event;
         # the client uses it to dedupe replay vs live events.
         self._seq = 0
+        # monotonic() at run() start; None outside a turn. Feeds the panel's
+        # elapsed timer (done payload, replay of an in-flight turn).
+        self._turn_started: float | None = None
 
     async def run(
         self,
@@ -1396,6 +1399,7 @@ class AIAnalysisCoordinator:
             self._seq = 0
             self._replay_buffer = []
             self._turn_usage = None
+            self._turn_started = time.monotonic()
             # New turn -> the live position has moved; stale searches must
             # not satisfy this turn's requests.
             if self._search_cache is not None:
@@ -1519,6 +1523,7 @@ class AIAnalysisCoordinator:
                         done_payload["usage"] = dict(self._turn_usage)
                         if active.provider_name:
                             done_payload["provider"] = active.provider_name
+                    done_payload["elapsed_ms"] = self.turn_elapsed_ms()
                     await transcript.turn_end(done_payload)
                     await self._emit(
                         Event(
@@ -1530,6 +1535,7 @@ class AIAnalysisCoordinator:
                     self._task = None
                     self._cancel_token = None
                     self._active_provider = None
+                    self._turn_started = None
                     self._turn_context = ""
                     self._opening_turn = False
                     self._turn_book_move = None
@@ -2548,6 +2554,12 @@ class AIAnalysisCoordinator:
 
     def replay(self) -> list[dict]:
         return list(self._replay_buffer)
+
+    def turn_elapsed_ms(self) -> int | None:
+        """Milliseconds since the current turn's run() began; None outside one."""
+        if self._turn_started is None:
+            return None
+        return round((time.monotonic() - self._turn_started) * 1000)
 
     def turn_running(self) -> bool:
         """True while a turn is in flight, events emitted or not -- from the

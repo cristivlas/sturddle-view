@@ -122,6 +122,7 @@ const THINKING_LABEL_DONE_PREFIX = "Thought for ";
 
 const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
+const SECONDS_PER_HOUR = 3600;
 const SECONDS_PAD = 2;
 
 // Panel DOM classes shared between builders and selectors.
@@ -218,7 +219,13 @@ function buildBody() {
   // (Claude Code style). Empty until the provider reports usage.
   const statusTokens = document.createElement("span");
   statusTokens.className = "play-ai-status-tokens";
-  status.append(spinner, statusText, statusTokens);
+  // Elapsed timer: ticks while the turn runs, frozen at the total on done.
+  const statusTime = document.createElement("span");
+  statusTime.className = "play-ai-status-time";
+  const statusMeta = document.createElement("span");
+  statusMeta.className = "play-ai-status-meta";
+  statusMeta.append(statusTime, statusTokens);
+  status.append(spinner, statusText, statusMeta);
 
   // Scroll wrapper. Holds rounds + terminal; the status header above
   // it stays put because only this wrapper scrolls.
@@ -260,6 +267,7 @@ function buildBody() {
   root._status = status;
   root._statusText = statusText;
   root._statusTokens = statusTokens;
+  root._statusTime = statusTime;
   root._scroll = scroll;
   root._rounds = rounds;
   root._terminal = terminal;
@@ -335,6 +343,18 @@ function freezeThinkingLabel(entry, serverMs = null) {
   entry.thinking.summary.textContent =
     `${THINKING_LABEL_DONE_PREFIX}${formatThinkingDuration(entry.thinkingDurationMs)}`;
   entry.thinking.summary.classList.remove(IS_ACTIVE_CLASS);
+}
+
+// Elapsed-timer text: "0s".."59s", "m:ss", "h:mm:ss" (engine-only runs
+// are open-ended). Floors, unlike the thinking label, so it ticks from 0s.
+function formatElapsed(ms) {
+  const total = Math.max(0, Math.floor(ms / MS_PER_SECOND));
+  if (total < SECONDS_PER_MINUTE) return `${total}s`;
+  const pad = n => String(n).padStart(SECONDS_PAD, "0");
+  const h = Math.floor(total / SECONDS_PER_HOUR);
+  const m = Math.floor((total % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE);
+  const s = total % SECONDS_PER_MINUTE;
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
 function formatThinkingDuration(ms) {
@@ -679,11 +699,50 @@ function withStickyBottom(fn) {
   if (pinned) scrollToBottom(scroller);
 }
 
+// Status-line elapsed timer. performance.now() anchor of elapsed 0;
+// the interval re-renders once a second and stops itself once the
+// window is gone.
+const ELAPSED_TICK_MS = 1000;
+let elapsedAnchor = 0;
+let elapsedTimer = null;
+
+function renderElapsed(ms) {
+  if (inst.body) inst.body._statusTime.textContent = formatElapsed(ms);
+}
+
+function stopElapsedTimer() {
+  clearInterval(elapsedTimer);
+  elapsedTimer = null;
+}
+
+function tickElapsed() {
+  if (!inst.mounted) { stopElapsedTimer(); return; }
+  renderElapsed(performance.now() - elapsedAnchor);
+}
+
+// (Re)start the timer at `elapsedMs` -- 0 for a fresh turn, the server's
+// figure when rehydrating one already in flight.
+export function startAiElapsed(elapsedMs = 0) {
+  stopElapsedTimer();
+  elapsedAnchor = performance.now() - elapsedMs;
+  tickElapsed();
+  elapsedTimer = setInterval(tickElapsed, ELAPSED_TICK_MS);
+}
+
+// Freeze at the server's total when given, else wherever it stands.
+function freezeAiElapsed(totalMs) {
+  const live = elapsedTimer !== null;
+  stopElapsedTimer();
+  if (Number.isFinite(totalMs)) renderElapsed(totalMs);
+  else if (live) renderElapsed(performance.now() - elapsedAnchor);
+}
+
 export function resetAi() {
   if (!inst.body) return;
   inst.body._rounds.textContent = "";
   inst.body._terminal.textContent = "";
   inst.body._statusTokens.textContent = "";
+  startAiElapsed();
   inst.body._roundPanels.clear();
   inst.body._toolCallNodes.clear();
   inst.body._runningRows.length = 0;
@@ -1313,6 +1372,7 @@ export function setAiStatus(state) {
   if (!inst.body) return;
   const text = STATUS_TEXT[state] ?? "";
   if (state === AI_STATE.IDLE || !text) {
+    stopElapsedTimer();
     inst.body._status.hidden = true;
     inst.body._statusText.textContent = "";
     return;
@@ -1388,12 +1448,14 @@ export function markAiDone({
   rounds = null,
   usage = null,
   provider = null,
+  elapsedMs = null,
 } = {}) {
   // Terminal: switch the header text + drop the spinner. Markers (error >
   // roundCap > noResponse > noRecommendation > cancelled if any apply)
   // land in the dedicated terminal slot below the last round panel.
   const naturalCompletion =
     !error && !roundCap && !noResponse && !noRecommendation && !cancelled;
+  freezeAiElapsed(elapsedMs);
   setAiStatus(naturalCompletion ? AI_STATE.DONE : AI_STATE.IDLE);
   if (!inst.body) return;
   // Refresh the ticker from the done totals: a replay that delivers only

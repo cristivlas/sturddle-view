@@ -434,14 +434,19 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
 .winbox.sturddle-wb-ai .wb-body,
 .dock-slot-body:has(> .play-ai-body) { overflow: hidden; padding: 0; }
 .play-ai-status-text { line-height: 1; }
-/* Cumulative token ticker; muted so it reads as telemetry, not status.
-   Empty until the provider reports usage. */
-.play-ai-status-tokens {
+/* Elapsed timer + cumulative token ticker, right-aligned; muted so they
+   read as telemetry, not status. Tokens stay empty until the provider
+   reports usage. */
+.play-ai-status-meta {
   line-height: 1;
   margin-left: auto;
   font-size: 0.85em;
   opacity: 0.7;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.play-ai-status-time:not(:empty) + .play-ai-status-tokens:not(:empty)::before {
+  content: " \00b7  ";
 }
 /* Terminal token breakdown line under the final prose. */
 .play-ai-usage {

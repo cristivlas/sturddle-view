@@ -37,6 +37,7 @@ import {
   markAiDone,
   setAiUsage,
   setAiStatus,
+  startAiElapsed,
   setAiTitle,
   setOnUserCloseAi,
   setOnReanalyzeAi,
@@ -464,6 +465,7 @@ function dispatchAiEvent(aiCtx, evt) {
           rounds: p.rounds ?? null,
           usage: p.usage || null,
           provider: p.provider || null,
+          elapsedMs: p.elapsed_ms ?? null,
         });
         if (p.error) {
           // Provider errors can be many lines with URLs; the toast shows the
@@ -604,6 +606,8 @@ async function rehydrateAiPanel(ai, aiCtx, { adopt = false } = {}) {
     if (adopt || events.length > 0 || r?.running === true) {
       openAi();
       resetAi();
+      // Turn in flight: resume the timer from the server's clock.
+      if (Number.isFinite(r?.elapsed_ms)) startAiElapsed(r.elapsed_ms);
       for (const evt of events) dispatchAiEventOrdered(ai, aiCtx, evt);
       replayedThrough = ai.maxSeq;
     }
