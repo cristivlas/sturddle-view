@@ -3882,11 +3882,11 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .studio-boards-wall > * { width: 100%; }
 /* Boards laid out (tournament-studio.js fitWallToStrip): the wall is the strip
    under the centered grid; its footer centers there, unpadded so it fits thin
-   strips, hidden below 20px (about one 12px text line, the tallest row part). */
+   strips, hidden below 24px (the LLR marker, the tallest row part). */
 .studio-boards-wall.in-strip { padding-block: 0; container: studio-strip / size; }
 .studio-boards-wall.in-strip .iw-footer { margin-block: auto; }
 .studio-boards-wall.in-strip .iw-progress { padding-block: 0; }
-@container studio-strip (max-height: 20px) { .iw-footer { visibility: hidden; } }
+@container studio-strip (max-height: 24px) { .iw-footer { visibility: hidden; } }
 /* Empty state: the wall hosts a clickable New-tournament CTA. */
 .studio-boards-wall.is-empty { pointer-events: auto; }
 /* The footer takes right-clicks too (its frost menu, tournament-studio.js). */
@@ -3928,6 +3928,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 }
 /* An empty move list has nothing to read. */
 .has-wallpaper .game-view-moves:has(.move-list:empty) { backdrop-filter: none; }
+/* Nor does an info wall footer without a bar (a bare tally, or empty). */
+.has-wallpaper .iw-footer:not(:has(.iw-progress, .iw-llr)) { backdrop-filter: none; }
 /* Idle dock grips are solid so the wallpaper doesn't show between slots. */
 .has-wallpaper .dock-grip:not(:hover, .dragging, .play-rail-grip) { background: var(--panel); }
 /* Same for the arena list: each row fills the gap below it. A pseudo, not a
@@ -3985,30 +3987,31 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   border-radius: var(--wb-radius);
 }
 .iw-progress { display: flex; align-items: center; gap: 12px; flex: 1 1 auto; padding: 8px 12px; }
-.iw-progress .tournament-progress { flex: 1 1 auto; }
+.iw-progress .tournament-progress { flex: 1 1 auto; height: 10px; }
+.iw-progress .tournament-progress-label { font-size: 0.875rem; }
 
 /* SPRT LLR meter: H0 ---[marker]--- H1, the verdict gauge. */
 .iw-llr {
   display: flex; align-items: center; gap: 10px;
   flex: 1 1 auto;
   font-family: var(--wa-font-family-code); font-weight: 700;
-  font-size: 12px; letter-spacing: 0.12em; color: var(--fg);
+  font-size: 14px; letter-spacing: 0.12em; color: var(--fg);
 }
-/* Thin rail like the progress bar: muted rounded track, a slim marker walking
+/* Rail like the progress bar: muted rounded track, a slim marker walking
    it, a faint center pip at the H0/H1 pivot. */
 .iw-llr-track {
-  position: relative; flex: 1 1 auto; height: 6px;
+  position: relative; flex: 1 1 auto; height: 10px;
   background: var(--progress-track);
   border-radius: 6px;
 }
 /* Center pip at the H0/H1 pivot: same height as the marker, muted + wider. */
 .iw-llr-track::before {
   content: ""; position: absolute; top: 50%; left: 50%;
-  width: 3px; height: 16px; background: var(--muted); border-radius: 2px;
+  width: 3px; height: 20px; background: var(--muted); border-radius: 2px;
   transform: translate(-50%, -50%);
 }
 .iw-llr-mark {
-  position: absolute; top: 50%; width: 4px; height: 16px;
+  position: absolute; top: 50%; width: 4px; height: 20px;
   background: var(--wa-color-brand-60); border-radius: 2px;
   box-shadow: 0 0 4px rgba(var(--accent-rgb), 0.6);
   transform: translate(-50%, -50%);
