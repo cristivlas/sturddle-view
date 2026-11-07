@@ -2431,7 +2431,7 @@ body .side-popover.popover-floating {
    --sb-arrow-secondary the AI's pick, --sb-arrow-alt its book alternatives. */
 .cm-chessboard { --sb-arrow: #1e3a8a; --sb-arrow-secondary: #334155; --sb-arrow-alt: #0f766e; }
 .cm-chessboard.green { --sb-arrow-secondary: #1f2937; --sb-arrow-alt: #c2410c; }
-.cm-chessboard.blue { --sb-arrow: #9a3412; --sb-arrow-secondary: #1e3a8a; --sb-arrow-alt: #15803d; }
+.cm-chessboard.blue { --sb-arrow: #1e3a8a; --sb-arrow-secondary: darkgreen; --sb-arrow-alt: #15803d; }
 .cm-chessboard.black-and-white { --sb-arrow-secondary: #15803d; }
 /* One end shape: the vendor's butt-ended secondary would leave a stacked
    round end showing. */
