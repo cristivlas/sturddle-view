@@ -67,13 +67,9 @@ const reset = Object.freeze({
 });
 
 // A frosted panel's right-click menu: the frost sliders and Reset, while the
-// clicked panel is actually frosted (styles.css: only over a wallpaper, not
-// an empty move list). within: only right-clicks on these parts of panel (a
-// host whose other parts aren't frosted). Returns the teardown.
-export function attachFrostMenu(panel, within = null) {
-  const shown = (ev) => {
-    const part = within ? ev.target.closest(within) : panel;
-    return !!part && getComputedStyle(part).backdropFilter !== NO_FILTER;
-  };
+// panel is actually frosted (styles.css: only over a wallpaper, not an empty
+// move list). Returns the teardown.
+export function attachFrostMenu(panel) {
+  const shown = () => getComputedStyle(panel).backdropFilter !== NO_FILTER;
   return attachPanelMenu(panel, { sliders, tailActions: [reset], shown });
 }

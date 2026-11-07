@@ -3882,8 +3882,6 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 @container studio-strip (max-height: 24px) { .iw-footer { visibility: hidden; } }
 /* Empty state: the wall hosts a clickable New-tournament CTA. */
 .studio-boards-wall.is-empty { pointer-events: auto; }
-/* The footer takes right-clicks too (its frost menu, tournament-studio.js). */
-.studio-boards-wall .iw-footer { pointer-events: auto; }
 /* The empty-state pill hugs its text, not the wall's full width. */
 .studio-boards-wall > .studio-empty { width: fit-content; align-self: center; }
 /* Wallpaper (wallpaper.js): fills a view's region behind its content.
@@ -3902,9 +3900,21 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 [data-wallpaper-fit="center"] { --wallpaper-size: auto; }
 [data-wallpaper-fit="tile"] { --wallpaper-size: auto; --wallpaper-position: top left; --wallpaper-repeat: repeat; }
 /* Frost keeps see-through panels readable over the wallpaper. */
-.has-wallpaper :is(.game-view-engine, .game-view-moves, .game-view-meta, .iw-footer) {
+.has-wallpaper :is(.game-view-engine, .game-view-moves, .game-view-meta) {
   /* frost.js sets both on <html> when imported (by every view with frost). */
   backdrop-filter: blur(var(--frost-blur)) brightness(var(--frost-brightness));
+}
+/* The info wall footer sits on bare wallpaper: frosted glass that keeps the
+   image's hues (heavy blur, boosted saturation), dimmed and lightly tinted
+   toward the theme background so the bar and its label read. */
+.has-wallpaper .iw-footer {
+  backdrop-filter: blur(20px) saturate(1.8) brightness(0.75);
+  background: color-mix(in srgb, var(--bg) 25%, transparent);
+}
+/* Its bar stands out from the glass: a dark solid track, edged light. */
+.has-wallpaper .iw-footer .tournament-progress {
+  background: color-mix(in srgb, var(--bg) 80%, black);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 55%, transparent), 0 1px 4px rgb(0 0 0 / 0.5);
 }
 /* Board transparency (board-fade.js): the board, its box and the tournament
    windows holding one. The SVG group fades as one layer: its full-size border
@@ -3920,7 +3930,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 /* An empty move list has nothing to read. */
 .has-wallpaper .game-view-moves:has(.move-list:empty) { backdrop-filter: none; }
 /* Nor does an info wall footer without a bar (a bare tally, or empty). */
-.has-wallpaper .iw-footer:not(:has(.iw-progress, .iw-llr)) { backdrop-filter: none; }
+.has-wallpaper .iw-footer:not(:has(.iw-progress, .iw-llr)) { backdrop-filter: none; background: none; }
 /* Idle dock grips are solid so the wallpaper doesn't show between slots. */
 .has-wallpaper .dock-grip:not(:hover, .dragging, .play-rail-grip) { background: var(--panel); }
 /* Same for the arena list: each row fills the gap below it. A pseudo, not a
