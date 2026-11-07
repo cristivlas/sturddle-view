@@ -66,7 +66,8 @@
   --eval-gauge-w: 10px;
   --eval-gauge-gap: 3px;
   --eval-gauge-white: #e8e8e8;
-  --eval-gauge-black: #2d3139;
+  --eval-gauge-black: #3a3f48;
+  --eval-gauge-shadow: 0 2px 14px 4px rgba(0, 0, 0, 0.7);
   /* Play/view board frame; the gauge insets by it to match the squares. */
   --board-border-w: 1px;
   /* Ribbon button hover: icon scale and color. */
@@ -2019,6 +2020,7 @@ body .side-popover.popover-floating {
   display: flex;
   flex-direction: column-reverse;
   background: var(--eval-gauge-black);
+  box-shadow: var(--eval-gauge-shadow);
 }
 .eval-gauge.flipped { flex-direction: column; }
 .eval-gauge-fill {
