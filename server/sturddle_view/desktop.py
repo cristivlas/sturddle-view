@@ -35,6 +35,12 @@ _MIN_WINDOW_HEIGHT = 720
 # Most of a screen the window may take: the reported size includes panels
 # and the title bar, which pywebview can't measure.
 _SCREEN_FIT = 0.9
+# Linux builds without a bundled Qt need the distro's WebKitGTK (and, for
+# --linux-webview system builds, its PyGObject for this Python version).
+_LINUX_WEBVIEW_HINT = (
+    "Install WebKitGTK and PyGObject, e.g. on Debian/Ubuntu: "
+    "sudo apt install gir1.2-webkit2-4.1 python3-gi"
+)
 _STARTUP_ERROR_TITLE = f"{APP_NAME} could not start"
 _PORT_IN_USE_MESSAGE = (
     "Port {port} is already in use -- another copy may be running. "
@@ -342,7 +348,15 @@ def run_desktop(host: str, port: int, width: int, height: int) -> None:
     # cookie, then 303s to /ui/. The window's history never holds the token.
     url = entry_url(settings, window_host)
     api = JsApi(save_dialog_kind=webview.FileDialog.SAVE)
-    screens = webview.screens
+    try:
+        # A lazy proxy: list() forces the GUI backend to load inside the try.
+        screens = list(webview.screens)
+    except webview.WebViewException as e:
+        server.should_exit = True
+        thread.join(timeout=_SERVER_SHUTDOWN_TIMEOUT)
+        msg = f"{e}\n{_LINUX_WEBVIEW_HINT}" if sys.platform.startswith("linux") else str(e)
+        log.error("no web view backend: %s", msg)
+        raise SystemExit(msg) from e
     size, min_size = fit_to_screen(width, height, screens[0] if screens else None)
     window = webview.create_window(
         APP_NAME, url, width=size[0], height=size[1], min_size=min_size, js_api=api,
