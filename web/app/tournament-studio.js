@@ -20,7 +20,7 @@ import { copyToClipboard, reportError, toast } from "./dialogs.js";
 import { debounce, escapeHtml, flashWindow, markSelectable, rafCoalesce, roveTabStop, setStartTab, suppressModifierClickSelect, syncRovingTabStop, WB_EDGE_RIGHT_CLASS, WB_NO_SHADOW_CLASS, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
 import { createMultiSelect, selectionTargets } from "./multi-select.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS, STATUS_RANK } from "./tournament-events.js";
-import { newTournamentCta, removeSelected, ribbonHtml, setStartVerb, tournamentActions } from "./tournaments.js";
+import { emptyStateNodes, fastchessMissing, removeSelected, ribbonHtml, setStartVerb, tournamentActions, watchTournamentSettings } from "./tournaments.js";
 import { RESULT, SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, backfillEvent, createLiveState, seedFromDetail } from "./tournament-live-state.js";
 import { closeAllLiveGames, getLiveWindows, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow, replayTournamentGame, syncWaitingOverlays } from "./tournament-live-game.js";
@@ -36,7 +36,6 @@ import { mqMobile, mqMobileH } from "./breakpoints.js";
 import { attachRibbonOverflow } from "./ribbon-overflow.js";
 
 const TOURNAMENTS_ENDPOINT = "/api/tournaments";
-const TOURNAMENT_SETTINGS_ENDPOINT = "/api/tournament-settings";
 const SETTINGS_ENDPOINT = "/settings";
 const LOAD_FAIL_MSG = "Loading tournaments failed";
 const NO_ENGINES_MSG = "No active engines.";
@@ -65,10 +64,10 @@ const STUDIO_COLS = 4;
 const STUDIO_BOARD_CLASS = `sturddle-wb-studio no-move no-resize ${WB_NO_SHADOW_CLASS}`;
 // On the info wall while it fills only the strip under the board grid.
 const WALL_STRIP_CLASS = "in-strip";
-// The wall's frosted parts (styles.css), which carry the frost menu.
-// The info wall's progress footer, which styles.css hides in a strip too short.
+// The info wall's progress footer: the wall's frosted part (styles.css), which
+// carries the frost menu; styles.css hides it in a strip too short.
 const IW_FOOTER_SEL = ".iw-footer";
-const WALL_FROSTED_SEL = `${IW_FOOTER_SEL}, .studio-empty`;
+const WALL_FROSTED_SEL = IW_FOOTER_SEL;
 const STUDIO_PANE_SEL = ".studio-pane";
 const HIDDEN_VISIBILITY = "hidden";
 const OVERFLOW_SCROLL = "scroll";
@@ -370,7 +369,7 @@ function renderTourneys(ctx) {
 
 // ---- Ribbon actions ------------------------------------------------------
 // Reuse Arena's tournament verbs via the shared adapter; target the selected
-// tourney. New is always enabled; the rest follow status like Arena.
+// tourney. New follows fastchess like Arena; the rest follow status.
 function wireRibbonActions(ctx) {
   const q = (sel) => ctx.ribbonEl.querySelector(sel);
   ctx.ribbonBtns = {
@@ -400,6 +399,7 @@ function wireRibbonActions(ctx) {
 function syncRibbon(ctx) {
   const b = ctx.ribbonBtns;
   if (!b) return;
+  b.create.disabled = fastchessMissing(ctx.tournSettings);
   const t = selectedTournament(ctx);
   if (!t) {
     for (const k of ["start", "stop", "info", "edit", "duplicate", "remove"]) b[k].disabled = true;
@@ -902,9 +902,11 @@ function paintWall(ctx, hasBoards = anyBoardsShown()) {
   // (not only in regridBoards) so the idle first paint, which never re-grids,
   // still clips.
   ctx.boardsEl?.classList.toggle("no-boards", !hasBoards);
-  // No tourneys at all: the wall hosts the New-tournament CTA, not the footer.
-  ctx.boardsWallEl.classList.toggle("is-empty", ctx.tournaments.length === 0);
-  if (ctx.tournaments.length === 0) {
+  // No tourneys at all, or no fastchess to run them: the wall hosts the
+  // empty-state CTA, not the footer.
+  const empty = ctx.tournaments.length === 0 || fastchessMissing(ctx.tournSettings);
+  ctx.boardsWallEl.classList.toggle("is-empty", empty);
+  if (empty) {
     renderEmptyWall(ctx);
     return;
   }
@@ -913,12 +915,12 @@ function paintWall(ctx, hasBoards = anyBoardsShown()) {
   renderInfoWall(ctx.boardsWallEl, t);
 }
 
-// Empty-state CTA on the Boards wall: Arena's shared "+" prose, fired through
-// the ribbon's create verb.
+// Empty-state CTA on the Boards wall: Arena's shared prose, its "+" fired
+// through the ribbon's create verb.
 function renderEmptyWall(ctx) {
   const msg = document.createElement("p");
-  msg.className = "studio-empty";
-  msg.append(...newTournamentCta(() => ctx.actions?.create()));
+  msg.className = "studio-empty empty-pill";
+  msg.append(...emptyStateNodes(ctx.tournSettings, () => ctx.actions?.create()));
   ctx.boardsWallEl.replaceChildren(msg);
 }
 
@@ -1486,9 +1488,13 @@ export function mountTournamentStudio({ container, api, events, log }) {
   ctx.boardStyleReady = ctx.api("GET", SETTINGS_ENDPOINT)
     .then((s) => { ctx.boardStyleCached = s?.board_style || null; })
     .catch(() => {});
-  ctx.api("GET", TOURNAMENT_SETTINGS_ENDPOINT)
-    .then((s) => { ctx.tournSettings = s; })
-    .catch(() => {});
+  // Repaint only when fastchess turns missing or present: a repaint before the
+  // first list load would flash the no-tournaments CTA.
+  ctx.offSettings = watchTournamentSettings(ctx, (s) => {
+    const flipped = fastchessMissing(s) !== fastchessMissing(ctx.tournSettings);
+    ctx.tournSettings = s;
+    if (flipped) { paintWall(ctx); syncRibbon(ctx); }
+  });
 
   // Re-grid boards when one closes or the viewport changes; closing also
   // resets the spawning watch button. If the closed board was the maximized
@@ -1542,6 +1548,7 @@ function unmountStudio(ctx) {
   ctx.offEvents?.();
   ctx.scheduleRenderTourneys?.cancel();
   window.removeEventListener(APP_EVT.TOURNAMENTS_ROOT_CHANGED, ctx.reload);
+  ctx.offSettings?.();
   // Kill the pending-dim timer before the panes go away, so a late fire
   // can't touch detached nodes.
   setSelPending(ctx, false);

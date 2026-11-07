@@ -8,7 +8,7 @@
 // selected tournament. New / Sort / Window remain in the top menubar.
 
 import { mqMobile, mqMobileH, mqMobileHPlay } from "./breakpoints.js";
-import { apiErrorDetail, buildToastWithActions, confirm, deepLink, makeToastDismissBtn, OPEN_ENGINES_ACTION, openSettings, reportError, SETTINGS_TAB_TOURNAMENT, shakeField, showDialog, toast, TOAST_DURATION_MS } from "./dialogs.js";
+import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, SETTINGS_TAB_TOURNAMENT, settingsLink, shakeField, showDialog, toast, TOAST_DURATION_MS } from "./dialogs.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, sprtParamErrors, STATUS, STATUS_RANK } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
 import { baseCompare, scrollSortedRowIntoView } from "./col-sort.js";
@@ -173,7 +173,7 @@ const PANEL_HTML = `
             <wa-input class="tournaments-search" size="small" placeholder="${SEARCH_PLACEHOLDER}" clearable autocomplete="off"></wa-input>
           </div>
           <div class="tournaments-empty hidden">
-            <p class="empty-message"></p>
+            <p class="empty-message empty-pill"></p>
           </div>
 
           <ul class="tournaments-list" role="listbox" tabindex="0"></ul>
@@ -260,28 +260,11 @@ function syncWorkspaceOtherActive(ctx) {
 function renderList(ctx) {
   ctx.listEl.innerHTML = "";
 
-  const noFastchess = !ctx.settings || !ctx.settings.fastchess_detected;
-  const noTournaments = ctx.tournaments.length === 0;
-
-  if (noFastchess) {
+  const noFastchess = fastchessMissing(ctx.settings);
+  ctx.newBtn.disabled = noFastchess;
+  if (noFastchess || ctx.tournaments.length === 0) {
     ctx.emptyEl.classList.remove("hidden");
-    ctx.emptyMsg.replaceChildren();
-    ctx.emptyMsg.append(
-      "fastchess not configured \u2014 open ",
-      deepLink("Settings \u2192 Tournament", () => openSettings(SETTINGS_TAB_TOURNAMENT)),
-      " to set the binary path.",
-    );
-    ctx.newBtn.disabled = true;
-    ctx.selectedId = null;
-    ctx.ms.prune();
-    syncRibbon(ctx);
-    return;
-  }
-  ctx.newBtn.disabled = false;
-
-  if (noTournaments) {
-    ctx.emptyEl.classList.remove("hidden");
-    ctx.emptyMsg.replaceChildren(...newTournamentCta(() => ctx.actions.create()));
+    ctx.emptyMsg.replaceChildren(...emptyStateNodes(ctx.settings, () => ctx.actions.create()));
     ctx.selectedId = null;
     ctx.ms.prune();
     syncRibbon(ctx);
@@ -668,10 +651,40 @@ function guardedVerbs(ctx) {
   };
 }
 
-// Empty-list call to action shared by Arena and Studio: prose wrapping an
-// inline "+" button that fires New. Returns the nodes to append into a host
-// (text, button, text) so each perspective drops them into its own container.
-export function newTournamentCta(onCreate) {
+// Tournament settings for a view (Arena, Studio): loaded now and again on
+// every Settings save (another tab/dialog), newest response wins. Returns the
+// unsubscribe.
+export function watchTournamentSettings({ api, log }, onLoad) {
+  const load = lastWriteWins(
+    () => api("GET", "/api/tournament-settings"),
+    onLoad,
+    (e) => reportError({ log }, "Loading tournament settings failed", e),
+  );
+  load();
+  window.addEventListener(APP_EVT.SETTINGS_CHANGED, load);
+  return () => window.removeEventListener(APP_EVT.SETTINGS_CHANGED, load);
+}
+
+// fastchess known to be missing. Settings not loaded yet read as present, so
+// a view doesn't flash the setup prompt while they load.
+export function fastchessMissing(settings) {
+  return !!settings && !settings.fastchess_detected;
+}
+
+// Empty-state prose shared by Arena and Studio: the setup link while fastchess
+// is missing, else the New-tournament CTA. Returns the nodes to append into a
+// host so each perspective drops them into its own container.
+export function emptyStateNodes(settings, onCreate) {
+  if (!fastchessMissing(settings)) return newTournamentCta(onCreate);
+  return [
+    "fastchess not configured \u2014 open ",
+    settingsLink(SETTINGS_TAB_TOURNAMENT, "Settings \u2192 Tournament"),
+    " to set the binary path.",
+  ];
+}
+
+// Prose wrapping an inline "+" button that fires New (text, button, text).
+function newTournamentCta(onCreate) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "toast-icon-btn";
@@ -1659,11 +1672,6 @@ export function mountTournaments({ container, wallpaperEl, api, events, log }) {
     onChange: () => syncRibbon(ctx),
   });
 
-  ctx.loadSettings = lastWriteWins(
-    () => ctx.api("GET", "/api/tournament-settings"),
-    (data) => { ctx.settings = data; renderList(ctx); },
-    (e) => reportError({ log }, "Loading tournament settings failed", e),
-  );
   ctx.scheduleRenderList = rafCoalesce(() => renderList(ctx));
   ctx.scheduleProgress = rafCoalesce(() => updateProgressInPlace(ctx, ctx.progressPending));
   ctx.loadList = lastWriteWins(
@@ -1701,10 +1709,7 @@ export function mountTournaments({ container, wallpaperEl, api, events, log }) {
   ctx.onWsEvent = (evt) => onWsEvent(ctx, evt);
   const offEvents = ctx.events.on(ctx.onWsEvent);
 
-  // Settings can change in another tab/dialog -- pick those up too.
-  ctx.onSettingsChanged = () => ctx.loadSettings();
   ctx.onWorkspaceClosed = () => { syncWindowMenu(ctx); syncRibbon(ctx); };
-  window.addEventListener(APP_EVT.SETTINGS_CHANGED, ctx.onSettingsChanged);
   window.addEventListener(APP_EVT.WORKSPACE_CLOSED, ctx.onWorkspaceClosed);
   window.addEventListener(APP_EVT.TOURNAMENTS_ROOT_CHANGED, ctx.loadList);
 
@@ -1714,9 +1719,9 @@ export function mountTournaments({ container, wallpaperEl, api, events, log }) {
   // Visibility is driven by the Engines tab group (see engines.js):
   // the workspace stays hidden unless the Tournaments sub-tab is active.
 
-  // Fire-and-forget: lastWriteWins resolves undefined; state is populated
-  // asynchronously and rendered via renderList() inside each commit.
-  ctx.loadSettings();
+  // State is populated asynchronously and rendered via renderList() inside
+  // each commit.
+  const offSettings = watchTournamentSettings(ctx, (data) => { ctx.settings = data; renderList(ctx); });
   // After initial population, fire one immediate pollTick so a workspace
   // revealed on perspective re-mount catches up without waiting a full
   // POLL_INTERVAL_MS. No-op when nothing's running.
@@ -1755,7 +1760,7 @@ export function mountTournaments({ container, wallpaperEl, api, events, log }) {
       window.clearInterval(pollIntervalId);
       ctx.scheduleRenderList.cancel();
       ctx.scheduleProgress.cancel();
-      window.removeEventListener(APP_EVT.SETTINGS_CHANGED, ctx.onSettingsChanged);
+      offSettings();
       window.removeEventListener(APP_EVT.WORKSPACE_CLOSED, ctx.onWorkspaceClosed);
       window.removeEventListener(APP_EVT.TOURNAMENTS_ROOT_CHANGED, ctx.loadList);
       mqMobile.removeEventListener("change", ctx.onViewportChange);

@@ -661,6 +661,16 @@ export function deepLink(text, onClick) {
   return link;
 }
 
+/** In-prose "⚙ Settings" link opening `tab`. The gear sits inside the link:
+ *  same target, so no second tab stop. Icon-only gears use openSettingsAction. */
+export function settingsLink(tab, label = "Settings") {
+  const gear = document.createElement("wa-icon");
+  gear.name = "gear";
+  const link = deepLink(label, () => openSettings(tab));
+  link.prepend(gear);
+  return link;
+}
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 /** Mount an inline SVG icon that follows the parent's color and font-size,

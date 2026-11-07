@@ -313,8 +313,6 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
   margin-top: var(--play-ai-round-pad-top);
   margin-bottom: var(--play-ai-round-gap);
 }
-/* Margin, not a space: a space would underline with the link. */
-.play-ai-engine-only wa-icon { margin-right: 0.25em; }
 
 /* Revision: <details> folding away prose the AI corrected. Summary carries the
    model's self-correction line, body the struck flawed prose. Neutral (not
@@ -499,9 +497,6 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
   white-space: nowrap;
 }
 .play-ai-roundcap {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   margin-top: 8px;
   padding: 6px 8px;
   border-left: 3px solid var(--wa-color-warning-60, #d6a200);
@@ -509,12 +504,6 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
   font-size: 0.9em;
   opacity: 0.85;
 }
-.play-ai-roundcap-gear {
-  flex: none;
-  cursor: pointer;
-  opacity: 0.75;
-}
-.play-ai-roundcap-gear:hover { opacity: 1; }
 
 /* Thinking disclosure: dimmer + smaller than prose; user opt-in. */
 .play-ai-thinking {
@@ -1546,19 +1535,6 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
 }
 .no-engine-banner.hidden { display: none; }
 .no-engine-banner__msg { flex: 1; }
-.no-engine-banner__btn {
-  background: rgba(120, 144, 168, 0.22);
-  border: 1px solid rgba(120, 144, 168, 0.5);
-  border-radius: 4px;
-  padding: 3px 10px;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-}
-.no-engine-banner__btn:hover {
-  background: rgba(120, 144, 168, 0.38);
-  border-color: rgba(120, 144, 168, 0.7);
-}
 .play-grid {
   --rail-w: 240px;
   --grid-gap: 8px;
@@ -3697,8 +3673,16 @@ wa-dialog::part(body) {
 }
 .tournaments-empty {
   display: flex; align-items: center; justify-content: center;
-  min-height: 30vh; color: var(--muted);
+  min-height: 30vh;
 }
+/* Arena and Studio empty state: a solid pill hugging the text, readable over
+   any wallpaper. */
+.empty-pill {
+  padding: 8px 16px; border-radius: 8px;
+  background: var(--panel); color: var(--fg); text-align: center;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.45);
+}
+.empty-pill .toast-icon-btn { vertical-align: middle; }
 .tournaments-empty.hidden { display: none; }
 .engines-empty {
   position: absolute; inset: 0;
@@ -3813,6 +3797,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   color: inherit; text-decoration: underline; cursor: pointer;
 }
 .settings-deeplink:hover { color: var(--accent, #4a9eff); }
+/* settingsLink's gear. Margin, not a space: a space would underline with the link. */
+.settings-deeplink wa-icon { margin-right: 0.25em; }
 .about-dialog { text-align: center; padding: 8px 0 16px; }
 .about-name { font-size: 1.125rem; font-weight: 600; margin-bottom: 36px; }
 .about-meta { font-size: 0.8125rem; color: var(--muted); line-height: 1.6; }
@@ -3898,10 +3884,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .studio-boards-wall.is-empty { pointer-events: auto; }
 /* The footer takes right-clicks too (its frost menu, tournament-studio.js). */
 .studio-boards-wall .iw-footer { pointer-events: auto; }
-.studio-empty {
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-  color: var(--muted); text-align: center;
-}
+/* The empty-state pill hugs its text, not the wall's full width. */
+.studio-boards-wall > .studio-empty { width: fit-content; align-self: center; }
 /* Wallpaper (wallpaper.js): fills a view's region behind its content.
    Layer 1 is the view glow, layer 2 the fade overlay (app background at the
    fade percent), both full-size; layer 3 the image, sized per data-wallpaper-fit. */
@@ -3918,7 +3902,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 [data-wallpaper-fit="center"] { --wallpaper-size: auto; }
 [data-wallpaper-fit="tile"] { --wallpaper-size: auto; --wallpaper-position: top left; --wallpaper-repeat: repeat; }
 /* Frost keeps see-through panels readable over the wallpaper. */
-.has-wallpaper :is(.game-view-engine, .game-view-moves, .game-view-meta, .iw-footer, .studio-empty) {
+.has-wallpaper :is(.game-view-engine, .game-view-moves, .game-view-meta, .iw-footer) {
   /* frost.js sets both on <html> when imported (by every view with frost). */
   backdrop-filter: blur(var(--frost-blur)) brightness(var(--frost-brightness));
 }

@@ -20,13 +20,12 @@ import {
   scrollToBottom,
 } from "./wb-utils.js";
 import { STORAGE_KEY } from "./storage-keys.js";
-import { ACTIVATE_KEYS } from "./keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import {
   deepLink,
-  OPEN_AI_SETTINGS_ARIA,
   openSettings,
   SETTINGS_TAB_ANALYSIS,
+  settingsLink,
   errorActionsFor,
   buildToastActionButton,
 } from "./dialogs.js";
@@ -641,23 +640,12 @@ export function isAiOpen() {
 
 const ENGINE_ONLY_LEAD = "Engine analysis appears in ";
 const ENGINE_ONLY_MID = ". To use AI, switch providers in ";
-const SETTINGS_LINK = "Settings";
 // The window's right-click entry: it opens a dialog.
-const SETTINGS_MENU_LABEL = `${SETTINGS_LINK}...`;
-const SETTINGS_ICON = "gear";
+const SETTINGS_MENU_LABEL = "Settings...";
 const ENGINE_ONLY_CLASS = "play-ai-engine-only";
 
 function openAiSettings() {
   openSettings(SETTINGS_TAB_ANALYSIS);
-}
-
-// Gear inside the link: same target, so no second tab stop.
-function settingsLink() {
-  const gear = document.createElement("wa-icon");
-  gear.name = SETTINGS_ICON;
-  const link = deepLink(SETTINGS_LINK, openAiSettings);
-  link.prepend(gear);
-  return link;
 }
 
 // Engine-only stand-in body, spinner on until Stop; resetAi() clears it.
@@ -678,7 +666,7 @@ export function openAiEngineOnly(showLines) {
   note.className = ENGINE_ONLY_CLASS;
   note.append(
     ENGINE_ONLY_LEAD, deepLink(PV_TABLE_TITLE, showLines),
-    ENGINE_ONLY_MID, settingsLink(), ".",
+    ENGINE_ONLY_MID, settingsLink(SETTINGS_TAB_ANALYSIS), ".",
   );
   inst.body?._rounds.append(note);
   engineOnly = true;
@@ -1403,24 +1391,12 @@ export function appendAiDelta(text, roundIndex = 0, thinkingMs = null) {
   });
 }
 
-// A round-cap note with a gear that opens Settings -> Analysis. Shared by
-// the narrator tool-call cap and the verifier-rounds cap (same tab).
-function _roundCapNote(message) {
+// A round-cap note linking Settings -> Analysis between `lead` and `tail`.
+// Shared by the narrator tool-call cap and the verifier-rounds cap (same tab).
+function _roundCapNote(lead, tail) {
   const note = document.createElement("div");
   note.className = ROUNDCAP_CLASS;
-  const text = document.createElement("span");
-  text.textContent = message;
-  const gear = document.createElement("wa-icon");
-  gear.name = SETTINGS_ICON;
-  gear.className = "play-ai-roundcap-gear";
-  gear.setAttribute("role", "button");
-  gear.setAttribute("tabindex", "0");
-  gear.setAttribute("aria-label", OPEN_AI_SETTINGS_ARIA);
-  gear.addEventListener("click", openAiSettings);
-  gear.addEventListener("keydown", (e) => {
-    if (ACTIVATE_KEYS.has(e.key)) { e.preventDefault(); openAiSettings(); }
-  });
-  note.append(text, gear);
+  note.append(lead, settingsLink(SETTINGS_TAB_ANALYSIS), tail);
   return note;
 }
 
@@ -1513,12 +1489,14 @@ export function markAiDone({
     // any other terminal marker below.
     if (verifierRoundCap) {
       slot.append(_roundCapNote(
-        "A verification step stopped early at its round cap. Raise \"Max subagent rounds\" for fuller checks",
+        "A verification step stopped early at its round cap. Raise \"Max subagent rounds\" in ",
+        " for fuller checks.",
       ));
     }
     if (roundCap) {
       slot.append(_roundCapNote(
-        "Stopped early at the tool-call cap. Raise \"Max rounds\" to allow more rounds.",
+        "Stopped early at the tool-call cap. Raise \"Max rounds\" in ",
+        " to allow more rounds.",
       ));
       return;
     }

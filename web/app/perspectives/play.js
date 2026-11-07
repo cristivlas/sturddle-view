@@ -8,7 +8,7 @@ import { KIND, AI_KIND_PREFIX } from "../game-events.js";
 import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
 import { sidePovScore } from "../wb-utils.js";
-import { alert as showAlert, apiErrorObject, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportAiError, reportError, SETTINGS_PATH, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
+import { alert as showAlert, apiErrorObject, buildToastActionButton, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, OPEN_ENGINES_ACTION, openSettings, reportAiError, reportError, SETTINGS_PATH, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, revealPvTableWindow, isUciLogOpen, isPvTableOpen, UCI_LOG_TITLE, PV_TABLE_TITLE, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, clearUciLog, clearSearchLines, isMobileLayout, setPvLineBoard } from "../play-dock-windows.js";
 import {
@@ -655,9 +655,6 @@ const PLAY_PERSPECTIVE_HTML = `
       <div class="play-dock-left"></div>
       <div id="no-engine-banner" class="no-engine-banner hidden" role="status">
         <span class="no-engine-banner__msg">No engine configured.</span>
-        <button type="button" class="no-engine-banner__btn" aria-label="Open engine settings" title="Open engine settings">
-          <wa-icon name="gear"></wa-icon>
-        </button>
       </div>
       <div class="play-board-host"></div>
       <div class="play-ai-inline inline-empty" aria-label="AI analysis"></div>
@@ -2415,7 +2412,6 @@ export const playPerspective = {
     const editConfirmBtn = root.querySelector("#edit-confirm");
     const editCancelBtn = root.querySelector("#edit-cancel");
     const noEngineBanner = root.querySelector("#no-engine-banner");
-    const noEngineBannerBtn = noEngineBanner.querySelector(".no-engine-banner__btn");
     // DOM refs read by lifted module-level handlers (edit popovers,
     // refreshButtons). Mount keeps the bare consts for listener wiring.
     state.el = {
@@ -2447,7 +2443,7 @@ export const playPerspective = {
         setNoEngine(false);
       }
     }
-    noEngineBannerBtn.addEventListener("click", () => openSettings(SETTINGS_TAB_ENGINES));
+    noEngineBanner.append(buildToastActionButton(OPEN_ENGINES_ACTION));
     const onEnginesChanged = (e) => {
       setNoEngine(!e.detail?.activeId);
     };
