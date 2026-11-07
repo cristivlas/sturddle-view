@@ -54,9 +54,9 @@ const PANE_LOADING_HOST_ACTIVE_CLASS = "is-loading";
 // haven't signalled ready by now (a stuck fetch must not hide the UI forever).
 const READY_TIMEOUT_MS = 4000;
 
-// Boards region grid: always 4 columns; cells stretch to fill the region
-// width (keeping the board square), clamped to the Arena minimum board
-// width -- below that the row overflows and scrolls. Unlimited rows scroll
+// Boards region grid: 4 columns (fewer boards widen to fill the row); cells
+// stretch to fill the region width, clamped to the Arena minimum board width
+// -- below that the row overflows and scrolls. Unlimited rows scroll
 // vertically. Boards are laid out (no-move), absolutely positioned, edge to
 // edge: their right/bottom borders are the seams (see the CSS).
 const STUDIO_COLS = 4;
@@ -783,6 +783,9 @@ function renderGamesPane(ctx) {
 // a 4-column grid (see boardCell for sizing). No free drag; re-gridded on
 // open/close/resize.
 
+// Boards taking grid slots (minimized/maximized boards don't).
+const laidOutCount = () => getLiveWindows().filter((wb) => !wb.min && !wb.max).length;
+
 // 4 columns; 1 when narrow and tall (phone portrait). Short = phone landscape.
 function studioCols() {
   return mqMobile.matches && !mqMobileH.matches ? 1 : STUDIO_COLS;
@@ -790,6 +793,7 @@ function studioCols() {
 
 // Cell size: width fills the region across the columns (>= the Arena board
 // minimum), height keeps the board square (width + the fixed window chrome).
+// Desktop: fewer boards than columns widen, at the full grid's height.
 // Height is whole device px off the narrowest column (snapped widths vary by
 // 1px), so no board's own square cap (width + chrome) trims it shorter.
 // x0/dpr: the region's page x and the device pixel ratio, for slotRect.
@@ -798,14 +802,16 @@ function studioCols() {
 // pending: boards not yet open but about to take slots. width: the region's
 // content width to fit (default: as laid out now).
 function boardCell(ctx, pending = 0, width = ctx.boardsEl?.clientWidth ?? 0) {
-  const cols = studioCols();
+  const gridCols = studioCols();
   const el = ctx.boardsEl;
   const dpr = window.devicePixelRatio;
+  const laidOut = laidOutCount() + pending;
+  const cols = mqMobile.matches ? gridCols : Math.max(1, Math.min(gridCols, laidOut));
   const fit = width / cols;
   const cw = Math.max(LIVE_MIN_WIDTH, fit);
-  const chDev = Math.floor(cw * dpr) + Math.floor((LIVE_MIN_HEIGHT() - LIVE_MIN_WIDTH) * dpr);
+  const gridCw = Math.max(LIVE_MIN_WIDTH, width / gridCols);
+  const chDev = Math.floor(gridCw * dpr) + Math.floor((LIVE_MIN_HEIGHT() - LIVE_MIN_WIDTH) * dpr);
   const ch = chDev / dpr;
-  const laidOut = getLiveWindows().filter((wb) => !wb.min && !wb.max).length + pending;
   const gridH = Math.ceil(laidOut / cols) * ch;
   const centered = !mqMobile.matches && !ctx._maxWb;
   const spare = centered ? Math.max(0, (el?.clientHeight ?? 0) - gridH) : 0;
@@ -1109,9 +1115,9 @@ function remaximize(wb) {
   queueMicrotask(() => { if (wb.g) wb.maximize().focus(); });
 }
 
-// Next laid-out slot index (minimized/maximized boards don't occupy slots).
+// Next laid-out slot.
 function nextSlotRect(ctx) {
-  return studioSlotRect(ctx, getLiveWindows().filter((wb) => !wb.min && !wb.max).length, 1);
+  return studioSlotRect(ctx, laidOutCount(), 1);
 }
 
 // Shared post-open: wire hooks, re-grid, repaint tray, persist.
@@ -1320,7 +1326,7 @@ function wireBoardKeyboard(ctx) {
   wireArrowKeyNav(ctx.boardsEl, {
     rows: BOARD_SEL,
     selected: BOARD_CURRENT_SEL,
-    cols: studioCols,
+    cols: () => boardCell(ctx).cols,
     // Boards are absolutely placed; landOnBoard scrolls the region by the
     // WinBox geometry instead, so the generic row scroller would double up.
     scroll: () => {},
