@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import socket
+import sys
 import threading
 from html import escape as html_escape
 from pathlib import Path
@@ -282,7 +283,8 @@ def run_desktop(host: str, port: int, width: int, height: int) -> None:
     # Build the app eagerly so we can hand the same instance to uvicorn
     # AND keep a reference for the close-confirm handler (reads
     # app.state.tournament_orch to decide whether to prompt).
-    app = create_app(settings=settings)
+    # Linux's GTK web view needs eval for pywebview's JS bridge (app.py CSP).
+    app = create_app(settings=settings, allow_eval=sys.platform.startswith("linux"))
 
     config = uvicorn.Config(
         app,
