@@ -1087,6 +1087,13 @@ function setAnalyzing(state, v) {
   // The session is server-owned: whoever ended it, every client drops the
   // panel -- its replay buffer is gone, so it can't be restored anyway.
   if (was && !state.analyzing && !state.analysisTransitionInFlight) teardownAiPanel(state.aiShared);
+  // Name the UCI Log after the analysis engine (may differ from the play
+  // engine) however the session began: here, elsewhere, or before a reload.
+  if (!was && state.analyzing) {
+    resolveAnalysisEngineName(state)
+      .then((n) => { if (state.analyzing) setUciLogEngine(n); })
+      .catch(() => {});
+  }
 }
 
 // Re-apply the stashed AI recommendation arrow after a board_update wiped
@@ -1877,11 +1884,6 @@ async function startAnalysisFromUiImpl(state) {
   // toast and dropped the dock container -- opening windows now would float
   // them over the next perspective.
   if (state.unmounted) return;
-  // Name the UCI Log after the analysis engine (may differ from the play
-  // engine). Async + best-effort so it can't delay or fail the start.
-  resolveAnalysisEngineName(state)
-    .then((n) => { if (state.analyzing) setUciLogEngine(n); })
-    .catch(() => {});
   restoreViewAnalysisWindows(state.ctx.events);
 }
 
@@ -2223,7 +2225,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         }
       }
       // Title the UCI Log with the engine whose traffic it shows. The
-      // analysis engine is named at analysis start; here we cover the play
+      // analysis engine is named in setAnalyzing; here we cover the play
       // engine (or bare when none, e.g. viewing an imported game).
       if (!state.analyzing) setUciLogEngine(evt.payload.engine_name || "");
       // Engine's (non-analysis) turn just started -- drop the prior turn's
