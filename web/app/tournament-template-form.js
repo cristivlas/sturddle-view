@@ -260,6 +260,7 @@ export function mountTournamentTemplateForm({
   pathRow = null,
   inheritedBook = null,
   rawBookEmit = false,
+  fallbackRounds = null,
 }) {
   container.innerHTML = "";
   container.classList.add("tournament-template-form");
@@ -352,6 +353,10 @@ export function mountTournamentTemplateForm({
   // it, so Rounds is always emitted there and survives in default_template).
   let sprtOn = false;
   function applySprt(on) {
+    // An SPRT template carries no rounds; turning SPRT off refills the field.
+    if (sprtOn && !on && !inputs.rounds.value && fallbackRounds != null) {
+      inputs.rounds.value = String(fallbackRounds);
+    }
     sprtOn = on;
     if (on) {
       if (typeSelect.value !== "roundrobin") {
