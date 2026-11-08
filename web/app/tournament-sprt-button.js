@@ -7,7 +7,7 @@
 // SPRT on forces round-robin and self-termination via the host form (onChange).
 
 import { showDialog } from "./dialogs.js";
-import { guard } from "./wb-utils.js";
+import { guard, isObject } from "./wb-utils.js";
 import { SPRT_DEFAULTS, sprtParamErrors } from "./tournament-events.js";
 
 const PARAM_KEYS = ["elo0", "elo1", "alpha", "beta"];
@@ -78,7 +78,7 @@ function openParamsPopup({ params }) {
 export function mountSprtButton({ host, initialSprt, sprtDefaults, onChange, onPersist }) {
   let on = !!initialSprt;
   let params = { ...SPRT_DEFAULTS, ...(sprtDefaults || {}),
-    ...(initialSprt && typeof initialSprt === "object" ? initialSprt : {}) };
+    ...(isObject(initialSprt) ? initialSprt : {}) };
   let available = false;
 
   host.classList.add("sprt-control");

@@ -17,6 +17,7 @@ import {
 import { FADE_MAX_PCT, FADE_STEP_PCT } from "./panel-fade.js";
 import { ribbonAnchor } from "./ribbon-overflow.js";
 import { applyThemePreset } from "./theme.js";
+import { rememberThemePreset, syncThemePreset } from "./theme-preset.js";
 import { escapeHtml, PCT_SUFFIX, WALLPAPER_CLASS } from "./wb-utils.js";
 
 const WALLPAPER_PATH = "/wallpaper";
@@ -182,7 +183,11 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
     }
     if (mobile) closeMenu();
   };
-  const apply = (next) => { info = cachedInfo = next; paint(); };
+  const apply = (next) => {
+    info = cachedInfo = next;
+    syncThemePreset(next.theme);
+    paint();
+  };
   // A failed save repaints the stored style and closes the menu, so a reopen
   // renders the slider from it too.
   const putStyle = (patch) => api("PUT", STYLE_PATH, patch).then(apply, (e) => {
@@ -231,6 +236,7 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
     } else if (item.dataset.theme) {
       // A reload paints the new wallpaper itself; painting first would show twice.
       api("PUT", `${THEME_PATH}/${encodeURIComponent(item.dataset.theme)}`).then(async ({ preset, ...next }) => {
+        rememberThemePreset(next.theme, preset);
         if (!await applyThemePreset(preset, api)) apply(next);
       }).catch((e) => reportError(errCtx, THEME_FAIL_MSG, e));
     } else if (item.dataset.item === ITEM.CHOOSE) {

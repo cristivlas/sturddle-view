@@ -2,6 +2,8 @@ import { scrollRowIntoView } from "./col-sort.js";
 import { mqMobile } from "./breakpoints.js";
 import { ACTIVATE_KEYS } from "./keys.js";
 
+export const isObject = (v) => v !== null && typeof v === "object";
+
 // Split at the last / or \ (trailing ones ignored) into { dir, name };
 // dir is "" when there is none. Roots keep their separator ("/", "C:\").
 export function splitPath(p) {
