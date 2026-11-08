@@ -8,19 +8,8 @@ import { BOARD_STYLES, DEFAULT_BOARD_STYLE } from "./board-styles.js";
 import { SETTINGS_PATH } from "./dialogs.js";
 import { setFrost } from "./frost.js";
 import { setPanelFades } from "./panel-fade.js";
-import { STORAGE_KEY } from "./storage-keys.js";
-
-// A preset's panel names and the fade each sets.
-const PANEL_FADE_KEY = Object.freeze({
-  ai: STORAGE_KEY.AI_FADE,
-  evalbar: STORAGE_KEY.EVALBAR_FADE,
-  ucilog: STORAGE_KEY.UCILOG_FADE,
-  pvtable: STORAGE_KEY.PVTABLE_FADE,
-  studioLeft: STORAGE_KEY.STUDIO_LEFT_FADE,
-  studioRight: STORAGE_KEY.STUDIO_RIGHT_FADE,
-});
-
-const isObject = (v) => v !== null && typeof v === "object";
+import { PANEL_FADE_KEY } from "./theme-preset.js";
+import { isObject } from "./wb-utils.js";
 
 // Stores a new board style; true when it changed.
 async function putBoardStyle(board, api) {

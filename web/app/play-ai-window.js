@@ -15,6 +15,7 @@ import { pvFrames } from "./pv-walk.js";
 import { FEN } from "../vendor/cm-chessboard/src/model/Position.js";
 import {
   AUTOSCROLL_SLACK_PROSE_PX,
+  isObject,
   isPinnedToBottom,
   markSelectable,
   scrollToBottom,
@@ -866,8 +867,8 @@ const VERDICT_HOLDS = "holds";
 const MOVE_SURVIVED_KEY = "move_survived";
 
 function verdictKind(output) {
-  if (output && typeof output === "object" && output[MOVE_SURVIVED_KEY]) return VERDICT_HOLDS;
-  const verdict = output && typeof output === "object" ? output.verdict : null;
+  if (isObject(output) && output[MOVE_SURVIVED_KEY]) return VERDICT_HOLDS;
+  const verdict = isObject(output) ? output.verdict : null;
   if (typeof verdict !== "string") return null;
   const head = verdict.trimStart().toLowerCase();
   if (head.startsWith(VERDICT_REFUTED)) return VERDICT_REFUTED;
@@ -900,7 +901,7 @@ function attachVerdictProse(line, output) {
   // Delegate rows only -- same scope as the verdict badge, so a future tool
   // that happens to return a `verdict` key never grows a prose panel.
   if (!hasOwnDot(line, DELEGATE_DOT_CLASS)) return;
-  const verdict = output && typeof output === "object" ? output.verdict : null;
+  const verdict = isObject(output) ? output.verdict : null;
   if (typeof verdict !== "string" || !verdict.trim()) return;
   if (line.querySelector(`:scope > .${VERDICT_PROSE_CLASS}`)) return;
   const kind = verdictKind(output);

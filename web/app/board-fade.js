@@ -10,6 +10,9 @@ import { PCT_SUFFIX } from "./wb-utils.js";
 
 const OPACITY_VAR = "--board-opacity";
 const FULL_OPACITY_PCT = 100;
+// Grid lines (styles.css) show only past this much transparency.
+const BOARD_GRID_MIN_PCT = 70;
+const GRID_ATTR = "data-board-grid";
 
 const stored = loadJson(STORAGE_KEY.BOARD_FADE);
 let pct = isFadePct(stored) ? stored : FADE_DEFAULT_PCT;
@@ -21,6 +24,7 @@ export function paintBoardFade(next) {
   pct = next;
   const opacity = FULL_OPACITY_PCT * (1 - pct / FADE_MAX_PCT);
   document.documentElement.style.setProperty(OPACITY_VAR, `${opacity}${PCT_SUFFIX}`);
+  document.documentElement.toggleAttribute(GRID_ATTR, pct > BOARD_GRID_MIN_PCT);
 }
 paintBoardFade(pct);
 

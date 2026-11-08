@@ -11,9 +11,9 @@
     "evalbar": 10,
     "ucilog": 10,
     "pvtable": 10,
-    "studioLeft": 16,
-    "studioRight": 16
+    "studioLeft": 12,
+    "studioRight": 12
   },
   "board": "classic",
-  "boardFade": 35
+  "boardFade": 30
 }

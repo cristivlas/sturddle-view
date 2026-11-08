@@ -8,7 +8,7 @@ import { createTable, RENDER_REASON } from "./data-table.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import { collapseWhitespace } from "./text-utils.js";
-import { escapeHtml, markSelectable, rafCoalesce, splitPath, suppressMultiClickSelect } from "./wb-utils.js";
+import { escapeHtml, isObject, markSelectable, rafCoalesce, splitPath, suppressMultiClickSelect } from "./wb-utils.js";
 
 const FS_ENTRY_CLASS = "fs-entry";
 const FS_SELECTED_CLASS = "selected";
@@ -581,7 +581,7 @@ export function apiErrorDetail(error) {
   try {
     const parsed = JSON.parse(body);
     const detail = parsed.detail;
-    if (detail && typeof detail === "object") return detail.message || JSON.stringify(detail);
+    if (isObject(detail)) return detail.message || JSON.stringify(detail);
     // Empty/missing detail carries no info -- echoing the raw envelope back
     // ({"detail":""}) is useless. Surface the parsed body if it has other
     // keys, else fall back to the HTTP status.
@@ -603,7 +603,7 @@ export function apiErrorObject(error) {
   try {
     const parsed = JSON.parse(m[1]);
     const detail = parsed.detail;
-    return (detail && typeof detail === "object") ? detail : null;
+    return isObject(detail) ? detail : null;
   } catch {
     return null;
   }

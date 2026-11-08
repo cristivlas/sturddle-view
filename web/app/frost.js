@@ -5,6 +5,7 @@
 import { attachPanelMenu, RESET_LABEL } from "./panel-fade.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson } from "./storage.js";
+import { themeFrost } from "./theme-preset.js";
 import { PCT_SUFFIX } from "./wb-utils.js";
 
 const BLUR_VAR = "--frost-blur";
@@ -55,12 +56,17 @@ const sliders = Object.entries(SLIDERS).map(([key, spec]) => ({
   save,
 }));
 
-const isDefault = () => Object.entries(SLIDERS).every(([key, spec]) => frost[key] === spec.initial);
+// Reset restores the active theme's value, else the default.
+function resetValue(key, spec) {
+  const theme = themeFrost(key);
+  return inRange(theme, spec) ? theme : spec.initial;
+}
+const isReset = () => Object.entries(SLIDERS).every(([key, spec]) => frost[key] === resetValue(key, spec));
 const reset = Object.freeze({
   label: RESET_LABEL,
-  disabled: isDefault,
+  disabled: isReset,
   run: () => {
-    for (const [key, spec] of Object.entries(SLIDERS)) frost[key] = spec.initial;
+    for (const [key, spec] of Object.entries(SLIDERS)) frost[key] = resetValue(key, spec);
     apply();
     save();
   },

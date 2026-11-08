@@ -16,6 +16,7 @@ import {
 } from "./dialogs.js";
 import { STATUS } from "./tournament-events.js";
 import { ENGINES_NO_PROBE_PATH } from "./engines.js";
+import { isObject } from "./wb-utils.js";
 
 const CONFIRM_WIPE_QS = "confirm_wipe=true";
 const FASTCHESS_CHECK_PATH = "/api/tournament-settings/fastchess-check";
@@ -46,7 +47,7 @@ function buildRestartConfirm(name, games) {
 export function engineRefFromRegistry(e) {
   const ref = { id: e.id, name: e.name, cmd: e.path };
   if (Array.isArray(e.args) && e.args.length) ref.args = e.args.slice();
-  if (e.env && typeof e.env === "object" && Object.keys(e.env).length) {
+  if (isObject(e.env) && Object.keys(e.env).length) {
     ref.env = { ...e.env };
   }
   return ref;

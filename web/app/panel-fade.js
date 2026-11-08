@@ -14,6 +14,7 @@ import {
   wireSliderRow,
 } from "./menu-nav.js";
 import { loadJson, saveJson } from "./storage.js";
+import { themePanelFade } from "./theme-preset.js";
 import { escapeHtml, PCT_SUFFIX } from "./wb-utils.js";
 
 // Panel-menu action labels shared across panels.
@@ -194,8 +195,10 @@ export function createPanelFade(panel, { storageKey }) {
       apply();
     },
     save() { saveJson(storageKey, pct); },
+    // To the active theme's fade, else the default.
     reset() {
-      this.set(FADE_DEFAULT_PCT);
+      const theme = themePanelFade(storageKey);
+      this.set(isFadePct(theme) ? theme : FADE_DEFAULT_PCT);
       this.save();
     },
     rescan,

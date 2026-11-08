@@ -45,6 +45,7 @@ import {
   flashElement,
   flashWindow,
   headerBottomPx,
+  isObject,
   isPinnedToBottom,
   markSelectable,
   rafCoalesce,
@@ -111,7 +112,7 @@ const DEFAULT_DOCK_GROW = 1.0;
 
 function loadDockGrows() {
   const parsed = loadJson(DOCK_GROW_KEY, {});
-  return (parsed && typeof parsed === "object") ? parsed : {};
+  return isObject(parsed) ? parsed : {};
 }
 
 function saveDockGrows(grows) {
@@ -404,7 +405,7 @@ const DOCK_DEST_RAIL = "rail";
 
 function loadDockDests() {
   const parsed = loadJson(DOCK_DEST_KEY, {});
-  return (parsed && typeof parsed === "object") ? parsed : {};
+  return isObject(parsed) ? parsed : {};
 }
 
 function destFor(key, fallback) {
