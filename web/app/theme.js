@@ -1,7 +1,8 @@
 // Themes: a bundled wallpaper plus a preset tuned for it. The server sets the
 // image and the preset's fit/fade; this applies the rest: frost, panel and
 // board fades here, the board style as the display setting. Keys a preset
-// leaves out stay as they are.
+// leaves out stay as they are. Arrow colors ({ engine?, ai?, alt? }) are
+// painted by theme-preset.js while the theme is active.
 
 import { setBoardFade } from "./board-fade.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE } from "./board-styles.js";

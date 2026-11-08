@@ -17,8 +17,9 @@ metadata stripped) and a ``<name>.json`` preset tuned for it:
 - The board style is the one whose dark squares best match the image's
   dominant hue; a muted image gets the most neutral board.
 
-The preset's ``name`` (the menu label, the file stem at first) is edited by
-hand; --force keeps it. An existing preset is kept unless --force.
+The preset's ``name`` (the menu label, the file stem at first) and ``arrows``
+(board arrow colors) are edited by hand; --force keeps them. An existing
+preset is kept unless --force.
 
 Usage:
   python scripts/prep_wallpaper.py photo.jpg
@@ -53,8 +54,9 @@ QUALITY = 80
 # WebP encoder effort (0..6): past this, size gains are slight and slow.
 WEBP_METHOD = 4
 FIT = "cover"
-# Preset key for the theme's display name.
+# Preset keys edited by hand, kept on --force: display name, arrow colors.
 NAME_KEY = "name"
+ARROWS_KEY = "arrows"
 
 # The simulated screen: SCREEN_W CSS px wide, rendered at SIM_SCALE for speed.
 SCREEN_W = 1920
@@ -349,6 +351,8 @@ def main() -> None:
         "board": board,
         "boardFade": BOARD_FADE,
     }
+    if ARROWS_KEY in old:
+        preset[ARROWS_KEY] = old[ARROWS_KEY]
     preset_path.write_text(json.dumps(preset, indent=2) + "\n", encoding="utf-8")
     flag = "" if t["readable"] else "  UNREADABLE: hand-tune"
     print(f"{name}: fade {t['fade']} blur {t['blur']} bright {t['brightness']} panels {t['panel_fade']}"

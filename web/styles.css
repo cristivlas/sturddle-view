@@ -68,6 +68,7 @@
   --eval-gauge-white: #e8e8e8;
   --eval-gauge-black: #3a3f48;
   --eval-gauge-shadow: 0 2px 14px 4px rgba(0, 0, 0, 0.7);
+  --board-shadow: var(--eval-gauge-shadow);
   /* Play/view board frame; the gauge insets by it to match the squares. */
   --board-border-w: 1px;
   /* Ribbon button hover: icon scale and color. */
@@ -2264,6 +2265,7 @@ body .side-popover.popover-floating {
   --board-edge: #333;
   background: var(--board-bg);
   border: var(--board-border-w) solid var(--board-edge);
+  box-shadow: var(--board-shadow);
   width: var(--board-max-px, 100%);
   height: auto;
   align-self: center;
@@ -2411,12 +2413,13 @@ body .side-popover.popover-floating {
 .clock-row.clock-disabled { opacity: 0.5; }
 
 /* Arrow colors, per board style below: --sb-arrow the engine's line,
-   --sb-arrow-secondary the AI's pick, --sb-arrow-alt its book alternatives. */
-.cm-chessboard { --sb-arrow: #1e3a8a; --sb-arrow-secondary: #334155; --sb-arrow-alt: #0f766e; }
-.cm-chessboard.green { --sb-arrow-secondary: #1f2937; --sb-arrow-alt: #c2410c; }
-.cm-chessboard.blue { --sb-arrow: #1e3a8a; --sb-arrow-secondary: #b45309; --sb-arrow-alt: #15803d; }
-.cm-chessboard.black-and-white { --sb-arrow-secondary: #286586; }
-.cm-chessboard.chess-club { --sb-arrow: #334155; --sb-arrow-secondary: #1e3a8a; }
+   --sb-arrow-secondary the AI's pick, --sb-arrow-alt its book alternatives.
+   A theme's --theme-arrow* (set on the root) wins over each. */
+.cm-chessboard { --sb-arrow: var(--theme-arrow, #1e3a8a); --sb-arrow-secondary: var(--theme-arrow-secondary, #334155); --sb-arrow-alt: var(--theme-arrow-alt, #0f766e); }
+.cm-chessboard.green { --sb-arrow-secondary: var(--theme-arrow-secondary, #1f2937); --sb-arrow-alt: var(--theme-arrow-alt, #c2410c); }
+.cm-chessboard.blue { --sb-arrow-secondary: var(--theme-arrow-secondary, #7e22ce); --sb-arrow-alt: var(--theme-arrow-alt, #15803d); }
+.cm-chessboard.black-and-white { --sb-arrow-secondary: var(--theme-arrow-secondary, #286586); }
+.cm-chessboard.chess-club { --sb-arrow: var(--theme-arrow, #334155); --sb-arrow-secondary: var(--theme-arrow-secondary, #166534); }
 /* One end shape: the vendor's butt-ended secondary would leave a stacked
    round end showing. */
 .cm-chessboard .arrow .arrow-line { stroke-linecap: round; }
@@ -2455,19 +2458,20 @@ body .side-popover.popover-floating {
   --sb-dark: #2a3a4a;
   --sb-light: rgb(112, 134, 134);
   --sb-marker: turquoise;
-  --sb-arrow: turquoise;
-  --sb-arrow-secondary: rgb(18, 82, 179);
-  --sb-arrow-alt: #f59e0b;
+  --sb-arrow: var(--theme-arrow, turquoise);
+  --sb-arrow-secondary: var(--theme-arrow-secondary, rgb(18, 82, 179));
+  --sb-arrow-alt: var(--theme-arrow-alt, #f59e0b);
 }
 
 /* Wine: classic pieces over a darkish wine board. */
 .cm-chessboard.sturddle-wine {
   --sb-dark: #743042;
   --sb-light: #c3a3aa;
-  --sb-arrow: #facc15;
-  --sb-arrow-secondary: #d97706;
-  --sb-arrow-alt: #a3e635;
-  --sb-marker: var(--sb-arrow);
+  --sb-wine-gold: #facc15;
+  --sb-arrow: var(--theme-arrow, var(--sb-wine-gold));
+  --sb-arrow-secondary: var(--theme-arrow-secondary, #d97706);
+  --sb-arrow-alt: var(--theme-arrow-alt, #a3e635);
+  --sb-marker: var(--sb-wine-gold);
 }
 .clock-row .clock-name {
   font-size: 0.8125rem;
@@ -3960,6 +3964,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   content: ""; position: absolute; left: 0; right: 0; top: 100%;
   height: var(--tournaments-row-gap); background: var(--bg); pointer-events: none;
 }
+/* Its scrollbar gutter too, flush with the rows' solid right end. */
+.has-wallpaper .tournaments-list::-webkit-scrollbar-track { background: var(--bg); }
 /* Studio wallpaper: each tab group stays solid on its own, so a group's fade
    covers only it. Groups fill to the column grip's middle and under the row
    grip (padded, content unmoved); the grips and the tray stay see-through. */
