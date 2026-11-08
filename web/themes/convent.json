@@ -10,9 +10,9 @@
     "ai": 20,
     "evalbar": 20,
     "ucilog": 20,
-    "pvtable": 20,
-    "studioLeft": 15,
-    "studioRight": 15
+    "pvtable": 10,
+    "studioLeft": 12,
+    "studioRight": 10
   },
   "board": "classic-staunty",
   "boardFade": 0

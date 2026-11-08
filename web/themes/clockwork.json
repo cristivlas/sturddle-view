@@ -7,10 +7,10 @@
     "brightness": 70
   },
   "panels": {
-    "ai": 10,
+    "ai": 5,
     "evalbar": 10,
     "ucilog": 10,
-    "pvtable": 10,
+    "pvtable": 5,
     "studioLeft": 5,
     "studioRight": 5
   },
