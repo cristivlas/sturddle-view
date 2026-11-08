@@ -1469,11 +1469,11 @@ export function mountTournamentStudio({ container, api, events, log }) {
   wireLeftTabsFold(ctx);
   wireRibbonActions(ctx);
   // Before overflow attaches, so its first fit check counts the wallpaper button.
-  // Spans boards and bottom panes; only the boards area's bare background
-  // opens the menu (board windows' and panes' right-clicks are theirs).
+  // Spans boards and bottom panes; the boards area (background and board
+  // windows) opens the menu, the panes' right-clicks are theirs.
   ctx.wallpaper = mountWallpaper({
     ribbonEls: [ctx.ribbonEl], regionEl: ctx.mainEl,
-    isBare: (t) => ctx.boardsEl.contains(t) && !t.closest(".winbox"), api: ctx.api, log: ctx.log,
+    isBare: (t) => ctx.boardsEl.contains(t), api: ctx.api, log: ctx.log,
   });
   // Right-click Transparency for the tabs without a Columns menu.
   // The group is a shadow host, so its panes take the Menu key's focus.
