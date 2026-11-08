@@ -3926,12 +3926,13 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 }
 /* Board transparency (board-fade.js): the board, its box and the tournament
    windows holding one. The SVG group fades as one layer: its full-size border
-   rect lies under every square. The Display Settings preview stays solid. */
-:root:has(.has-wallpaper) .cm-chessboard:not(.board-style-preview) g.board { opacity: var(--board-opacity, 100%); }
-/* Grid lines under the squares: hidden by a solid board, shown as it fades,
-   so a see-through board keeps its files and ranks. The inset shadow closes
+   rect lies under every square. The Display Settings preview and a maximized
+   window stay solid. */
+:root:has(.has-wallpaper) .cm-chessboard:not(.board-style-preview, .winbox.max *) g.board { opacity: var(--board-opacity, 100%); }
+/* Grid lines under the squares, past BOARD_GRID_MIN_PCT (board-fade.js), so
+   a see-through board keeps its files and ranks. The inset shadow closes
    the right and bottom edges the per-square lines leave open. */
-:root:has(.has-wallpaper) .cm-chessboard:not(.board-style-preview) {
+:root[data-board-grid]:has(.has-wallpaper) .cm-chessboard:not(.board-style-preview, .winbox.max *) {
   --board-grid-line: color-mix(in srgb, var(--fg) 40%, transparent);
   background-image:
     linear-gradient(to right, var(--board-grid-line) 1px, transparent 1px),
@@ -3943,7 +3944,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   background: color-mix(in srgb, var(--board-bg) var(--board-opacity, 100%), transparent);
   border-color: color-mix(in srgb, var(--board-edge) var(--board-opacity, 100%), transparent);
 }
-:root:has(.has-wallpaper) :is(.winbox.sturddle-wb-live, .winbox.sturddle-wb-live .wb-body) {
+:root:has(.has-wallpaper) :is(.winbox.sturddle-wb-live:not(.max), .winbox.sturddle-wb-live:not(.max) .wb-body) {
   background: color-mix(in srgb, var(--panel) var(--board-opacity, 100%), transparent);
 }
 /* An empty move list has nothing to read. */
