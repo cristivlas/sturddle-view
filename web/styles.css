@@ -3926,12 +3926,12 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 }
 /* Board transparency (board-fade.js): the board, its box and the tournament
    windows holding one. The SVG group fades as one layer: its full-size border
-   rect lies under every square. */
-:root:has(.has-wallpaper) .cm-chessboard g.board { opacity: var(--board-opacity, 100%); }
+   rect lies under every square. The Display Settings preview stays solid. */
+:root:has(.has-wallpaper) .cm-chessboard:not(.board-style-preview) g.board { opacity: var(--board-opacity, 100%); }
 /* Grid lines under the squares: hidden by a solid board, shown as it fades,
    so a see-through board keeps its files and ranks. The inset shadow closes
    the right and bottom edges the per-square lines leave open. */
-:root:has(.has-wallpaper) .cm-chessboard {
+:root:has(.has-wallpaper) .cm-chessboard:not(.board-style-preview) {
   --board-grid-line: color-mix(in srgb, var(--fg) 40%, transparent);
   background-image:
     linear-gradient(to right, var(--board-grid-line) 1px, transparent 1px),
