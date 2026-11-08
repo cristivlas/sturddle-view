@@ -16,10 +16,29 @@ export const PANEL_FADE_KEY = Object.freeze({
   studioRight: STORAGE_KEY.STUDIO_RIGHT_FADE,
 });
 
+// A preset's arrow names and the root property each sets; the board styles'
+// arrow colors fall back to their own when one is unset.
+const ARROW_PROP = Object.freeze({
+  engine: "--theme-arrow",
+  ai: "--theme-arrow-secondary",
+  alt: "--theme-arrow-alt",
+});
+
 const isEntry = (v) => isObject(v) && typeof v.id === "string" && v.id !== "" && isObject(v.preset);
+
+function paintArrows() {
+  const arrows = active?.preset.arrows;
+  const style = document.documentElement.style;
+  for (const [name, prop] of Object.entries(ARROW_PROP)) {
+    const color = isObject(arrows) ? arrows[name] : undefined;
+    if (typeof color === "string" && CSS.supports("color", color)) style.setProperty(prop, color);
+    else style.removeProperty(prop);
+  }
+}
 
 let active = loadJson(STORAGE_KEY.THEME_PRESET);
 if (!isEntry(active)) active = null;
+paintArrows();
 
 export function rememberThemePreset(id, preset) {
   active = { id, preset };
@@ -28,6 +47,7 @@ export function rememberThemePreset(id, preset) {
     active = null;
     removeKey(STORAGE_KEY.THEME_PRESET);
   }
+  paintArrows();
 }
 
 // The wallpaper info's current theme id (null: none).

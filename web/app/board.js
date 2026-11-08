@@ -332,9 +332,8 @@ export function mountBoard({ element, onMove, styleId }) {
   const setArrow = (fromUci, toUci) => setTypedArrow(ARROW_TYPE.default, fromUci, toUci);
   const setOpponentArrow = (fromUci, toUci) => setTypedArrow(ARROW_TYPE.success, fromUci, toUci);
 
-  // AI agent's declared move; uses ARROW_TYPE.secondary paired with a
-  // local purple override in styles.css so it reads distinctly from
-  // the navy default/PV arrow.
+  // AI agent's declared move; ARROW_TYPE.secondary, colored per board
+  // style in styles.css (--sb-arrow-secondary) apart from the PV arrow.
   const setRecommendArrow = (fromUci, toUci) => setTypedArrow(ARROW_TYPE.secondary, fromUci, toUci);
 
   const setRankArrow = (rank, fromUci, toUci) => setTypedArrow(rankArrowType(rank), fromUci, toUci);
@@ -346,8 +345,8 @@ export function mountBoard({ element, onMove, styleId }) {
     for (const type of rankArrowTypes.values()) setTypedArrow(type, null, null);
   }
 
-  // Equally standard book alternatives beside the AI's pick; the vendored
-  // ARROW_TYPE.info style (blue, translucent) as shipped.
+  // Equally standard book alternatives beside the AI's pick;
+  // ARROW_TYPE.info, colored per board style (--sb-arrow-alt).
   function setAlternativeArrows(ucis) {
     if (lineShow.shouldRedirectArrows()) {
       const pairs = (ucis || [])
