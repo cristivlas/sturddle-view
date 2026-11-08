@@ -17,7 +17,12 @@ from pathlib import Path
 
 import pytest
 
-from sturddle_view.tournament.fastchess import FastchessRunner, build_command
+from sturddle_view.tournament import fastchess as fc_mod
+from sturddle_view.tournament.fastchess import (
+    FastchessNotFoundError,
+    FastchessRunner,
+    build_command,
+)
 from sturddle_view.tournament.runner import RunSpec
 from sturddle_view.tournament.store import (
     STATUS_IDLE,
@@ -736,6 +741,29 @@ def test_detect_binary_missing_returns_none(tmp_path):
     assert FastchessRunner.detect_binary(str(tmp_path / "nope")) in (None, "fastchess") or True
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="no POSIX execute bit")
+def test_detect_binary_rejects_non_executable(tmp_path, monkeypatch):
+    monkeypatch.setattr(fc_mod.shutil, "which", lambda name: None)
+    fake = tmp_path / "fc"
+    fake.write_text("#!/bin/sh\nexit 0\n")
+    fake.chmod(0o644)
+    assert FastchessRunner.detect_binary(str(fake)) is None
+
+
+@pytest.mark.parametrize(("configured", "message"), [
+    (None, "fastchess not configured"),
+    ("/gone/fc", "fastchess binary not found or not executable: /gone/fc"),
+])
+def test_require_binary_names_the_problem(monkeypatch, configured, message):
+    monkeypatch.setattr(
+        FastchessRunner, "detect_binary",
+        staticmethod(lambda configured: None),
+    )
+    with pytest.raises(FastchessNotFoundError) as e:
+        FastchessRunner.require_binary(configured)
+    assert str(e.value) == message
+
+
 # ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
@@ -1026,7 +1054,7 @@ async def test_runner_binary_missing_raises(tmp_path, monkeypatch):
     )
     runner = FastchessRunner(binary_path=lambda: None)
     spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(FastchessNotFoundError):
         await runner.start(spec, _Recorder())
 
 

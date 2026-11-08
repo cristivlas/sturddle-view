@@ -4,15 +4,20 @@
 // layout. The body is the caller's: it fills the tbody and re-lays its rows
 // out in onLayout(cols), which runs after every header rebuild.
 //
-// Column descriptor: { key, label, width, colClass?, thClass?, alwaysOn?,
-// defaultHidden?, pinEnd? }. A pinEnd column stays last and shown; in px mode
-// it is the auto-width column that takes the remaining space.
+// Column descriptor: { key, label, width, menuLabel?, colClass?, thClass?,
+// alwaysOn?, defaultHidden?, pinEnd? }. menuLabel names a column in the
+// Columns menu when its header label is blank. A pinEnd column stays last and
+// shown; in px mode it is the auto-width column that takes the remaining space.
 
 import { loadJson, saveJson } from "./storage.js";
 import { attachColumnResize } from "./col-resize.js";
 import { ARROW_CLASS, ARROW_DESC, TH_LABEL_CLASS, TH_SORTABLE_CLASS } from "./col-sort.js";
 import { ESCAPE_KEY } from "./keys.js";
-import { attachMenuNav, focusFirstItem, positionMenuAt, wireMenuToggle } from "./menu-nav.js";
+import {
+  attachMenuNav, claimContextMenu, focusFirstItem, isKeyboardContextMenu, makeMenuHost,
+  MENU_CHECKED_CLASS, MENU_SEPARATOR_HTML, positionMenuAt, wireMenuToggle, wireSliderRow,
+} from "./menu-nav.js";
+import { fadeMenuHtml, RESET_LABEL } from "./panel-fade.js";
 import { applySplitColWidths, wireSplitScroll } from "./split-table.js";
 import { escapeHtml } from "./wb-utils.js";
 
@@ -21,14 +26,12 @@ export const WIDTH_UNIT = Object.freeze({ PCT: "pct", PX: "px" });
 const MENU_ICON = "sliders";
 const MENU_BTN_LABEL = "Columns";
 const FIT_LABEL = "Auto-fit";
-const RESET_LABEL = "Reset";
 const UP_ICON = "arrow-up-long";
 const DOWN_ICON = "arrow-down-long";
 const PIN_ICON = "thumbtack";
 const PIN_LABEL = "Pinned last";
 // Marks a pinEnd column, in its header and its Columns-menu row.
 const PIN_HTML = `<wa-icon class="dt-pin" name="${PIN_ICON}" label="${PIN_LABEL}" title="${PIN_LABEL}"></wa-icon>`;
-const ACTIVE_CLASS = "tmb-active";
 const MOVE = Object.freeze({ UP: -1, DOWN: 1 });
 const MOVE_LABEL = Object.freeze({ [MOVE.UP]: "Move up:", [MOVE.DOWN]: "Move down:" });
 const MENU_ACTION = Object.freeze({ TOGGLE: "toggle", FIT: "fit", RESET: "reset" });
@@ -189,23 +192,25 @@ function menuHtml(layout, byKey, traits, visibleCount) {
   const items = layout.order.map((key, i) => {
     const col = byKey.get(key);
     const shown = !layout.hidden.has(key);
+    const name = col.menuLabel ?? col.label;
     const lockToggle = !traits.hide || col.alwaysOn || col.pinEnd || (shown && visibleCount === 1);
     const move = (dir, icon) => {
-      const label = escapeHtml(`${MOVE_LABEL[dir]} ${col.label || key}`);
+      const label = escapeHtml(`${MOVE_LABEL[dir]} ${name || key}`);
       return menuBtnHtml(`${key}:${dir}`, "dt-menu-move", `<wa-icon name="${icon}"></wa-icon>`,
         { disabled: moveTarget(layout, byKey, i, dir) < 0, attrs: ` data-dir="${dir}" aria-label="${label}" title="${label}"` });
     };
     const moves = !traits.reorder ? ""
       : col.pinEnd ? PIN_HTML : move(MOVE.UP, UP_ICON) + move(MOVE.DOWN, DOWN_ICON);
     const toggle = menuBtnHtml(`${key}:${MENU_ACTION.TOGGLE}`,
-      `tmb-dd-item dt-menu-toggle${shown ? ` ${ACTIVE_CLASS}` : ""}`, escapeHtml(col.label),
+      `tmb-dd-item dt-menu-toggle${shown ? ` ${MENU_CHECKED_CLASS}` : ""}`, escapeHtml(name),
       { disabled: lockToggle, attrs: ` data-action="${MENU_ACTION.TOGGLE}"` });
     return `<li class="${MENU_COL_CLASS}" data-key="${escapeHtml(key)}">${toggle}${moves}</li>`;
   }).join("");
   const action = (name, label) =>
     `<li>${menuBtnHtml(name, "tmb-dd-item", label, { attrs: ` data-action="${name}"` })}</li>`;
-  return items + `<li class="tmb-separator"></li>` +
-    (traits.fit ? action(MENU_ACTION.FIT, FIT_LABEL) : "") + action(MENU_ACTION.RESET, RESET_LABEL);
+  const fade = traits.fade ? fadeMenuHtml(traits.fade.pct) : "";
+  return items + MENU_SEPARATOR_HTML + (traits.fit ? action(MENU_ACTION.FIT, FIT_LABEL) : "")
+    + action(MENU_ACTION.RESET, RESET_LABEL) + (fade ? MENU_SEPARATOR_HTML + fade : "");
 }
 
 // Visible boundary nearest x: 0 = before the first column, n = after the
@@ -438,13 +443,17 @@ function naturalWidths({ wrap, headTable, bodyTable, thead, tbody }) {
 // The Columns menu: a top-layer popover (escapes the scrollers' and WinBox's
 // clip) rebuilt from html() on open. A control's click runs onAction({
 // action, key, dir }), which re-lays out the table; the menu then refocuses.
-function createColumnsMenu({ wrap, thead, html, onAction }) {
+// The Transparency slider, if any, reports to onFade { onInput, onChange }.
+function createColumnsMenu({ wrap, thead, html, onAction, onFade }) {
   const menu = document.createElement("ul");
   menu.className = "tmb-dropdown dt-menu";
   menu.setAttribute("popover", "auto");
 
   // Rebuilt in place on every change; the caller restores focus.
-  const render = () => { menu.innerHTML = html(); };
+  const render = () => {
+    menu.innerHTML = html();
+    if (onFade) wireSliderRow(menu, onFade);
+  };
   const isOpen = () => menu.matches(":popover-open");
 
   // The beforetoggle handler below returns focus to the button.
@@ -499,20 +508,26 @@ function createColumnsMenu({ wrap, thead, html, onAction }) {
     render();
     if (!isOpen()) menu.showPopover();
     positionMenuAt(menu, anchor);
-    focusFirstItem(menu);
   }
 
   wrap.addEventListener("contextmenu", (ev) => {
     if (menu.contains(ev.target)) return;
     ev.preventDefault();
+    claimContextMenu(ev);
     open({ top: ev.clientY, bottom: ev.clientY, left: ev.clientX });
+    if (isKeyboardContextMenu(ev)) focusFirstItem(menu);
   });
+  // The table's own element, so no undo: it goes with the table.
+  makeMenuHost(wrap);
 
   return {
     // The click bubbles on (col-sort skips th controls), so document-level
     // listeners such as other menus' close-on-click still see it.
     wire(btn) {
-      wireMenuToggle(btn, menu, () => open(btn.getBoundingClientRect()));
+      wireMenuToggle(btn, menu, () => {
+        open(btn.getBoundingClientRect());
+        focusFirstItem(menu);
+      });
     },
     // A layout change from elsewhere (a synced table) shows in an open menu.
     refresh() {
@@ -528,7 +543,7 @@ export function createColumnHeader({
   classes,           // { wrap, headScroll, headTable, bodyScroll, bodyTable }
   unit = WIDTH_UNIT.PCT, // px needs a pinEnd column to fill the rest
   minPct,            // pct floor per column
-  traits = {},       // { resize?, reorder?, hide?, fit? }
+  traits = {},       // { resize?, reorder?, hide?, fit?, fade? (its panel's fader) }
   dragLineHeight,    // see attachColumnResize
   onLayout,          // (shownCols) after every header rebuild
   onSizes,           // () after widths are applied, drags included
@@ -542,7 +557,7 @@ export function createColumnHeader({
     return reconcileLayout(columns, saved, !traits.reorder, unit);
   };
   let layout = loadLayout();
-  const hasMenu = traits.reorder || traits.hide || traits.fit;
+  const hasMenu = traits.reorder || traits.hide || traits.fit || traits.fade;
 
   const wrap = document.createElement("div");
   wrap.className = classes.wrap;
@@ -617,6 +632,12 @@ export function createColumnHeader({
   }
   const roomObserver = hasMenu ? new ResizeObserver(refreshButtonRoom) : null;
   roomObserver?.observe(headTable);
+  // The table's share of its panel's fade: its own backgrounds, header cells
+  // and lines.
+  const removeFadePart = traits.fade?.addPart({
+    ownEls: () => [wrap, headScroll, headTable, bodyScroll, bodyTable, ...thead.querySelectorAll("th")],
+    lineTables: [headTable, bodyTable],
+  });
   // Floors per shown column; the first also keeps its button room.
   const minAt = (i) => (unit === WIDTH_UNIT.PX ? MIN_COL_PX : minPct) + (i ? 0 : buttonRoom);
 
@@ -675,6 +696,8 @@ export function createColumnHeader({
         relayout();
       });
     }
+    // The header cells are new.
+    traits.fade?.rescan();
     menu?.refresh();
     onLayout?.(cols);
   }
@@ -700,7 +723,10 @@ export function createColumnHeader({
     if (dir !== null) moveColumn(layout, byKey, key, dir);
     else if (action === MENU_ACTION.TOGGLE) toggleColumn(layout, key, visibleCols().length);
     else if (action === MENU_ACTION.FIT) fitColumns();
-    else layout = reconcileLayout(columns, {}, !traits.reorder, unit);
+    else {
+      layout = reconcileLayout(columns, {}, !traits.reorder, unit);
+      traits.fade?.reset();
+    }
     saveLayout();
     relayout();
   }
@@ -709,6 +735,10 @@ export function createColumnHeader({
     ? createColumnsMenu({
       wrap, thead, onAction: applyMenuAction,
       html: () => menuHtml(layout, byKey, traits, visibleCols().length),
+      onFade: traits.fade && {
+        onInput: (pct) => traits.fade.set(pct),
+        onChange: () => traits.fade.save(),
+      },
     })
     : null;
 
@@ -725,6 +755,7 @@ export function createColumnHeader({
     destroy() {
       resizeCtrl?.destroy();
       roomObserver?.disconnect();
+      removeFadePart?.();
       if (!sync) return;
       const set = syncRegistry.get(layoutKey);
       set.delete(reloadFromSaved);

@@ -131,6 +131,12 @@ class _StubEngine:
         self.send_line = lambda line: None
         self.line_received = lambda line: None
 
+    def _ucinewgame(self) -> None:
+        pass
+
+    async def ping(self) -> None:
+        pass
+
     async def configure(self, options: dict) -> None:
         pass
 

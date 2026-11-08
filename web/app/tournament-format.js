@@ -1,6 +1,5 @@
-// Shared adjudication/type formatters. Two registers: the verbose dialog rows
-// (formatResign/formatDraw) and the terse Studio fight-bill wall (shortResign/
-// shortDraw). All return null when unset; the dialog supplies its own "Off"
+// Shared adjudication/type formatters for the dialog rows (formatResign/
+// formatDraw). Both return null when unset; the dialog supplies its own "Off"
 // sentinel so its row still renders.
 
 const TYPE_LABEL = Object.freeze({ roundrobin: "Round-robin", gauntlet: "Gauntlet" });
@@ -45,14 +44,4 @@ export function formatResign(r) {
 export function formatDraw(d) {
   if (!d || d.movenumber == null) return null;
   return `from move ${d.movenumber}, ${d.movecount} move${d.movecount === 1 ? "" : "s"} within ±${d.score} cp`;
-}
-
-export function shortResign(r) {
-  if (!r || r.movecount == null || r.score == null) return null;
-  return `${r.movecount}@${r.score}cp`;
-}
-
-export function shortDraw(d) {
-  if (!d || d.movenumber == null) return null;
-  return `${d.movenumber},${d.movecount}@${d.score}cp`;
 }

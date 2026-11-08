@@ -91,7 +91,7 @@ function rowNavAttrs(rowAttrs, nav, cursor) {
 }
 
 // traits: { sort?: { sortKey, stackKey?, defaultState?, single?, group? },
-// resize?, reorder?, hide?, fit?, rowNav? }; sort.single keeps one active
+// resize?, reorder?, hide?, fit?, fade?, rowNav? }; sort.single keeps one active
 // column (no layered stack); sort.group(a, b) is a fixed partition applied
 // first (see sortByStack); rowNav: see attachRowNav. `cls` prefixes the wrap/scroller/table classes; the caller
 // appends `wrap` and fills it via render(rows). rowAttrs sets each <tr>'s

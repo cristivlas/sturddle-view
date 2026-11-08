@@ -1,4 +1,4 @@
-import { AI_THINKING_MODE_CLASS, apiErrorDetail, SETTINGS_PUT_DEBOUNCE_MS, SETTINGS_TAB_ANALYSIS, shakeField, toast } from "./dialogs.js";
+import { AI_THINKING_MODE_CLASS, apiErrorDetail, SETTINGS_PATH, SETTINGS_PUT_DEBOUNCE_MS, SETTINGS_TAB_ANALYSIS, shakeField, toast } from "./dialogs.js";
 
 // AI/analysis wire field-name constants + provider list. Mirror of the
 // server contract in server/sturddle_view/api/settings.py.
@@ -549,7 +549,7 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
       await putSettings({ [AI_ENABLED_KEY]: false });
     }
     try {
-      const live = await api("GET", "/settings");
+      const live = await api("GET", SETTINGS_PATH);
       initial[AI_MODEL_KEY] = live[AI_MODEL_KEY] || "";
       initial[AI_API_KEY_SET_KEY] = !!live[AI_API_KEY_SET_KEY];
       initial[ANALYSIS_ENGINE_KEY] = live[ANALYSIS_ENGINE_KEY] || "";

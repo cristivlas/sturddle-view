@@ -14,11 +14,12 @@ import {
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
-import { BEST_RANK, SIDE, FEN_STM, fenSide, stmSide, uciSquares } from "./chess-consts.js";
+import { BEST_RANK, SIDE, FEN_STM, fenSide, firstSanMove, stmSide, uciSquares } from "./chess-consts.js";
 import { fmtClock, fmtCount, fmtMoveNo, fmtScore, markSelectable, rafCoalesce } from "./wb-utils.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { EVAL_GAUGE_HTML, setEvalGauge, setEvalGaugeFlipped } from "./eval-gauge.js";
 import { loadRaw, saveRaw } from "./storage.js";
+import { attachFrostMenu } from "./frost.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 // The `analyze` tool's alias for the initial position (a preview's FEN).
@@ -45,6 +46,37 @@ const MIN_AVAIL_REM = 10;
 const RAIL_EDGE_GAP_REM = 1; // viewport-edge breathing room beside the rail
 const RAIL_WIDTH_FRACTION = 0.18;
 const DEFAULT_LEFT_RAIL_EMPTY_RATIO = 0.4;
+const DOCK_GLIDE_CLASS = "dock-glide";
+// Panels frosted over the wallpaper (styles.css); each gets the frost menu.
+const FROSTED_SEL = ".game-view-meta, .game-view-engine, .game-view-moves";
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+const EVENT_POINTERDOWN = "pointerdown";
+const EVENT_POINTERMOVE = "pointermove";
+const EVENT_POINTERUP = "pointerup";
+const EVENT_POINTERCANCEL = "pointercancel";
+const EVENT_CLICK = "click";
+const EVENT_RESIZE = "resize";
+const EVENT_SCROLL = "scroll";
+const EVENT_VISIBILITYCHANGE = "visibilitychange";
+const EVENT_FOCUS = "focus";
+const EVENT_BLUR = "blur";
+
+// Held pointer = drag in progress: a glide would freeze it and eat its drop.
+let pointerHeld = false;
+let pointerDowns = 0;
+// View whose dock change waits for the drag to end (glideIfDockChanged).
+let deferredGlideCtx = null;
+window.addEventListener(EVENT_POINTERDOWN, () => { pointerHeld = true; pointerDowns++; }, true);
+function releasePointer() {
+  pointerHeld = false;
+  deferredGlideCtx?.scheduleRecompute();
+  deferredGlideCtx = null;
+}
+for (const type of [EVENT_POINTERUP, EVENT_POINTERCANCEL]) window.addEventListener(type, releasePointer, true);
+// A press that loses the window may never see its pointerup. Not capture:
+// element blurs would reach it then.
+window.addEventListener(EVENT_BLUR, releasePointer);
+
 // Viewport >= this caps the rail at its natural width (raw px on purpose:
 // a rem-derived threshold would slide the rail as font-size grows).
 const RAIL_NATURAL_CAP_VIEWPORT_PX = 1500;
@@ -74,7 +106,7 @@ function renderMoveList(el, sanList, {
     cell.textContent = san;
     if (onMoveClick) {
       cell.classList.add("clickable");
-      cell.addEventListener("click", () => onMoveClick(plyIdx));
+      cell.addEventListener(EVENT_CLICK, () => onMoveClick(plyIdx));
     }
     const info = forkInfo ? forkInfo.get(plyIdx) : null;
     const childCount = info?.childCount ?? 0;
@@ -93,7 +125,7 @@ function renderMoveList(el, sanList, {
         : "Forked from parent here";
       if (onForkClick) {
         glyph.classList.add("clickable");
-        glyph.addEventListener("click", (e) => {
+        glyph.addEventListener(EVENT_CLICK, (e) => {
           e.stopPropagation();
           onForkClick(plyIdx);
         });
@@ -384,7 +416,7 @@ function ensureRailGrip(ctx, railDock) {
   const grip = document.createElement("div");
   grip.className = `${DOCK_GRIP_CLASS} ${RAIL_GRIP_SEL_CLASS}`;
   railDock.after(grip);
-  grip.addEventListener("pointerdown", (eDown) => {
+  grip.addEventListener(EVENT_POINTERDOWN, (eDown) => {
     if (eDown.button !== 0) return;
     eDown.preventDefault();
     try { grip.setPointerCapture(eDown.pointerId); } catch { /* */ }
@@ -397,14 +429,14 @@ function ensureRailGrip(ctx, railDock) {
     };
     const onUp = () => {
       grip.classList.remove("dragging");
-      grip.removeEventListener("pointermove", onMove);
-      grip.removeEventListener("pointerup", onUp);
-      grip.removeEventListener("pointercancel", onUp);
+      grip.removeEventListener(EVENT_POINTERMOVE, onMove);
+      grip.removeEventListener(EVENT_POINTERUP, onUp);
+      grip.removeEventListener(EVENT_POINTERCANCEL, onUp);
       saveRaw(STORAGE_KEY.PLAY_RAIL_LIFT, String(Math.round(railLift)));
     };
-    grip.addEventListener("pointermove", onMove);
-    grip.addEventListener("pointerup", onUp);
-    grip.addEventListener("pointercancel", onUp);
+    grip.addEventListener(EVENT_POINTERMOVE, onMove);
+    grip.addEventListener(EVENT_POINTERUP, onUp);
+    grip.addEventListener(EVENT_POINTERCANCEL, onUp);
   });
   return grip;
 }
@@ -586,8 +618,7 @@ function recomputeNow(ctx) {
   } else {
     const usable = window.innerWidth - sidePad;
     railW = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.floor(usable * RAIL_WIDTH_FRACTION)));
-    leftEmpty =
-      document.querySelector(".play-dock-left")?.classList.contains(DOCK_EMPTY_CLASS) !== false;
+    leftEmpty = dockSideEmpty();
     leftRailW = leftEmpty ? Math.floor(railW * LEFT_RAIL_EMPTY_RATIO) : railW;
     availW = Math.max(rem(MIN_AVAIL_REM), Math.floor(usable - railW - leftRailW - 2 * gapW));
   }
@@ -629,9 +660,44 @@ function recomputeNow(ctx) {
   board.forceResize();
 }
 
+function dockSideEmpty() {
+  return document.querySelector(".play-dock-left")?.classList.contains(DOCK_EMPTY_CLASS) !== false;
+}
+
+// A dock emptying or filling resizes its rail, which moves the board: glide
+// there. Starts from rAF so the old snapshot has the old rail, whatever the
+// dock's own DOM already did; dock lifecycle stays synchronous.
+function glideIfDockChanged(ctx, update) {
+  const empty = dockSideEmpty();
+  const changed = ctx.dockEmpty !== null && empty !== ctx.dockEmpty;
+  // A remount restores docks async (/game/sync, AI replay), after first layout:
+  // only a click since mount tells a real change from that restore.
+  const restoring = pointerDowns === ctx.mountPointerDowns;
+  if (!changed || restoring || !document.startViewTransition || isMobileLayout()
+      || window.matchMedia(REDUCED_MOTION_QUERY).matches) {
+    ctx.dockEmpty = empty;
+    update();
+    return true;
+  }
+  // Mid-drag (undock, piece), hold the old layout: the board would move under
+  // the pointer and a glide would freeze the drag. The release glides.
+  if (pointerHeld) {
+    deferredGlideCtx = ctx;
+    return false;
+  }
+  ctx.dockEmpty = empty;
+  const root = document.documentElement;
+  // A newer glide skips this one, whose finish must not strip the shared class.
+  const clear = () => { if (ctx.glide === glide) root.classList.remove(DOCK_GLIDE_CLASS); };
+  root.classList.add(DOCK_GLIDE_CLASS);
+  const glide = ctx.glide = document.startViewTransition(update);
+  glide.finished.finally(clear);
+  return true;
+}
+
 function recomputeBoardSize(ctx) {
   ctx.scheduleRecompute ??= rafCoalesce(() => {
-    recomputeNow(ctx);
+    if (!glideIfDockChanged(ctx, () => recomputeNow(ctx))) return;
     // Run again after the next paint so secondary measurements reflect
     // the new layout (e.g. controls/clocks settled into final positions).
     requestAnimationFrame(() => recomputeNow(ctx));
@@ -825,7 +891,10 @@ function applyEngineInfo(ctx, evt) {
   }
   // The summary fields track the best line only.
   if (rank !== BEST_RANK) return;
-  if (squares) ctx.bestSquares = squares;
+  if (squares) {
+    ctx.bestSquares = squares;
+    ctx.onBestMove?.(firstSanMove(evt.payload.pv?.[0]));
+  }
   setEngineSectionEmpty(ctx, false);
   if (ctx.engineDepth && evt.payload.depth != null) {
     ctx.engineDepth.textContent = evt.payload.depth;
@@ -1160,7 +1229,6 @@ function buildViewApi(ctx) {
     },
     cancelLine() { ctx.board.cancelLine(); },
     currentPlacement() { return ctx.board.currentPlacement(); },
-    showsPosition: (fen) => showsPosition(ctx, fen),
     clearEngineInfo() {
       clearEngineInfoFields(ctx);
       setEvalGauge(ctx.evalGauge, null);
@@ -1215,12 +1283,14 @@ function buildViewApi(ctx) {
       ctx.board.destroy();
       ctx.off?.();
       try { ctx.ro.disconnect(); } catch {}
-      window.removeEventListener("resize", ctx.onRecompute);
+      window.removeEventListener(EVENT_RESIZE, ctx.onRecompute);
       window.removeEventListener(APP_EVT.LAYOUT_CHANGED, ctx.onRecompute);
-      window.removeEventListener("scroll", ctx.onScroll);
-      document.removeEventListener("visibilitychange", ctx.onVisibilityChange);
-      window.removeEventListener("focus", ctx.onWindowFocus);
+      window.removeEventListener(EVENT_SCROLL, ctx.onScroll);
+      document.removeEventListener(EVENT_VISIBILITYCHANGE, ctx.onVisibilityChange);
+      window.removeEventListener(EVENT_FOCUS, ctx.onWindowFocus);
       ctx.scheduleRecompute?.cancel();
+      ctx.frostMenuOffs.forEach((off) => off());
+      if (deferredGlideCtx === ctx) deferredGlideCtx = null;
     },
   };
 }
@@ -1240,6 +1310,8 @@ export function mountGameView(container, opts = {}) {
     // (fen, uciMoves) => Promise<(opening|null)[]>: the book opening at each
     // position a played line reaches; see playLineWithOpenings.
     fetchLineOpenings = null,
+    // (san) => void: the best line's first move, each time its arrow is drawn.
+    onBestMove = null,
   } = opts;
   const showClocks = show.clocks !== false;
   const showMoves = show.moves !== false;
@@ -1259,7 +1331,7 @@ export function mountGameView(container, opts = {}) {
   const ready = new Promise((r) => { resolveReady = r; });
 
   const ctx = {
-    onMoveJump, onPlayMoveClick, forkInfoFn, onForkClick, fetchLineOpenings,
+    onMoveJump, onPlayMoveClick, forkInfoFn, onForkClick, fetchLineOpenings, onBestMove,
     interactive, showClocks, showMoves, showEngineInfo,
     ready, resolveReady,
 
@@ -1306,16 +1378,22 @@ export function mountGameView(container, opts = {}) {
     holdPending: null,
     holdBaseFen: null,
     scheduleRecompute: null,
+    dockEmpty: null,
+    glide: null,
+    mountPointerDowns: pointerDowns,
     off: null,
   };
 
   queryRefs(ctx, container, sideHost);
+  // The side rail may live outside the container (or be it): each panel once.
+  const frosted = [...container.querySelectorAll(FROSTED_SEL), ...sideHost.querySelectorAll(FROSTED_SEL)];
+  ctx.frostMenuOffs = [...new Set(frosted)].map((el) => attachFrostMenu(el));
   if (ctx.moveListEl) {
     markSelectable(ctx.moveListEl, { rows: ".move-row" });
   }
   if (ctx.fenText) ctx.fenText.textContent = INITIAL_FEN;
-  ctx.fenCopyBtn?.addEventListener("click", () => copyFen(ctx));
-  ctx.fenText?.addEventListener("click", () => copyFen(ctx));
+  ctx.fenCopyBtn?.addEventListener(EVENT_CLICK, () => copyFen(ctx));
+  ctx.fenText?.addEventListener(EVENT_CLICK, () => copyFen(ctx));
 
   ctx.board = mountBoard({
     element: ctx.boardEl,
@@ -1334,18 +1412,18 @@ export function mountGameView(container, opts = {}) {
   ctx.ro = new ResizeObserver(ctx.onRecompute);
   ctx.ro.observe(ctx.boardCol);
   ctx.ro.observe(document.body);
-  window.addEventListener("resize", ctx.onRecompute);
+  window.addEventListener(EVENT_RESIZE, ctx.onRecompute);
   window.addEventListener(APP_EVT.LAYOUT_CHANGED, ctx.onRecompute);
   // The side rail is viewport-fixed: follow the board as the document scrolls.
   // Synchronous, not rAF-deferred, so it moves in the same frame as the board.
   ctx.onScroll = () => { if (ctx.railGeom && !ctx.railGeom.mobile) positionSideRail(ctx, ctx.railGeom); };
-  window.addEventListener("scroll", ctx.onScroll, { passive: true });
+  window.addEventListener(EVENT_SCROLL, ctx.onScroll, { passive: true });
   requestAnimationFrame(ctx.onRecompute);
 
   ctx.onVisibilityChange = () => { if (!document.hidden) ctx.board.cancelAnimations(); };
   ctx.onWindowFocus = () => ctx.board.cancelAnimations();
-  document.addEventListener("visibilitychange", ctx.onVisibilityChange);
-  window.addEventListener("focus", ctx.onWindowFocus);
+  document.addEventListener(EVENT_VISIBILITYCHANGE, ctx.onVisibilityChange);
+  window.addEventListener(EVENT_FOCUS, ctx.onWindowFocus);
 
   if (events) ctx.off = events.on((evt) => applyEvent(ctx, evt));
 

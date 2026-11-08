@@ -620,6 +620,7 @@ export function shakeField(el) {
   el.addEventListener("animationend", () => el.classList.remove(FIELD_SHAKE_CLASS), { once: true });
 }
 
+export const SETTINGS_PATH = "/settings";
 // Typing pause before a settings field persists.
 export const SETTINGS_PUT_DEBOUNCE_MS = 400;
 
@@ -629,6 +630,7 @@ export const SETTINGS_TAB_RECENTS = "recents";
 export const SETTINGS_TAB_TOURNAMENT = "tournament";
 export const SETTINGS_TAB_DISPLAY = "display";
 export const SETTINGS_TAB_PLAY = "play";
+export const OPEN_AI_SETTINGS_ARIA = "Open AI settings";
 
 // Deep-link focus target: class on the extended-thinking control, shared
 // with the tab that builds it so the selector has one source of truth.
@@ -656,6 +658,16 @@ export function deepLink(text, onClick) {
     e.preventDefault();
     onClick();
   });
+  return link;
+}
+
+/** In-prose "⚙ Settings" link opening `tab`. The gear sits inside the link:
+ *  same target, so no second tab stop. Icon-only gears use openSettingsAction. */
+export function settingsLink(tab, label = "Settings") {
+  const gear = document.createElement("wa-icon");
+  gear.name = "gear";
+  const link = deepLink(label, () => openSettings(tab));
+  link.prepend(gear);
   return link;
 }
 
@@ -703,7 +715,12 @@ export const OPEN_ENGINES_ACTION =
 /** Canonical "open the Analysis settings tab" toast action, for failures
  *  the user fixes among the AI settings. */
 export const OPEN_ANALYSIS_ACTION =
-  openSettingsAction(SETTINGS_TAB_ANALYSIS, "Open AI settings");
+  openSettingsAction(SETTINGS_TAB_ANALYSIS, OPEN_AI_SETTINGS_ARIA);
+
+/** Canonical "open the Tournament settings tab" toast action, for a
+ *  start that failed on the fastchess binary. */
+const OPEN_TOURNAMENT_ACTION =
+  openSettingsAction(SETTINGS_TAB_TOURNAMENT, "Open tournament settings");
 
 // Map of well-known server error codes to inline toast actions.
 // Centralized here so every reportError call site picks up the same
@@ -712,6 +729,7 @@ export const OPEN_ANALYSIS_ACTION =
 // /game/new).
 const ERROR_CODE_ACTIONS = {
   no_engine_configured: [OPEN_ENGINES_ACTION],
+  no_fastchess_configured: [OPEN_TOURNAMENT_ACTION],
   // A verifier sub-run that never concluded -- usually the verifier round
   // cap is too low. Gear deep-links to the Analysis tab to raise it.
   no_verdict: [OPEN_ANALYSIS_ACTION],
@@ -837,7 +855,7 @@ export function reportVerboseError(text, { variant = "danger" } = {}) {
 // says how to fix them.
 const AI_ERROR_ACTIONS = {
   ThinkingUnsupported: [
-    openSettingsAction(SETTINGS_TAB_ANALYSIS, "Open AI settings", AI_THINKING_MODE_CLASS),
+    openSettingsAction(SETTINGS_TAB_ANALYSIS, OPEN_AI_SETTINGS_ARIA, AI_THINKING_MODE_CLASS),
   ],
 };
 
@@ -943,7 +961,8 @@ export function buildToastWithActions(text, actions) {
  *  inline buttons to the toast. Well-known server error codes (see
  *  ERROR_CODE_ACTIONS) attach their canonical action automatically.
  *  Optional `opts.duration` overrides the toast lifetime; a non-finite
- *  duration (0 / Infinity) makes it sticky with a dismiss button.
+ *  duration (0 / Infinity) makes it sticky with a dismiss button, and
+ *  taking a code action then dismisses it too.
  *  Returns the sticky toast's dismiss fn, or null for a transient toast. */
 export function reportError(ctx, action, error, opts = {}) {
   const message = (error && error.message) || String(error);
@@ -951,16 +970,23 @@ export function reportError(ctx, action, error, opts = {}) {
   const detailObj = apiErrorObject(error);
   const codeActions = detailObj?.code ? ERROR_CODE_ACTIONS[detailObj.code] : null;
   const actions = [...(opts.actions || []), ...(codeActions || [])];
-  const body = actions.length
-    ? buildToastWithActions(`${action}: ${detailText}`, actions)
-    : `${action}: ${detailText}`;
+  const text = `${action}: ${detailText}`;
   // A sticky toast (no auto-dismiss timer) gets the dismiss button so the
   // user can still close it; toast() alone would leave it button-less.
   const sticky = opts.duration !== undefined && !(opts.duration > 0 && Number.isFinite(opts.duration));
   let dismiss = null;
   if (sticky) {
-    dismiss = stickyToast(body, { variant: "danger" });
+    // A code action is the fix, so taking it retires the toast.
+    const retiring = (codeActions || []).map((a) => ({
+      ...a,
+      onClick: (e) => {
+        dismiss?.();
+        a.onClick(e);
+      },
+    }));
+    dismiss = stickyToast(text, { variant: "danger", actions: [...(opts.actions || []), ...retiring] });
   } else {
+    const body = actions.length ? buildToastWithActions(text, actions) : text;
     toast(body, { variant: "danger", duration: opts.duration });
   }
   ctx?.log?.(`${action}: ${message}`);

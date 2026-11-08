@@ -20,8 +20,10 @@ from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.tournament import fastchess as fc_mod
+from sturddle_view.tournament import orchestrator as orch_mod
 from sturddle_view.tournament.fastchess import FastchessRunner
 from sturddle_view.tournament.pgn_stats import SPRT_CONTINUE, SPRT_H0, SPRT_H1, SprtResult
+from sturddle_view.tournament.rescheck import RescheckError
 from sturddle_view.tournament.store import (
     PGN_FILENAME,
     STATE_FILENAME,
@@ -439,8 +441,74 @@ def test_start_with_missing_binary_returns_400(client, settings, monkeypatch):
     }).json()
     r = client.post(f"/api/tournaments/{t['id']}/start")
     assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "no_fastchess_configured"
     # Tournament should be left in a STOPPED state due to start rollback
     assert client.get(f"/api/tournaments/{t['id']}").json()["status"] == "stopped"
+
+
+def _stopped_with_games(client, settings) -> tuple[dict, Path]:
+    t = client.post("/api/tournaments", json={
+        "name": "x", "engines": _engines_payload(),
+    }).json()
+    store = TournamentStore(Path(settings.tournament_root))
+    store.update_status(t["id"], "stopped", stopped_at="2026-01-01T00:00:00+00:00")
+    pgn = Path(settings.tournament_root) / t["id"] / PGN_FILENAME
+    pgn.parent.mkdir(parents=True, exist_ok=True)
+    pgn.write_text("[Result \"1-0\"]\n", encoding="utf-8")
+    return t, pgn
+
+
+def test_restart_with_missing_binary_keeps_games(client, settings, monkeypatch):
+    t, pgn = _stopped_with_games(client, settings)
+    monkeypatch.setattr(
+        FastchessRunner, "detect_binary",
+        staticmethod(lambda configured: None),
+    )
+
+    r = client.post(f"/api/tournaments/{t['id']}/start?confirm_wipe=true")
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "no_fastchess_configured"
+    assert pgn.exists(), "a start that can't launch must not wipe"
+
+
+def test_restart_while_busy_keeps_games(client, settings, monkeypatch):
+    t, pgn = _stopped_with_games(client, settings)
+    _patch_fake_fastchess(monkeypatch, "--sleep", "30")
+    other = client.post("/api/tournaments", json={
+        "name": "y", "engines": _engines_payload(),
+    }).json()
+    assert client.post(f"/api/tournaments/{other['id']}/start").status_code == 200
+    try:
+        r = client.post(f"/api/tournaments/{t['id']}/start?confirm_wipe=true")
+        assert r.status_code == 409
+        assert pgn.exists(), "a start that can't launch must not wipe"
+    finally:
+        client.post(f"/api/tournaments/{other['id']}/stop")
+        _wait_status(client, other["id"], "stopped")
+
+
+def test_restart_rejected_by_rescheck_keeps_games(client, settings, monkeypatch):
+    t, pgn = _stopped_with_games(client, settings)
+
+    def reject(template):
+        raise RescheckError("too_big", "too big")
+
+    monkeypatch.setattr(orch_mod, "check_template", reject)
+    r = client.post(f"/api/tournaments/{t['id']}/start?confirm_wipe=true")
+    assert r.status_code == 400
+    assert r.json()["detail"]["reason"] == "too_big"
+    assert pgn.exists(), "a start that can't launch must not wipe"
+
+
+def test_fastchess_check(client, monkeypatch):
+    assert client.get("/api/tournament-settings/fastchess-check").status_code == 200
+    monkeypatch.setattr(
+        FastchessRunner, "detect_binary",
+        staticmethod(lambda configured: None),
+    )
+    r = client.get("/api/tournament-settings/fastchess-check")
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "no_fastchess_configured"
 
 
 # ---------------------------------------------------------------------------

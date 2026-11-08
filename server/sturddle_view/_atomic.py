@@ -1,4 +1,4 @@
-"""Atomic JSON-on-disk writes used by the registry/settings/game-state stores."""
+"""Atomic on-disk writes used by the registry/settings/game-state stores."""
 from __future__ import annotations
 
 import json
@@ -25,13 +25,18 @@ def atomic_write_text(path: Path, text: str) -> None:
     _atomic_write(path, lambda f: f.write(text))
 
 
-def _atomic_write(path: Path, writer) -> None:
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Binary twin of ``atomic_write_text``."""
+    _atomic_write(path, lambda f: f.write(data), binary=True)
+
+
+def _atomic_write(path: Path, writer, *, binary: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(
         dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
     )
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with (os.fdopen(fd, "wb") if binary else os.fdopen(fd, "w", encoding="utf-8")) as f:
             writer(f)
         os.replace(tmp, path)
     except Exception:

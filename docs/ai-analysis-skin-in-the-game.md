@@ -95,9 +95,10 @@ that fires today must still fire, with the same shape:
 - Tool searches publish `engine_info` (PV window, board arrow).
   play_out and test_aim search through the same path as `analyze`
   (search_cache + publish), so they light the UI the same way.
-  `engine_info` carries the searched FEN; the client draws the arrow,
-  moves the eval gauge and depth/score readout, and fills Search Lines
-  only when that FEN matches the position the board shows: the live
+  `engine_info` carries the searched FEN. Search Lines takes every
+  info, each row replaying from its own FEN. The client draws the
+  arrow and moves the eval gauge and depth/score readout only when
+  that FEN matches the position the board shows: the live
   position, or the `analyze` preview (its `fen` arg; `startpos` maps to
   the initial position). Match is on piece placement and side to move
   only: python-chess may rewrite the castling and en-passant fields of

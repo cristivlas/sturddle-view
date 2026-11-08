@@ -425,6 +425,10 @@ def _popen_kwargs() -> dict:
     return {"start_new_session": True}
 
 
+class FastchessNotFoundError(FileNotFoundError):
+    """No usable fastchess binary, configured or on PATH."""
+
+
 class FastchessRunner:
     """Owns one fastchess subprocess; ``start`` while running raises."""
 
@@ -469,20 +473,26 @@ class FastchessRunner:
         """
         if configured_path:
             p = Path(configured_path)
-            if p.is_file():
+            if p.is_file() and os.access(p, os.X_OK):
                 return str(p)
         return shutil.which("fastchess")
+
+    @classmethod
+    def require_binary(cls, configured_path: str | None) -> str:
+        """Return the fastchess binary to use, or raise if there is none."""
+        binary = cls.detect_binary(configured_path)
+        if not binary:
+            raise FastchessNotFoundError(
+                f"fastchess binary not found or not executable: {configured_path}"
+                if configured_path else "fastchess not configured"
+            )
+        return binary
 
     async def start(self, spec: RunSpec, on_event: EventCallback) -> None:
         if self.is_running():
             raise RuntimeError("FastchessRunner already running")
 
-        configured = self.binary_path
-        binary = self.detect_binary(configured)
-        if not binary:
-            raise FileNotFoundError(
-                f"fastchess binary not found (configured: {configured!r})"
-            )
+        binary = self.require_binary(self.binary_path)
 
         self._on_event = on_event
         self._spec = spec

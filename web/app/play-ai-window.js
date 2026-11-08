@@ -20,12 +20,12 @@ import {
   scrollToBottom,
 } from "./wb-utils.js";
 import { STORAGE_KEY } from "./storage-keys.js";
-import { ACTIVATE_KEYS } from "./keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import {
   deepLink,
   openSettings,
   SETTINGS_TAB_ANALYSIS,
+  settingsLink,
   errorActionsFor,
   buildToastActionButton,
 } from "./dialogs.js";
@@ -33,6 +33,7 @@ import {
 const GEO_KEY       = STORAGE_KEY.AI_GEO;
 const WIN_STATE_KEY = STORAGE_KEY.AI_WIN_STATE;
 const DOCKED_KEY    = STORAGE_KEY.AI_DOCKED;
+const FADE_KEY      = STORAGE_KEY.AI_FADE;
 // Last model name shown in the panel title. Pinned at analyze-start;
 // reload restores so the title reflects what last ran, not what is
 // currently selected in Settings.
@@ -120,6 +121,7 @@ const THINKING_LABEL_DONE_PREFIX = "Thought for ";
 
 const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
+const SECONDS_PER_HOUR = 3600;
 const SECONDS_PAD = 2;
 
 // Panel DOM classes shared between builders and selectors.
@@ -216,7 +218,13 @@ function buildBody() {
   // (Claude Code style). Empty until the provider reports usage.
   const statusTokens = document.createElement("span");
   statusTokens.className = "play-ai-status-tokens";
-  status.append(spinner, statusText, statusTokens);
+  // Elapsed timer: ticks while the turn runs, frozen at the total on done.
+  const statusTime = document.createElement("span");
+  statusTime.className = "play-ai-status-time";
+  const statusMeta = document.createElement("span");
+  statusMeta.className = "play-ai-status-meta";
+  statusMeta.append(statusTime, statusTokens);
+  status.append(spinner, statusText, statusMeta);
 
   // Scroll wrapper. Holds rounds + terminal; the status header above
   // it stays put because only this wrapper scrolls.
@@ -258,6 +266,7 @@ function buildBody() {
   root._status = status;
   root._statusText = statusText;
   root._statusTokens = statusTokens;
+  root._statusTime = statusTime;
   root._scroll = scroll;
   root._rounds = rounds;
   root._terminal = terminal;
@@ -268,6 +277,9 @@ function buildBody() {
   // tool_use_id -> tool-call line DOM node, so a failure event can
   // mark the exact row by id (not by tool name or position).
   root._toolCallNodes = new Map();
+  // Dispatched rows with no result yet, in dispatch order: the last one
+  // owns the search the board shows (see showAiSearchMove).
+  root._runningRows = [];
   return root;
 }
 
@@ -330,6 +342,18 @@ function freezeThinkingLabel(entry, serverMs = null) {
   entry.thinking.summary.textContent =
     `${THINKING_LABEL_DONE_PREFIX}${formatThinkingDuration(entry.thinkingDurationMs)}`;
   entry.thinking.summary.classList.remove(IS_ACTIVE_CLASS);
+}
+
+// Elapsed-timer text: "0s".."59s", "m:ss", "h:mm:ss" (engine-only runs
+// are open-ended). Floors, unlike the thinking label, so it ticks from 0s.
+function formatElapsed(ms) {
+  const total = Math.max(0, Math.floor(ms / MS_PER_SECOND));
+  if (total < SECONDS_PER_MINUTE) return `${total}s`;
+  const pad = n => String(n).padStart(SECONDS_PAD, "0");
+  const h = Math.floor(total / SECONDS_PER_HOUR);
+  const m = Math.floor((total % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE);
+  const s = total % SECONDS_PER_MINUTE;
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
 function formatThinkingDuration(ms) {
@@ -420,6 +444,21 @@ const MOVE_TOOL_VERBS = {
   [TOOL.PLAY_OUT]:       ["Playing out", "Trying", "Testing", "Following", "Tracing", "Unfolding", "Extending"],
 };
 
+// Tools whose label lists the candidates from input.moves ("Comparing Bb5,
+// d4"): their searches put those moves on the board.
+const MOVES_TOOL_VERBS = {
+  [TOOL.TOP_MOVES]: ["Scoping out", "Sizing up", "Comparing", "Weighing up", "Lining up"],
+};
+const MOVES_SEPARATOR = ", ";
+
+function inputMoves(input) {
+  const moves = Array.isArray(input?.moves) ? input.moves : [];
+  return moves
+    .filter((m) => typeof m === "string" && m.trim())
+    .map((m) => m.trim())
+    .join(MOVES_SEPARATOR);
+}
+
 // The dominance check's two steps share one metaphor: the baseline search
 // (the engine's own best) sets the standard, the candidate is measured
 // against it. Each pair is [baseline, candidate]; "{}" is the move slot. One
@@ -434,6 +473,12 @@ const CHECK_STEP_INDEX = { [TOOL.ENGINE_BEST]: 0, [TOOL.SEARCH_MOVE]: 1 };
 // parent row (the recommend_move line) -> its pair; the baseline step picks,
 // the candidate step reuses. Cleared with the tool-call node index.
 const checkStepPairs = new Map();
+
+// True for a tool's progress step (a nested row the server reports), not a
+// tool call of its own.
+export function isAiProgressStep(name) {
+  return name in CHECK_STEP_INDEX;
+}
 
 function checkStepLabel(name, input, parent) {
   const slot = CHECK_STEP_INDEX[name];
@@ -500,6 +545,9 @@ function friendlyToolLabel(name, input, parent = null) {
   const move = input && typeof input.move === "string" ? input.move.trim() : "";
   const verbs = MOVE_TOOL_VERBS[name];
   if (verbs && move) return `${pickVariant(verbs)} ${move}`;
+  const listVerbs = MOVES_TOOL_VERBS[name];
+  const moves = listVerbs ? inputMoves(input) : "";
+  if (moves) return `${pickVariant(listVerbs)} ${moves}`;
   const labels = TOOL_FRIENDLY_LABELS[name];
   if (name === TOOL.PIECE_AT) {
     const square = input && typeof input.square === "string" ? input.square.trim() : "";
@@ -532,10 +580,12 @@ const inst = createDockableWindow({
   geoKey: GEO_KEY,
   winStateKey: WIN_STATE_KEY,
   dockedKey: DOCKED_KEY,
+  fadeKey: FADE_KEY,
   defaultW: () => DEFAULT_WIN_W,
   defaultH: DEFAULT_WIN_H,
   defaultY: () => DEFAULT_WIN_Y,
-  build() {
+  build(_events, { setActions }) {
+    setActions([{ label: SETTINGS_MENU_LABEL, run: openAiSettings }]);
     return buildBody();
   },
   dockOrder: DOCK_ORDER.AI_ANALYSIS,
@@ -590,17 +640,12 @@ export function isAiOpen() {
 
 const ENGINE_ONLY_LEAD = "Engine analysis appears in ";
 const ENGINE_ONLY_MID = ". To use AI, switch providers in ";
-const SETTINGS_LINK = "Settings";
-const SETTINGS_ICON = "gear";
+// The window's right-click entry: it opens a dialog.
+const SETTINGS_MENU_LABEL = "Settings...";
 const ENGINE_ONLY_CLASS = "play-ai-engine-only";
 
-// Gear inside the link: same target, so no second tab stop.
-function settingsLink() {
-  const gear = document.createElement("wa-icon");
-  gear.name = SETTINGS_ICON;
-  const link = deepLink(SETTINGS_LINK, () => openSettings(SETTINGS_TAB_ANALYSIS));
-  link.prepend(gear);
-  return link;
+function openAiSettings() {
+  openSettings(SETTINGS_TAB_ANALYSIS);
 }
 
 // Engine-only stand-in body, spinner on until Stop; resetAi() clears it.
@@ -621,7 +666,7 @@ export function openAiEngineOnly(showLines) {
   note.className = ENGINE_ONLY_CLASS;
   note.append(
     ENGINE_ONLY_LEAD, deepLink(PV_TABLE_TITLE, showLines),
-    ENGINE_ONLY_MID, settingsLink(), ".",
+    ENGINE_ONLY_MID, settingsLink(SETTINGS_TAB_ANALYSIS), ".",
   );
   inst.body?._rounds.append(note);
   engineOnly = true;
@@ -642,13 +687,53 @@ function withStickyBottom(fn) {
   if (pinned) scrollToBottom(scroller);
 }
 
+// Status-line elapsed timer. performance.now() anchor of elapsed 0;
+// the interval re-renders once a second and stops itself once the
+// window is gone.
+const ELAPSED_TICK_MS = 1000;
+let elapsedAnchor = 0;
+let elapsedTimer = null;
+
+function renderElapsed(ms) {
+  if (inst.body) inst.body._statusTime.textContent = formatElapsed(ms);
+}
+
+function stopElapsedTimer() {
+  clearInterval(elapsedTimer);
+  elapsedTimer = null;
+}
+
+function tickElapsed() {
+  if (!inst.mounted) { stopElapsedTimer(); return; }
+  renderElapsed(performance.now() - elapsedAnchor);
+}
+
+// (Re)start the timer at `elapsedMs` -- 0 for a fresh turn, the server's
+// figure when rehydrating one already in flight.
+export function startAiElapsed(elapsedMs = 0) {
+  stopElapsedTimer();
+  elapsedAnchor = performance.now() - elapsedMs;
+  tickElapsed();
+  elapsedTimer = setInterval(tickElapsed, ELAPSED_TICK_MS);
+}
+
+// Freeze at the server's total when given, else wherever it stands.
+function freezeAiElapsed(totalMs) {
+  const live = elapsedTimer !== null;
+  stopElapsedTimer();
+  if (Number.isFinite(totalMs)) renderElapsed(totalMs);
+  else if (live) renderElapsed(performance.now() - elapsedAnchor);
+}
+
 export function resetAi() {
   if (!inst.body) return;
   inst.body._rounds.textContent = "";
   inst.body._terminal.textContent = "";
   inst.body._statusTokens.textContent = "";
+  startAiElapsed();
   inst.body._roundPanels.clear();
   inst.body._toolCallNodes.clear();
+  inst.body._runningRows.length = 0;
   checkStepPairs.clear();
   inst.body._currentRound = null;
   toolLabelLastIndex.clear();
@@ -735,6 +820,8 @@ export function appendAiToolCall({
     label.className = "play-ai-tool-label";
     label.textContent = label.title = friendlyToolLabel(name, input, parent);
     head.append(label);
+    line._label = label;
+    line._baseLabel = label.textContent;
     const args = formatToolArgs(input);
     const raw = args ? `${name}(${args})` : `${name}()`;
     const toggle = document.createElement("span");
@@ -759,6 +846,7 @@ export function appendAiToolCall({
       toggle.classList.toggle("is-open", open);
     });
     container.append(line);
+    inst.body._runningRows.push(line);
     if (toolUseId) {
       // Index by tool_use_id so a subsequent ai_tool_call_failed event
       // can mark this exact row (multiple calls of the same tool in a
@@ -865,12 +953,40 @@ function markCleared(line, output) {
   line.classList.add(toolCallStateClass("cleared"));
 }
 
+// A finished row's nested rows are done too, even one whose step never
+// reported its end (a failed search).
+function finishRow(line) {
+  const rows = inst.body._runningRows;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (line.contains(rows[i])) rows.splice(i, 1);
+  }
+}
+
+// Words of a row label, to tell whether it already names a move.
+const LABEL_WORD_RE = /[\s,]+/;
+// SAN annotation suffixes the model may drop or add ("Qxf7" vs "Qxf7+").
+const SAN_SUFFIX_RE = /[+#!?]+$/;
+const SEARCH_MOVE_SEP = ": ";
+const bareSan = (san) => san.replace(SAN_SUFFIX_RE, "");
+
+// The engine's own best has no name until found: the running row that owns
+// the board's search shows it, unless its label already names it. A
+// finished row keeps the last one.
+export function showAiSearchMove(san) {
+  const line = inst.body?._runningRows.at(-1);
+  if (!line || !san) return;
+  const base = line._baseLabel;
+  const named = base.split(LABEL_WORD_RE).map(bareSan).includes(bareSan(san));
+  line._label.textContent = line._label.title = named ? base : `${base}${SEARCH_MOVE_SEP}${san}`;
+}
+
 // Fill the OUT row with the tool result from ai_tool_call_complete.
 // Idempotent (replay-on-reconnect re-dispatches with the same output).
 export function setAiToolCallResult({ toolUseId, output }) {
   if (!inst.body || !toolUseId || output === undefined) return;
   const line = inst.body._toolCallNodes.get(toolUseId);
   if (!line || !line._outPre) return;
+  finishRow(line);
   withStickyBottom(() => {
     line._outPre.textContent = formatToolOutput(output);
     line._outRow.hidden = false;
@@ -889,6 +1005,7 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   if (!inst.body || !toolUseId) return;
   const line = inst.body._toolCallNodes.get(toolUseId);
   if (!line) return;
+  finishRow(line);
   const cls = toolCallStateClass(SUPERSEDED_ERRORS.has(error) ? "superseded" : "failed");
   // Idempotent: replay-on-reconnect can re-dispatch this event for the same
   // row; appending the suffix/gear twice would stack them.
@@ -1243,6 +1360,7 @@ export function setAiStatus(state) {
   if (!inst.body) return;
   const text = STATUS_TEXT[state] ?? "";
   if (state === AI_STATE.IDLE || !text) {
+    stopElapsedTimer();
     inst.body._status.hidden = true;
     inst.body._statusText.textContent = "";
     return;
@@ -1273,25 +1391,12 @@ export function appendAiDelta(text, roundIndex = 0, thinkingMs = null) {
   });
 }
 
-// A round-cap note with a gear that opens Settings -> Analysis. Shared by
-// the narrator tool-call cap and the verifier-rounds cap (same tab).
-function _roundCapNote(message) {
+// A round-cap note linking Settings -> Analysis between `lead` and `tail`.
+// Shared by the narrator tool-call cap and the verifier-rounds cap (same tab).
+function _roundCapNote(lead, tail) {
   const note = document.createElement("div");
   note.className = ROUNDCAP_CLASS;
-  const text = document.createElement("span");
-  text.textContent = message;
-  const gear = document.createElement("wa-icon");
-  gear.name = SETTINGS_ICON;
-  gear.className = "play-ai-roundcap-gear";
-  gear.setAttribute("role", "button");
-  gear.setAttribute("tabindex", "0");
-  gear.setAttribute("aria-label", "Open AI settings");
-  const open = () => openSettings(SETTINGS_TAB_ANALYSIS);
-  gear.addEventListener("click", open);
-  gear.addEventListener("keydown", (e) => {
-    if (ACTIVATE_KEYS.has(e.key)) { e.preventDefault(); open(); }
-  });
-  note.append(text, gear);
+  note.append(lead, settingsLink(SETTINGS_TAB_ANALYSIS), tail);
   return note;
 }
 
@@ -1319,17 +1424,21 @@ export function markAiDone({
   rounds = null,
   usage = null,
   provider = null,
+  elapsedMs = null,
 } = {}) {
   // Terminal: switch the header text + drop the spinner. Markers (error >
   // roundCap > noResponse > noRecommendation > cancelled if any apply)
   // land in the dedicated terminal slot below the last round panel.
   const naturalCompletion =
     !error && !roundCap && !noResponse && !noRecommendation && !cancelled;
+  freezeAiElapsed(elapsedMs);
   setAiStatus(naturalCompletion ? AI_STATE.DONE : AI_STATE.IDLE);
   if (!inst.body) return;
   // Refresh the ticker from the done totals: a replay that delivers only
   // the terminal event (no ai_usage stream) still restores the count.
   if (usage) setAiUsage(usage);
+  // A cancelled turn leaves rows unfinished; no later search is theirs.
+  inst.body._runningRows.length = 0;
   const slot = inst.body._terminal;
   withStickyBottom(() => {
     // Trim trailing whitespace on every round's prose and thinking so a
@@ -1380,12 +1489,14 @@ export function markAiDone({
     // any other terminal marker below.
     if (verifierRoundCap) {
       slot.append(_roundCapNote(
-        "A verification step stopped early at its round cap. Raise \"Max subagent rounds\" for fuller checks",
+        "A verification step stopped early at its round cap. Raise \"Max subagent rounds\" in ",
+        " for fuller checks.",
       ));
     }
     if (roundCap) {
       slot.append(_roundCapNote(
-        "Stopped early at the tool-call cap. Raise \"Max rounds\" to allow more rounds.",
+        "Stopped early at the tool-call cap. Raise \"Max rounds\" in ",
+        " to allow more rounds.",
       ));
       return;
     }

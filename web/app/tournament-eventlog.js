@@ -68,6 +68,9 @@ export function renderEventLogList(listEl, eventLog, scroller) {
   if (atBottom && scroller) scrollToBottom(scroller);
 }
 
+// What a copied event log is called in the copy toast.
+export const EVENT_LOG_COPY_WHAT = "Event log";
+
 // The event log as plain text, one line per entry the list shows.
 export function eventLogText(eventLog) {
   return shownEntries(eventLog).map((e) => {

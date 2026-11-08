@@ -1,0 +1,39 @@
+# Part 1: shipped matchers. Expected tags are from the side to move's point of view, material margin (no eval).
+r1bqr1k1/pp2bpp1/2n2n1p/3p4/3N4/2N1B1P1/PP2PPBP/R2Q1RK1 w - - id "iqp_theirs"; c0 "Tarrasch: Black IQP on d5 -> imbalance=iqp_theirs";
+rnbq1rk1/p4ppp/1p2pn2/8/1bBP4/2N2N2/PP3PPP/R1BQ1RK1 w - - id "iqp_ours"; c0 "Nimzo-Indian: White IQP on d4 -> imbalance=iqp_ours";
+r1bqrnk1/pp2bppp/2p2n2/3p2B1/3P4/2NBPN2/PPQ2PPP/R4RK1 w - - id "minority_ours"; c0 "QGD Exchange, Carlsbad: White minority attack -> imbalance=minority_ours";
+r3k2r/pp1q1ppp/2nbpn2/3p4/3P1Bb1/1QPB1N2/PP1N1PPP/R3K2R w KQkq - id "minority_theirs"; c0 "Caro-Kann Exchange: Black minority attack -> imbalance=minority_theirs";
+r4rk1/pp2qppp/2p1b3/3p4/3P4/2P1B3/PP2QPPP/R4RK1 w - - id "ocb_queens"; c0 "opposite-colored bishops, queens on -> bishops=opposite_queens";
+r4rk1/pp3ppp/2p1b3/3p4/3P4/2P1B3/PP3PPP/R4RK1 w - - id "ocb_no_queens"; c0 "opposite-colored bishops, queens off -> bishops=opposite";
+2r3k1/5ppp/2n5/8/P7/2N5/5PPP/2R3K1 w - - id "passed_outside_ours"; c0 "late phase, White a-pawn is an outside passer -> pawn=passed_outside_ours, phase=late, structure=open";
+2r3k1/5ppp/2n5/8/P7/2N5/5PPP/2R3K1 b - - id "passed_outside_theirs"; c0 "same, Black to move -> pawn=passed_outside_theirs";
+r2q1rk1/pp1bppbp/2np1np1/8/2BNP3/2N1BP2/PPPQ2PP/2KR3R b - - id "castling_opposite+open_sicilian_theirs"; c0 "Dragon Yugoslav: opposite castling, Black faces the open Sicilian -> castling=opposite, formation=open_sicilian_theirs";
+r1bq1rk1/pppnn1bp/3p4/3Pp1p1/2P1Pp2/2N2P2/PP2BBPP/R2QNRK1 w - - id "closed+kid_center_ours"; c0 "KID Mar del Plata: closed center, White has the space -> structure=closed, formation=kid_center_ours";
+r2q1rk1/pp2bppp/2n5/3n4/8/2N2N2/PP2BPPP/R2Q1RK1 w - - id "no_structure_tag"; c0 "piece play, no center pawns: neither open nor closed -> no structure tag";
+r2q1rk1/pp1bppbp/2np1np1/8/2PNP3/2N1B3/PP2BPPP/R2Q1RK1 w - - id "maroczy_ours"; c0 "Accelerated Dragon, Maroczy bind -> formation=maroczy_ours";
+rn1q1rk1/pb3pp1/5b1p/2pp4/8/2N1PN2/PP2BPPP/R2Q1RK1 w - - id "hanging_theirs"; c0 "QGD Tartakower: Black hanging pawns c5/d5 -> formation=hanging_theirs";
+r4rk1/1bqnbppp/pp1ppn2/8/2PQP3/1PN2NP1/PB3PBP/R2R2K1 w - - id "hedgehog_theirs"; c0 "English Hedgehog, White has the c4/e4 clamp -> formation=hedgehog_theirs";
+r1b2rk1/pp1nqppp/2n1p3/2ppP3/3P1P2/2N2N2/PPPQ2PP/R3KB1R w KQ - id "french_chain_ours"; c0 "French Classical: White d4-e5 chain -> formation=french_chain_ours";
+rnb1k2r/pp2q1pp/2pbpn2/3p1p2/2PP4/1P3NP1/P3PPBP/RNBQ1RK1 w kq - id "stonewall_theirs"; c0 "Dutch Stonewall, White to move -> formation=stonewall_theirs";
+rnbqr1k1/pp3pbp/3p1np1/2pP4/4P3/2N2N2/PP2BPPP/R1BQ1RK1 w - - id "benoni_ours"; c0 "Modern Benoni: White d5 wedge -> formation=benoni_ours";
+r2qkbnr/pp1nppp1/2p3bp/8/3P3P/5NN1/PPP2PP1/R1BQKB1R w KQkq - id "caro_kann_ours"; c0 "Caro-Kann Classical: lone d4 pawn against c6/e6 shell -> formation=caro_kann_ours";
+rnbq1rk1/1p2bppp/p2p1n2/4p3/4P3/1NN5/PPP1BPPP/R1BQ1RK1 w - - id "open_sicilian_ours"; c0 "Najdorf: open Sicilian, White to move -> formation=open_sicilian_ours";
+5rk1/pp3ppp/2n5/3p4/3P4/2N5/PP3PPP/R2R2K1 w - - id "material_margin_ahead"; c0 "no eval: a rook up gives margin from material -> margin=winning";
+r1bq1b1r/ppp3pp/3k4/3Bp3/3n4/P1N2Q2/1P1P1PPP/R1BK3R w - - id "repeats_qf7"; c0 "needs the move stack: reach it by 1.e4 e5 2.Nf3 Nc6 3.Bc4 Nf6 4.Ng5 d5 5.exd5 Nxd5 6.Nxf7 Kxf7 7.Qf3+ Ke6 8.Nc3 Ncb4 9.a3 Nxc2+ 10.Kd1 Nd4 11.Bxd5+ Kd6 12.Qf7 Qe7 13.Qf3 Qd8 14.Qf7 Qe7 15.Qf3 Qd8; then Qf7 repeats -> repeats=(Qf7,)";
+
+# Part 2: speculative sacrifices (draft). 'listed' = sacrifice_moves should return the move; 'not listed' = a near-miss.
+r1b2rk1/ppqn1ppp/2n1p3/2bpP3/8/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - id "greek_gift_white"; c0 "Bxh7+: listed: Koltanowski Greek gift, Bxh7+ Kxh7 Ng5+ then Qh5. Also the later-step case: in the idea Ng5 first then Bxh7+, step two reaches Bxh7+ with a non-empty line, same SAN, normal margin";
+r1bq1rk1/pp1n1ppp/2pb1n2/8/2BPp3/2N1P3/PPQN1PPP/R1B2RK1 b - - id "greek_gift_black"; c0 "Bxh2+: listed: same position with colors reversed";
+r1bqkbnr/pppn1pp1/7p/4p3/2B1P3/5N2/PPP2PPP/RNBQK2R w KQkq - id "bxf7_white"; c0 "Bxf7+: listed: Philidor Hanham trap, Bxf7+ Kxf7 Nxe5+ and Qh5+";
+rnbqk2r/ppp2ppp/5n2/2b1p3/4P3/7P/PPPN1PP1/R1BQKBNR b KQkq - id "bxf2_black"; c0 "Bxf2+: listed: same with colors reversed";
+r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - id "bxf7_jerome_refuted"; c0 "Bxf7+: listed by pattern, but unsound (Jerome gambit): the deep comparison must reject it";
+r1b2rk1/ppq2ppp/2n1pn2/2bpP3/8/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - id "greek_gift_nf6_defender"; c0 "Bxh7+: not listed: a Black knight on f6 defends h7 and guards g5";
+r1b2rk1/ppqn1ppp/2n1p3/2bpP3/8/1NPB4/PP1N1PPP/R1BQ1RK1 w - - id "greek_gift_no_knight"; c0 "Bxh7+: not listed: no White knight reaches g5";
+r1b2rk1/pp1n1ppp/2n1p3/2bpP3/8/2PB1N2/PP1N1PPP/R1B2RK1 w - - id "greek_gift_no_queens"; c0 "Bxh7+: not listed: queens off, nothing follows the check";
+r1b1rk2/ppqn1ppp/2n1p3/2bpP3/8/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - id "greek_gift_h7_hanging"; c0 "Bxh7: not listed: king on f8 so Bxh7 just wins a pawn, not a sacrifice";
+r1b1k2r/ppqn1ppp/2n1p3/2bpP3/8/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - id "greek_gift_uncastled"; c0 "Bxh7: not listed: king on e8, no check; Rxh7 recaptures";
+2b2rk1/ppqn1ppp/2n1p3/2bpP3/8/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - id "greek_gift_ahead"; c0 "Bxh7+: listed, but White is a rook up (margin from material): no note, no widening, SAC_DEPTH comparison still runs";
+r1bq1rk1/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQ1RK1 w - - id "bxf7_castled_king"; c0 "Bxf7+: not listed: the king is castled, Bxf7+ is not the uncastled-king pattern";
+r1bk1bnr/pppn1pp1/7p/4p3/2B1P3/5N2/PPP2PPP/RNBQK2R w KQ - id "bxf7_f7_hanging"; c0 "Bxf7: not listed: king on d8, f7 is a free pawn";
+r1b2rk1/ppq2ppp/2n1pn2/2bp4/4P3/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - id "greek_gift_diagonal_blocked"; c0 "not listed: the e4 pawn blocks the d3-h7 diagonal, Bxh7 is not even legal";
+r4rk1/pp3p1p/4p1p1/2P3P1/1q2BP2/4Q3/2P5/2KR3R w - - id "rook_h7_king_zone"; c0 "Rxh7: listed: king_zone, a sound rook sacrifice (Kxh7 Qh3+ then Qh8)";

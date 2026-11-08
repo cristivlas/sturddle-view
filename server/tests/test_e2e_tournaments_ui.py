@@ -4,6 +4,8 @@ Skipped if Playwright/Chromium isn't installed.
 """
 from __future__ import annotations
 
+import os
+import shutil
 import sys
 
 import pytest
@@ -12,7 +14,7 @@ pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
 from sturddle_view.engines import EngineRegistry  # noqa: E402
-from sturddle_view.tournament.store import TournamentStore  # noqa: E402
+from sturddle_view.tournament.store import STATUS_FAILED, TournamentStore  # noqa: E402
 
 from .conftest import (  # noqa: E402
     REGISTRY_FILE,
@@ -24,6 +26,13 @@ from .conftest import (  # noqa: E402
     wait_for_async_predicate,
     wait_perspective_ready,
 )
+
+
+_STICKY_TOAST_X = "#toast-stack .toast-danger .xgame-toast-x"
+
+
+def _danger_toast(page):
+    return page.locator("#toast-stack .toast-danger")
 
 
 def _server_env(tmp_path, *, fastchess_path=None):
@@ -172,6 +181,113 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, make_p
         )
 
         assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)
+
+
+def _vanishing_fastchess(tmp_path):
+    """A configured fastchess to delete once the UI has seen it, on a PATH
+    with no real one to fall back to. Returns (path, env)."""
+    fastchess = tmp_path / "fastchess"
+    fastchess.touch(mode=0o755)
+    path = os.pathsep.join(
+        d for d in os.environ["PATH"].split(os.pathsep)
+        if not shutil.which("fastchess", path=d)
+    )
+    return fastchess, {**_server_env(tmp_path, fastchess_path=str(fastchess)), "PATH": path}
+
+
+def _seed_tournament(tmp_path):
+    return TournamentStore(tmp_path / "tournaments").create(
+        name="smoke",
+        template={"tc": "10+0.1"},
+        engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
+    )
+
+
+async def _select_row(page, base):
+    await pin_arena_tournament_ux(page)
+    await page.goto(base + "/")
+    await wait_perspective_ready(page)
+    await page.click('button[data-perspective="engines"]')
+    await page.click(".tournament-row")
+    await page.wait_for_selector(".tournament-row.selected")
+
+
+async def _assert_gear_opens_tournament_settings(page):
+    await _danger_toast(page).locator(".toast-action-btn").click()
+    await page.wait_for_function(
+        """() => document.querySelector('wa-dialog .settings-tabs')?.active === 'tournament'""",
+    )
+    await _danger_toast(page).wait_for(state="detached")
+
+
+@pytest.mark.asyncio
+async def test_start_without_fastchess_gear_opens_tournament_settings(tmp_path, make_page):
+    """fastchess disappearing after the list loaded fails the start with a
+    toast that stays up, doesn't stack, and whose gear lands on Settings >
+    Tournament."""
+    fastchess, env = _vanishing_fastchess(tmp_path)
+    _seed_tournament(tmp_path)
+
+    with run_uvicorn_subprocess(env_overrides=env) as base:
+        _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
+        await _select_row(page, base)
+
+        fastchess.unlink()
+        await page.click(".tournaments-ribbon .t-start")
+        await _danger_toast(page).wait_for()
+        assert "fastchess binary not found" in await _danger_toast(page).text_content()
+        await page.locator(_STICKY_TOAST_X).wait_for()
+
+        first = await _danger_toast(page).element_handle()
+        await page.click(".tournaments-ribbon .t-start")
+        await page.wait_for_function("(el) => !el.isConnected", arg=first)
+        assert await _danger_toast(page).count() == 1
+        await _assert_gear_opens_tournament_settings(page)
+
+
+@pytest.mark.asyncio
+async def test_launchable_start_retires_fastchess_toast(tmp_path, make_page):
+    """Fixing the path without the gear: the next Start clears the toast."""
+    fastchess, env = _vanishing_fastchess(tmp_path)
+    _seed_tournament(tmp_path)
+
+    with run_uvicorn_subprocess(env_overrides=env) as base:
+        _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
+        await _select_row(page, base)
+
+        fastchess.unlink()
+        await page.click(".tournaments-ribbon .t-start")
+        await _danger_toast(page).wait_for()
+
+        fastchess.touch(mode=0o755)
+        await page.click(".tournaments-ribbon .t-start")
+        await page.locator(_STICKY_TOAST_X).wait_for(state="detached")
+
+
+@pytest.mark.asyncio
+async def test_banner_restart_without_fastchess_shows_gear(tmp_path, make_page):
+    """The workspace banner's Restart reports the same gear, and stops short
+    of the wipe confirm."""
+    fastchess, env = _vanishing_fastchess(tmp_path)
+    t = _seed_tournament(tmp_path)
+    TournamentStore(tmp_path / "tournaments").update_status(
+        t.id, STATUS_FAILED,
+        last_error={"rc": 1, "stderr_tail": [
+            "boom; press Start to restart from scratch (prior games will be discarded).",
+        ]},
+    )
+
+    with run_uvicorn_subprocess(env_overrides=env) as base:
+        _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
+        await _select_row(page, base)
+        await open_arena_workspace(page)
+
+        fastchess.unlink()
+        await page.click('.wb-error-banner button[aria-label="Restart"]')
+        await _danger_toast(page).wait_for()
+        assert "Restart failed" in await _danger_toast(page).text_content()
+        assert await page.locator("wa-dialog[no-header]").count() == 0
+        await _assert_gear_opens_tournament_settings(page)
 
 
 @pytest.mark.asyncio

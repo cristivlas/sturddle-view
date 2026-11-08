@@ -923,22 +923,61 @@ def _is_notation_dot(text: str, pos: int) -> bool:
     return end < len(text) and not text[end].isspace()
 
 
-def _clause_sans(text: str, pos: int) -> list[re.Match]:
-    """SAN tokens before `pos` within its clause, in order. The clause is
-    punctuation-bounded (_CLAUSE_SPLIT_RE), except that move-number dots
-    glued to their move ("13...Rc8", "14.Qb3") do not split."""
+def _clause_start(text: str, pos: int) -> int:
+    """Start of the clause holding `pos`: just past the last punctuation
+    (_CLAUSE_SPLIT_RE) before it, move-number dots glued to their move
+    ("13...Rc8", "14.Qb3") excepted."""
     clause_start = 0
     for m_split in _CLAUSE_SPLIT_RE.finditer(text, 0, pos):
         if m_split.group(0) == "." and _is_notation_dot(text, m_split.start()):
             continue
         clause_start = m_split.end()
-    return list(_SAN_TOKEN_RE.finditer(text, clause_start, pos))
+    return clause_start
+
+
+def _clause_sans(text: str, pos: int) -> list[re.Match]:
+    """SAN tokens before `pos` within its clause, in order."""
+    return list(_SAN_TOKEN_RE.finditer(text, _clause_start(text, pos), pos))
 
 
 def _clause_last_san(text: str, pos: int) -> re.Match | None:
     """Nearest SAN token before `pos` within its clause, or None."""
     sans = _clause_sans(text, pos)
     return sans[-1] if sans else None
+
+
+# Verbs whose object is the moved or captured piece, as (participle, "which"
+# form): a comma clause opening on either describes the move just before the
+# comma ("10...Nxe3, eliminating the light-squared bishop"; "7.Bg2, which
+# develops the light-squared bishop"). Other verbs ("which frees the
+# bishop") name another piece and stay unbound.
+_HOST_VERBS = (
+    ("eliminating", "eliminates"), ("removing", "removes"),
+    ("capturing", "captures"), ("winning", "wins"), ("taking", "takes"),
+    ("trading", "trades"), ("exchanging", "exchanges"),
+    ("liquidating", "liquidates"), ("grabbing", "grabs"), ("netting", "nets"),
+    ("picking up", "picks up"), ("developing", "develops"),
+    ("activating", "activates"), ("rerouting", "reroutes"),
+    ("relocating", "relocates"),
+)
+_PARTICIPLE_HOST_RE = re.compile(
+    r"\s*(?:"
+    + "|".join(participle for participle, _ in _HOST_VERBS)
+    + r"|which\s+(?:"
+    + "|".join(verb for _, verb in _HOST_VERBS)
+    + r"))\b",
+    re.IGNORECASE,
+)
+
+
+def _participle_host_san(text: str, pos: int) -> re.Match | None:
+    """The SAN a host-verb clause at `pos` describes: the last one in the
+    clause before its comma, when the clause opens on a _HOST_VERBS form.
+    ", and the bishop will follow" names a new subject and stays unbound."""
+    start = _clause_start(text, pos)
+    if start == 0 or text[start - 1] != "," or not _PARTICIPLE_HOST_RE.match(text, start):
+        return None
+    return _clause_last_san(text, start - 1)
 
 
 def _clause_bound_square(text: str, pos: int, board: chess.Board) -> int | None:
@@ -949,7 +988,7 @@ def _clause_bound_square(text: str, pos: int, board: chess.Board) -> int | None:
     holds on any board, so no parse is needed. Any other SAN binds only when
     it captures a bishop on `board` (the victim's square); a nearest SAN that
     is neither leaves the phrase unbound."""
-    last = _clause_last_san(text, pos)
+    last = _clause_last_san(text, pos) or _participle_host_san(text, pos)
     if last is None:
         return None
     token = _strip_annotation_glyphs(last.group("token"))

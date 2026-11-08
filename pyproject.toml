@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sturddle-view"
-version = "0.7.5"
+version = "0.8.0"
 description = "Browser-based chess GUI for human vs engine play and headless tournament observation."
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
 authors = [{ name = "Cristian Vlasceanu" }]
@@ -34,6 +34,8 @@ dev = [
     "playwright>=1.40",
     # Starlette >=1.3 moved its TestClient backend from httpx to httpx2.
     "httpx2>=2.0",
+    # scripts/prep_wallpaper.py
+    "Pillow>=10.0",
 ]
 
 [project.scripts]
@@ -42,9 +44,12 @@ sturddle-view = "sturddle_view.__main__:main"
 [tool.setuptools.packages.find]
 where = ["server"]
 
+[tool.setuptools.package-data]
+"sturddle_view.play" = ["playbook_data/*.toml"]
+
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 # Default set (E4/E7/E9, F) plus E302 (2 blank lines before a top-level def).

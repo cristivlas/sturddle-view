@@ -30,6 +30,7 @@ from ..llm import (
     PromptMode,
     build_initial_user_message,
     render_playbook,
+    structural_playbook,
 )
 from ..llm.ollama import DEFAULT_BASE_URL as _DEFAULT_OLLAMA_BASE_URL, OllamaProvider
 from ..openings import Opening
@@ -161,11 +162,16 @@ def _prompt_mode_for(hve) -> PromptMode:
     return COACH_MODE
 
 
-def _playbook_for(hve, board: chess.Board, mode: PromptMode) -> str:
-    """Rendered plan line (docs/ai-playbook-spec.md). "Our side" is the
-    human for the coach, the side to move for the commentator."""
+def _situation_for(hve, board: chess.Board, mode: PromptMode):
+    """Playbook tags (docs/ai-playbook-spec.md). "Our side" is the human for
+    the coach, the side to move for the commentator."""
     our_color = board.turn if mode == COMMENTATOR_MODE else hve.human_color()
-    return render_playbook(hve.situation(our_color), mode, board.turn)
+    return hve.situation(our_color)
+
+
+def _playbook_for(hve, board: chess.Board, mode: PromptMode) -> str:
+    """Rendered plan line for the `plan` tool."""
+    return render_playbook(_situation_for(hve, board, mode), mode, board.turn)
 
 
 def live_playbook(state) -> str | None:
@@ -257,6 +263,7 @@ async def _build_turn_inputs(hve, settings, eco_book) -> TurnInputs | None:
         in_opening=in_opening,
         book_reply=reply,
         player_side=color_name(hve.human_color()) if mode == COACH_MODE else None,
+        plan_line=structural_playbook(_situation_for(hve, board, mode)),
     )
     if reply is None:
         return TurnInputs(message, None, (), opening)

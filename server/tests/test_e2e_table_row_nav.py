@@ -151,15 +151,15 @@ async def test_standings_cursor_row(tourney_server, make_page):
 
 @pytest.mark.asyncio
 async def test_h2h_reachable_with_cursor(tourney_server, make_page):
-    """Head-to-Head was unreachable by Tab; now Tab from its tab enters the
-    body with a ringed cursor on the first stat row (group rows are skipped),
-    and arrows move it."""
+    """Head-to-Head was unreachable by Tab; now Tab from its Columns button
+    enters the body with a ringed cursor on the first stat row (group rows are
+    skipped), and arrows move it."""
     _ctx, page = await make_page(viewport=VIEWPORT)
     errors = watch_page_errors(page)
     await open_studio_tab(page, tourney_server, "h2h")
     await page.wait_for_selector(".h2h-tbl tbody tr")
     body = ".h2h-body-tbl"
-    await page.focus('.studio-bottom-right wa-tab[panel="h2h"]')
+    await page.focus(".h2h-head-tbl .dt-menu-btn")
     await page.keyboard.press("Tab")
     first = await _wait_cursor(page, body)
     assert first["ring"] == "solid", first

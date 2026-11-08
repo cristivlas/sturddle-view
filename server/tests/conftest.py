@@ -31,6 +31,7 @@ import sturddle_view.app as app_mod
 import sturddle_view.config as cfg
 import sturddle_view.engines as engines_mod
 import sturddle_view.play.game_store as gs
+import sturddle_view.play.playbook_catalog as pc_mod
 import sturddle_view.recent_imports as ri_mod
 import sturddle_view.tournament.store as ts_mod
 from sturddle_view import key_store
@@ -438,6 +439,9 @@ def e2e_env(tmp_path: Path) -> dict[str, str]:
         "SV_IMPORTS_DIR": str(tmp_path / "imports"),
         "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
         "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+        "SV_AI_PLAYBOOK_DIR": str(tmp_path / "playbook"),
+        "SV_WALLPAPER_DIR": str(tmp_path / "wallpaper"),
+        "SV_THEMES_DIR": str(tmp_path / "themes"),
     }
 
 
@@ -779,6 +783,8 @@ async def browser():
 
 _E2E_PAGES_ATTR = "_sv_e2e_pages"
 _E2E_ERRORS_ATTR = "_sv_console_errors"
+# Instant dock changes: a view-transition glide would show tests mid-move.
+_E2E_REDUCED_MOTION = "reduce"
 
 
 def _attach_console_capture(page):
@@ -816,6 +822,7 @@ async def make_page(browser, request):
 
     async def _make(viewport=None, **ctx_kwargs):
         kwargs = dict(ctx_kwargs)
+        kwargs.setdefault("reduced_motion", _E2E_REDUCED_MOTION)
         if viewport is not None:
             kwargs["viewport"] = viewport
         ctx = await browser.new_context(**kwargs)
@@ -849,9 +856,14 @@ async def wait_perspective_ready(page) -> None:
     its controller resolves ``ready``; before that, ``#perspective-root``
     carries the ``is-pending`` class. Tests that click ribbon buttons
     immediately after page.goto MUST await this before clicking, or
-    the click can land on an unbound element and silently do nothing."""
+    the click can land on an unbound element and silently do nothing.
+    An empty root means main.js hasn't mounted anything yet: is-pending is
+    absent then too."""
     await page.wait_for_function(
-        "() => !document.querySelector('#perspective-root')?.classList.contains('is-pending')",
+        """() => {
+            const root = document.querySelector('#perspective-root');
+            return root?.childElementCount > 0 && !root.classList.contains('is-pending');
+        }""",
     )
 
 
@@ -1218,3 +1230,8 @@ def _isolate_user_config(tmp_path, monkeypatch):
     monkeypatch.setattr(app_mod, "default_root", lambda: fake_root)
     monkeypatch.setattr(tournaments_api, "default_root", lambda: fake_root)
     monkeypatch.setenv("SV_ENGINE_TMP_ROOT", str(tmp_path / "engine-tmp"))
+    monkeypatch.setenv("SV_WALLPAPER_DIR", str(tmp_path / "wallpaper"))
+    monkeypatch.setenv("SV_THEMES_DIR", str(tmp_path / "themes"))
+    # Shipped playbook text only: never the developer's own overrides.
+    monkeypatch.setattr(pc_mod, "default_user_dir", lambda: tmp_path / "playbook")
+    pc_mod.default_catalog.cache_clear()

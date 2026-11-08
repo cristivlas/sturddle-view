@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import socket
+import sys
 import threading
 from html import escape as html_escape
 from pathlib import Path
@@ -31,6 +32,15 @@ _SERVER_STARTUP_TIMEOUT = env_float("SV_DESKTOP_STARTUP_TIMEOUT_S", 5.0, min_val
 _SERVER_SHUTDOWN_TIMEOUT = env_float("SV_DESKTOP_SHUTDOWN_TIMEOUT_S", 5.0, min_value=0.0)
 _MIN_WINDOW_WIDTH = 960
 _MIN_WINDOW_HEIGHT = 720
+# Most of a screen the window may take: the reported size includes panels
+# and the title bar, which pywebview can't measure.
+_SCREEN_FIT = 0.9
+# Linux builds without a bundled Qt need the distro's WebKitGTK (and, for
+# --linux-webview system builds, its PyGObject for this Python version).
+_LINUX_WEBVIEW_HINT = (
+    "Install WebKitGTK and PyGObject, e.g. on Debian/Ubuntu: "
+    "sudo apt install gir1.2-webkit2-4.1 python3-gi"
+)
 _STARTUP_ERROR_TITLE = f"{APP_NAME} could not start"
 _PORT_IN_USE_MESSAGE = (
     "Port {port} is already in use -- another copy may be running. "
@@ -259,6 +269,15 @@ def _make_close_handler(app, window):
     return on_closing
 
 
+def fit_to_screen(width: int, height: int, screen) -> tuple[tuple[int, int], tuple[int, int]]:
+    """(size, min_size) for the window: the requested size and the minimum,
+    each capped to _SCREEN_FIT of ``screen`` (logical px; None = uncapped)."""
+    if screen is None:
+        return (width, height), (_MIN_WINDOW_WIDTH, _MIN_WINDOW_HEIGHT)
+    cap_w, cap_h = int(screen.width * _SCREEN_FIT), int(screen.height * _SCREEN_FIT)
+    return (min(width, cap_w), min(height, cap_h)), (min(_MIN_WINDOW_WIDTH, cap_w), min(_MIN_WINDOW_HEIGHT, cap_h))
+
+
 def run_desktop(host: str, port: int, width: int, height: int) -> None:
     if webview is None:
         raise SystemExit(_NOT_INSTALLED_MESSAGE)
@@ -282,7 +301,8 @@ def run_desktop(host: str, port: int, width: int, height: int) -> None:
     # Build the app eagerly so we can hand the same instance to uvicorn
     # AND keep a reference for the close-confirm handler (reads
     # app.state.tournament_orch to decide whether to prompt).
-    app = create_app(settings=settings)
+    # Linux's GTK web view needs eval for pywebview's JS bridge (app.py CSP).
+    app = create_app(settings=settings, allow_eval=sys.platform.startswith("linux"))
 
     config = uvicorn.Config(
         app,
@@ -328,9 +348,18 @@ def run_desktop(host: str, port: int, width: int, height: int) -> None:
     # cookie, then 303s to /ui/. The window's history never holds the token.
     url = entry_url(settings, window_host)
     api = JsApi(save_dialog_kind=webview.FileDialog.SAVE)
+    try:
+        # A lazy proxy: list() forces the GUI backend to load inside the try.
+        screens = list(webview.screens)
+    except webview.WebViewException as e:
+        server.should_exit = True
+        thread.join(timeout=_SERVER_SHUTDOWN_TIMEOUT)
+        msg = f"{e}\n{_LINUX_WEBVIEW_HINT}" if sys.platform.startswith("linux") else str(e)
+        log.error("no web view backend: %s", msg)
+        raise SystemExit(msg) from e
+    size, min_size = fit_to_screen(width, height, screens[0] if screens else None)
     window = webview.create_window(
-        APP_NAME, url, width=width, height=height,
-        min_size=(_MIN_WINDOW_WIDTH, _MIN_WINDOW_HEIGHT), js_api=api,
+        APP_NAME, url, width=size[0], height=size[1], min_size=min_size, js_api=api,
     )
     api.attach(window)
     window.events.shown += _apply_window_icon

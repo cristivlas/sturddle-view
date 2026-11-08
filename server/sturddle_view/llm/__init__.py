@@ -12,7 +12,7 @@ from .base import LLMProvider, Message, ProviderChunk, ProviderUsage, ToolWireSp
 from .canned import CannedProvider
 from .markdown_strip import strip_markdown_stream
 from .openai_compat import TOOL_SIGNATURE_KEY
-from .playbook import render_playbook
+from .playbook import render_playbook, structural_playbook
 from .prompts import (
     BOOK_REPLY_GUIDANCE,
     COACH_MODE,
@@ -46,6 +46,7 @@ __all__ = [
     "OPENING_PHASE_GUIDANCE",
     "PLAYBOOK_LEAD",
     "render_playbook",
+    "structural_playbook",
     "TOOL_SIGNATURE_KEY",
     "ToolWireSpec",
     "CannedProvider",

@@ -11,6 +11,8 @@ export const APP_EVT = {
   LIVEGAME_RESOLVED: "sturddle:livegame-resolved",
   // Active ribbon element changed (perspective mount/unmount); detail.el.
   RIBBON_ACTIVE: "sturddle:ribbon-active",
+  // A view's wallpaper was painted or cleared; faders re-read their fills.
+  WALLPAPER_TOGGLED: "sturddle:wallpaper-toggled",
   // User closed the floating ribbon WinBox; revert to last docked side.
   RIBBON_FLOAT_CLOSED: "sturddle:ribbon-float-closed",
   // Floating ribbon WinBox was dragged; open edit-mode popovers close.

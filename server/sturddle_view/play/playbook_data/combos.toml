@@ -1,0 +1,66 @@
+# Combo overrides: margin plus bishops, phase or structure; replaces both fragments.
+# A bishops combo outranks the others (opposite-colored bishops change what trades do).
+
+[meta]
+source = "shipped"
+trust = "trusted"
+
+[[entry]]
+id = "combo.losing_closed"
+kind = "combo"
+when = { margin = "losing", structure = "closed" }
+text = "behind in a closed position: keep it closed, avoid opening lines for the stronger side; wait for a mistake, prepare one break."
+
+[[entry]]
+id = "combo.losing_open"
+kind = "combo"
+when = { margin = "losing", structure = "open" }
+text = "behind in an open position: complicate now, activity and initiative over material; open lines toward the enemy king."
+
+[[entry]]
+id = "combo.winning_closed"
+kind = "combo"
+when = { margin = "winning", structure = "closed" }
+text = "ahead in a closed position: do not force it; prepare the pawn break on the side with more space, then open at the right moment."
+
+[[entry]]
+id = "combo.winning_open"
+kind = "combo"
+when = { margin = "winning", structure = "open" }
+text = "ahead in an open position: trade pieces, keep pawns, hold the open files; simplification is the win."
+
+[[entry]]
+id = "combo.winning_endgame"
+kind = "combo"
+when = { margin = "winning", phase = "endgame" }
+text = "ahead in the endgame: king to the center, create the passed pawn, promote; trade pieces not pawns."
+
+[[entry]]
+id = "combo.losing_endgame"
+kind = "combo"
+when = { margin = "losing", phase = "endgame" }
+text = "behind in the endgame: king activity and counterplay; seek the drawing fortress or opposite-colored bishops before it is too late."
+
+[[entry]]
+id = "combo.worse_opening"
+kind = "combo"
+when = { margin = "worse", phase = "opening" }
+text = "slightly worse in the opening: finish development first, no pawn grabs; castle and consolidate."
+
+[[entry]]
+id = "combo.better_opening"
+kind = "combo"
+when = { margin = "better", phase = "opening" }
+text = "slightly better in the opening: keep developing, do not cash in early; punish the lag later."
+
+[[entry]]
+id = "combo.winning_opposite"
+kind = "combo"
+when = { margin = "winning", bishops = "opposite" }
+text = "ahead with opposite-colored bishops: keep the rooks on and pawns on both wings, create a second passed pawn; avoid pawn trades."
+
+[[entry]]
+id = "combo.losing_opposite"
+kind = "combo"
+when = { margin = "losing", bishops = "opposite" }
+text = "behind with opposite-colored bishops: trade pawns, blockade on the bishop's color, head for the drawn ending."

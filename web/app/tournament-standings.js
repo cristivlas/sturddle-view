@@ -50,7 +50,8 @@ const STANDINGS_COLUMNS = [
     cell: ({ engine: e }) => ordoCell(e) },
 ];
 
-export function makeStandingsBody() {
+// fade: its panel's fader, for Transparency in the Columns menu (Studio only).
+export function makeStandingsBody({ fade = null } = {}) {
   const el = document.createElement("div");
   el.className = "wb-standings";
   el.innerHTML = `
@@ -70,7 +71,7 @@ export function makeStandingsBody() {
         stackKey: STORAGE_KEY.TOURNAMENTS_STANDINGS_STACK,
         defaultState: { key: "pct", dir: SORT_DIR.DESC },
       },
-      resize: true, reorder: true, hide: true, fit: true, rowNav: {},
+      resize: true, reorder: true, hide: true, fit: true, fade, rowNav: {},
     },
     rowAttrs: (r) => ({ "data-id": r.name }),
   });

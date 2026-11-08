@@ -9,7 +9,9 @@ Pins the contract the skin-in-the-game design rests on
   live position,
 - a step that drops the mover's eval past PLAY_OUT_MARGIN_CP fails and is not
   kept, yet its first move still counts as played out,
-- a mating move ends the line; the record ranks first moves by eval after.
+- a mating move ends the line; the record ranks first moves by eval after,
+- a search of the live position (the board shows its arrow) is reported as
+  a progress step first, so the panel names the move the arrow shows.
 
 Searches come from a scripted _run_one_search (side-to-move POV), so the
 real SearchCache and step logic run without an engine.
@@ -21,14 +23,24 @@ import pytest
 
 from sturddle_view.events import EVT_ENGINE_SEARCH_START, EventBus
 from sturddle_view.llm.cancel import CancelToken
+from sturddle_view.llm.tool_progress import reporting_progress
 from sturddle_view.play import tools_engine
 from sturddle_view.play.tools_engine import (
     MAX_IDEAS,
     PLAY_OUT_MARGIN_CP,
     PLAY_OUT_MAX_MOVES,
+    SACRIFICE_HOLDS_NOTE,
     PlayOutRecord,
     make_play_out_tool,
 )
+from sturddle_view.play.playbook import Situation
+from sturddle_view.play.playbook_tags import (
+    MARGIN_BETTER,
+    MARGIN_EVEN,
+    PHASE_MIDDLEGAME,
+    SOURCE_EVAL,
+)
+from sturddle_view.play.sacrifices import PATTERN_GREEK_GIFT
 
 from .scripted_search import epd_after, scripted_search
 
@@ -136,6 +148,38 @@ async def test_each_step_starts_a_fresh_search_panel(monkeypatch):
     while not queue.empty():
         kinds.append(queue.get_nowait().kind)
     assert kinds.count(EVT_ENGINE_SEARCH_START) == 1
+
+
+@pytest.mark.asyncio
+async def test_live_position_search_is_reported_before_it_runs(monkeypatch):
+    # The live-position search paints the engine's best (d4) on the board
+    # under a "Playing out e4" row: a step row must name it first. A later
+    # step searches off the board's position, which paints nothing.
+    log: list = []
+    tool, _bus = _tool(monkeypatch, chess.Board(), PlayOutRecord(), calls=log)
+
+    async def progress(name, input_):
+        log.append((name, input_))
+
+        async def finish(output):
+            log.append(("done", name, output))
+
+        return finish
+
+    with reporting_progress(progress):
+        await _step(tool, "e4, aim d4", "e4")
+        first = len(log)
+        await _step(tool, "e4, aim d4", "Nf3")
+
+    best = tools_engine.PROGRESS_ENGINE_BEST
+    depth = min(tools_engine.PLAY_OUT_DEPTH, tools_engine.MAX_DEPTH)
+    assert log[:first] == [
+        (best, {"depth": depth}),
+        (epd_after(), None),
+        ("done", best, {"san": "d4", "score_text": "+0.30", "depth": depth}),
+        (epd_after("e4"), None),
+    ]
+    assert best not in [entry[0] for entry in log[first:]]
 
 
 @pytest.mark.asyncio
@@ -254,3 +298,74 @@ async def test_idea_past_its_move_cap_is_refused(monkeypatch):
         assert "error" not in await _step(tool, "e4 idea", move)
     out = await _step(tool, "e4 idea", moves[PLAY_OUT_MAX_MOVES])
     assert out["error"] == "idea_done"
+
+
+# Greek gift: Bxh7+ Kxh7 Ng5+ Kg6 keeps the eval level (side-to-move POV).
+_GIFT_FEN = "r1b2rk1/ppqn1ppp/2n1p3/2bpP3/8/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - 0 1"
+_GIFT = chess.Board(_GIFT_FEN)
+
+
+def _gift_script(after_ng5: int) -> dict:
+    return {
+        (epd_after(start=_GIFT), None): (20, ["d2b3"]),
+        (epd_after("Bxh7+", start=_GIFT), None): (1, ["g8h7"]),
+        (epd_after("Bxh7+", "Kxh7", start=_GIFT), None): (0, ["f3g5"]),
+        (epd_after("Bxh7+", "Kxh7", "Ng5+", start=_GIFT), None): (after_ng5, ["h7g6"]),
+        (epd_after("Nb3", start=_GIFT), None): (13, ["c6e5"]),
+    }
+
+
+def _gift_tool(monkeypatch, situation, after_ng5: int = 1):
+    monkeypatch.setattr(tools_engine, "_run_one_search", scripted_search(_gift_script(after_ng5), []))
+    return make_play_out_tool(
+        lambda: None, bus=EventBus(), board_provider=lambda: _GIFT.copy(),
+        record=PlayOutRecord(), situation_provider=lambda: situation,
+    )
+
+
+def _gift_situation(margin=MARGIN_EVEN, sacrifices=((PATTERN_GREEK_GIFT, "Bxh7+"),)):
+    return Situation(margin=margin, margin_source=SOURCE_EVAL, phase=PHASE_MIDDLEGAME, sacrifices=sacrifices)
+
+
+@pytest.mark.asyncio
+async def test_listed_sacrifice_that_holds_says_so(monkeypatch):
+    tool = _gift_tool(monkeypatch, _gift_situation())
+    first = await _step(tool, "Greek gift", "Bxh7+")
+    assert first["note"] == SACRIFICE_HOLDS_NOTE
+    second = await _step(tool, "Greek gift", "Ng5+")
+    assert second["note"] == SACRIFICE_HOLDS_NOTE
+
+
+@pytest.mark.asyncio
+async def test_listed_sacrifice_ahead_says_so_too(monkeypatch):
+    tool = _gift_tool(monkeypatch, _gift_situation(margin=MARGIN_BETTER))
+    out = await _step(tool, "Greek gift", "Bxh7+")
+    assert out["note"] == SACRIFICE_HOLDS_NOTE
+
+
+@pytest.mark.asyncio
+async def test_sacrifice_that_sinks_past_the_margin_gets_no_note(monkeypatch):
+    # Each step stays within the margin, the line does not: 20 -> -45.
+    tool = _gift_tool(monkeypatch, _gift_situation(), after_ng5=45)
+    await _step(tool, "Greek gift", "Bxh7+")
+    out = await _step(tool, "Greek gift", "Ng5+")
+    assert "failed" not in out
+    assert "note" not in out
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("situation", [
+    _gift_situation(sacrifices=()),
+    None,
+])
+async def test_unlisted_sacrifice_gets_no_note(monkeypatch, situation):
+    tool = _gift_tool(monkeypatch, situation)
+    out = await _step(tool, "Greek gift", "Bxh7+")
+    assert "note" not in out
+
+
+@pytest.mark.asyncio
+async def test_other_ideas_get_no_note(monkeypatch):
+    tool = _gift_tool(monkeypatch, _gift_situation())
+    out = await _step(tool, "Nb3 develop", "Nb3")
+    assert "note" not in out

@@ -11,6 +11,7 @@ import { mqMobile } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
 import { getTournamentUx, tournamentUxLabel } from "./tournament-studio.js";
 import { installSelection, installScrollEdgeTracking } from "./wb-utils.js";
+import { SETTINGS_PATH } from "./dialogs.js";
 
 installSelection();
 installScrollEdgeTracking();
@@ -122,7 +123,7 @@ async function refreshRibbonSide() {
   // Always fetch the server's ribbon_side so lastDockedSide reflects the
   // user's left/right preference even when float is the current mode.
   try {
-    const s = await api("GET", "/settings");
+    const s = await api("GET", SETTINGS_PATH);
     if (s?.ribbon_side === "right" || s?.ribbon_side === "left") {
       lastDockedSide = s.ribbon_side;
       if (side !== "float") side = s.ribbon_side;
@@ -250,7 +251,7 @@ connect({
   onEvent: (evt) => events.emit(evt),
 });
 
-api("GET", "/settings").then(s => {
+api("GET", SETTINGS_PATH).then(s => {
   const footer = document.getElementById("app-footer");
   if (footer && s) {
     const ver = s.version ? ` v${s.version}` : "";

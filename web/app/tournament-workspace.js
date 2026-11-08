@@ -24,8 +24,8 @@ import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, loadRaw, saveJson, saveRaw, removeKey } from "./storage.js";
 import { attachButtonSort, loadSortDir, SORT_ASC_LABEL, SORT_DESC_LABEL, SORT_DIR } from "./col-sort.js";
-import { gatedStart } from "./tournament-restart.js";
-import { apiErrorDetail, copyToClipboard, toast } from "./dialogs.js";
+import { gatedStart, reportStartError } from "./tournament-restart.js";
+import { copyToClipboard, toast } from "./dialogs.js";
 import {
   addTitleControl,
   AUTOSCROLL_SLACK_ROW_PX,
@@ -45,7 +45,7 @@ import {
 } from "./tournament-live-state.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { makeCrosstableBody, renderCrosstable } from "./tournament-crosstable.js";
-import { eventLogText, renderEventLogList } from "./tournament-eventlog.js";
+import { EVENT_LOG_COPY_WHAT, eventLogText, renderEventLogList } from "./tournament-eventlog.js";
 import { engineRowEntries, ICON_ENGINE_ROW, ICON_GAME_ROW, LOADING_MSG, markEngineRow } from "./tournament-row.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 import { createWinBox } from "./winbox-factory.js";
@@ -278,8 +278,12 @@ function tidy(ctx, { preserveMin = false } = {}) {
   setLayout(ctx, LAYOUT.TIDY);
   const { left, top, slotGrid } = ctx;
   const keys = ["engines", "standings", "schedule", "log"];
-  for (const k of keys) {
-    if (!ctx.windows[k]) openSystemWindow(ctx, k, { flash: false });
+  // Only an explicit Clean (menu, fresh workspace) reopens closed system
+  // windows; a refit keeps them closed (docs/tournament-workspace.md T-S4).
+  if (!preserveMin) {
+    for (const k of keys) {
+      if (!ctx.windows[k]) openSystemWindow(ctx, k, { flash: false });
+    }
   }
   // If watchers exist, re-grid them first while the 4 system panels
   // are hidden, so the user doesn't see the panels flicker beneath
@@ -346,6 +350,11 @@ function tidy(ctx, { preserveMin = false } = {}) {
   for (const [k, x, y, w, h] of placements) {
     const wb = ctx.windows[k];
     if (!wb) continue;
+    // A refit (preserveMin) keeps a minimized or maximized window as the
+    // user left it (docs/tournament-workspace.md T-S1 / T-S2); the rest tile
+    // around it, as Tile / Snap's preserveMax do. Clean from the menu (no
+    // preserveMin) still brings every system window back into its tile.
+    if (preserveMin && (wb.min || wb.max)) continue;
     unminimize(wb);
     wb.resize(w, h).move(x, y);
     setShadow(wb, false, ctx);
@@ -1168,7 +1177,7 @@ async function restartFromBanner(ctx) {
   try {
     await gatedStart({ api: ctx.api, log: ctx.log }, ctx.detail ?? ctx.tournament);
   } catch (e) {
-    toast(`Restart failed: ${apiErrorDetail(e)}`, { variant: "danger" });
+    reportStartError(ctx.log, "Restart failed", e);
     // Resync even on failure: Update & start may have PATCHed (reset to
     // idle, games wiped) before the start POST failed.
     await refresh(ctx);
@@ -1259,7 +1268,6 @@ const SORT_ASC_CTRL = "wb-sort-asc-ctrl";
 const SORT_DESC_CTRL = "wb-sort-desc-ctrl";
 const LOG_COPY_CTRL = "wb-log-copy-ctrl";
 const LOG_COPY_LABEL = "Copy event log";
-const LOG_COPY_WHAT = "Event log";
 
 // A-Z / Z-A title-bar buttons on Engine Instances: the same toggle pair as the
 // Engines page (click the lit one to clear), persisted across workspaces.
@@ -1358,7 +1366,7 @@ function buildWindowSpecs(ctx) {
       setBody: (b) => { ctx.logBody = b; },
       render: () => renderEventLog(ctx),
       postCreate: (wb) => addTitleControl(wb, LOG_COPY_CTRL, LOG_COPY_LABEL,
-        () => copyToClipboard(eventLogText(ctx.eventLog), LOG_COPY_WHAT)),
+        () => copyToClipboard(eventLogText(ctx.eventLog), EVENT_LOG_COPY_WHAT)),
     },
   };
 }
@@ -1535,11 +1543,18 @@ export function openTournamentWorkspace({
       spec.postCreate?.(ctx.windows[key]);
     }
   } else {
-    // Default: standings only; initWorkspace opens more based on tournament status.
+    // Default: standings only; the explicit Clean below opens the other
+    // three (initWorkspace's status-based opens then find them open).
     ctx.windows.standings = makeBox(ctx, "standings", windowSpecs.standings.title, standingsView);
     windowSpecs.standings.postCreate(ctx.windows.standings);
   }
-  requestAnimationFrame(() => reapplyLayout(ctx));
+  // Fresh: an explicit Clean (all four system windows). Restored: a refit
+  // of what was saved, closed windows staying closed.
+  requestAnimationFrame(() => {
+    if (ctx.finalized) return;
+    if (restoreFromSaved) reapplyLayout(ctx);
+    else tidy(ctx);
+  });
 
   // ---- Data refresh -----------------------------------------------------
 

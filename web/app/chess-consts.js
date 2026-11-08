@@ -46,3 +46,11 @@ export function uciSquares(uci) {
   if (!uci || uci.length < 2 * SQUARE_LEN) return null;
   return [uci.slice(0, SQUARE_LEN), uci.slice(SQUARE_LEN, 2 * SQUARE_LEN)];
 }
+
+// A SAN line's leading move number: "12. " or "12...".
+const SAN_MOVE_NUMBER_RE = /^\d+\.(?:\.\.)?\s*/;
+
+// First move of a SAN line ("12...Nf6 13. Bd3" -> "Nf6"), "" for none.
+export function firstSanMove(line) {
+  return (line ?? "").trim().replace(SAN_MOVE_NUMBER_RE, "").split(/\s+/)[0];
+}

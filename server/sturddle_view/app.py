@@ -33,6 +33,7 @@ from .api import openings as openings_api
 from .api import settings as settings_api
 from .api import test_hooks as test_hooks_api
 from .api import tournaments as tournaments_api
+from .api import wallpaper as wallpaper_api
 from .api import ws as ws_api
 from .api._ai_kick import ai_coordinator, live_playbook
 from .config import (
@@ -62,6 +63,7 @@ from .play.engine_analysis import make_analysis_supervisor
 from .play.engine_supervisor import EngineSupervisor
 from .play.game_store import GameStore
 from .play.human_vs_engine import HumanVsEngine, live_hve
+from .play.playbook_catalog import default_catalog
 from .play.tools_engine import (
     MATERIAL_TOOL_SPEC,
     PIECE_AT_TOOL_SPEC,
@@ -129,22 +131,31 @@ class _NoCacheUIMiddleware(BaseHTTPMiddleware):
         return response
 
 
+# connect-src includes data: so component libraries that fetch inline-SVG
+# icon payloads (e.g. webawesome) work without warnings.
+_CSP = (
+    "default-src 'self'; "
+    "img-src 'self' data:; "
+    "style-src 'self' 'unsafe-inline'; "
+    "connect-src 'self' data: ws: wss:; "
+    "frame-ancestors 'none'"
+)
+# pywebview's GTK backend hands every result back to the page through
+# eval(), which default-src 'self' refuses.
+_CSP_ALLOW_EVAL = f"{_CSP}; script-src 'self' 'unsafe-eval'"
+
+
 class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # Same-origin app: lock framing, strip Referer, restrict resource origins.
+    def __init__(self, app, csp: str):
+        super().__init__(app)
+        self._csp = csp
+
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
-        # connect-src includes data: so component libraries that fetch
-        # inline-SVG icon payloads (e.g. webawesome) work without warnings.
-        response.headers.setdefault(
-            "Content-Security-Policy",
-            "default-src 'self'; "
-            "img-src 'self' data:; "
-            "style-src 'self' 'unsafe-inline'; "
-            "connect-src 'self' data: ws: wss:; "
-            "frame-ancestors 'none'",
-        )
+        response.headers.setdefault("Content-Security-Policy", self._csp)
         return response
 
 
@@ -303,6 +314,8 @@ async def _lifespan(app: FastAPI):
             log.info("reconciled stale running tournament: %s (%s)", t.id, t.name)
     except Exception:
         log.error("tournament reconcile failed", exc_info=True)
+    # A bad shipped playbook fails boot, not a live plan call.
+    default_catalog()
     _signal_ready_port()
     yield
     # Best-effort: stop any active tournament on shutdown.
@@ -362,6 +375,7 @@ def create_app(
     engine_registry: EngineRegistry | None = None,
     game_store: GameStore | None = None,
     recent_imports: RecentImports | None = None,
+    allow_eval: bool = False,
 ) -> FastAPI:
     settings = settings or Settings()
     settings.apply_persisted()
@@ -402,6 +416,7 @@ def create_app(
     app.include_router(openings_api.router)
     app.include_router(tournaments_api.router)
     app.include_router(tournaments_api.internal_router)
+    app.include_router(wallpaper_api.router)
     app.include_router(ws_api.router)
     if settings.test_mode:
         app.include_router(test_hooks_api.router)
@@ -464,7 +479,7 @@ def create_app(
         log.warning("web_dir %s does not exist; UI will not be served", settings.web_dir)
 
     app.add_middleware(_NoCacheUIMiddleware)
-    app.add_middleware(_SecurityHeadersMiddleware)
+    app.add_middleware(_SecurityHeadersMiddleware, csp=_CSP_ALLOW_EVAL if allow_eval else _CSP)
     app.add_middleware(_OriginMiddleware)
 
     _print_banner(settings)
@@ -624,6 +639,7 @@ def _setup_ai(app: FastAPI) -> None:
             game_id_provider=_ai_game_id_provider,
             settings_provider=_ai_settings_provider,
             search_cache=ai_search_cache,
+            situation_provider=_ai_situation_provider,
         ),
     )
     # top_moves: the narrator's one-call way to rank its candidate moves

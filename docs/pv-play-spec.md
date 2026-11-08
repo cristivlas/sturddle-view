@@ -271,23 +271,24 @@ come from `POST /openings/line {fen, moves}` -> `{results: [opening |
 null, ...]}`, one per position the moves reach from `fen`, up to the
 first malformed or illegal move (a bad `fen` is a 400).
 
-A row's position is sampled at `engine_info` arrival from the board:
-its last externally set placement, never a show frame. Placement is
-all `pvFrames` needs. Rows keep `{ placement, pv_uci, frames }`
-beside the rendered text, written together and only by PV-carrying
-infos. A row that arrived with no board to sample (the view
-unmounted; the body and its bus slot outlive a perspective nav) has
-no placement and no frames; the next gate announcement (the remount's
-first) resamples it against the live board, and `pvFrames`' truncation
-covers a position that has moved on.
+A row's position is the info's `fen` (the searched position; AI tools
+search positions off the board), and the replay starts there. An info
+without one is sampled at arrival from the board: its last externally
+set placement, never a show frame. Placement is all `pvFrames` needs.
+Rows keep `{ fen, pv_uci, frames }` beside the rendered text, written
+together and only by PV-carrying infos. A row that arrived with no
+board to sample (the view unmounted; the body and its bus slot
+outlive a perspective nav) has no frames; the next gate announcement
+(the remount's first) resamples it against the live board, and
+`pvFrames`' truncation covers a position that has moved on.
 
 `pvFrames` never throws. No placement (the board source not wired
 yet, or the view unmounted) yields no frames. It truncates at the
 first token that is malformed (`0000`, wrong length, non-square),
 whose from-square is empty, or whose mover does not alternate colour
-with the previous ply. Searches from different positions interleave
-on one bus, so a row can be sampled against the wrong placement; a
-truncated line is shown as far as it makes sense, never as ghosts.
+with the previous ply. An info without a `fen` can be sampled against
+the wrong placement (the board moved on); a truncated line is shown
+as far as it makes sense, never as ghosts.
 
 ## Components
 
@@ -327,15 +328,16 @@ truncated line is shown as far as it makes sense, never as ghosts.
   internal position helper returns the animation promise, which the
   public `setPosition` swallows today.
 - `pv-table.js`: `createPvTable({ colWidthsKey, onActivate, cancelLine,
-  canPlay, currentPlacement })`; `update(info, pvText)` samples
-  `currentPlacement()` and writes the triple on PV-carrying infos
-  only; `refreshShowability()` first resamples rows that were written
-  with no placement; double-click on a showable row calls
-  `onActivate(handle)` with `handle = { frames, pvUci, setPly(i),
-  release() }`, keyed to the snapshot, not the `tr`. Showable requires
-  a playable line and `canPlay()` (when given); `refreshShowability()`
-  re-derives it for every row without a new write, for `canPlay`
-  answers that change on their own (`PLAY_LINE_GATE_CHANGED`).
+  canPlay, currentPlacement })`; `update(info, pvText)` takes the
+  info's `fen`, else samples `currentPlacement()`, and writes the
+  triple on PV-carrying infos only; `refreshShowability()` first
+  resamples rows that were written with no frames; double-click on a
+  showable row calls `onActivate(handle)` with `handle = { frames,
+  pvUci, startFen, setPly(i), release() }`, keyed to the snapshot, not
+  the `tr`. Showable requires a playable line and `canPlay()` (when
+  given); `refreshShowability()` re-derives it for every row without a
+  new write, for `canPlay` answers that change on their own
+  (`PLAY_LINE_GATE_CHANGED`).
   A single click on a row other than the one playing cancels via
   `cancelLine`, held for a grace window in case a following
   double-click on the same row claims it as a retarget instead; a

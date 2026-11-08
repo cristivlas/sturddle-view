@@ -8,7 +8,7 @@
 // Feed-agnostic: callers subscribe to their own event source and push
 // unified engine_info payloads via update(). The PV cell text differs by
 // caller (SAN in play, joined UCI in tournaments), so it's passed in; the
-// searched position is sampled from `currentPlacement` (play only).
+// searched position is the info's `fen`, else sampled from `currentPlacement`.
 //
 // `onActivate` (play only) turns showable rows into a double-click-to-play
 // affordance; see docs/pv-play-spec.md. Tables created without it (the
@@ -117,7 +117,7 @@ function highlightPly(tr, ply) {
 }
 
 // Per-row state off the DOM node: depth, rank, td per column key (hidden ones
-// detached but kept current), the {placement, pv_uci, frames} snapshot, and
+// detached but kept current), the {fen, pv_uci, frames} snapshot, and
 // the show generation that detects a superseded same-row retarget.
 const rowState = new WeakMap();
 
@@ -126,7 +126,8 @@ function hasPlayableFrames(tr) {
   return !!st?.pvRow && st.pvRow.frames.length >= MIN_SHOWABLE_FRAMES;
 }
 
-export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, currentPlacement }) {
+// fade: its panel's fader, for Transparency in the Columns menu.
+export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, currentPlacement, fade = null }) {
   // Showable requires both a playable line AND the board currently willing
   // to play one (not analyzing, not editing) -- gating here, not just at
   // activation, means a row never becomes double-click-able (hover, tooltip)
@@ -143,8 +144,10 @@ export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, curr
     else tr.removeAttribute("title");
   }
 
-  function writePvRow(tr, placement, pvUci, text) {
-    rowState.get(tr).pvRow = { placement, pvUci, text, frames: pvFrames(placement, pvUci) };
+  // An info naming its searched `fen` (AI tools search off the board) walks
+  // from it; one without samples the board.
+  function writePvRow(tr, pvUci, text, fen) {
+    rowState.get(tr).pvRow = { fen, pvUci, text, frames: pvFrames(fen ?? currentPlacement?.(), pvUci) };
   }
 
   // A row written with no board to sample (the view unmounted; this body
@@ -153,9 +156,7 @@ export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, curr
   // if the position has moved on.
   function resampleUnsampled(tr) {
     const st = rowState.get(tr);
-    if (st.pvRow.placement) return;
-    const placement = currentPlacement?.();
-    if (placement) writePvRow(tr, placement, st.pvRow.pvUci, st.pvRow.text);
+    if (!st.pvRow.frames.length) writePvRow(tr, st.pvRow.pvUci, st.pvRow.text);
   }
 
   function refreshShowability() {
@@ -180,7 +181,7 @@ export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, curr
     columns: COLUMNS,
     layoutKey,
     unit: WIDTH_UNIT.PX,
-    traits: { resize: true, reorder: true, hide: true, fit: true },
+    traits: { resize: true, reorder: true, hide: true, fit: true, fade },
     classes: {
       wrap: "wb-pvtable",
       headScroll: "wb-pvtable-head-scroll",
@@ -224,6 +225,7 @@ export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, curr
     const handle = {
       frames: st.pvRow.frames,
       pvUci: st.pvRow.pvUci,
+      startFen: st.pvRow.fen,
       setPly(i) { highlightPly(tr, i); },
       release() {
         // A same-row retarget already bumped showGen for the new handle;
@@ -340,7 +342,7 @@ export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, curr
   }
 
   function update(info, pvText) {
-    const { depth, seldepth, score, nodes, nps, pv_uci } = info;
+    const { depth, seldepth, score, nodes, nps, pv_uci, fen } = info;
     if (depth == null) return;
     const rank = info.multipv ?? BEST_RANK;
     // A best-line depth 1 after maxDepth > 1 signals a new search; lines
@@ -382,11 +384,11 @@ export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, curr
     if (nps != null) cellOf(tr, COL.NPS).textContent = fmtCount(nps);
     if (pvText) renderPvInto(cellOf(tr, COL.PV), pvText);
     if (ranked) setRankBadge(tr, rank);
-    // A row's {placement, pv_uci, frames} is written as one unit, and only by
+    // A row's {fen, pv_uci, frames} is written as one unit, and only by
     // an info that carries pv_uci -- infos without one update depth/score/
     // nodes/nps only, so the triple never disagrees with itself.
     if (pv_uci && pv_uci.length) {
-      writePvRow(tr, currentPlacement?.(), pv_uci, pvText);
+      writePvRow(tr, pv_uci, pvText, fen);
       applyShowability(tr);
     }
     fit();

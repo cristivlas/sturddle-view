@@ -57,7 +57,8 @@ from .engine_analysis import (
 from .engine_info_pump import is_interesting_info, publish_engine_info, pump_engine_info
 from .engine_supervisor import EngineSupervisor
 from .play_out_caps import MAX_IDEAS, PLAY_OUT_MAX_MOVES
-from .playbook import AHEAD_MARGINS, Situation
+from .playbook import Situation
+from .playbook_tags import AHEAD_MARGINS
 from .tactics import all_forks, all_pins, piece_label
 
 
@@ -1820,6 +1821,24 @@ async def _position_search(
     )
 
 
+# A listed sacrifice whose line keeps the eval: the model must not write
+# it off as unsound against the numbers.
+SACRIFICE_HOLDS_NOTE = (
+    "Material is given up but the eval holds: this sacrifice has "
+    "compensation here. Do not call it unsound or say it leaves nothing to show."
+)
+
+
+def _is_listed_sacrifice(
+    board: chess.Board, first: chess.Move, situation: Situation | None,
+) -> bool:
+    """`first` (from the live `board`) is a sacrifice the playbook lists
+    (docs/ai-playbook-spec.md, Speculative sacrifices)."""
+    if situation is None:
+        return False
+    return board.san(first) in {san for _, san in situation.sacrifices}
+
+
 def make_play_out_tool(
     engine_launcher: EngineLauncher,
     bus: EventBus,
@@ -1828,6 +1847,7 @@ def make_play_out_tool(
     game_id_provider: GameIdProvider | None = None,
     settings_provider: SettingsProvider | None = None,
     search_cache: SearchCache | None = None,
+    situation_provider: SituationProvider | None = None,
 ) -> AnalyzeTool:
     """Build the `play_out` async tool: one step of an idea per call. The
     eval before is a search of the line's position; the search after the
@@ -1836,7 +1856,10 @@ def make_play_out_tool(
     running as the next step's eval before (and only if that step comes).
     The engine's best for the model's own side is never returned. A step
     whose drop (mover POV) exceeds PLAY_OUT_MARGIN_CP is not kept. Every
-    first move tried lands in `record` with its eval after. `search_cache`: see make_analyze_tool."""
+    first move tried lands in `record` with its eval after. A kept step of
+    an idea that opens with a listed sacrifice (`situation_provider`), whose
+    line stays within PLAY_OUT_MARGIN_CP of the live eval, carries
+    SACRIFICE_HOLDS_NOTE. `search_cache`: see make_analyze_tool."""
     cache = search_cache or SearchCache()
 
     async def play_out(input_: dict, *, cancel_token: CancelToken) -> dict:
@@ -1871,11 +1894,16 @@ def make_play_out_tool(
             bus=bus, game_id=game_id, cancel_token=cancel_token,
             settings_provider=settings_provider,
         )
+        # A search of the live position paints the engine's best on the
+        # board: name it in the panel. Later steps search off the board.
+        report = skip_progress if line.moves else report_progress
         try:
+            finish = await report(PROGRESS_ENGINE_BEST, {_DEPTH_KEY: limit.depth})
             before_info, cancelled = await _position_search(
                 cache, engine_launcher, line.board, limit, **search_kw,
             )
             if not cancelled:
+                await finish(_step_result(line.board, before_info))
                 after_info, cancelled = await _position_search(
                     cache, engine_launcher, after, limit, **search_kw,
                 )
@@ -1915,6 +1943,19 @@ def make_play_out_tool(
             after.push(reply)
         record.keep(idea, _IdeaLine(after, line.moves + step))
         out[FEN_KEY] = after.fen()
+        first = line.moves[0] if line.moves else move
+        situation = situation_provider() if situation_provider is not None else None
+        if after_cp is not None and _is_listed_sacrifice(board, first, situation):
+            # The live search ran on this idea's first step: a cache hit.
+            try:
+                root_info, _ = await _position_search(
+                    cache, engine_launcher, board, limit, **search_kw,
+                )
+            except _SearchError:
+                return out
+            root_cp = _mover_cp(root_info.get(_SCORE_KEY), mover)
+            if root_cp is not None and root_cp - after_cp <= PLAY_OUT_MARGIN_CP:
+                out[_NOTE_KEY] = SACRIFICE_HOLDS_NOTE
         return out
 
     return play_out

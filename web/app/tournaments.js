@@ -8,14 +8,15 @@
 // selected tournament. New / Sort / Window remain in the top menubar.
 
 import { mqMobile, mqMobileH, mqMobileHPlay } from "./breakpoints.js";
-import { apiErrorDetail, buildToastWithActions, confirm, deepLink, makeToastDismissBtn, OPEN_ENGINES_ACTION, openSettings, reportError, SETTINGS_TAB_TOURNAMENT, shakeField, showDialog, toast, TOAST_DURATION_MS } from "./dialogs.js";
+import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, SETTINGS_TAB_TOURNAMENT, settingsLink, shakeField, showDialog, toast, TOAST_DURATION_MS } from "./dialogs.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, sprtParamErrors, STATUS, STATUS_RANK } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
 import { baseCompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { rankCmp } from "./sort-stack.js";
 import { wireInlineSearch } from "./inline-search.js";
 import { attachRibbonOverflow } from "./ribbon-overflow.js";
-import { attachMenuNav, focusFirstItem, MENU_OPEN_CLASS } from "./menu-nav.js";
+import { mountWallpaper } from "./wallpaper.js";
+import { attachMenuNav, focusFirstItem, MENU_CHECKED_CLASS, MENU_OPEN_CLASS, MENU_SEPARATOR_HTML } from "./menu-nav.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import {
@@ -23,6 +24,7 @@ import {
   engineRefFromRegistry,
   gatedStart,
   loadGlobalEngineDefaults,
+  reportStartError,
   resolveResourceParams,
 } from "./tournament-restart.js";
 import { BOOK_KEYS, mountTournamentTemplateForm } from "./tournament-template-form.js";
@@ -66,8 +68,6 @@ const REVEAL_COOLDOWN_MS = 1500;
 // Workspace windows' outside outline width (styles.css :root).
 const WB_OUTLINE_W_VAR = "--wb-outline-w";
 const WB_OUTLINE_W_FALLBACK_PX = 1;
-// Checkmark on a menu item (styles.css .tmb-dd-item.tmb-active).
-const MENU_CHECK_CLASS = "tmb-active";
 // Window-menu items for the Standings window's two views.
 const STANDINGS_VIEW_ITEMS = [
   [".tmb-sys-standings", STANDINGS_VIEW.TABLE],
@@ -151,15 +151,15 @@ const PANEL_HTML = `
                 <li><button class="tmb-dd-item tmb-sys-crosstable">Crosstable</button></li>
                 <li><button class="tmb-dd-item tmb-sys-schedule">Live Games</button></li>
                 <li><button class="tmb-dd-item tmb-sys-engines">Engines</button></li>
-                <li class="tmb-separator"></li>
+                ${MENU_SEPARATOR_HTML}
                 <li><button class="tmb-dd-item tmb-sys-log">Event Log</button></li>
               </ul>
             </li>
-            <li class="tmb-separator"></li>
+            ${MENU_SEPARATOR_HTML}
             <li><button class="tmb-dd-item tmb-snap">Snap</button></li>
             <li><button class="tmb-dd-item tmb-tile">Tile</button></li>
             <li><button class="tmb-dd-item tmb-tidy">Clean</button></li>
-            <li class="tmb-separator"></li>
+            ${MENU_SEPARATOR_HTML}
             <li><button class="tmb-dd-item tmb-closeall">Close All</button></li>
           </ul>
         </li>
@@ -173,7 +173,7 @@ const PANEL_HTML = `
             <wa-input class="tournaments-search" size="small" placeholder="${SEARCH_PLACEHOLDER}" clearable autocomplete="off"></wa-input>
           </div>
           <div class="tournaments-empty hidden">
-            <p class="empty-message"></p>
+            <p class="empty-message empty-pill"></p>
           </div>
 
           <ul class="tournaments-list" role="listbox" tabindex="0"></ul>
@@ -260,28 +260,11 @@ function syncWorkspaceOtherActive(ctx) {
 function renderList(ctx) {
   ctx.listEl.innerHTML = "";
 
-  const noFastchess = !ctx.settings || !ctx.settings.fastchess_detected;
-  const noTournaments = ctx.tournaments.length === 0;
-
-  if (noFastchess) {
+  const noFastchess = fastchessMissing(ctx.settings);
+  ctx.newBtn.disabled = noFastchess;
+  if (noFastchess || ctx.tournaments.length === 0) {
     ctx.emptyEl.classList.remove("hidden");
-    ctx.emptyMsg.replaceChildren();
-    ctx.emptyMsg.append(
-      "fastchess not configured \u2014 open ",
-      deepLink("Settings \u2192 Tournament", () => openSettings(SETTINGS_TAB_TOURNAMENT)),
-      " to set the binary path.",
-    );
-    ctx.newBtn.disabled = true;
-    ctx.selectedId = null;
-    ctx.ms.prune();
-    syncRibbon(ctx);
-    return;
-  }
-  ctx.newBtn.disabled = false;
-
-  if (noTournaments) {
-    ctx.emptyEl.classList.remove("hidden");
-    ctx.emptyMsg.replaceChildren(...newTournamentCta(() => ctx.actions.create()));
+    ctx.emptyMsg.replaceChildren(...emptyStateNodes(ctx.settings, () => ctx.actions.create()));
     ctx.selectedId = null;
     ctx.ms.prune();
     syncRibbon(ctx);
@@ -548,7 +531,7 @@ async function startOne(ctx, t) {
   try {
     started = await gatedStart({ api: ctx.api, log: ctx.log }, t);
   } catch (e) {
-    reportError({ log: ctx.log }, `Starting "${t.name}" failed`, e);
+    reportStartError(ctx.log, `Starting "${t.name}" failed`, e);
     // Resync even on failure: Update & start may have PATCHed (reset to
     // idle, games wiped) before the start POST failed.
     await ctx.loadList();
@@ -668,10 +651,40 @@ function guardedVerbs(ctx) {
   };
 }
 
-// Empty-list call to action shared by Arena and Studio: prose wrapping an
-// inline "+" button that fires New. Returns the nodes to append into a host
-// (text, button, text) so each perspective drops them into its own container.
-export function newTournamentCta(onCreate) {
+// Tournament settings for a view (Arena, Studio): loaded now and again on
+// every Settings save (another tab/dialog), newest response wins. Returns the
+// unsubscribe.
+export function watchTournamentSettings({ api, log }, onLoad) {
+  const load = lastWriteWins(
+    () => api("GET", "/api/tournament-settings"),
+    onLoad,
+    (e) => reportError({ log }, "Loading tournament settings failed", e),
+  );
+  load();
+  window.addEventListener(APP_EVT.SETTINGS_CHANGED, load);
+  return () => window.removeEventListener(APP_EVT.SETTINGS_CHANGED, load);
+}
+
+// fastchess known to be missing. Settings not loaded yet read as present, so
+// a view doesn't flash the setup prompt while they load.
+export function fastchessMissing(settings) {
+  return !!settings && !settings.fastchess_detected;
+}
+
+// Empty-state prose shared by Arena and Studio: the setup link while fastchess
+// is missing, else the New-tournament CTA. Returns the nodes to append into a
+// host so each perspective drops them into its own container.
+export function emptyStateNodes(settings, onCreate) {
+  if (!fastchessMissing(settings)) return newTournamentCta(onCreate);
+  return [
+    "fastchess not configured \u2014 open ",
+    settingsLink(SETTINGS_TAB_TOURNAMENT, "Settings \u2192 Tournament"),
+    " to set the binary path.",
+  ];
+}
+
+// Prose wrapping an inline "+" button that fires New (text, button, text).
+function newTournamentCta(onCreate) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "toast-icon-btn";
@@ -1319,7 +1332,7 @@ function layoutToggles(ctx) {
 
 function syncTidyBtn(ctx) {
   const layout = getActiveLayout();
-  for (const [btn, mode] of layoutToggles(ctx)) btn.classList.toggle(MENU_CHECK_CLASS, layout === mode);
+  for (const [btn, mode] of layoutToggles(ctx)) btn.classList.toggle(MENU_CHECKED_CLASS, layout === mode);
 }
 
 // Check the open Standings window's view; synced on menu open, since the
@@ -1327,7 +1340,7 @@ function syncTidyBtn(ctx) {
 function syncStandingsViewItems(ctx) {
   const view = getActiveWorkspace()?.standingsView;
   for (const [cls, v] of STANDINGS_VIEW_ITEMS) {
-    ctx.container.querySelector(cls).classList.toggle(MENU_CHECK_CLASS, view === v);
+    ctx.container.querySelector(cls).classList.toggle(MENU_CHECKED_CLASS, view === v);
   }
 }
 
@@ -1596,8 +1609,12 @@ function wireMenus(ctx) {
   }
 }
 
+// Layout boxes only: a right-click there hits the wallpaper, not content.
+const ARENA_BARE_SEL = "#perspective-root, #engines-perspective, .tournaments-panel, .tournaments-body, .tournaments-body-main, .tournaments-list";
+
 // oversized-ok removed: factory decomposed into module-level helpers below.
-export function mountTournaments({ container, api, events, log }) {
+// wallpaperEl: the region the wallpaper paints behind.
+export function mountTournaments({ container, wallpaperEl, api, events, log }) {
   container.innerHTML = PANEL_HTML;
 
   const ctx = {
@@ -1655,11 +1672,6 @@ export function mountTournaments({ container, api, events, log }) {
     onChange: () => syncRibbon(ctx),
   });
 
-  ctx.loadSettings = lastWriteWins(
-    () => ctx.api("GET", "/api/tournament-settings"),
-    (data) => { ctx.settings = data; renderList(ctx); },
-    (e) => reportError({ log }, "Loading tournament settings failed", e),
-  );
   ctx.scheduleRenderList = rafCoalesce(() => renderList(ctx));
   ctx.scheduleProgress = rafCoalesce(() => updateProgressInPlace(ctx, ctx.progressPending));
   ctx.loadList = lastWriteWins(
@@ -1677,7 +1689,12 @@ export function mountTournaments({ container, api, events, log }) {
   ctx.actions = guardedVerbs(ctx);
 
   wireRibbon(ctx);
-  const ribbonOverflow = attachRibbonOverflow(container.querySelector(".tournaments-ribbon"));
+  const ribbonEl = container.querySelector(".tournaments-ribbon");
+  // Before overflow attaches, so its first fit check counts the wallpaper button.
+  const wallpaper = mountWallpaper({
+    ribbonEls: [ribbonEl], regionEl: wallpaperEl, isBare: (t) => t.matches(ARENA_BARE_SEL), api, log,
+  });
+  const ribbonOverflow = attachRibbonOverflow(ribbonEl);
   const stopSearch = setupTournamentSearch(ctx);
   wireListKeyboard(ctx);
   wireMenus(ctx);
@@ -1692,10 +1709,7 @@ export function mountTournaments({ container, api, events, log }) {
   ctx.onWsEvent = (evt) => onWsEvent(ctx, evt);
   const offEvents = ctx.events.on(ctx.onWsEvent);
 
-  // Settings can change in another tab/dialog -- pick those up too.
-  ctx.onSettingsChanged = () => ctx.loadSettings();
   ctx.onWorkspaceClosed = () => { syncWindowMenu(ctx); syncRibbon(ctx); };
-  window.addEventListener(APP_EVT.SETTINGS_CHANGED, ctx.onSettingsChanged);
   window.addEventListener(APP_EVT.WORKSPACE_CLOSED, ctx.onWorkspaceClosed);
   window.addEventListener(APP_EVT.TOURNAMENTS_ROOT_CHANGED, ctx.loadList);
 
@@ -1705,9 +1719,9 @@ export function mountTournaments({ container, api, events, log }) {
   // Visibility is driven by the Engines tab group (see engines.js):
   // the workspace stays hidden unless the Tournaments sub-tab is active.
 
-  // Fire-and-forget: lastWriteWins resolves undefined; state is populated
-  // asynchronously and rendered via renderList() inside each commit.
-  ctx.loadSettings();
+  // State is populated asynchronously and rendered via renderList() inside
+  // each commit.
+  const offSettings = watchTournamentSettings(ctx, (data) => { ctx.settings = data; renderList(ctx); });
   // After initial population, fire one immediate pollTick so a workspace
   // revealed on perspective re-mount catches up without waiting a full
   // POLL_INTERVAL_MS. No-op when nothing's running.
@@ -1746,7 +1760,7 @@ export function mountTournaments({ container, api, events, log }) {
       window.clearInterval(pollIntervalId);
       ctx.scheduleRenderList.cancel();
       ctx.scheduleProgress.cancel();
-      window.removeEventListener(APP_EVT.SETTINGS_CHANGED, ctx.onSettingsChanged);
+      offSettings();
       window.removeEventListener(APP_EVT.WORKSPACE_CLOSED, ctx.onWorkspaceClosed);
       window.removeEventListener(APP_EVT.TOURNAMENTS_ROOT_CHANGED, ctx.loadList);
       mqMobile.removeEventListener("change", ctx.onViewportChange);
@@ -1757,6 +1771,7 @@ export function mountTournaments({ container, api, events, log }) {
       document.removeEventListener("contextmenu", ctx.onMenuDocClick, true);
       stopSearch();
       ribbonOverflow.detach();
+      wallpaper.unmount();
       dismissSortToastNow(ctx);
       // Hide (don't close) so the workspace survives perspective
       // navigation; it'll be re-shown when the user returns.

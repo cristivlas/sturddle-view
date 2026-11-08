@@ -52,8 +52,10 @@ When the active layout is Tile or Snap (not None or Tidy):
 - Restoring a minimized live window triggers a layout reapply.
 - Slot grid placement and overflow-minimize are disabled; all live windows open visible.
 
-Tidy mode is excluded from auto-reapply on open/close because it also opens all
-system windows, which would be disruptive.
+Tidy mode is excluded from auto-reapply on open/close. A Tidy refit (resize,
+restore, return to the workspace) keeps minimized, maximized and closed system
+windows as the user left them; only an explicit Clean (the menu, or a fresh
+workspace) reopens closed system windows and restores every one into its tile.
 
 The active layout mode is persisted **per tournament** in that tournament's
 workspace state (`_layout`), not globally. Opening a workspace restores its own

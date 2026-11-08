@@ -68,6 +68,9 @@ export function rafCoalesce(fn) {
 // Layout-managed window (WinBox's own class: no shadow); CSS also squares it
 // and, where bordered (Studio), keeps only its right/bottom seam borders.
 export const WB_NO_SHADOW_CLASS = "no-shadow";
+// On a view's region while wallpaper.js paints a wallpaper behind it.
+export const WALLPAPER_CLASS = "has-wallpaper";
+export const PCT_SUFFIX = "%";
 // A managed window whose right edge is the workspace's: CSS stretches it there.
 export const WB_EDGE_RIGHT_CLASS = "wb-edge-right";
 

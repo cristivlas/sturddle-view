@@ -18,6 +18,8 @@
      the ribbon. A separate name: --dialog-bg must stay undefined outside
      dialogs, where tables reading it fall back to transparent. */
   --panel-bg: #363a42;
+  /* Fills that must read against --panel-bg (dialog borders, slider tracks). */
+  --panel-accent: #4a5b73;
   /* Hovered/focused menu item: a blue-gray accent over the gray panel. */
   --panel-item-hover: #364b66;
   /* Secondary button fill on the panel (path Browse/Clear, confirm-popup
@@ -29,10 +31,12 @@
      page instead. */
   --ribbon-bg: var(--panel-bg);
   --ribbon-bar-bg: transparent;
-  --play-glow-dir: to bottom;
-  --play-glow-color: rgba(120, 144, 168, 0.22);
-  --play-glow-tint-at: 20%;
-  --play-glow-reach: 100%;
+  --view-glow-dir: to bottom;
+  --view-glow-color: rgba(120, 144, 168, 0.22);
+  --view-glow-tint-at: 20%;
+  --view-glow-reach: 100%;
+  /* Play and Studio backdrop: the ribbon color melting into a faint tint. */
+  --view-glow: linear-gradient(var(--view-glow-dir), var(--ribbon-bg), var(--view-glow-color) var(--view-glow-tint-at), transparent var(--view-glow-reach));
   /* Play's vertical rhythm: header line, clocks, board, moves-to-dock grip. */
   --play-gap: 5px;
   /* Minimized-WinBox dock strip; tournament-workspace.js reads it as
@@ -62,7 +66,8 @@
   --eval-gauge-w: 10px;
   --eval-gauge-gap: 3px;
   --eval-gauge-white: #e8e8e8;
-  --eval-gauge-black: #5c6370;
+  --eval-gauge-black: #3a3f48;
+  --eval-gauge-shadow: 0 2px 14px 4px rgba(0, 0, 0, 0.7);
   /* Play/view board frame; the gauge insets by it to match the squares. */
   --board-border-w: 1px;
   /* Ribbon button hover: icon scale and color. */
@@ -73,6 +78,7 @@
   --row-bg-selected: #2a3a4a;
   --border-subtle: #2e3138;
   --border-faint: #26282e;  /* row separators: fainter than --border-subtle */
+  --pvtable-line: #3a3e46;  /* Search Lines cell grid: a notch above --border-subtle */
 
   /* Status callouts (import dialog and similar). Pinned because webawesome's
      --wa-color-{success,danger}-50 are dark-mode tuned and clash with dark
@@ -81,6 +87,8 @@
   --status-ok-bg:  rgba(46, 160, 67, 0.12);
   --status-err-fg: #ff8a80;
   --status-err-bg: rgba(220, 50, 50, 0.15);
+  /* SPRT meter marker once H1 is accepted. */
+  --sprt-h1-mark: #7fb37f;
   --play-ai-warning-bg: rgba(255, 255, 255, 0.18);
   --play-ai-prose-final-border: rgba(255, 255, 255, 0.6);
 
@@ -305,8 +313,6 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
   margin-top: var(--play-ai-round-pad-top);
   margin-bottom: var(--play-ai-round-gap);
 }
-/* Margin, not a space: a space would underline with the link. */
-.play-ai-engine-only wa-icon { margin-right: 0.25em; }
 
 /* Revision: <details> folding away prose the AI corrected. Summary carries the
    model's self-correction line, body the struck flawed prose. Neutral (not
@@ -426,14 +432,19 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
 .winbox.sturddle-wb-ai .wb-body,
 .dock-slot-body:has(> .play-ai-body) { overflow: hidden; padding: 0; }
 .play-ai-status-text { line-height: 1; }
-/* Cumulative token ticker; muted so it reads as telemetry, not status.
-   Empty until the provider reports usage. */
-.play-ai-status-tokens {
+/* Elapsed timer + cumulative token ticker, right-aligned; muted so they
+   read as telemetry, not status. Tokens stay empty until the provider
+   reports usage. */
+.play-ai-status-meta {
   line-height: 1;
   margin-left: auto;
   font-size: 0.85em;
   opacity: 0.7;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.play-ai-status-time:not(:empty) + .play-ai-status-tokens:not(:empty)::before {
+  content: " \00b7  ";
 }
 /* Terminal token breakdown line under the final prose. */
 .play-ai-usage {
@@ -486,9 +497,6 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
   white-space: nowrap;
 }
 .play-ai-roundcap {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   margin-top: 8px;
   padding: 6px 8px;
   border-left: 3px solid var(--wa-color-warning-60, #d6a200);
@@ -496,12 +504,6 @@ wa-switch { --wa-focus-ring: var(--wa-focus-ring-style) var(--wa-focus-ring-widt
   font-size: 0.9em;
   opacity: 0.85;
 }
-.play-ai-roundcap-gear {
-  flex: none;
-  cursor: pointer;
-  opacity: 0.75;
-}
-.play-ai-roundcap-gear:hover { opacity: 1; }
 
 /* Thinking disclosure: dimmer + smaller than prose; user opt-in. */
 .play-ai-thinking {
@@ -1233,11 +1235,12 @@ body { display: flex; flex-direction: column; --main-pad: 16px; }
 main { padding: var(--main-pad); flex: 1 1 auto; min-height: 0; overflow: hidden; }
 /* Studio starts flush under the header's amber line. */
 #perspective-root:has(.studio-panel) { padding-top: 0; }
-/* On main, not #play-perspective, so it spans main's side padding too. */
-#perspective-root:has(#play-perspective) {
-  padding-top: var(--play-gap);
-  background: linear-gradient(var(--play-glow-dir), var(--ribbon-bg), var(--play-glow-color) var(--play-glow-tint-at), transparent var(--play-glow-reach));
-}
+/* Every view's backdrop, on main so it spans main's side padding too. :where()
+   keeps it under .has-wallpaper, which layers the same glow over the image.
+   Phones get none (Play's own mobile block also covers short touch screens). */
+:where(#perspective-root) { background: var(--view-glow); }
+@media (max-width: 800px) { :where(#perspective-root) { background: none; } }
+#perspective-root:has(#play-perspective) { padding-top: var(--play-gap); }
 #app-footer {
   flex: 0 0 auto;
   text-align: center;
@@ -1381,7 +1384,7 @@ wa-dialog:has(.import-pos-form)::part(body) {
   line-height: 1.4;
   word-break: break-word;
 }
-.import-pos-status.ok { color: var(--text); background: var(--row-bg-selected); }
+.import-pos-status.ok { color: var(--fg); background: var(--row-bg-selected); }
 .import-pos-status.err { color: var(--status-err-fg); background: var(--status-err-bg); }
 .import-pos-status.muted { background: transparent; color: var(--muted); }
 .import-pos-playas { display: flex; align-items: center; gap: 12px; }
@@ -1532,19 +1535,6 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
 }
 .no-engine-banner.hidden { display: none; }
 .no-engine-banner__msg { flex: 1; }
-.no-engine-banner__btn {
-  background: rgba(120, 144, 168, 0.22);
-  border: 1px solid rgba(120, 144, 168, 0.5);
-  border-radius: 4px;
-  padding: 3px 10px;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-}
-.no-engine-banner__btn:hover {
-  background: rgba(120, 144, 168, 0.38);
-  border-color: rgba(120, 144, 168, 0.7);
-}
 .play-grid {
   --rail-w: 240px;
   --grid-gap: 8px;
@@ -1568,6 +1558,19 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   display: flex;
   flex-direction: column;
 }
+/* Dock rail changes glide the play columns (glideIfDockChanged). Names are set
+   only during the glide: an active name changes stacking. */
+:root.dock-glide .play-board-host { view-transition-name: play-board; }
+:root.dock-glide .play-side-host { view-transition-name: play-side; }
+:root.dock-glide .play-dock-left { view-transition-name: play-dock; }
+/* Named too, or they would sink below the columns while gliding. */
+:root.dock-glide body > header { view-transition-name: play-header; }
+:root.dock-glide .winbox,
+:root.dock-glide [popover]:popover-open { view-transition-name: match-element; }
+:root.dock-glide { --dock-glide-dur: 200ms; }
+:root.dock-glide::view-transition-group(*),
+:root.dock-glide::view-transition-old(*),
+:root.dock-glide::view-transition-new(*) { animation-duration: var(--dock-glide-dur); }
 /* Docked ribbons: fixed vertical rail, buttons centered, over the footer. top
    defaults to 0 (Play, Studio -- under the z-20 header); Arena sets
    --arena-ribbon-top from JS so its rail starts below the menubar. */
@@ -1833,7 +1836,7 @@ body .side-popover.popover-floating {
 .dock-ghost {
   flex: 1 1 0;
   min-height: 0;
-  background: color-mix(in srgb, var(--row-bg-selected), white 15%);
+  background: color-mix(in srgb, color-mix(in srgb, var(--row-bg-selected), white 15%), transparent 55%);
   border-top: 2px solid color-mix(in srgb, var(--row-bg-selected), white 40%);
   pointer-events: none;
 }
@@ -1973,11 +1976,11 @@ body .side-popover.popover-floating {
   display: flex;
   flex-direction: column;
 }
-/* No game yet: board is shown but not interactive. */
-.play-board-host.board-idle .board {
-  opacity: 0.6;
-  pointer-events: none;
-  filter: grayscale(0.4);
+/* No game yet: display-settings colors under a tint; opaque, not interactive. */
+.play-board-host.board-idle .board { pointer-events: none; position: relative; }
+.play-board-host.board-idle .board::after {
+  content: ""; position: absolute; inset: 0;
+  background: color-mix(in srgb, var(--bg) 45%, transparent);
 }
 /* Desktop: the gauge hangs off the board's dock side, in room the dock
    column gives up (play-dock-windows.js applyDockBounds). White's end
@@ -1998,13 +2001,13 @@ body .side-popover.popover-floating {
   display: flex;
   flex-direction: column-reverse;
   background: var(--eval-gauge-black);
+  box-shadow: var(--eval-gauge-shadow);
 }
 .eval-gauge.flipped { flex-direction: column; }
 .eval-gauge-fill {
   flex: 0 0 var(--white-share, 50%);
   background: var(--eval-gauge-white);
 }
-.eval-gauge.is-empty { opacity: 0.4; }
 /* 800px = --bp-mobile, 680px = --bp-mobile-h-play. Media queries can't read
    custom props; keep these literals in sync with :root. Height gate is
    touch-only so short laptops keep the desktop layout. */
@@ -2135,7 +2138,8 @@ body .side-popover.popover-floating {
 .game-view-side {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  /* The board's gap to it (.play-grid). */
+  gap: var(--grid-gap);
   min-height: 0;
   height: 100%;
 }
@@ -2144,6 +2148,7 @@ body .side-popover.popover-floating {
   min-width: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  border-radius: var(--wb-radius);
 }
 .game-view-engine.is-empty { display: none; }
 @media (min-width: 801px) and (min-height: 701px) {
@@ -2178,8 +2183,10 @@ body .side-popover.popover-floating {
   border-color: transparent;
   padding: 0;
 }
-.game-view-engine:not(.is-empty) + .game-view-moves {
-  margin-top: 14px;
+/* Mobile spaces the side panels wider. */
+@media (max-width: 800px) {
+  .game-view-side { gap: 16px; }
+  .game-view-engine:not(.is-empty) + .game-view-moves { margin-top: 14px; }
 }
 .game-view-moves .move-list {
   flex: 1 1 auto;
@@ -2253,8 +2260,10 @@ body .side-popover.popover-floating {
   min-height: 0;
 }
 .game-view-board .board {
-  background: #2a2a2a;
-  border: var(--board-border-w) solid #333;
+  --board-bg: #2a2a2a;
+  --board-edge: #333;
+  background: var(--board-bg);
+  border: var(--board-border-w) solid var(--board-edge);
   width: var(--board-max-px, 100%);
   height: auto;
   align-self: center;
@@ -2313,6 +2322,7 @@ body .side-popover.popover-floating {
   flex-direction: column;
   gap: 2px;
   font-size: 0.75rem;
+  border-radius: var(--wb-radius);
   /* Reserve space for the FEN + opening + tablebase lines so the page doesn't
      reflow when they appear; FEN renders slightly larger, hence the split. */
   min-height: calc(2 * 1.4em + 13px * 1.4 + 4px);
@@ -2400,12 +2410,22 @@ body .side-popover.popover-floating {
 .clock-row[data-color="black"].active { background: #111; color: #e8e8e8; }
 .clock-row.clock-disabled { opacity: 0.5; }
 
-/* Engine "thinking" arrow: navy. */
-.cm-chessboard .arrow-success .arrow-head { fill: #1e3a8a; }
-.cm-chessboard .arrow-success .arrow-line { stroke: #1e3a8a; opacity: 0.55; }
-/* AI recommendation arrow: purple. */
-.cm-chessboard .arrow-secondary .arrow-head { fill: #7c3aed; }
-.cm-chessboard .arrow-secondary .arrow-line { stroke: #7c3aed; opacity: 0.55; }
+/* Arrow colors, per board style below: --sb-arrow the engine's line,
+   --sb-arrow-secondary the AI's pick, --sb-arrow-alt its book alternatives. */
+.cm-chessboard { --sb-arrow: #1e3a8a; --sb-arrow-secondary: #334155; --sb-arrow-alt: #0f766e; }
+.cm-chessboard.green { --sb-arrow-secondary: #1f2937; --sb-arrow-alt: #c2410c; }
+.cm-chessboard.blue { --sb-arrow: #1e3a8a; --sb-arrow-secondary: #b45309; --sb-arrow-alt: #15803d; }
+.cm-chessboard.black-and-white { --sb-arrow-secondary: #286586; }
+.cm-chessboard.chess-club { --sb-arrow: #334155; --sb-arrow-secondary: #1e3a8a; }
+/* One end shape: the vendor's butt-ended secondary would leave a stacked
+   round end showing. */
+.cm-chessboard .arrow .arrow-line { stroke-linecap: round; }
+.cm-chessboard .arrow-success .arrow-head { fill: var(--sb-arrow); }
+.cm-chessboard .arrow-success .arrow-line { stroke: var(--sb-arrow); opacity: 0.75; }
+.cm-chessboard .arrow-secondary .arrow-head { fill: var(--sb-arrow-secondary); }
+.cm-chessboard .arrow-secondary .arrow-line { stroke: var(--sb-arrow-secondary); opacity: 0.75; }
+.cm-chessboard .arrow-info .arrow-head { fill: var(--sb-arrow-alt); }
+.cm-chessboard .arrow-info .arrow-line { stroke: var(--sb-arrow-alt); opacity: 0.75; }
 /* MultiPV line number on its arrow (numbered-arrows.js). */
 .cm-chessboard .arrow-badge { pointer-events: none; }
 .cm-chessboard .arrow-badge circle { fill: #111; }
@@ -2425,13 +2445,9 @@ body .side-popover.popover-floating {
 .cm-chessboard.sturddle-board .coordinates .coordinate { fill: var(--sb-dark); }
 .cm-chessboard.sturddle-board .coordinates .coordinate.black { fill: var(--sb-light); }
 .cm-chessboard.sturddle-board .coordinates .coordinate.white { fill: var(--sb-dark); }
-/* Markers/arrows, readable on both square colors. */
+/* Markers, readable on both square colors. */
 .cm-chessboard.sturddle-board .markers .marker.marker-frame { stroke: var(--sb-marker); }
 .cm-chessboard.sturddle-board .markers .marker.marker-dot { stroke: var(--sb-marker); fill: var(--sb-marker); opacity: 0.65; }
-.cm-chessboard.sturddle-board .arrow-success .arrow-head { fill: var(--sb-arrow); }
-.cm-chessboard.sturddle-board .arrow-success .arrow-line { stroke: var(--sb-arrow); opacity: 0.75; }
-.cm-chessboard.sturddle-board .arrow-secondary .arrow-head { fill: var(--sb-arrow-secondary); }
-.cm-chessboard.sturddle-board .arrow-secondary .arrow-line { stroke: var(--sb-arrow-secondary); opacity: 0.75; }
 
 /* Staunty: staunty pieces (set in board-styles.js) over navy squares. Dark =
    the tournament selected-row color; light is that navy lifted to slate. */
@@ -2441,14 +2457,16 @@ body .side-popover.popover-floating {
   --sb-marker: turquoise;
   --sb-arrow: turquoise;
   --sb-arrow-secondary: rgb(18, 82, 179);
+  --sb-arrow-alt: #f59e0b;
 }
 
 /* Wine: classic pieces over a darkish wine board. */
 .cm-chessboard.sturddle-wine {
   --sb-dark: #743042;
   --sb-light: #c3a3aa;
-  --sb-arrow: #FF4500;
-  --sb-arrow-secondary: darkorchid;
+  --sb-arrow: #facc15;
+  --sb-arrow-secondary: #d97706;
+  --sb-arrow-alt: #a3e635;
   --sb-marker: var(--sb-arrow);
 }
 .clock-row .clock-name {
@@ -2482,6 +2500,17 @@ body .side-popover.popover-floating {
 .game-view-board .clock-row .clock-name { color: var(--muted-bright); }
 .game-view-board .clock-row.active .clock-name { color: inherit; }
 .game-view-board .clock-row .clock-time { font-variant-numeric: tabular-nums; }
+/* Player's color. The gray edge keeps it visible on a same-colored active row. */
+.game-view-board .clock-row[data-color]::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  margin-right: 8px;
+  border: 1px solid #777;
+}
+.game-view-board .clock-row[data-color="white"]::before { background: #e8e8e8; }
+.game-view-board .clock-row[data-color="black"]::before { background: #111; }
 /* On-move accent ring; must follow the border-color override above. */
 .game-view-board .clock-row.active {
   border-color: var(--accent);
@@ -2887,7 +2916,6 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
 }
 .engines-list-item {
   cursor: pointer; user-select: none;
-  /* background: linear-gradient(to right, var(--row-bg), var(--bg) 75%); */
 }
 .engines-list-item td {
   padding: 12px 12px;
@@ -2918,7 +2946,7 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   font-size: 0.875rem;
 }
 .engines-list-path {
-  color: var(--text);
+  color: var(--fg);
   font-size: 0.75rem;
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
@@ -3080,7 +3108,7 @@ wa-dialog {
   /* Shared accent for anything that needs to read against --dialog-bg:
      borders/dividers via --border-subtle, and non-border fills (e.g. the
      slider track) that read --dialog-accent directly. */
-  --dialog-accent: #4a5b73;
+  --dialog-accent: var(--panel-accent);
   --border-subtle: var(--dialog-accent);
   --border-faint: #3a4a5f;
 }
@@ -3416,11 +3444,11 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 :where(:not(.dt-kbd) > tbody) > .fs-entry:hover > td { background: var(--nav-btn-bg); }
 .fs-entry.dim { color: var(--muted); }
-.fs-entry.selected > td { background: var(--row-bg-selected); color: var(--text); }
+.fs-entry.selected > td { background: var(--row-bg-selected); color: var(--fg); }
 .fs-entry.selected > td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
 .fs-entry.dim.selected > td { color: var(--muted); }
 .fs-entry .fs-name-cell wa-icon { font-size: 0.875rem; vertical-align: middle; margin-right: 8px; color: var(--wa-color-brand-95); }
-.fs-entry.selected .fs-name-cell wa-icon { color: var(--text); }
+.fs-entry.selected .fs-name-cell wa-icon { color: var(--fg); }
 .fs-entry .fs-name { vertical-align: middle; }
 .fs-entry .fs-date { color: inherit; }
 .fs-entry .fs-size { color: inherit; text-align: right; }
@@ -3456,7 +3484,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   list-style: none; margin: 0; padding: 6px 0; min-width: 160px;
   background: var(--panel-bg);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
+  border-radius: 5px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.25);
   font-family: var(--wa-font-family-body);
   font-size: 0.8125rem;
@@ -3487,21 +3515,26 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .tmb-dd-item.tmb-active::before { content: "\2713"; position: absolute; left: 8px; }
 /* Inset ring: a scrolling dropdown (columns menu) clips outer outlines. */
 .tmb-dropdown button:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* Click-focusable for the Menu key (menu-nav.js makeMenuHost); never ringed. */
+[data-menu-host]:focus-visible { outline: none; }
+/* Mouse-driven (menu-nav.js): hover focuses items, the highlight shows it. */
+.tmb-dropdown.menu-pointer :focus-visible { outline: none; }
 .tmb-separator {
   border-top: 1px solid var(--wa-color-border-loud, #333);
   margin: 4px 0;
 }
 
 /* column-header.js columns menu, ribbon-overflow.js and header-menu.js ellipsis
-   menus: top-layer popovers reusing the .tmb-dropdown look. Must follow
-   .tmb-dropdown: same specificity, fixed placement (JS sets top/left)
-   overrides its absolute one. */
-.dt-menu, .ribbon-more-menu, .header-more-menu {
+   menus, wallpaper.js and panel-fade.js menus: top-layer popovers reusing the
+   .tmb-dropdown look. Must follow .tmb-dropdown: same specificity, fixed
+   placement (JS sets top/left) overrides its absolute one. */
+.dt-menu, .ribbon-more-menu, .header-more-menu, .wallpaper-menu, .panel-fade-menu {
   position: fixed; inset: auto; color: var(--fg);
   /* JS max-height (viewport room) includes padding/border; tall menus scroll. */
   box-sizing: border-box; overflow-y: auto;
 }
-.dt-menu:popover-open, .ribbon-more-menu:popover-open, .header-more-menu:popover-open { display: block; }
+.dt-menu:popover-open, .ribbon-more-menu:popover-open, .header-more-menu:popover-open,
+.wallpaper-menu:popover-open, .panel-fade-menu:popover-open { display: block; }
 /* Vertical ribbon overflow (ribbon-overflow.js): items keep their size, so a
    short rail overflows into the ellipsis menu instead of squashing them. */
 .ribbon-overflow-managed > * { flex-shrink: 0; }
@@ -3512,6 +3545,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 .dt-menu-col { display: flex; align-items: center; padding-right: 6px; }
 .dt-menu-col .dt-menu-toggle { flex: 1 1 auto; width: auto; }
+/* Smaller check; centered, since its shorter line box would ride high. */
+.dt-menu .tmb-dd-item.tmb-active::before { font-size: 0.625rem; top: 50%; transform: translateY(-50%); }
 .dt-menu .tmb-dd-item:disabled, .ribbon-more-menu .tmb-dd-item:disabled,
 .header-more-menu .tmb-dd-item:disabled { opacity: 0.5; cursor: default; }
 .dt-menu-move {
@@ -3638,8 +3673,16 @@ wa-dialog::part(body) {
 }
 .tournaments-empty {
   display: flex; align-items: center; justify-content: center;
-  min-height: 30vh; color: var(--muted);
+  min-height: 30vh;
 }
+/* Arena and Studio empty state: a solid pill hugging the text, readable over
+   any wallpaper. */
+.empty-pill {
+  padding: 8px 16px; border-radius: 8px;
+  background: var(--panel); color: var(--fg); text-align: center;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.45);
+}
+.empty-pill .toast-icon-btn { vertical-align: middle; }
 .tournaments-empty.hidden { display: none; }
 .engines-empty {
   position: absolute; inset: 0;
@@ -3754,6 +3797,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   color: inherit; text-decoration: underline; cursor: pointer;
 }
 .settings-deeplink:hover { color: var(--accent, #4a9eff); }
+/* settingsLink's gear. Margin, not a space: a space would underline with the link. */
+.settings-deeplink wa-icon { margin-right: 0.25em; }
 .about-dialog { text-align: center; padding: 8px 0 16px; }
 .about-name { font-size: 1.125rem; font-weight: 600; margin-bottom: 36px; }
 .about-meta { font-size: 0.8125rem; color: var(--muted); line-height: 1.6; }
@@ -3771,7 +3816,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   list-style: none; padding: 0; margin: 0;
   /* Same line as the menubar's bottom edge, which doubles as this top edge. */
   border: 1px solid var(--wa-color-border-loud, #333); border-top: 0;
-  display: flex; flex-direction: column; gap: 2px;
+  --tournaments-row-gap: 2px;
+  display: flex; flex-direction: column; gap: var(--tournaments-row-gap);
   flex: 1; min-height: 0; overflow-y: auto;
   outline: none;
 }
@@ -3801,6 +3847,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   /* The resizer grip is the only separation between board area and bottom
      row -- no extra gap. */
   gap: 0;
+  --studio-grip-row-h: 4px;
 }
 /* Boards (top) vs bottom tab row: the vertical split. Boards are WinBoxes
    rooted here (position:relative); the region scrolls, and the canvas spacer
@@ -3815,248 +3862,179 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .studio-boards.no-boards { overflow: hidden; }
 .studio-boards-canvas { width: 1px; height: 0; pointer-events: none; }
 
-/* Info wall: a comic-noir splash on the empty Boards region -- muted
-   monochrome ink, thick-outlined stat panels with hard shadows, a slanted
-   status placard, tag-style engines. Full-width so the composition isn't
-   left-heavy; recedes behind boards when present. Local ink/paper vars keep
-   it self-contained. */
+/* Info wall: the selected tourney's progress footer, pinned to the bottom of
+   the empty Boards region; boards cover it when present. */
 .studio-boards-wall {
-  --iw-ink: #4a4e57;          /* very muted ink -- barely-there backdrop */
-  --iw-paper: #14161b;        /* near-black panel fill */
-  --iw-buttery: #c3bba6;      /* aged warm-gray paper for pasted stamps */
-  --iw-shadow: rgba(0, 0, 0, 0.5);
   position: absolute; inset: 0; z-index: 0;
   display: flex; flex-direction: column; justify-content: center; align-items: stretch;
-  gap: clamp(12px, 1.8vw, 22px);
   padding: clamp(24px, 5vw, 68px);
   overflow: hidden;
   pointer-events: none;
   color: var(--muted-bright);
-  opacity: 0.85;
 }
-/* Each row spans the wall so the splash fills the region. */
 .studio-boards-wall > * { width: 100%; }
-/* Empty state: the wall hosts a clickable New-tournament CTA (poster art
-   suppressed), so undo the backdrop fade and re-enable pointer events. */
-.studio-boards-wall.is-empty { opacity: 1; pointer-events: auto; }
-.studio-empty {
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-  color: var(--muted); text-align: center;
+/* Boards laid out (tournament-studio.js fitWallToStrip): the wall is the strip
+   under the centered grid; its footer centers there, unpadded so it fits thin
+   strips, hidden below 24px (the LLR marker, the tallest row part). */
+.studio-boards-wall.in-strip { padding-block: 0; container: studio-strip / size; }
+.studio-boards-wall.in-strip .iw-footer { margin-block: auto; }
+.studio-boards-wall.in-strip .iw-progress { padding-block: 0; }
+@container studio-strip (max-height: 24px) { .iw-footer { visibility: hidden; } }
+/* Empty state: the wall hosts a clickable New-tournament CTA. */
+.studio-boards-wall.is-empty { pointer-events: auto; }
+/* The empty-state pill hugs its text, not the wall's full width. */
+.studio-boards-wall > .studio-empty { width: fit-content; align-self: center; }
+/* Wallpaper (wallpaper.js): fills a view's region behind its content.
+   Layer 1 is the view glow, layer 2 the fade overlay (app background at the
+   fade percent), both full-size; layer 3 the image, sized per data-wallpaper-fit. */
+.has-wallpaper {
+  --wallpaper-fade-color: color-mix(in srgb, var(--bg) var(--wallpaper-fade, 0%), transparent);
+  --wallpaper-fade-layer: linear-gradient(var(--wallpaper-fade-color), var(--wallpaper-fade-color));
+  background-image: var(--view-glow), var(--wallpaper-fade-layer), var(--wallpaper);
+  background-size: 100% 100%, 100% 100%, var(--wallpaper-size, cover);
+  background-position: center, center, var(--wallpaper-position, center);
+  background-repeat: no-repeat, no-repeat, var(--wallpaper-repeat, no-repeat);
+}
+[data-wallpaper-fit="contain"] { --wallpaper-size: contain; }
+[data-wallpaper-fit="stretch"] { --wallpaper-size: 100% 100%; }
+[data-wallpaper-fit="center"] { --wallpaper-size: auto; }
+[data-wallpaper-fit="tile"] { --wallpaper-size: auto; --wallpaper-position: top left; --wallpaper-repeat: repeat; }
+/* Frost keeps see-through panels readable over the wallpaper. */
+.has-wallpaper :is(.game-view-engine, .game-view-moves, .game-view-meta) {
+  /* frost.js sets both on <html> when imported (by every view with frost). */
+  backdrop-filter: blur(var(--frost-blur)) brightness(var(--frost-brightness));
+}
+/* The info wall footer sits on bare wallpaper: frosted glass that keeps the
+   image's hues (heavy blur, boosted saturation), dimmed and lightly tinted
+   toward the theme background so the bar and its label read. */
+.has-wallpaper .iw-footer {
+  backdrop-filter: blur(20px) saturate(1.8) brightness(0.75);
+  background: color-mix(in srgb, var(--bg) 25%, transparent);
+}
+/* Its bar stands out from the glass: a dark solid track, edged light. */
+.has-wallpaper .iw-footer .tournament-progress {
+  background: color-mix(in srgb, var(--bg) 80%, black);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 55%, transparent), 0 1px 4px rgb(0 0 0 / 0.5);
+}
+/* Board transparency (board-fade.js): the board, its box and the tournament
+   windows holding one. The SVG group fades as one layer: its full-size border
+   rect lies under every square. */
+:root:has(.has-wallpaper) .cm-chessboard g.board { opacity: var(--board-opacity, 100%); }
+/* Grid lines under the squares: hidden by a solid board, shown as it fades,
+   so a see-through board keeps its files and ranks. The inset shadow closes
+   the right and bottom edges the per-square lines leave open. */
+:root:has(.has-wallpaper) .cm-chessboard {
+  --board-grid-line: color-mix(in srgb, var(--fg) 40%, transparent);
+  background-image:
+    linear-gradient(to right, var(--board-grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--board-grid-line) 1px, transparent 1px);
+  background-size: 12.5% 12.5%;
+  box-shadow: inset 0 0 0 1px var(--board-grid-line);
+}
+:root:has(.has-wallpaper) .game-view-board .board {
+  background: color-mix(in srgb, var(--board-bg) var(--board-opacity, 100%), transparent);
+  border-color: color-mix(in srgb, var(--board-edge) var(--board-opacity, 100%), transparent);
+}
+:root:has(.has-wallpaper) :is(.winbox.sturddle-wb-live, .winbox.sturddle-wb-live .wb-body) {
+  background: color-mix(in srgb, var(--panel) var(--board-opacity, 100%), transparent);
+}
+/* An empty move list has nothing to read. */
+.has-wallpaper .game-view-moves:has(.move-list:empty) { backdrop-filter: none; }
+/* Nor does an info wall footer without a bar (a bare tally, or empty). */
+.has-wallpaper .iw-footer:not(:has(.iw-progress, .iw-llr)) { backdrop-filter: none; background: none; }
+/* Idle dock grips are solid so the wallpaper doesn't show between slots. */
+.has-wallpaper .dock-grip:not(:hover, .dragging, .play-rail-grip) { background: var(--panel); }
+/* Same for the arena list: each row fills the gap below it. A pseudo, not a
+   border, so the lead row's focus ring keeps its size. */
+.has-wallpaper .tournament-row:not(:last-child) { position: relative; }
+.has-wallpaper .tournament-row:not(:last-child)::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 100%;
+  height: var(--tournaments-row-gap); background: var(--bg); pointer-events: none;
+}
+/* Studio wallpaper: each tab group stays solid on its own, so a group's fade
+   covers only it. Groups fill to the column grip's middle and under the row
+   grip (padded, content unmoved); the grips and the tray stay see-through. */
+.has-wallpaper .studio-tabs { background: var(--bg); padding-top: var(--studio-grip-row-h); }
+.has-wallpaper .studio-grip-row { margin-bottom: calc(-1 * var(--studio-grip-row-h)); }
+.has-wallpaper .studio-bottom { gap: 0; }
+.has-wallpaper .studio-bottom-left .studio-tabs { padding-right: var(--studio-seam); }
+.has-wallpaper .studio-bottom-right .studio-tabs { padding-left: var(--studio-seam); }
+.has-wallpaper .studio-grip-col { margin-inline: calc(var(--studio-grip-col-w) / -2); }
+/* Never scrolls, so its flyouts aren't clipped. */
+.wallpaper-menu { overflow: visible; }
+/* The Columns menu scrolls (one row per column), so its flyout is fixed,
+   escaping the clip; menu-nav.js places it. Same for the panel menu (it
+   shares the scrolling base rule). */
+:is(.dt-menu, .panel-fade-menu) .tmb-dd-submenu > .tmb-dropdown { position: fixed; }
+.flyout-left .tmb-dd-submenu > .tmb-dropdown { left: auto; right: 100%; }
+/* Slider flyout rows (menu-nav.js). Outranks .tmb-dropdown > li's zero padding. */
+.tmb-dropdown > li.menu-slider { display: flex; align-items: center; gap: 12px; padding: 12px 18px; }
+.menu-slider wa-slider { flex: 1 1 auto; min-width: 140px; --thumb-width: 1.15em; --thumb-height: 1.15em; }
+.menu-slider wa-slider::part(track) { background: var(--panel-accent); }
+/* Room for "100%", so the flyout never widens mid-drag. */
+.menu-slider-val { min-width: 4.5ch; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Panel Transparency (panel-fade.js): a faded panel, host or header cell.
+   Outranks their own and WinBox's inline backgrounds; a hovered header cell
+   and a reorder drag's copy keep their own look. */
+[data-fade]:not(th:hover, .dt-drag-ghost th) { background-color: var(--fade-bg) !important; }
+/* A faded table's cell lines, colored per side off its first row. */
+[data-fade-lines] :is(th, td) {
+  border-top-color: var(--fade-line-t) !important;
+  border-right-color: var(--fade-line-r) !important;
+  border-bottom-color: var(--fade-line-b) !important;
+  border-left-color: var(--fade-line-l) !important;
+}
+/* AI Analysis fills that match its panel (the status bar, prose covering the
+   timeline rule) take the faded host color; a revision's light card stays. */
+[data-fade] :is(.play-ai-status, .play-ai-prose, .play-ai-engine-only):not(.play-ai-revision-body > *) {
+  background-color: var(--fade-bg);
 }
 
-/* Status placard: stark black-on-white, slanted and hand-pasted. */
-.iw-burst {
-  flex: 0 0 auto;
-  transform: rotate(-4deg);
-  background: var(--iw-ink);
-  color: #000;
-  padding: 5px 16px;
-  font-family: var(--wa-font-family-code);
-  font-weight: 800; font-size: clamp(12px, 1.5vw, 17px);
-  letter-spacing: 0.28em; text-transform: uppercase;
-  box-shadow: 5px 5px 0 var(--iw-shadow);
-}
-/* Running pops louder: buttery pasted-stamp fill, vs the muted ink. */
-.iw-burst--running { background: var(--iw-buttery); }
-/* Terminal states get an inverted (white outline on black) placard. */
-.iw-burst--done, .iw-burst--stopped, .iw-burst--failed {
-  background: #000; color: var(--accent-line); border: 2px solid var(--iw-ink);
-}
-/* SPRT: same family but outlined (a mode tag, not a status) and tilted the
-   other way, so the two stamps read as hand-pasted. */
-.iw-burst--sprt {
-  background: var(--iw-paper); color: var(--iw-ink);
-  border: 2px solid var(--iw-ink);
-  transform: rotate(3deg);
-}
-/* Live run: amber lettering, so it reads as "test in progress". */
-.iw-burst--sprt-live { color: var(--accent-line); }
-/* SPRT + status placards clustered hard right of the headline. */
-.iw-stamps { display: flex; align-items: center; gap: clamp(8px, 1vw, 16px); flex: 0 0 auto; }
-
-/* Headline row spans the wall: title left, status placard hard right. */
-.iw-head {
-  display: flex; align-items: center; justify-content: space-between;
-  flex-wrap: wrap; gap: 12px 20px;
-}
-.iw-name {
-  margin: 0; min-width: 0;
-  /* Italic glyphs overhang their box and the shadow drops below, so pad right
-     + bottom or -webkit-line-clamp's overflow:hidden shaves the last slanted
-     character and clips the shadow. */
-  padding-right: 0.18em; padding-bottom: 0.16em;
-  font-style: italic; font-weight: 900;
-  font-size: clamp(28px, 6vw, var(--iw-name-max, 96px));
-  letter-spacing: -0.03em; line-height: 1;
-  color: var(--iw-ink);
-  text-shadow: 4px 5px 0 var(--iw-shadow);
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
-  overflow: hidden;
-}
-
-/* Bill body: tale of the tape (left) and contenders (right), each framed.
-   They share the wall width and wrap on narrow regions. */
-.iw-bill {
-  display: flex; flex-wrap: wrap; align-items: flex-start;
-  gap: clamp(14px, 2vw, 26px);
-}
-.iw-tape { flex: 1 1 340px; }
-.iw-card { flex: 1 1 260px; }
-.iw-tape, .iw-card {
-  background: var(--iw-paper);
-  border: 3px solid var(--iw-ink);
-  box-shadow: 6px 6px 0 var(--iw-shadow);
-  padding: clamp(12px, 1.4vw, 22px) clamp(16px, 1.8vw, 28px) clamp(14px, 1.6vw, 24px);
-}
-/* Section nameplate atop each framed block. */
-.iw-tape-title {
-  font-family: var(--wa-font-family-code);
-  font-size: clamp(10px, 0.8vw, 13px); font-weight: 800;
-  letter-spacing: 0.28em; text-transform: uppercase;
-  color: var(--muted);
-  padding-bottom: clamp(6px, 0.8vw, 12px);
-  margin-bottom: clamp(6px, 0.8vw, 12px);
-  border-bottom: 2px solid var(--iw-ink);
-}
-
-/* Ledger row: label, leader dots eating the slack, big numeral hard right.
-   The dots fill the width so no value ever floats. */
-.iw-tape-row {
-  display: flex; align-items: baseline; gap: 10px;
-  padding: clamp(3px, 0.5vw, 7px) 0;
-}
-.iw-tape-label {
-  flex: 0 0 auto;
-  font-family: var(--wa-font-family-code);
-  font-size: clamp(11px, 0.95vw, 15px); letter-spacing: 0.12em; text-transform: uppercase;
-  color: var(--muted-bright);
-}
-.iw-tape-dots {
-  flex: 1 1 auto; min-width: 18px;
-  border-bottom: 3px dotted var(--iw-ink);
-  transform: translateY(-5px);
-}
-.iw-tape-value {
-  flex: 0 0 auto;
-  font-weight: 900; font-size: clamp(22px, 2.6vw, 40px); line-height: 0.9;
-  color: var(--iw-ink);
-}
-
-/* Contenders billing: seed(s) vs field, or a two-engine A vs B. */
-.iw-versus {
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
-  gap: clamp(8px, 1.2vw, 18px);
-}
-.iw-vs {
-  font-style: italic; font-weight: 900;
-  font-size: clamp(20px, 2.4vw, 38px);
-  letter-spacing: -0.02em; color: var(--muted);
-  text-shadow: 3px 3px 0 var(--iw-shadow);
-}
-
-/* Fine print: sanctioning-body small print at the foot of the bill. */
-.iw-setup {
-  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 24px;
-  font-size: clamp(13px, 1vw, 18px); color: var(--muted-bright);
-}
-.iw-fact-key {
-  font-family: var(--wa-font-family-code);
-  text-transform: uppercase; letter-spacing: 0.12em;
-  font-size: 10px; color: var(--muted);
-  margin-right: 4px;
-}
-
-/* Adjudication marks: skewed sanctioning stickers, echoing the engine plates
-   but smaller and inked on paper. */
-.iw-adj-stamps {
-  display: inline-flex; flex-wrap: wrap; align-items: center;
-  gap: 6px 8px; vertical-align: middle;
-}
-.iw-adj-stamp {
-  --iw-adj-ink: #14110a;     /* near-black */
-  display: inline-flex; align-items: baseline; gap: 6px;
-  padding: 4px 9px;
-  background: var(--iw-buttery);
-  box-shadow: 3px 3px 0 var(--iw-shadow), 4px 4px 8px rgba(0, 0, 0, 0.6);
-  transform: skewX(-8deg);
-}
-.iw-adj-stamp > * { transform: skewX(8deg); }
-.iw-adj-stamp-label {
-  font-family: var(--wa-font-family-code);
-  text-transform: uppercase; letter-spacing: 0.1em;
-  font-size: 11px; font-weight: 700; color: var(--iw-adj-ink);
-}
-.iw-adj-stamp-detail { font-size: 13px; font-weight: 700; color: var(--iw-adj-ink); }
-
-/* Engines: tag stickers, slightly skewed, hard outline. Sized to content. */
-.iw-roster { display: flex; flex-wrap: wrap; gap: 8px 10px; }
-.iw-engine {
-  font-weight: 700; font-size: 13px;
-  padding: 3px 12px;
-  background: var(--iw-paper);
-  border: 2px solid var(--iw-ink);
-  color: var(--iw-ink);
-  box-shadow: 3px 3px 0 var(--iw-shadow);
-  transform: skewX(-8deg);
-}
-.iw-engine > * { display: inline-block; transform: skewX(8deg); }
-.iw-engine-ver { margin-left: 6px; color: var(--muted); font-weight: 600; }
-.iw-engine--more { flex: 0 0 auto; color: var(--muted); font-weight: 600; }
-/* Gauntlet seed: louder plate so the runner reads as the headliner. */
-.iw-engine--seed {
-  background: var(--iw-ink); color: var(--iw-paper);
-  border-width: 3px; box-shadow: 4px 4px 0 var(--iw-shadow);
-}
-.iw-engine--seed .iw-engine-ver { color: var(--iw-paper); opacity: 0.7; }
-
-/* Footer spans the wall: progress/tally left, created stamp hard right. */
+/* Footer spans the wall: the progress bar / LLR meter fills it; a tally sits left. */
 .iw-footer {
-  display: flex; align-items: center; justify-content: space-between;
-  flex-wrap: wrap; gap: 12px;
-  /* Pinned to the poster's bottom; padding keeps the old minimum spacing. */
+  display: flex; align-items: center;
+  /* Pinned to the wall's bottom. */
   margin-top: auto;
-  padding-top: clamp(20px, 3vw, 40px);
+  /* Its frost (with a wallpaper) reads as a rounded panel, like the windows. */
+  border-radius: var(--wb-radius);
 }
-.iw-progress { display: flex; align-items: center; gap: 12px; flex: 1 1 280px; max-width: 75%; }
-.iw-progress .tournament-progress { flex: 1 1 auto; }
+.iw-progress { display: flex; align-items: center; gap: 12px; flex: 1 1 auto; padding: 8px 12px; }
+.iw-progress .tournament-progress { flex: 1 1 auto; height: 10px; }
+.iw-progress .tournament-progress-label { font-size: 0.875rem; }
 
 /* SPRT LLR meter: H0 ---[marker]--- H1, the verdict gauge. */
 .iw-llr {
   display: flex; align-items: center; gap: 10px;
-  flex: 1 1 320px; max-width: 75%;
+  flex: 1 1 auto;
   font-family: var(--wa-font-family-code); font-weight: 700;
-  font-size: 12px; letter-spacing: 0.12em; color: var(--muted);
+  font-size: 14px; letter-spacing: 0.12em; color: var(--fg);
 }
-/* Thin rail like the progress bar: muted rounded track, a slim marker walking
+/* Rail like the progress bar: muted rounded track, a slim marker walking
    it, a faint center pip at the H0/H1 pivot. */
 .iw-llr-track {
-  position: relative; flex: 1 1 auto; height: 6px;
+  position: relative; flex: 1 1 auto; height: 10px;
   background: var(--progress-track);
   border-radius: 6px;
 }
 /* Center pip at the H0/H1 pivot: same height as the marker, muted + wider. */
 .iw-llr-track::before {
   content: ""; position: absolute; top: 50%; left: 50%;
-  width: 3px; height: 16px; background: var(--muted); border-radius: 2px;
+  width: 3px; height: 20px; background: var(--muted); border-radius: 2px;
   transform: translate(-50%, -50%);
 }
 .iw-llr-mark {
-  position: absolute; top: 50%; width: 4px; height: 16px;
+  position: absolute; top: 50%; width: 4px; height: 20px;
   background: var(--wa-color-brand-60); border-radius: 2px;
   box-shadow: 0 0 4px rgba(var(--accent-rgb), 0.6);
   transform: translate(-50%, -50%);
 }
-.iw-llr-val { color: var(--muted-bright); }
-/* Concluded verdicts tint the marker + value (H1 affirms, H0 mutes). */
-.iw-llr--h1 .iw-llr-mark { background: #7fb37f; }
-.iw-llr--h1 .iw-llr-val { color: #7fb37f; }
+/* Concluded verdicts tint the marker (H1 affirms, H0 mutes). */
+.iw-llr--h1 .iw-llr-mark { background: var(--sprt-h1-mark); }
 .iw-llr--h0 .iw-llr-mark { background: var(--muted); }
-.iw-llr--h0 .iw-llr-val { color: var(--muted); }
 .iw-tally {
   font-family: var(--wa-font-family-code); font-weight: 700;
   font-size: 14px; color: var(--muted-bright);
 }
-.iw-created { font-size: 12px; color: var(--muted); }
 /* Minimize tray: a strip below the Boards region, outside its scroll area, so
    chips stay at the visible bottom regardless of scroll. Native minimize is
    hidden; each minimized board gets a restore chip. */
@@ -4114,7 +4092,11 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .winbox.sturddle-wb-studio { position: absolute; transition: none; }
 .winbox.sturddle-wb-studio .wb-drag { cursor: default; }
 .studio-bottom {
-  flex: 1 1 0; min-height: 0; display: flex; gap: 6px;
+  --studio-bottom-gap: 6px;
+  --studio-grip-col-w: 4px;
+  /* A group's side, gap included, up to the column grip's middle. */
+  --studio-seam: calc(var(--studio-bottom-gap) + var(--studio-grip-col-w) / 2);
+  flex: 1 1 0; min-height: 0; display: flex; gap: var(--studio-bottom-gap);
   /* Single rule separating the board area from the bottom tab groups. */
   border-top: 1px solid var(--border-subtle);
   box-sizing: border-box;
@@ -4125,10 +4107,10 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 /* Resizer grips: invisible until hovered/dragged, then tinted like a
    selected row. */
 .studio-grip-row {
-  flex: 0 0 4px; cursor: row-resize; background: transparent; z-index: 1;
+  flex: 0 0 var(--studio-grip-row-h); cursor: row-resize; background: transparent; z-index: 1;
 }
 .studio-grip-col {
-  flex: 0 0 4px; cursor: col-resize; background: transparent; z-index: 1;
+  flex: 0 0 var(--studio-grip-col-w); cursor: col-resize; background: transparent; z-index: 1;
 }
 .studio-grip-row:hover, .studio-grip-row.dragging,
 .studio-grip-col:hover, .studio-grip-col.dragging {
@@ -4463,7 +4445,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .tournament-progress-label {
   flex: 0 0 auto;
   font-size: 0.75rem;
-  color: var(--text);
+  color: var(--fg);
   white-space: nowrap;
   letter-spacing: 0.3px;
 }
@@ -4599,7 +4581,7 @@ wa-dialog.tournament-info-dialog::part(body) {
 .ne-list:focus, .ne-list:focus-visible { outline: none; }
 .ne-item:hover { background: var(--nav-btn-bg); }
 .ne-item.selected {
-  background: var(--row-bg-selected); color: var(--text);
+  background: var(--row-bg-selected); color: var(--fg);
   box-shadow: inset 3px 0 0 var(--accent-line);
 }
 .ne-controls, .ne-reorder {
@@ -5294,7 +5276,7 @@ wa-dialog.tournament-info-dialog::part(body) {
   border: 1px solid var(--border-subtle);
   border-radius: 3px;
   background: var(--row-bg-selected);
-  color: var(--text);
+  color: var(--fg);
 }
 .wb-sched-list .wb-engine-idle .wb-engine-state {
   background: var(--wa-color-surface-border);
@@ -5308,31 +5290,16 @@ wa-dialog.tournament-info-dialog::part(body) {
    it collapses to a normal divider in every layout. */
 .ribbon-sep--push { flex: 0 0 auto; }
 
-/* UCI log window. The toolbar is a fixed (non-scrolling) header above its own
-   scroll container, so the lines' scrollbar track starts below it instead of
-   a sticky header sharing the body's scrollbar. The negative margin cancels
-   wb-body's default 8px/12px padding so the toolbar spans edge-to-edge; the
-   scroll container keeps that padding for the lines below it. */
+/* UCI log window (actions in its right-click menu). The scroll container
+   cancels wb-body's 8px/12px padding with a negative margin, so its scrollbar
+   sits at the window's edge, and keeps that padding for the lines. */
 .wb-uci-log { height: 100%; display: flex; flex-direction: column; min-height: 0; }
 .winbox.sturddle-wb-uci-log .wb-body,
 .dock-slot-body:has(> .wb-uci-log) { overflow: hidden; }
-.wb-uci-log-toolbar {
-  display: flex; align-items: center; gap: 12px;
-  flex: 0 0 auto;
-  padding: 4px 8px; margin: -8px -12px 0;
-  border-bottom: 1px solid var(--border-subtle); font-size: 0.8125rem;
-  background: var(--panel);
-}
-.wb-uci-log-toolbar button {
-  background: var(--nav-btn-bg); color: var(--fg);
-  border: 1px solid var(--border-subtle); border-radius: 3px;
-  padding: 2px 8px; cursor: pointer; font-size: 0.75rem;
-}
-.wb-uci-log-toolbar button:hover { background: var(--nav-btn-bg-hover); }
 .wb-uci-log-scroll {
   flex: 1 1 auto; min-height: 0;
   overflow: auto;
-  margin: 0 -12px -8px; padding: 8px 12px;
+  margin: -8px -12px; padding: 8px 12px;
 }
 .wb-uci-log-line {
   font-family: var(--wa-font-family-code); font-size: 0.75rem; line-height: 1.5;
@@ -5364,7 +5331,10 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-pvtable-head-tbl th:last-child:hover {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
 }
-.wb-pvtable-tbl td { overflow: hidden; text-overflow: ellipsis; text-align: right; border-right: 1px solid var(--border-subtle); }
+.wb-pvtable-tbl td {
+  overflow: hidden; text-overflow: ellipsis; text-align: right;
+  border-right: 1px solid var(--pvtable-line); border-bottom-color: var(--pvtable-line);
+}
 .wb-pvtable-tbl td:last-child { border-right: none; }
 .wb-pvtable-head-tbl th { text-align: center; }
 .wb-pvtable-tbl td.wb-pvtable-pv,

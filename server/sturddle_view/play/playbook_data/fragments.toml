@@ -1,0 +1,100 @@
+# Per-axis plan fragments: one tag selects one fragment.
+
+[meta]
+source = "shipped"
+trust = "trusted"
+
+[[entry]]
+id = "margin.winning"
+when = { margin = "winning" }
+text = "convert cleanly: simplify, trade pieces not pawns, keep the king safe, avoid needless complications."
+
+[[entry]]
+id = "margin.better"
+when = { margin = "better" }
+text = "keep pieces on, improve the worst-placed piece, no rush; do not cash the edge in for a simplified drawn position."
+
+[[entry]]
+id = "margin.worse"
+when = { margin = "worse" }
+text = "solidify first; trade off the most active enemy piece; trade queens if under attack."
+
+[[entry]]
+id = "margin.losing"
+when = { margin = "losing" }
+text = "seek counterplay and practical chances; prolong the game: no simplifying trades, keep pieces and tension on, make the opponent prove the win."
+
+[[entry]]
+id = "phase.opening"
+when = { phase = "opening" }
+text = "development, the center and king safety before premature attacks; no early queen sorties."
+
+[[entry]]
+id = "phase.middlegame"
+when = { phase = "middlegame" }
+text = "pawn breaks, piece activity, weak squares; a plan before tactics."
+
+[[entry]]
+id = "phase.late"
+when = { phase = "late" }
+text = "trade toward a favorable ending when ahead, keep tension when behind; watch the transition."
+
+[[entry]]
+id = "phase.endgame"
+when = { phase = "endgame" }
+text = "king activity, create and push passed pawns, promotion is the goal; opposition and zugzwang in pawn endings."
+
+[[entry]]
+id = "structure.closed"
+when = { structure = "closed" }
+text = "closed structure: maneuver, prepare pawn breaks, knights over bishops, play on the wing with more space."
+
+[[entry]]
+id = "structure.open"
+when = { structure = "open" }
+text = "open structure: bishops over knights, files and diagonals, initiative and tactics; tempo matters."
+
+[[entry]]
+id = "imbalance.iqp_ours"
+when = { imbalance = "iqp_ours" }
+text = "isolated d-pawn: control its stop square, play actively now, avoid endings where it is a target."
+
+[[entry]]
+id = "imbalance.iqp_theirs"
+when = { imbalance = "iqp_theirs" }
+text = "enemy isolated d-pawn: blockade it with a knight, trade minor pieces, aim for an ending."
+
+[[entry]]
+id = "imbalance.minority_ours"
+when = { imbalance = "minority_ours" }
+text = "minority attack: advance the a- and b-pawns, trade one to leave a weak pawn, target it."
+
+[[entry]]
+id = "imbalance.minority_theirs"
+when = { imbalance = "minority_theirs" }
+text = "enemy minority attack: counter in the center or on the kingside; guard the weakened queenside pawn."
+
+[[entry]]
+id = "bishops.opposite_queens"
+when = { bishops = "opposite_queens" }
+text = "opposite-colored bishops with queens on: the attacker keeps queens on and attacks on its bishop's color."
+
+[[entry]]
+id = "bishops.opposite"
+when = { bishops = "opposite" }
+text = "opposite-colored bishops: mass trades tend to draw; the side ahead needs a second front or outside passer."
+
+[[entry]]
+id = "pawn.passed_outside_ours"
+when = { pawn = "passed_outside_ours" }
+text = "outside passed pawn: push and support it; it ties enemy pieces down."
+
+[[entry]]
+id = "pawn.passed_outside_theirs"
+when = { pawn = "passed_outside_theirs" }
+text = "enemy outside passed pawn: blockade it with a minor piece; keep the other pieces free."
+
+[[entry]]
+id = "castling.opposite"
+when = { castling = "opposite" }
+text = "opposite-side castling: pawn-storm the enemy king's wing without loosening the king's shelter; tempo counts."

@@ -6,10 +6,12 @@ import { mountTournaments } from "../tournaments.js";
 import { APP_EVT } from "../app-events.js";
 import { getActiveWorkspace } from "../tournament-workspace.js";
 import { getTournamentUx, mountTournamentStudio, TOURNAMENT_UX } from "../tournament-studio.js";
+import { parkLiveFeeds } from "../tournament-live-game.js";
 
-function mountArena(host, ctx) {
+function mountArena(host, root, ctx) {
   const tournamentsCtl = mountTournaments({
     container: host,
+    wallpaperEl: root,
     api: ctx.api,
     events: ctx.events,
     log: ctx.log,
@@ -40,8 +42,15 @@ export const enginesPerspective = {
   async mount(root, ctx) {
     root.innerHTML = `<section id="engines-perspective"></section>`;
     const host = root.querySelector("#engines-perspective");
-    return getTournamentUx() === TOURNAMENT_UX.STUDIO
+    const ctl = getTournamentUx() === TOURNAMENT_UX.STUDIO
       ? mountTournamentStudio({ container: host, api: ctx.api, events: ctx.events, log: ctx.log })
-      : mountArena(host, ctx);
+      : mountArena(host, root, ctx);
+    return {
+      ...ctl,
+      async unmount() {
+        await parkLiveFeeds();
+        ctl.unmount();
+      },
+    };
   },
 };

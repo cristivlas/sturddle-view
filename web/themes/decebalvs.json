@@ -1,0 +1,19 @@
+{
+  "name": "Decebalvs",
+  "fit": "cover",
+  "fade": 35,
+  "frost": {
+    "blur": 2,
+    "brightness": 75
+  },
+  "panels": {
+    "ai": 10,
+    "evalbar": 10,
+    "ucilog": 10,
+    "pvtable": 10,
+    "studioLeft": 10,
+    "studioRight": 10
+  },
+  "board": "chess-club",
+  "boardFade": 35
+}

@@ -1,0 +1,163 @@
+# Pawn formations: patterns and their plan fragments (Stage 2).
+# Ranks are relative to each side (2 = its home rank); examples have the
+# `ours` side to move.
+
+[meta]
+source = "shipped"
+trust = "trusted"
+
+[[pattern]]
+id = "maroczy"
+ours = { c = "4", d = "-", e = "4" }
+theirs = { c = "-", d = "3" }
+examples = ["r1bqkb1r/pp2pppp/2np1n2/8/2PNP3/8/PP3PPP/RNBQKB1R w KQkq - 0 1"]
+counterexamples = ["r1bqkb1r/pp2pppp/2np1n2/8/3NP3/8/PPP2PPP/RNBQKB1R w KQkq - 0 1"]
+
+[[pattern]]
+id = "hanging"
+ours = { b = "-", c = "4", d = "4", e = "-" }
+theirs = { c = "-", d = "-" }
+examples = ["r2q1rk1/p3bppp/1p2pn2/8/2PP4/5N2/P3BPPP/R2Q1RK1 w - - 0 1"]
+counterexamples = ["r2q1rk1/p3bppp/1p2pn2/8/2PP4/4PN2/P3BPPP/R2Q1RK1 w - - 0 1"]
+
+[[pattern]]
+id = "hedgehog"
+ours = { a = "3", b = "3", c = "-", d = "3", e = "3" }
+theirs = { c = "4", e = "4" }
+examples = ["r2qkb1r/1b3ppp/pp1ppn2/8/2P1P3/2N2N2/PP3PPP/R1BQKB1R b KQkq - 0 1"]
+counterexamples = ["r1bqkb1r/1p3ppp/p2ppn2/8/2P1P3/2N2N2/PP3PPP/R1BQKB1R b KQkq - 0 1"]
+
+# Before stonewall: both have four constraints and can hold at once (a
+# Stonewall against an enemy pawn on e5); ties keep load order. The chain
+# is the right plan there: the Stonewall hole holds the enemy pawn, and
+# the grammar cannot say "no enemy pawn on the hole".
+[[pattern]]
+id = "french_chain"
+ours = { d = "4", e = "5" }
+theirs = { d = "4", e = "3" }
+examples = ["rnbqkbnr/pp3ppp/4p3/2ppP3/3P4/2P5/PP3PPP/RNBQKBNR w KQkq - 0 4"]
+counterexamples = ["rnbqkbnr/pp3ppp/4p3/2pp4/3PP3/2P5/PP3PPP/RNBQKBNR w KQkq - 0 4"]
+
+[[pattern]]
+id = "stonewall"
+ours = { c = "3", d = "4", e = "3", f = "4" }
+examples = ["rnbqkb1r/ppp2ppp/4pn2/3p4/3P1P2/2P1P3/PP4PP/RNBQKBNR w KQkq - 0 1"]
+counterexamples = ["rnbqkb1r/ppp2ppp/4pn2/3p4/3P4/2P1P3/PP3PPP/RNBQKBNR w KQkq - 0 1"]
+
+[[pattern]]
+id = "kid_center"
+ours = { d = "5", e = "4" }
+theirs = { d = "3", e = "4" }
+examples = ["r1bq1rk1/ppp1npbp/3p1np1/3Pp3/2P1P3/2N2N2/PP2BPPP/R1BQ1RK1 w - - 0 9"]
+counterexamples = ["r1bq1rk1/ppp2pbp/2np1np1/4p3/2PPP3/2N2N2/PP2BPPP/R1BQ1RK1 w - - 0 8"]
+
+[[pattern]]
+id = "benoni"
+ours = { c = "-", d = "5" }
+theirs = { c = "4", d = "3", e = "-" }
+examples = ["rnbq1rk1/pp3pbp/3p1np1/2pP4/4P3/2N2N2/PP2BPPP/R1BQK2R w KQ - 0 9"]
+counterexamples = ["rnbq1rk1/pp2ppbp/3p1np1/2pP4/4P3/2N2N2/PP2BPPP/R1BQK2R w KQ - 0 9"]
+
+[[pattern]]
+id = "caro_kann"
+ours = { c = "2-3", d = "4", e = "-" }
+theirs = { c = "3", d = "-", e = "2-3" }
+examples = ["rn1qkbnr/pp2pppp/2p3b1/8/3P4/6N1/PPP2PPP/R1BQKBNR w KQkq - 0 6"]
+counterexamples = ["rnbqkbnr/pp2pppp/2p5/3p4/3PP3/8/PPP2PPP/RNBQKBNR w KQkq - 0 3"]
+
+[[pattern]]
+id = "open_sicilian"
+ours = { c = "2-3", d = "-", e = "4" }
+theirs = { c = "-", d = "3" }
+examples = ["rnbqkb1r/1p2pppp/p2p1n2/8/3NP3/2N5/PPP2PPP/R1BQKB1R w KQkq - 0 6"]
+counterexamples = ["r1bqkb1r/pp2pppp/2np1n2/8/2PNP3/8/PP3PPP/RNBQKB1R w KQkq - 0 1"]
+
+[[entry]]
+id = "formation.maroczy_ours"
+when = { formation = "maroczy_ours" }
+text = "Maroczy bind: keep the c- and e-pawn clamp, stop the enemy b- and d-pawn breaks, use the space."
+
+[[entry]]
+id = "formation.maroczy_theirs"
+when = { formation = "maroczy_theirs" }
+text = "enemy Maroczy bind: trade pieces to ease the cramp, prepare the b- or d-pawn break; avoid passivity."
+
+[[entry]]
+id = "formation.hanging_ours"
+when = { formation = "hanging_ours" }
+text = "hanging pawns: keep them side by side and mobile, use the half-open files, push the d-pawn when it opens lines."
+
+[[entry]]
+id = "formation.hanging_theirs"
+when = { formation = "hanging_theirs" }
+text = "enemy hanging pawns: pressure them from the front and the sides, force one to advance, then blockade it and target the other."
+
+[[entry]]
+id = "formation.hedgehog_ours"
+when = { formation = "hedgehog_ours" }
+text = "hedgehog: stay compact behind the pawn wall, prepare the b- or d-pawn break, strike when the enemy overextends."
+
+[[entry]]
+id = "formation.hedgehog_theirs"
+when = { formation = "hedgehog_theirs" }
+text = "enemy hedgehog: keep the c- and e-pawn clamp, stop the b- and d-pawn breaks, improve slowly; do not overextend."
+
+[[entry]]
+id = "formation.stonewall_ours"
+when = { formation = "stonewall_ours" }
+text = "stonewall: plant a knight on the e-file outpost, attack on the kingside, guard the hole in front of the e-pawn."
+
+[[entry]]
+id = "formation.stonewall_theirs"
+when = { formation = "stonewall_theirs" }
+text = "enemy stonewall: put a knight in the hole in front of its e-pawn, trade off its good bishop, open the queenside."
+
+[[entry]]
+id = "formation.kid_center_ours"
+when = { formation = "kid_center_ours" }
+text = "closed center with space: break with the c-pawn and open the queenside; meet the enemy f-pawn storm early."
+
+[[entry]]
+id = "formation.kid_center_theirs"
+when = { formation = "kid_center_theirs" }
+text = "closed center, less space: push the f-pawn and storm the kingside where the chain points; race, do not defend the queenside."
+
+[[entry]]
+id = "formation.french_chain_ours"
+when = { formation = "french_chain_ours" }
+text = "advanced chain: defend its base, use the kingside space to attack; meet the enemy c- and f-pawn breaks."
+
+[[entry]]
+id = "formation.french_chain_theirs"
+when = { formation = "french_chain_theirs" }
+text = "enemy advanced chain: hit its base with the c-pawn, then the f-pawn; trade off the bad bishop."
+
+[[entry]]
+id = "formation.benoni_ours"
+when = { formation = "benoni_ours" }
+text = "Benoni wedge: keep the d-pawn wedge, prepare the e-pawn break, stop the enemy queenside pawns from rolling."
+
+[[entry]]
+id = "formation.benoni_theirs"
+when = { formation = "benoni_theirs" }
+text = "enemy Benoni wedge: roll the queenside majority with the b-pawn, use the long diagonal, stop the e-pawn break."
+
+[[entry]]
+id = "formation.caro_kann_ours"
+when = { formation = "caro_kann_ours" }
+text = "space against a solid shell: post a knight on the central outpost, use the extra space before the enemy c-pawn break."
+
+[[entry]]
+id = "formation.caro_kann_theirs"
+when = { formation = "caro_kann_theirs" }
+text = "solid shell against a lone center pawn: finish development, prepare the c-pawn break, trade minor pieces."
+
+[[entry]]
+id = "formation.open_sicilian_ours"
+when = { formation = "open_sicilian_ours" }
+text = "open Sicilian: use the development lead and the half-open d-file, attack the king before the enemy queenside play arrives."
+
+[[entry]]
+id = "formation.open_sicilian_theirs"
+when = { formation = "open_sicilian_theirs" }
+text = "Sicilian counterplay: use the half-open c-file, keep the extra central pawn, prepare the d-pawn break."

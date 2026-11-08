@@ -19,6 +19,7 @@ import chess.pgn
 
 from ..chess.pgn_tags import (
     TAG_BLACK,
+    TAG_OPENING,
     TAG_RESULT,
     TAG_ROUND,
     TAG_TERMINATION,
@@ -182,18 +183,17 @@ _iter_games_cache: dict[
     Path, tuple[int, int, tuple[tuple[str, str, str, str], ...]]
 ] = {}
 
-# Byte offsets of decisive games: offsets[i] is the file position of the
-# (i+1)-th decisive game. Keyed by (mtime_ns, size); same invalidation as
+# Decisive games: entries[i] is (file position, header row) of the (i+1)-th
+# decisive game. Keyed by (mtime_ns, size); same invalidation as
 # _iter_games_cache. Lets read_game_record seek directly to game N.
-_game_offsets_cache: dict[Path, tuple[int, int, list[int]]] = {}
+_game_index_cache: dict[Path, tuple[int, int, list[tuple[int, dict]]]] = {}
 
 # pgn_path -> (mtime_ns, size, games). O(1) fast path for unchanged polls.
 _games_list_cache: dict[Path, tuple[int, int, list[dict]]] = {}
 
-# (pgn_path, byte_offset) -> finished-game record. The PGN is append-only
-# within a run, so an offset's game never changes; a rebuild re-parses only
-# the just-finished game. Stop/restart wipes the file -- the orchestrator
-# calls forget() at that point, the only event that invalidates this.
+# (pgn_path, byte_offset) -> record of a game with no usable Opening tag.
+# Append-only PGN: an offset's game never changes, so rebuilds re-parse only
+# new games. A Stop/restart wipe breaks that; the orchestrator calls forget().
 _opening_memo: dict[tuple[Path, int], dict] = {}
 
 # Plies replayed per game to identify its opening. ECO lines rarely exceed
@@ -221,7 +221,7 @@ def _iter_games_keyed(pgn_path: Path):
         st = pgn_path.stat()
     except FileNotFoundError:
         _iter_games_cache.pop(pgn_path, None)
-        _game_offsets_cache.pop(pgn_path, None)
+        _game_index_cache.pop(pgn_path, None)
         return
     cached = _cache_hit(_iter_games_cache, pgn_path, st)
     if cached is not None:
@@ -365,9 +365,19 @@ def _form_pairs(
     return pairs, orphans
 
 
-def _build_game_offsets(pgn_path: Path, f) -> list[int]:
-    """Scan open text file and return byte offsets of decisive games."""
-    offsets: list[int] = []
+def _header_row(headers, opening: str) -> dict:
+    """Games-list row from a decisive game's tags plus its opening name."""
+    return {
+        _KEY_WHITE: headers.get(TAG_WHITE, UNKNOWN_TAG_VALUE),
+        _KEY_BLACK: headers.get(TAG_BLACK, UNKNOWN_TAG_VALUE),
+        _KEY_RESULT: headers[TAG_RESULT],
+        _KEY_OPENING: opening,
+    }
+
+
+def _build_game_index(f) -> list[tuple[int, dict]]:
+    """Scan open text file; (byte offset, header row) of decisive games."""
+    entries: list[tuple[int, dict]] = []
     f.seek(0)
     while True:
         offset = f.tell()
@@ -375,18 +385,20 @@ def _build_game_offsets(pgn_path: Path, f) -> list[int]:
         if headers is None:
             break
         if headers.get(TAG_RESULT, UNKNOWN_RESULT) in DECISIVE_RESULTS:
-            offsets.append(offset)
-    return offsets
+            tag = headers.get(TAG_OPENING, "")
+            opening = "" if tag == UNKNOWN_TAG_VALUE else tag
+            entries.append((offset, _header_row(headers, opening)))
+    return entries
 
 
-def _get_game_offsets(pgn_path: Path, st) -> list[int]:
-    cached = _cache_hit(_game_offsets_cache, pgn_path, st)
+def _get_game_index(pgn_path: Path, st) -> list[tuple[int, dict]]:
+    cached = _cache_hit(_game_index_cache, pgn_path, st)
     if cached is not None:
         return cached
     with _open_pgn(pgn_path) as f:
-        offsets = _build_game_offsets(pgn_path, f)
-    _game_offsets_cache[pgn_path] = (st.st_mtime_ns, st.st_size, offsets)
-    return offsets
+        entries = _build_game_index(f)
+    _game_index_cache[pgn_path] = (st.st_mtime_ns, st.st_size, entries)
+    return entries
 
 
 def _read_game_at_offset(f, offset: int):
@@ -412,11 +424,11 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
         st = pgn_path.stat()
     except FileNotFoundError:
         return None
-    offsets = _get_game_offsets(pgn_path, st)
-    if game_n > len(offsets):
+    entries = _get_game_index(pgn_path, st)
+    if game_n > len(entries):
         return None
     with _open_pgn(pgn_path) as f:
-        game = _read_game_at_offset(f, offsets[game_n - 1])
+        game = _read_game_at_offset(f, entries[game_n - 1][0])
     if game is None:
         return None
     last_move_uci: str | None = None
@@ -429,7 +441,7 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
     pgn_text = str(game)
     white = game.headers.get(TAG_WHITE, UNKNOWN_TAG_VALUE)
     black = game.headers.get(TAG_BLACK, UNKNOWN_TAG_VALUE)
-    # _get_game_offsets only indexes decisive games, so Result is always decisive here.
+    # _get_game_index only indexes decisive games, so Result is always decisive here.
     result = game.headers[TAG_RESULT]
     summary = {
         _KEY_WHITE: white if white != UNKNOWN_TAG_VALUE else None,
@@ -460,13 +472,7 @@ def _game_record_at_offset(f, offset: int) -> dict | None:
         if len(uci) >= _OPENING_PLIES:
             break
     opening = OpeningBook.load().lookup(uci)
-    return {
-        _KEY_WHITE: game.headers.get(TAG_WHITE, UNKNOWN_TAG_VALUE),
-        _KEY_BLACK: game.headers.get(TAG_BLACK, UNKNOWN_TAG_VALUE),
-        # _get_game_offsets only indexes decisive games -> Result always set.
-        _KEY_RESULT: game.headers[TAG_RESULT],
-        _KEY_OPENING: opening.name if opening is not None else "",
-    }
+    return _header_row(game.headers, opening.name if opening is not None else "")
 
 
 def forget(pgn_path: Path) -> None:
@@ -481,7 +487,8 @@ def forget(pgn_path: Path) -> None:
 def compute_games_list(pgn_path: Path) -> list[dict]:
     """One dict per completed game (white, black, result, opening) in PGN
     order. Indexing matches read_game_record -- both driven by
-    _get_game_offsets -- so a row's position is its replay game number.
+    _get_game_index -- so a row's position is its replay game number.
+    Opening is the PGN's Opening tag, else identified from the moves.
     """
     try:
         st = pgn_path.stat()
@@ -491,16 +498,17 @@ def compute_games_list(pgn_path: Path) -> list[dict]:
     cached = _cache_hit(_games_list_cache, pgn_path, st)
     if cached is not None:
         return cached
-    offsets = _get_game_offsets(pgn_path, st)
+    entries = _get_game_index(pgn_path, st)
     with _open_pgn(pgn_path) as f:
         games = []
-        for offset in offsets:
-            rec = _opening_memo.get((pgn_path, offset))
-            if rec is None:
-                rec = _game_record_at_offset(f, offset)
+        for offset, rec in entries:
+            if not rec[_KEY_OPENING]:
+                rec = _opening_memo.get((pgn_path, offset))
                 if rec is None:
-                    continue
-                _opening_memo[(pgn_path, offset)] = rec
+                    rec = _game_record_at_offset(f, offset)
+                    if rec is None:
+                        continue
+                    _opening_memo[(pgn_path, offset)] = rec
             games.append(rec)
     _games_list_cache[pgn_path] = (st.st_mtime_ns, st.st_size, games)
     return games

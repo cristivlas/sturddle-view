@@ -11,7 +11,7 @@ import datetime
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -101,6 +101,7 @@ from .import_position import explain_invalid, parse_fen
 from .mode import Mode, ModeConflictError, Op
 from .opening_lines import BookRef, book_reply
 from .playbook import Situation, classify
+from .playbook_catalog import default_catalog
 from .tablebase import TablebaseProber
 
 if TYPE_CHECKING:
@@ -364,6 +365,14 @@ def _pgn_headers(event: str, white: str, black: str) -> dict[str, str]:
     }
 
 
+def _saved_book(state: GameState) -> BookRef | None:
+    """The saved game's book; none for a non-startpos game (books are
+    consulted for startpos games only) or an old save."""
+    if state.book is None or state.start_fen is not None:
+        return None
+    return BookRef(**state.book)
+
+
 def _own_book_off(engine) -> dict:
     """Per-search OwnBook off (book replies ignore searchmoves, carry no
     score), keyed by the engine's own spelling so the configured value
@@ -498,8 +507,8 @@ class HumanVsEngine:
         # moves played so far against the book's lines (book_reply); the
         # first empty pool latches _out_of_book so later turns skip the
         # lookup (takeback unlatches -- a shorter prefix can match again).
-        # None when no book. Reset per new_game; never set by
-        # restore_from, so a rehydrated mid-game is out of book.
+        # None when no book. Reset per new_game; restore_from re-arms it
+        # from the saved game.
         self._book: BookRef | None = None
         self._out_of_book = False
         # Difficulty searchmoves probe result, cached per engine
@@ -628,7 +637,8 @@ class HumanVsEngine:
     def book_ref(self) -> BookRef | None:
         """Per-game PGN book reference armed at new_game -- its anchor is
         the game-start cursor, unlike the live settings cursor which has
-        already advanced. None in view mode or after rehydrate."""
+        already advanced; restored with a saved game. None when the game
+        has no book."""
         return self._book
 
     def view_full_moves_san(self) -> list[str]:
@@ -651,7 +661,10 @@ class HumanVsEngine:
     def situation(self, our_color: chess.Color) -> Situation:
         """Playbook tags for the position under review from `our_color`'s
         point of view (docs/ai-playbook-spec.md)."""
-        return classify(self._board, score_white=self._position_eval(), our_color=our_color)
+        return classify(
+            self._board, score_white=self._position_eval(), our_color=our_color,
+            matchers=default_catalog().matchers,
+        )
 
     def _position_eval(self) -> dict | None:
         """White-POV eval dict ({cp} or {mate}) for the position under
@@ -1946,6 +1959,7 @@ class HumanVsEngine:
             play_root_comment=self._play_root_comment,
             parent_game_id=parent_game_id,
             fork_ply=fork_ply,
+            book=None if self._book is None else asdict(self._book),
         )
 
     async def _persist(self) -> None:
@@ -2022,6 +2036,8 @@ class HumanVsEngine:
             if state.parent_game_id is not None and state.fork_ply is not None
             else None
         )
+        self._book = _saved_book(state)
+        self._out_of_book = False
         self._mode = Mode.PAUSED if state.paused else Mode.PLAY
 
     # ----- internals -----

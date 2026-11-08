@@ -83,6 +83,8 @@ _CHILDREN_KEY = "children"
 _EVENTS_KEY = "events"
 # Replay: a turn is in flight, though it may not have emitted yet.
 _RUNNING_KEY = "running"
+# Replay: ms since the in-flight turn began (null when none), to seed the timer.
+_ELAPSED_KEY = "elapsed_ms"
 _ERROR_KEY = ERROR_KEY
 _IN_PROGRESS_ERROR = "in_progress"
 _WOULD_LEAVE_ERROR = "would_leave"
@@ -814,8 +816,12 @@ async def analysis_replay(request: Request) -> dict:
     turn has emitted nothing yet. Empty list when no analysis is live."""
     coord = ai_coordinator(request.app.state)
     if coord is None:
-        return {_EVENTS_KEY: [], _RUNNING_KEY: False}
-    return {_EVENTS_KEY: coord.replay(), _RUNNING_KEY: coord.turn_running()}
+        return {_EVENTS_KEY: [], _RUNNING_KEY: False, _ELAPSED_KEY: None}
+    return {
+        _EVENTS_KEY: coord.replay(),
+        _RUNNING_KEY: coord.turn_running(),
+        _ELAPSED_KEY: coord.turn_elapsed_ms(),
+    }
 
 
 @router.delete(_ANALYSIS_REPLAY_PATH)

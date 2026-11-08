@@ -8,9 +8,9 @@ import { KIND, AI_KIND_PREFIX } from "../game-events.js";
 import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
 import { sidePovScore } from "../wb-utils.js";
-import { alert as showAlert, apiErrorObject, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, openSettings, reportAiError, reportError, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
+import { alert as showAlert, apiErrorObject, buildToastActionButton, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, OPEN_ENGINES_ACTION, openSettings, reportAiError, reportError, SETTINGS_PATH, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, revealPvTableWindow, isUciLogOpen, isPvTableOpen, UCI_LOG_TITLE, PV_TABLE_TITLE, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, clearUciLog, isMobileLayout, setPvLineBoard } from "../play-dock-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, revealPvTableWindow, isUciLogOpen, isPvTableOpen, UCI_LOG_TITLE, PV_TABLE_TITLE, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, clearUciLog, clearSearchLines, isMobileLayout, setPvLineBoard } from "../play-dock-windows.js";
 import {
   commentaryWindow,
   openCommentary,
@@ -37,6 +37,7 @@ import {
   markAiDone,
   setAiUsage,
   setAiStatus,
+  startAiElapsed,
   setAiTitle,
   setOnUserCloseAi,
   setOnReanalyzeAi,
@@ -45,11 +46,15 @@ import {
   openAiEngineOnly,
   isAiEngineOnly,
   latestVisibleAiProse,
+  isAiProgressStep,
+  showAiSearchMove,
 } from "../play-ai-window.js";
 import { terminationLabel } from "../format-termination.js";
 import { editAnnotation } from "../annotation-dialog.js";
 import { collapseWhitespace } from "../text-utils.js";
 import { attachRibbonOverflow } from "../ribbon-overflow.js";
+import { mountWallpaper } from "../wallpaper.js";
+import { mqMobile, mqMobileHPlay } from "../breakpoints.js";
 import { ENGINES_NO_PROBE_PATH } from "../engines.js";
 
 // Tool name the AI uses to inspect hypothetical positions; the live
@@ -161,7 +166,7 @@ const SETTING_SHOW_EVAL_GRAPH = "play_show_eval_graph";
 // X on a settings-backed dock window is the same gesture as flipping its
 // Display-tab switch off.
 function putSettingOff(ctx, key) {
-  ctx.api("PUT", "/settings", { [key]: false })
+  ctx.api("PUT", SETTINGS_PATH, { [key]: false })
     .catch((e) => reportError(ctx, MSG.SETTING_SAVE_FAILED, e));
 }
 
@@ -245,6 +250,14 @@ const FORCED_TERMINATIONS = new Set([
 const ERR_WOULD_LEAVE = "would_leave";
 const ERR_IN_PROGRESS = "in_progress";
 
+const VARIANT_WARNING = "warning";
+const EVENT_BLUR = "blur";
+const EVENT_FOCUS = "focus";
+const EVENT_KEYDOWN = "keydown";
+const EVENT_POINTERDOWN = "pointerdown";
+
+let saveDialogWatch = null;
+
 // User-facing copy, grouped for an eventual move to a shared i18n
 // catalog. HTML-template aria-labels stay inline (static markup).
 const MSG = {
@@ -255,6 +268,7 @@ const MSG = {
   NEW_GAME_FAILED: "New game failed",
   RESIGN_FAILED: "Resign failed",
   SAVE_PGN_FAILED: "Save PGN failed",
+  SAVE_PGN_MAY_BE_BLOCKED: "Blocked? Choose Keep in browser downloads.",
   TAKEBACK_FAILED: "Take-back failed",
   IMPORT_FAILED: "Import failed",
   SWITCH_SIDES_FAILED: "Switch sides failed",
@@ -397,11 +411,11 @@ function wireShowHideLabel(btn, name, isOpen) {
   const onClick = () => queueMicrotask(sync);
   sync();
   btn.addEventListener("pointerenter", sync);
-  btn.addEventListener("focus", sync);
+  btn.addEventListener(EVENT_FOCUS, sync);
   btn.addEventListener("click", onClick);
   return () => {
     btn.removeEventListener("pointerenter", sync);
-    btn.removeEventListener("focus", sync);
+    btn.removeEventListener(EVENT_FOCUS, sync);
     btn.removeEventListener("click", onClick);
   };
 }
@@ -451,6 +465,7 @@ function dispatchAiEvent(aiCtx, evt) {
           rounds: p.rounds ?? null,
           usage: p.usage || null,
           provider: p.provider || null,
+          elapsedMs: p.elapsed_ms ?? null,
         });
         if (p.error) {
           // Provider errors can be many lines with URLs; the toast shows the
@@ -520,8 +535,11 @@ function dispatchAiEvent(aiCtx, evt) {
       const p = evt.payload || {};
       setAiToolCallResult({ toolUseId: p.tool_use_id, output: p.output });
       if (p.name === ANALYZE_TOOL_NAME) view.restorePosition({ animate: false });
-      view.clearArrows();
-      view.clearEngineInfo();
+      // A finished step's search stays shown: its tool is still running.
+      if (!isAiProgressStep(p.name)) {
+        view.clearArrows();
+        view.clearEngineInfo();
+      }
       return true;
     }
     case KIND.AI_POSITION_NOTE: {
@@ -588,6 +606,8 @@ async function rehydrateAiPanel(ai, aiCtx, { adopt = false } = {}) {
     if (adopt || events.length > 0 || r?.running === true) {
       openAi();
       resetAi();
+      // Turn in flight: resume the timer from the server's clock.
+      if (Number.isFinite(r?.elapsed_ms)) startAiElapsed(r.elapsed_ms);
       for (const evt of events) dispatchAiEventOrdered(ai, aiCtx, evt);
       replayedThrough = ai.maxSeq;
     }
@@ -626,15 +646,15 @@ function adoptRemoteAiSession(state, ai, aiCtx, evt) {
   rehydrateAiPanel(ai, aiCtx, { adopt: true });
 }
 
+// Layout boxes only: a right-click there hits the wallpaper, not content.
+const PLAY_BARE_SEL = "#perspective-root, #play-perspective, .play-grid, .play-board-host, .game-view-board";
+
 const PLAY_PERSPECTIVE_HTML = `
   <section id="play-perspective">
     <div class="play-grid">
       <div class="play-dock-left"></div>
       <div id="no-engine-banner" class="no-engine-banner hidden" role="status">
         <span class="no-engine-banner__msg">No engine configured.</span>
-        <button type="button" class="no-engine-banner__btn" aria-label="Open engine settings" title="Open engine settings">
-          <wa-icon name="gear"></wa-icon>
-        </button>
       </div>
       <div class="play-board-host"></div>
       <div class="play-ai-inline inline-empty" aria-label="AI analysis"></div>
@@ -1068,6 +1088,13 @@ function setAnalyzing(state, v) {
   // The session is server-owned: whoever ended it, every client drops the
   // panel -- its replay buffer is gone, so it can't be restored anyway.
   if (was && !state.analyzing && !state.analysisTransitionInFlight) teardownAiPanel(state.aiShared);
+  // Name the UCI Log after the analysis engine (may differ from the play
+  // engine) however the session began: here, elsewhere, or before a reload.
+  if (!was && state.analyzing) {
+    resolveAnalysisEngineName(state)
+      .then((n) => { if (state.analyzing) setUciLogEngine(n); })
+      .catch(() => {});
+  }
 }
 
 // Re-apply the stashed AI recommendation arrow after a board_update wiped
@@ -1217,7 +1244,7 @@ function editDocClickClose(state, ev) {
 // only apply next game. Refreshes the TC snapshot when no game is active.
 async function refreshSettings(state, { notifyOnDrift = false } = {}) {
   try {
-    const s = await state.ctx.api("GET", "/settings");
+    const s = await state.ctx.api("GET", SETTINGS_PATH);
     state.allowTakeback = s.allow_takeback !== false;
     state.showPgnComments = s[SETTING_SHOW_PGN_COMMENTS] !== false;
     state.aiEnabled = !!s.ai_enabled;
@@ -1436,6 +1463,28 @@ async function onResignImpl(state) {
   }
 }
 
+function warnSavePgnBlocked(state) {
+  state.dismissSaveWarning?.();
+  state.dismissSaveWarning = stickyToast(MSG.SAVE_PGN_MAY_BE_BLOCKED, { variant: VARIANT_WARNING });
+}
+
+async function resumeAfterSave(state) {
+  try { await state.ctx.api("POST", "/game/resume", {}); } catch (_) { /* best-effort */ }
+}
+
+// Pages get no Save As events: the window losing focus and regaining it is
+// the only sign the dialog closed. Page input first means none opened.
+function onSaveDialogClose(onClose) {
+  saveDialogWatch?.abort();
+  const watch = saveDialogWatch = new AbortController();
+  const { signal } = watch;
+  const close = () => { watch.abort(); onClose(); };
+  window.addEventListener(EVENT_BLUR, () => window.addEventListener(EVENT_FOCUS, close, { signal }), { once: true, signal });
+  for (const type of [EVENT_POINTERDOWN, EVENT_KEYDOWN]) {
+    window.addEventListener(type, () => watch.abort(), { capture: true, signal });
+  }
+}
+
 async function onSavePgnImpl(state) {
   const needsPause = !state.viewing && !state.paused && !state.gameOver && state.resignAvailable;
   if (needsPause) {
@@ -1444,6 +1493,7 @@ async function onSavePgnImpl(state) {
       return;
     }
   }
+  let resumeNow = needsPause;
   try {
     const r = await fetch("/game/pgn");
     if (!r.ok) {
@@ -1474,13 +1524,18 @@ async function onSavePgnImpl(state) {
       a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
+      // a.click() returns with Save As still open: hold the pause until it
+      // closes. Chromium blocks .pgn downloads from plain-HTTP pages.
+      resumeNow = false;
+      onSaveDialogClose(() => {
+        if (needsPause) resumeAfterSave(state);
+        if (!window.isSecureContext) warnSavePgnBlocked(state);
+      });
     }
   } catch (e) {
     reportError(state.ctx, MSG.SAVE_PGN_FAILED, e);
   } finally {
-    if (needsPause) {
-      try { await state.ctx.api("POST", "/game/resume", {}); } catch (_) { /* best-effort */ }
-    }
+    if (resumeNow) await resumeAfterSave(state);
   }
 }
 
@@ -1556,7 +1611,7 @@ async function onNewGameImpl(state) {
     // Snapshot the TC settings used for THIS game so a later mid-game
     // edit can detect drift.
     try {
-      const s = await state.ctx.api("GET", "/settings");
+      const s = await state.ctx.api("GET", SETTINGS_PATH);
       state.gameTcInitial = Number(s.tc_initial_seconds);
       state.gameTcIncrement = Number(s.tc_increment_seconds);
     } catch {
@@ -1599,7 +1654,7 @@ async function onImportImpl(state) {
     state.ctx.api("POST", "/game/sync", {}).catch(() => {});
   } catch (e) {
     if (apiErrorObject(e)?.error === ERR_IN_PROGRESS) {
-      toast(MSG.IMPORT_IN_PROGRESS, { variant: "warning" });
+      toast(MSG.IMPORT_IN_PROGRESS, { variant: VARIANT_WARNING });
     } else {
       reportError(state.ctx, MSG.IMPORT_FAILED, e);
     }
@@ -1651,7 +1706,7 @@ async function onPlayFromHereImpl(state) {
     state.view.setGameId(r.game_id);
     // Snapshot TC for drift detection (mirrors onNewGame).
     try {
-      const s = await state.ctx.api("GET", "/settings");
+      const s = await state.ctx.api("GET", SETTINGS_PATH);
       state.gameTcInitial = Number(s.tc_initial_seconds);
       state.gameTcIncrement = Number(s.tc_increment_seconds);
     } catch {
@@ -1787,7 +1842,7 @@ function showAnalysisToastImpl(state) {
 // resolve_analysis: the pinned analysis_engine_id, else the active engine.
 async function resolveAnalysisEngineName(state) {
   const [s, e] = await Promise.all([
-    state.ctx.api("GET", "/settings"),
+    state.ctx.api("GET", SETTINGS_PATH),
     state.ctx.api("GET", ENGINES_NO_PROBE_PATH),
   ]);
   const engines = e.engines || [];
@@ -1830,11 +1885,6 @@ async function startAnalysisFromUiImpl(state) {
   // toast and dropped the dock container -- opening windows now would float
   // them over the next perspective.
   if (state.unmounted) return;
-  // Name the UCI Log after the analysis engine (may differ from the play
-  // engine). Async + best-effort so it can't delay or fail the start.
-  resolveAnalysisEngineName(state)
-    .then((n) => { if (state.analyzing) setUciLogEngine(n); })
-    .catch(() => {});
   restoreViewAnalysisWindows(state.ctx.events);
 }
 
@@ -2043,8 +2093,11 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       state.viewingGameId = evt.game_id ?? null;
       const gameChanged = state.viewingGameId !== prevGameId;
       // New game (New Game / Play from here / opening a different game):
-      // drop the prior game's UCI traffic before its own lands.
-      if (prevGameId != null && gameChanged) clearUciLog();
+      // drop the prior game's UCI traffic and search lines before the new game's land.
+      if (prevGameId != null && gameChanged) {
+        clearUciLog();
+        clearSearchLines();
+      }
       state.viewing = !!v;
       // Read analyzing early: syncCommentsVisibility (called below) gates
       // view/goto on !analyzing; the main analyzing block runs later in
@@ -2173,7 +2226,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         }
       }
       // Title the UCI Log with the engine whose traffic it shows. The
-      // analysis engine is named at analysis start; here we cover the play
+      // analysis engine is named in setAnalyzing; here we cover the play
       // engine (or bare when none, e.g. viewing an imported game).
       if (!state.analyzing) setUciLogEngine(evt.payload.engine_name || "");
       // Engine's (non-analysis) turn just started -- drop the prior turn's
@@ -2342,6 +2395,12 @@ export const playPerspective = {
     const editCastleBtn = root.querySelector("#edit-castle-btn");
     const editCastlePopover = root.querySelector("#edit-castle-popover");
     const editCastlePopoverWrap = editCastlePopover.parentElement;
+    // Before overflow attaches, so its first fit check counts the wallpaper button.
+    const wallpaper = mountWallpaper({
+      ribbonEls: [playRibbon, viewRibbon], regionEl: root, isBare: (t) => t.matches(PLAY_BARE_SEL),
+      // Play's mobile layout (isMobileLayout) also covers short touch screens.
+      mobileQueries: [mqMobile, mqMobileHPlay], api: ctx.api, log: ctx.log,
+    });
     // Short window: a vertical ribbon's spare buttons move into a "more" menu.
     const ribbonOverflows = [playRibbon, viewRibbon, editRibbon].map(attachRibbonOverflow);
     const editCastleCb = {
@@ -2353,7 +2412,6 @@ export const playPerspective = {
     const editConfirmBtn = root.querySelector("#edit-confirm");
     const editCancelBtn = root.querySelector("#edit-cancel");
     const noEngineBanner = root.querySelector("#no-engine-banner");
-    const noEngineBannerBtn = noEngineBanner.querySelector(".no-engine-banner__btn");
     // DOM refs read by lifted module-level handlers (edit popovers,
     // refreshButtons). Mount keeps the bare consts for listener wiring.
     state.el = {
@@ -2385,7 +2443,7 @@ export const playPerspective = {
         setNoEngine(false);
       }
     }
-    noEngineBannerBtn.addEventListener("click", () => openSettings(SETTINGS_TAB_ENGINES));
+    noEngineBanner.append(buildToastActionButton(OPEN_ENGINES_ACTION));
     const onEnginesChanged = (e) => {
       setNoEngine(!e.detail?.activeId);
     };
@@ -2395,7 +2453,7 @@ export const playPerspective = {
     // Fetch settings before mount so the board picks up the saved style.
     let initialBoardStyle = null;
     try {
-      const s0 = await ctx.api("GET", "/settings");
+      const s0 = await ctx.api("GET", SETTINGS_PATH);
       initialBoardStyle = s0.board_style || null;
     } catch {
       // ignore -- fall back to default style
@@ -2409,6 +2467,7 @@ export const playPerspective = {
       boardStyle: initialBoardStyle,
       fetchLineOpenings: (fen, moves) =>
         ctx.api("POST", "/openings/line", { fen, moves }).then((r) => r.results),
+      onBestMove: showAiSearchMove,
       onMove: async (uci) => {
         // Drop during analysis: exit analysis and play the move. A running
         // session asks first; a finished AI turn exits silently, matching
@@ -2515,7 +2574,6 @@ export const playPerspective = {
     // with no board wired every row would go inert and stay that way.
     setPvLineBoard({
       currentPlacement: view.currentPlacement,
-      showsPosition: view.showsPosition,
       canPlayLine: () => view.canPlayLine(),
       playLine: view.playLine,
       cancelLine: view.cancelLine,
@@ -2664,7 +2722,7 @@ export const playPerspective = {
       ev.preventDefault();
       onImport();
     };
-    window.addEventListener("keydown", onKeydown);
+    window.addEventListener(EVENT_KEYDOWN, onKeydown);
 
     newGameBtn.addEventListener("click", onNewGame);
     importBtn.addEventListener("click", onImport);
@@ -2757,7 +2815,7 @@ export const playPerspective = {
             },
           }];
           dismiss = stickyToast(MSG.DIFFICULTY_UNAVAILABLE, {
-            variant: "warning",
+            variant: VARIANT_WARNING,
             actions,
             onDismiss: () => { _difficultyToastUp = false; },
           });
@@ -2790,6 +2848,7 @@ export const playPerspective = {
         }
         closeDebugWindows();
         ribbonOverflows.forEach((o) => o.detach());
+        wallpaper.unmount();
         // Announce no active ribbon so the global float manager unmounts it.
         window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: null } }));
         // Before the dock containers go (setDockContainer/RailDockContainer
@@ -2826,7 +2885,7 @@ export const playPerspective = {
         window.removeEventListener(APP_EVT.ENGINES_CHANGED, onEnginesChanged);
         window.removeEventListener(APP_EVT.RECENTS_CHANGED, onRecentsChanged);
         window.removeEventListener("resize", onCommentsResize);
-        window.removeEventListener("keydown", onKeydown);
+        window.removeEventListener(EVENT_KEYDOWN, onKeydown);
         newGameBtn.removeEventListener("click", onNewGame);
         importBtn.removeEventListener("click", onImport);
         resignBtn.removeEventListener("click", onResign);

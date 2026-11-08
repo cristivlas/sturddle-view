@@ -544,6 +544,72 @@ def test_clause_boundary_breaks_binding():
     ) == []
 
 
+# From the wild (2026-11-04): "10...Nxe3, eliminating the light-squared
+# bishop" -- the e3 bishop is dark-squared (f1 holds the light one, so the
+# bare check cleared it). The participle clause describes the move before
+# its comma. White to move; "10..." marks Black's capture.
+_WILD_E3_FEN = "r2qkb1r/pp3ppp/n1b1p3/2p3N1/3P1Pn1/P3B3/1PP1N1PP/R2QKB1R w KQkq - 5 10"
+_WILD_E3_TEXT = (
+    "Black answers with 10...Nxe3, eliminating the light-squared bishop and "
+    "initiating a series of exchanges that simplify the center."
+)
+
+
+def test_wild_participle_clause_binds_the_move_before_its_comma():
+    board = _board(_WILD_E3_FEN)
+    assert find_false_bishop_color_refs(_WILD_E3_TEXT, board) == [
+        "light-squared bishop on e3"
+    ]
+
+
+def test_participle_clause_correct_color_clears():
+    board = _board(_WILD_E3_FEN)
+    assert find_false_bishop_color_refs(
+        "Black answers with 10...Nxe3, eliminating the dark-squared bishop", board,
+    ) == []
+
+
+def test_non_participle_comma_clause_stays_unbound():
+    # A new subject after the comma: not about Nxe3's victim; the bare
+    # check clears (f1 is light).
+    board = _board(_WILD_E3_FEN)
+    assert find_false_bishop_color_refs(
+        "Black answers with 10...Nxe3, while the light-squared bishop waits", board,
+    ) == []
+
+
+# From the wild (2026-11-04): g2 is light, but the bare check cleared it on
+# the c1 bishop. A ", which <verb>" clause describes the move before its comma.
+_WILD_G2_FEN = "r2qk2r/ppp1nppp/2np4/2b1p3/2P1P1b1/2NP2P1/PP2NP1P/R1BQKB1R w KQkq - 1 7"
+_WILD_G2_TEXT = (
+    "The recommended move is 7.Bg2, which develops the dark-squared bishop to "
+    "complete kingside preparation and support central control."
+)
+
+
+def test_wild_which_clause_binds_the_move_before_its_comma():
+    board = _board(_WILD_G2_FEN)
+    assert find_false_bishop_color_refs(_WILD_G2_TEXT, board) == [
+        "dark-squared bishop on g2"
+    ]
+
+
+def test_which_clause_correct_color_clears():
+    board = _board(_WILD_G2_FEN)
+    assert find_false_bishop_color_refs(
+        "The recommended move is 7.Bg2, which develops the light-squared bishop", board,
+    ) == []
+
+
+def test_which_clause_with_a_non_move_verb_stays_unbound():
+    # "frees" is about another bishop, not Bb5's mover: the bare check
+    # clears it (c1 is dark).
+    board = _board(_WILD_G2_FEN)
+    assert find_false_bishop_color_refs(
+        "The recommended move is 7.Bb5, which frees the dark-squared bishop", board,
+    ) == []
+
+
 # From the wild (2026-07-26): "Bxd6 removes the active light-squared bishop"
 # -- d6 is dark. Clause binding caught it, but the semantic judge wrongly
 # cleared the flag; square-bound labels are now judge-exempt (invariant).

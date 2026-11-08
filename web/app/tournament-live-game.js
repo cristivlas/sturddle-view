@@ -11,6 +11,7 @@ import { SIDE, FEN_FIELD, fenSide, uciSquares } from "./chess-consts.js";
 import { createEvalGraph } from "./eval-graph.js";
 import { createPvTable } from "./pv-table.js";
 import { STORAGE_KEY } from "./storage-keys.js";
+import { loadJson, saveJson } from "./storage.js";
 import { fmtClock, fmtCount, fmtScore, flashWindow, rafCoalesce } from "./wb-utils.js";
 import { terminationPhrase } from "./format-termination.js";
 import { mqMobile } from "./breakpoints.js";
@@ -44,6 +45,8 @@ function _applyEvalInfo({ depthEl, npsEl, hashEl, tbhitsEl }, p) {
 
 // Eval rows: the window's own engine (bottom) and its opponent (top).
 const EVAL_ROW_EDGE = Object.freeze({ OWN: "bottom", OPP: "top" });
+// `kind` of a server-parsed UCI line.
+const UCI_KIND = Object.freeze({ POSITION: "position", GO: "go", INFO: "info", BESTMOVE: "bestmove" });
 const PV_PREVIEW_PLIES = 12;
 function _evalRowRefs(body, edge) {
   const q = (part) => body.querySelector(`.lg-${part}-${edge}`);
@@ -553,8 +556,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   } = refs;
   // Each row also tracks its shown score (pair tint), its color-routed PV
   // side table, and its board arrow.
-  const ownRow = { ...ownEvalRow, score: null, pvSide: pvOwn, setArrow: (from, to) => board.setArrow(from, to) };
-  const oppRow = { ...oppEvalRow, score: null, pvSide: pvOpp, setArrow: (from, to) => board.setOpponentArrow(from, to) };
+  const ownRow = { ...ownEvalRow, edge: EVAL_ROW_EDGE.OWN, score: null, pvSide: pvOwn, setArrow: (from, to) => board.setArrow(from, to) };
+  const oppRow = { ...oppEvalRow, edge: EVAL_ROW_EDGE.OPP, score: null, pvSide: pvOpp, setArrow: (from, to) => board.setOpponentArrow(from, to) };
   pvTableWhiteEl.appendChild(pvSideWhite.el);
   pvTableBlackEl.appendChild(pvSideBlack.el);
   evalGraphHostEl.appendChild(evalGraph.el);
@@ -603,8 +606,11 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   }
 
   let wbClosed = false;
+  // Only a parked board comes back (perspective switch); any other close
+  // (user, tournament switch or stop) drops its cached live info.
   wb.onclose = () => {
     wbClosed = true;
+    if (!parkedFeeds.has(path)) forgetLiveBoard(path);
     clearTimer();
     scheduleClockPaint.cancel();
     schedulePositionPaint.cancel();
@@ -664,6 +670,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     if (msg.ended) {
       stopTimer();
       conn.close();
+      forgetLiveBoard(path);
       // Late-attach race: sentinel arrived before any position. The
       // window has nothing to show -- auto-close instead of leaving a
       // startpos banner behind.
@@ -690,10 +697,9 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     }
     const parsed = msg.parsed;
     if (!parsed) return;
-    const isOpponent = msg.paired || (gameId && msg.proxy_id && msg.proxy_id !== proxyId);
-    if (isOpponent) {
+    if (isOpponentMsg(msg, wb._watchOpts)) {
       if (msg.engine_name) setOpponentName(msg.engine_name);
-      handlePairedParsed(parsed, msg.thinking_side);
+      handlePairedMsg(msg);
       return;
     }
     handleParsed(parsed, !!msg.snapshot);
@@ -705,10 +711,21 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     ? `game/${encodeURIComponent(gameId)}`
     : `proxy/${encodeURIComponent(proxyId)}`;
   const path = `/ws/tournament/${wsTarget}`;
+  wb._wsPath = path;
+  // Rebuilt board: repaint the opponent name and last rows at once (text only
+  // -- an arrow may predate the position); the socket then takes over.
+  const cachedInfo = liveInfoCache.get(path);
+  setOpponentName(cachedInfo?.[OPP_NAME_KEY]);
+  for (const row of [ownRow, oppRow]) {
+    if (cachedInfo?.[row.edge]) renderEvalRow(row, cachedInfo[row.edge], false);
+  }
   if (DEBUG_WATCH) console.log("[WATCH] ws connect", { windowKey, path });
   conn = connect({
     path,
-    onOpen: () => { if (DEBUG_WATCH) console.log("[WATCH] ws open", { windowKey }); },
+    onOpen: () => {
+      if (DEBUG_WATCH) console.log("[WATCH] ws open", { windowKey });
+      releaseParkedFeed(path);
+    },
     onClose: () => {
       if (DEBUG_WATCH) console.log("[WATCH] ws close", { windowKey });
       stopTimer();
@@ -778,6 +795,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   function setOpponentName(name) {
     if (!name || name === opponentName) return;
     opponentName = name;
+    cacheLiveInfo(path, OPP_NAME_KEY, name);
     topNameEl.textContent = name;
     topNameEl.title = name;
     syncPvSideNames();
@@ -814,7 +832,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   // never start clock timers (the `go` may predate the game's end).
   function handleParsed(p, snapshot = false) {
     switch (p.kind) {
-      case "position":
+      case UCI_KIND.POSITION:
         if (p.fen) {
           positionGen++;
           currentFen = p.fen;
@@ -838,12 +856,12 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
           queuePositionPaint(p.fen, p.last_move || null);
         }
         break;
-      case "info":
+      case UCI_KIND.INFO:
         if (p.score == null) break;  // ignore PV lines without an eval
         lastOwnInfo = p;
         renderEvalRow(ownRow, p);
         break;
-      case "go":
+      case UCI_KIND.GO:
         // Own engine starts a new search; drop the previous one's lines.
         pvOwn().clear();
         lastWtime = p.wtime ?? lastWtime;
@@ -852,7 +870,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         if (snapshot) break;
         startCountdown(clockBottomEl, bottomTimeEl, clockMs(p.wtime, p.btime, engineColor));
         break;
-      case "bestmove":
+      case UCI_KIND.BESTMOVE:
         // Opponent thinks next; its panel restarts (heuristic depth-reset
         // in createPvTable backstops ponder/missed transitions).
         pvOpp().clear();
@@ -876,19 +894,18 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     return uciSquares(pv[0]);
   }
 
-  function handlePairedParsed(p, thinkingSide) {
+  function handlePairedMsg(msg) {
     // Paired info: opposite-color engine's thinking. Mirror the same
     // eval/PV/arrow rendering as own-side, into the top (opponent) row.
-    if (p.kind !== "info") return;
-    if (p.score == null) return;  // ignore PV lines without an eval
-    if (engineColor && thinkingSide === engineColor) return;
-    lastOppInfo = p;
-    renderEvalRow(oppRow, p);
+    if (infoEdge(msg, wb._watchOpts, engineColor) !== EVAL_ROW_EDGE.OPP) return;
+    lastOppInfo = msg.parsed;
+    renderEvalRow(oppRow, msg.parsed);
   }
 
   // One info line into an eval row: score (re-tinting the pair), stats, PV
-  // preview, PV side table, and arrow.
-  function renderEvalRow(row, p) {
+  // preview, PV side table, and (unless `arrow` is false) arrow.
+  function renderEvalRow(row, p, arrow = true) {
+    cacheLiveInfo(path, row.edge, p);
     row.score = p.score;
     row.scoreEl.textContent = fmtScore(p.score, { empty: "--", matePrefix: "M", signed: true });
     _tintScorePair(ownRow, oppRow);
@@ -896,6 +913,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     const pv = p.pv_uci;
     if (pvSidesVisible) row.pvSide().update(p, pv?.join(" "));
     if (pv?.length) row.pvEl.textContent = pv.slice(0, PV_PREVIEW_PLIES).join(" ");
+    if (!arrow) return;
     const squares = pvArrowSquares(p);
     if (squares) row.setArrow(...squares);
   }
@@ -1040,5 +1058,89 @@ export function closeAllLiveGames() {
     try { wb.close(true); } catch { /* */ }
   }
   liveWindows.clear();
+}
+
+// Opponent line: a paired feed, or the other proxy on a game feed.
+const isOpponentMsg = (msg, { gameId, proxyId }) =>
+  msg.paired || (gameId && msg.proxy_id && msg.proxy_id !== proxyId);
+
+// Eval row a message's scored info paints, or null. `engineColor` (the
+// board's own, once known) drops a same-color "opponent" line.
+function infoEdge(msg, watch, engineColor) {
+  const p = msg.parsed;
+  if (p?.kind !== UCI_KIND.INFO || p.score == null) return null;
+  if (!isOpponentMsg(msg, watch)) return EVAL_ROW_EDGE.OWN;
+  return engineColor && msg.thinking_side === engineColor ? null : EVAL_ROW_EDGE.OPP;
+}
+
+// Socket-fed windows; frozen ones have no feed.
+const liveFeedWindows = () => getLiveWindows().filter((wb) => wb._wsPath);
+
+// Per WS path: latest parsed info per row edge, plus the opponent's name, so
+// a rebuilt board repaints both rows at once (the subscribe snapshot replays
+// only the own engine). Saved on pagehide (board-style/theme changes reload
+// the page), pruned to boards that can come back: open or parked.
+const OPP_NAME_KEY = "oppName";
+const liveInfoCache = new Map(Object.entries(loadJson(STORAGE_KEY.LIVE_INFO) ?? {}));
+window.addEventListener("pagehide", () => {
+  const keep = new Set([...liveFeedWindows().map((wb) => wb._wsPath), ...parkedFeeds.keys()]);
+  saveJson(STORAGE_KEY.LIVE_INFO,
+    Object.fromEntries([...liveInfoCache].filter(([path]) => keep.has(path))));
+});
+
+function cacheLiveInfo(path, key, value) {
+  const info = liveInfoCache.get(path) ?? {};
+  info[key] = value;
+  liveInfoCache.set(path, info);
+}
+
+// Bare sockets holding the server's info gate open while the tournament
+// perspective is unmounted; they keep the live-info cache current meanwhile.
+const parkedFeeds = new Map(); // WS path -> connection
+
+function releaseParkedFeed(path) {
+  parkedFeeds.get(path)?.close();
+  parkedFeeds.delete(path);
+}
+
+// Board gone for good (closed, game over, not reopened): drop its feed and info.
+function forgetLiveBoard(path) {
+  releaseParkedFeed(path);
+  liveInfoCache.delete(path);
+}
+
+// Resolves once the server holds the socket (or it failed), so the boards'
+// own sockets can close without a gap that flips the info gate off.
+function parkFeed(path, watch) {
+  return new Promise((resolve) => {
+    let engineColor = null;
+    const conn = connect({
+      path,
+      onOpen: resolve,
+      onClose: resolve,
+      onEvent: (msg) => {
+        if (msg.ended) {
+          forgetLiveBoard(path);
+          return;
+        }
+        const opp = isOpponentMsg(msg, watch);
+        if (opp && msg.engine_name) cacheLiveInfo(path, OPP_NAME_KEY, msg.engine_name);
+        if (!opp && msg.parsed?.fen) engineColor = fenSide(msg.parsed.fen);
+        const edge = infoEdge(msg, watch, engineColor);
+        if (edge) cacheLiveInfo(path, edge, msg.parsed);
+      },
+    });
+    parkedFeeds.set(path, conn);
+  });
+}
+
+// Park every live window's feed; forget parked boards no window still wants.
+// A reopened window releases its feed once open.
+export function parkLiveFeeds() {
+  const watched = new Map(liveFeedWindows().map((wb) => [wb._wsPath, wb._watchOpts]));
+  for (const path of parkedFeeds.keys()) if (!watched.has(path)) forgetLiveBoard(path);
+  return Promise.all([...watched]
+    .filter(([path]) => !parkedFeeds.has(path))
+    .map(([path, watch]) => parkFeed(path, watch)));
 }
 

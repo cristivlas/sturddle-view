@@ -34,6 +34,7 @@ import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
 import { createEvalBar, EVAL_EMPTY_CLASS } from "./eval-graph.js";
+import { attachPanelMenu, COPY_LABEL, createPanelFade } from "./panel-fade.js";
 import { createPvTable } from "./pv-table.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
@@ -49,6 +50,7 @@ import {
   rafCoalesce,
   ribbonWidthPx,
   scrollToBottom,
+  scrollToRight,
 } from "./wb-utils.js";
 import { createWinBox } from "./winbox-factory.js";
 
@@ -721,6 +723,13 @@ export function createDockableWindow(config) {
     // restoreDebugWindows) while still docking into the shared column, for
     // windows whose open/close is owned by their own state machine.
     selfManaged = false,
+    // Storage key of the body's Transparency: the window owns its fader (build
+    // gets it, for a table to add its share), shown in its right-click menu
+    // under any actions build passes to setActions.
+    fadeKey = null,
+    // Called with the body when toggle() revives one kept by a nav detach:
+    // reattaching resets its scroll positions.
+    onRestore = null,
   } = config;
   const mainDock = !config.getDockEl && !selfManaged;
 
@@ -1026,7 +1035,28 @@ export function createDockableWindow(config) {
   function toggle(events) {
     if (inst.mounted) { close(); return; }
     persistOpen(true);
-    if (!body) body = build(events, { setOff });
+    const kept = body;
+    if (!body) {
+      const fade = fadeKey ? createPanelFade(null, { storageKey: fadeKey }) : null;
+      // The body may hand its own actions to the window's right-click menu,
+      // at any time: the menu reads this list at each open. A window with
+      // neither actions nor a fade gets no menu.
+      const actions = [];
+      let menuOff = null;
+      // This build's body: a late call from a torn-down one attaches nothing.
+      let own = null;
+      const ensureMenu = () => { menuOff ??= attachPanelMenu(own, { fade, actions }); };
+      const setActions = (list) => {
+        actions.splice(0, actions.length, ...list);
+        if (own && own === body && actions.length) ensureMenu();
+      };
+      body = own = build(events, { setOff, fade, setActions });
+      // The window owns its body's fader and menu; their teardown joins the body's.
+      fade?.attach(body);
+      if (fade || actions.length) ensureMenu();
+      const builtOff = off;
+      off = () => { builtOff?.(); menuOff?.(); fade?.destroy(); };
+    }
     if (isMobileLayout() && getInlineEl?.()) {
       inline();
     } else if (isDocked(dockedKey) && resolveDockEl()) {
@@ -1034,6 +1064,7 @@ export function createDockableWindow(config) {
     } else {
       openFloat();
     }
+    if (kept) onRestore?.(kept);
   }
 
   function closeForNav() {
@@ -1170,6 +1201,22 @@ const UCI_GEO_KEY       = STORAGE_KEY.UCILOG_GEO;
 const UCI_WIN_STATE_KEY = STORAGE_KEY.UCILOG_WIN_STATE;
 const UCI_DOCKED_KEY    = STORAGE_KEY.UCILOG_DOCKED;
 const UCI_OPEN_KEY      = STORAGE_KEY.UCILOG_OPEN;
+const UCI_FADE_KEY      = STORAGE_KEY.UCILOG_FADE;
+const UCI_PAUSE_LABEL = "Pause";
+const UCI_CLEAR_LABEL = "Clear";
+// copyToClipboard's toast subject.
+const UCI_COPY_WHAT = "UCI log";
+// Shown in the title's parens in place of the engine name while paused.
+const UCI_PAUSED_TAG = "paused";
+
+// Title state: the engine named by setUciLogEngine, and the log's Pause.
+let uciEngineName = "";
+let uciPaused = false;
+function syncUciTitle() {
+  const tag = uciPaused ? UCI_PAUSED_TAG : uciEngineName;
+  uciLog.setTitle(tag ? `${UCI_LOG_TITLE} (${tag})` : UCI_LOG_TITLE);
+}
+const setUciPaused = (on) => { uciPaused = on; syncUciTitle(); };
 
 // Clear entry point ({clear}) or null while the window is closed. play.js
 // calls it when analysis starts and when the engine's (non-analysis) turn
@@ -1177,15 +1224,13 @@ const UCI_OPEN_KEY      = STORAGE_KEY.UCILOG_OPEN;
 let uciLogApi = null;
 export function clearUciLog() { uciLogApi?.clear(); }
 
-function buildUciLogBody(events, { setOff }) {
+const UCI_LOG_SCROLL_SEL = ".wb-uci-log-scroll";
+
+// Pause / Copy / Clear live in the window's right-click menu.
+function buildUciLogBody(events, { setOff, setActions }) {
   const body = document.createElement("div");
   body.className = "wb-uci-log";
   body.innerHTML = `
-    <div class="wb-uci-log-toolbar">
-      <label><input type="checkbox" class="uci-log-pause"> Pause</label>
-      <button type="button" class="uci-log-copy" title="Copy to clipboard">Copy</button>
-      <button type="button" class="uci-log-clear">Clear</button>
-    </div>
     <div class="wb-uci-log-scroll">
       <div class="wb-uci-log-lines"></div>
     </div>
@@ -1193,32 +1238,31 @@ function buildUciLogBody(events, { setOff }) {
 
   const lines = body.querySelector(".wb-uci-log-lines");
   markSelectable(lines);
-  const pauseChk = body.querySelector(".uci-log-pause");
-  const copyBtn = body.querySelector(".uci-log-copy");
-  const clearBtn = body.querySelector(".uci-log-clear");
   let lineCount = 0;
-  let paused = false;
 
-  const clear = () => { lines.textContent = ""; lineCount = 0; copyBtn.disabled = true; };
+  const clear = () => { lines.textContent = ""; lineCount = 0; };
 
-  copyBtn.disabled = true;
-  pauseChk.addEventListener("change", () => { paused = pauseChk.checked; });
-  copyBtn.addEventListener("click", () => copyToClipboard(
-    Array.from(lines.children).map(d => d.textContent).join("\n"), "UCI log"));
-  clearBtn.addEventListener("click", clear);
+  setActions([
+    { label: UCI_PAUSE_LABEL, checked: () => uciPaused, run: () => setUciPaused(!uciPaused) },
+    {
+      label: COPY_LABEL, disabled: () => !lines.firstChild,
+      run: () => copyToClipboard(
+        Array.from(lines.children).map(d => d.textContent).join("\n"), UCI_COPY_WHAT),
+    },
+    { label: UCI_CLEAR_LABEL, run: clear },
+  ]);
 
   // Autoscroll only when the user is already pinned to the bottom; otherwise
   // they're inspecting earlier output and new lines must not yank them away.
   const off = events.on((evt) => {
-    if (evt.kind !== "uci_log" || paused) return;
+    if (evt.kind !== "uci_log" || uciPaused) return;
     const { dir, line } = evt.payload;
-    const scroller = body.querySelector(".wb-uci-log-scroll");
+    const scroller = body.querySelector(UCI_LOG_SCROLL_SEL);
     const pinned = isPinnedToBottom(scroller, AUTOSCROLL_SLACK_LINE_PX);
     const div = document.createElement("div");
     div.className = `wb-uci-log-line ${dir === ">" ? "uci-out" : "uci-in"}`;
     div.textContent = `${dir} ${line}`;
     lines.appendChild(div);
-    if (copyBtn.disabled) copyBtn.disabled = false;
     lineCount++;
     if (lineCount > UCI_LOG_MAX_LINES) {
       for (let i = 0; i < UCI_LOG_TRIM_CHUNK && lines.firstChild; i++) {
@@ -1230,7 +1274,8 @@ function buildUciLogBody(events, { setOff }) {
   });
 
   uciLogApi = { clear };
-  setOff(() => { off(); uciLogApi = null; });
+  // A closed log reopens unpaused.
+  setOff(() => { off(); uciLogApi = null; setUciPaused(false); });
 
   return body;
 }
@@ -1241,6 +1286,7 @@ const uciLog = createDockableWindow({
   geoKey: UCI_GEO_KEY,
   winStateKey: UCI_WIN_STATE_KEY,
   dockedKey: UCI_DOCKED_KEY,
+  fadeKey: UCI_FADE_KEY,
   openKey: UCI_OPEN_KEY,
   defaultW: () => rightColumnWidth(480),
   defaultH: 320,
@@ -1250,6 +1296,8 @@ const uciLog = createDockableWindow({
     return botTop - h - WIN_MARGIN;
   },
   build: buildUciLogBody,
+  // Back at the tail, like a rebuilt log (the studio event log).
+  onRestore: (body) => scrollToBottom(body.querySelector(UCI_LOG_SCROLL_SEL)),
   dockOrder: DOCK_ORDER.UCI_LOG,
   closable: true,
   railDockable: true,
@@ -1261,6 +1309,7 @@ const PV_GEO_KEY       = STORAGE_KEY.PVTABLE_GEO;
 const PV_WIN_STATE_KEY = STORAGE_KEY.PVTABLE_WIN_STATE;
 const PV_DOCKED_KEY    = STORAGE_KEY.PVTABLE_DOCKED;
 const PV_OPEN_KEY      = STORAGE_KEY.PVTABLE_OPEN;
+const PV_FADE_KEY      = STORAGE_KEY.PVTABLE_FADE;
 
 // Set by play.js on mount, cleared on unmount: the live board's line-show
 // primitives, so this module can sample placement per engine_info and drive
@@ -1283,12 +1332,19 @@ function pvTableIsExempt(target) {
   );
 }
 
-function buildPvTableBody(events, { setOff }) {
+// Live Search Lines table, or null while the window is closed. play.js
+// clears it on a game change so the prior game's lines don't linger.
+let pvTableApi = null;
+export function clearSearchLines() { pvTableApi?.clear(); }
+
+function buildPvTableBody(events, { setOff, fade }) {
   const pvt = createPvTable({
     layoutKey: STORAGE_KEY.PVTABLE_LAYOUT,
+    fade,
     onActivate(handle) {
       return !!pvLineBoard?.playLine(handle.frames, {
         pvUci: handle.pvUci,
+        startFen: handle.startFen,
         onStep: handle.setPly,
         onEnd: handle.release,
         isExempt: pvTableIsExempt,
@@ -1300,9 +1356,6 @@ function buildPvTableBody(events, { setOff }) {
   });
   const off = events.on((evt) => {
     if (evt.kind !== KIND.ENGINE_INFO) return;
-    // Rows sample the board's placement, so an info searched for another
-    // position (AI play_out / test_aim lines) would get the wrong frames.
-    if (pvLineBoard && !pvLineBoard.showsPosition(evt.payload.fen)) return;
     pvt.update(evt.payload, evt.payload.pv?.[0]);
   });
   // Re-gate on game-view's own announcement rather than on the bus's
@@ -1310,7 +1363,9 @@ function buildPvTableBody(events, { setOff }) {
   // predate the remounted view's handler and would read the stale gate.
   const onGate = () => pvt.refreshShowability();
   window.addEventListener(APP_EVT.PLAY_LINE_GATE_CHANGED, onGate);
+  pvTableApi = pvt;
   setOff(() => {
+    pvTableApi = null;
     window.removeEventListener(APP_EVT.PLAY_LINE_GATE_CHANGED, onGate);
     off();
     pvt.dispose();
@@ -1326,6 +1381,7 @@ const pvTable = createDockableWindow({
   geoKey: PV_GEO_KEY,
   winStateKey: PV_WIN_STATE_KEY,
   dockedKey: PV_DOCKED_KEY,
+  fadeKey: PV_FADE_KEY,
   openKey: PV_OPEN_KEY,
   defaultW: () => rightColumnWidth(560),
   defaultH: 260,
@@ -1343,6 +1399,7 @@ const EVAL_TOOLTIP = "Evaluation from the engine's point of view";
 const EVAL_GEO_KEY       = STORAGE_KEY.EVALBAR_GEO;
 const EVAL_WIN_STATE_KEY = STORAGE_KEY.EVALBAR_WIN_STATE;
 const EVAL_DOCKED_KEY    = STORAGE_KEY.EVALBAR_DOCKED;
+const EVAL_FADE_KEY      = STORAGE_KEY.EVALBAR_FADE;
 
 // Cache of the play_show_eval_graph server setting, which owns whether this
 // window is open. play.js primes it from /settings on mount and on every
@@ -1396,6 +1453,7 @@ export const evalBar = createDockableWindow({
   geoKey: EVAL_GEO_KEY,
   winStateKey: EVAL_WIN_STATE_KEY,
   dockedKey: EVAL_DOCKED_KEY,
+  fadeKey: EVAL_FADE_KEY,
   defaultW: () => rightColumnWidth(480),
   defaultH: 140,
   defaultY: (h) => {
@@ -1404,6 +1462,8 @@ export const evalBar = createDockableWindow({
     return botTop - h - WIN_MARGIN;
   },
   build: buildEvalBarBody,
+  // Back at the newest bar; the body is the scroller.
+  onRestore: scrollToRight,
   dockOrder: DOCK_ORDER.ENGINE_EVAL,
   // Closable, with the Display settings switch as the way back. Open state is
   // the play_show_eval_graph setting, not localStorage placement state.
@@ -1449,7 +1509,8 @@ export const isPvTableOpen = () => pvTable.mounted;
 // Caller resolves the right engine (analysis engine while analyzing, play engine
 // otherwise). Empty/falsy reverts to the bare title.
 export function setUciLogEngine(name) {
-  uciLog.setTitle(name ? `${UCI_LOG_TITLE} (${name})` : UCI_LOG_TITLE);
+  uciEngineName = name || "";
+  syncUciTitle();
 }
 
 export function closeDebugWindows() {

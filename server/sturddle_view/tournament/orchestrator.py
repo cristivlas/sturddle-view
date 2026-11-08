@@ -498,12 +498,7 @@ class Orchestrator:
         """Id of the currently-running tournament, or ``None``."""
         return self._active_id
 
-    async def start(self, tournament_id: str) -> Tournament:
-        """Start the given tournament. Raises:
-
-          - ``TournamentNotFoundError`` if the id does not exist.
-          - ``TournamentBusyError`` if another tournament is running.
-        """
+    def _raise_if_busy(self) -> None:
         if self._active_id is not None or self._runner.is_running():
             try:
                 active = self._store.get(self._active_id) if self._active_id else None
@@ -514,6 +509,20 @@ class Orchestrator:
                     f'another tournament is running: "{active.name}" ({active.id})'
                 )
             raise TournamentBusyError("another tournament is running")
+
+    def ensure_startable(self, tournament_id: str) -> None:
+        """Raise what ``start`` would reject with, free of its side effects.
+        A restart wipes first, so it must learn this before the wipe."""
+        self._raise_if_busy()
+        check_template(self._store.get(tournament_id).template)
+
+    async def start(self, tournament_id: str) -> Tournament:
+        """Start the given tournament. Raises:
+
+          - ``TournamentNotFoundError`` if the id does not exist.
+          - ``TournamentBusyError`` if another tournament is running.
+        """
+        self._raise_if_busy()
 
         # Confirms existence and gets the frozen template.
         t = self._store.get(tournament_id)

@@ -18,6 +18,7 @@ from sturddle_view.openings import Opening
 from sturddle_view.play.mode import Mode
 from sturddle_view.play.opening_lines import BookRef
 from sturddle_view.play.playbook import Situation, classify
+from sturddle_view.play.playbook_catalog import default_catalog
 
 from .ai_kick_helpers import FakeSettings, build_inputs, build_message as _build
 
@@ -51,7 +52,11 @@ class _FakeHve:
         return chess.WHITE
 
     def situation(self, our_color: chess.Color) -> Situation:
-        return classify(self._board, score_white=None, our_color=our_color)
+        # As HumanVsEngine.situation: the catalog's composed registry.
+        return classify(
+            self._board, score_white=None, our_color=our_color,
+            matchers=default_catalog().matchers,
+        )
 
     def start_fen(self) -> str | None:
         return self._start_fen
@@ -386,10 +391,24 @@ def test_probe_runs_outside_opening(tmp_path):
     assert "Book reply here: 1...e5 (configured opening book)" in msg
 
 
-def test_turn_message_carries_no_plan_line():
-    # The plan reaches the narrator only through its `plan` tool.
+def test_turn_message_carries_no_plan_line_without_a_structural_match():
+    # Generic margin / phase advice stays behind the `plan` tool.
     msg = _build(_FakeHve(board=chess.Board()))
     assert PLAYBOOK_LEAD not in msg
+
+
+# King's Indian closed center, Black to move: the kid_center formation.
+_KID_FEN = "r1bq1rk1/ppp2pbp/2np1np1/3Pp3/2P1P3/2N2N2/PP2BPPP/R1BQ1RK1 b - - 0 8"
+
+
+def test_turn_message_carries_the_plan_line_on_a_structural_match():
+    # Models skip the optional tool: a matched structure rides the message.
+    board = chess.Board(_KID_FEN)
+    msg = _build(_FakeHve(board=board, start_fen=_KID_FEN))
+    plan = next(line for line in msg.splitlines() if line.startswith(PLAYBOOK_LEAD))
+    # Themes only: the standing stays behind the `plan` tool.
+    assert "closed center" in plan
+    assert " is level" not in plan
 
 
 def test_live_playbook_speaks_to_the_player_in_live_play():

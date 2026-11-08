@@ -5,7 +5,7 @@ Browser-based chess GUI for human vs engine play and live observation of
 
 ## Getting started
 
-Requires Python >= 3.10 and at least one UCI engine binary. The app ships no
+Requires Python >= 3.12 and at least one UCI engine binary. The app ships no
 engine -- download any UCI-compatible engine and register it from the Engines
 tab once the app is running.
 
@@ -23,7 +23,9 @@ them, so init them before the first run.
 ## Quickstart
 
 Create a virtualenv, install the package (editable, with dev extras), and run.
-The only OS difference is how the virtualenv is activated.
+The only OS difference is how the virtualenv is activated. If `pip install`
+rejects your default Python as too old, recreate the virtualenv from a newer
+one: `python3.12 -m venv .venv` (Windows: `py -3.12 -m venv .venv`).
 
 **Linux / macOS**
 

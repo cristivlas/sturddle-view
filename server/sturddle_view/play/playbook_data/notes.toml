@@ -1,0 +1,40 @@
+# Notes: selected by id from code; only notes take $fields.
+
+[meta]
+source = "shipped"
+trust = "trusted"
+
+[[entry]]
+id = "note.crushing"
+kind = "note"
+text = "The position is decisively won; no creativity is needed."
+
+[[entry]]
+id = "note.lost"
+kind = "note"
+text = "The position is objectively lost: name resignation as an option once, without insisting, and still give the most stubborn try."
+
+[[entry]]
+id = "note.repeat_behind"
+kind = "note"
+text = "A repetition is available ($moves): repeating is the drawing try; take it unless a move clearly improves."
+
+[[entry]]
+id = "note.repeat_ahead"
+kind = "note"
+text = "Do not repeat the position ($moves); make progress."
+
+[[entry]]
+id = "note.sacrifice_greek_gift"
+kind = "note"
+text = "$move is a Greek gift sacrifice: play it out before ruling it out."
+
+[[entry]]
+id = "note.sacrifice_bishop_f7"
+kind = "note"
+text = "$move is a bishop sacrifice against the uncastled king: play it out before ruling it out."
+
+[[entry]]
+id = "note.sacrifice_king_zone"
+kind = "note"
+text = "$move is a sacrifice against the king's cover: play it out before ruling it out."

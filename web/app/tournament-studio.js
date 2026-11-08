@@ -16,24 +16,25 @@ import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, loadSortDir, nextDir, scr
 import { createTable, RENDER_REASON } from "./data-table.js";
 import { ACTIVATE_KEYS } from "./keys.js";
 import { formatStamp } from "./tournament-format.js";
-import { reportError, toast } from "./dialogs.js";
+import { copyToClipboard, reportError, toast } from "./dialogs.js";
 import { debounce, escapeHtml, flashWindow, markSelectable, rafCoalesce, roveTabStop, setStartTab, suppressModifierClickSelect, syncRovingTabStop, WB_EDGE_RIGHT_CLASS, WB_NO_SHADOW_CLASS, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
 import { createMultiSelect, selectionTargets } from "./multi-select.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS, STATUS_RANK } from "./tournament-events.js";
-import { newTournamentCta, removeSelected, ribbonHtml, setStartVerb, tournamentActions } from "./tournaments.js";
+import { emptyStateNodes, fastchessMissing, removeSelected, ribbonHtml, setStartVerb, tournamentActions, watchTournamentSettings } from "./tournaments.js";
 import { RESULT, SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, backfillEvent, createLiveState, seedFromDetail } from "./tournament-live-state.js";
 import { closeAllLiveGames, getLiveWindows, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow, replayTournamentGame, syncWaitingOverlays } from "./tournament-live-game.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { makeH2HBody, renderH2H } from "./tournament-h2h.js";
-import { renderEventLogList } from "./tournament-eventlog.js";
+import { EVENT_LOG_COPY_WHAT, eventLogText, renderEventLogList } from "./tournament-eventlog.js";
 import { appendWatchControls, refreshWatchControls } from "./tournament-watch-controls.js";
 import { renderInfoWall } from "./tournament-info.js";
+import { mountWallpaper } from "./wallpaper.js";
+import { attachPanelMenu, COPY_LABEL, createPanelFade } from "./panel-fade.js";
 import { mqMobile, mqMobileH } from "./breakpoints.js";
 import { attachRibbonOverflow } from "./ribbon-overflow.js";
 
 const TOURNAMENTS_ENDPOINT = "/api/tournaments";
-const TOURNAMENT_SETTINGS_ENDPOINT = "/api/tournament-settings";
 const SETTINGS_ENDPOINT = "/settings";
 const LOAD_FAIL_MSG = "Loading tournaments failed";
 const NO_ENGINES_MSG = "No active engines.";
@@ -53,13 +54,21 @@ const PANE_LOADING_HOST_ACTIVE_CLASS = "is-loading";
 // haven't signalled ready by now (a stuck fetch must not hide the UI forever).
 const READY_TIMEOUT_MS = 4000;
 
-// Boards region grid: always 4 columns; cells stretch to fill the region
-// width (keeping the board square), clamped to the Arena minimum board
-// width -- below that the row overflows and scrolls. Unlimited rows scroll
+// Boards region grid: 4 columns (fewer boards widen to fill the row); cells
+// stretch to fill the region width, clamped to the Arena minimum board width
+// -- below that the row overflows and scrolls. Unlimited rows scroll
 // vertically. Boards are laid out (no-move), absolutely positioned, edge to
 // edge: their right/bottom borders are the seams (see the CSS).
 const STUDIO_COLS = 4;
 const STUDIO_BOARD_CLASS = `sturddle-wb-studio no-move no-resize ${WB_NO_SHADOW_CLASS}`;
+// On the info wall while it fills only the strip under the board grid.
+const WALL_STRIP_CLASS = "in-strip";
+// The info wall's progress footer; styles.css hides it in a strip too short.
+const IW_FOOTER_SEL = ".iw-footer";
+const STUDIO_PANE_SEL = ".studio-pane";
+const HIDDEN_VISIBILITY = "hidden";
+const OVERFLOW_SCROLL = "scroll";
+const OVERFLOW_HIDDEN = "hidden";
 // Minimized boards live in the tray (display:none), so they are not cells.
 const BOARD_SEL = ".winbox.sturddle-wb-studio:not(.min)";
 // The board grid roves one tab stop, so the "current" board is the one Tab
@@ -77,7 +86,6 @@ const BOARD_CONTROLS = [
 const CHIP_SEL = ".studio-tray-chip";
 const CHIP_CURRENT_SEL = `${CHIP_SEL}[tabindex="0"]`;
 const CHIP_CLOSE_SEL = ".wb-close";
-const BOARD_RESIZE_DEBOUNCE_MS = 120;
 // Default active tab per bottom group (first tab) when none is remembered.
 const STUDIO_TAB_DEFAULT_LEFT = "livegames";
 const STUDIO_TAB_DEFAULT_RIGHT = "tourneys";
@@ -172,8 +180,9 @@ function restoreSplit(key, a, b) {
 
 // Generic two-pane splitter: dragging the grip trades flex-grow between
 // sibling panes a and b. Total grow maps linearly to total pixels, so the
-// drag tracks the pointer 1:1. Mirrors the play-dock grip math.
-function attachSplitter(grip, a, b, axis, persistKey) {
+// drag tracks the pointer 1:1. Mirrors the play-dock grip math. snap(aPx):
+// where a release settles a (px), or null to leave it.
+function attachSplitter(grip, a, b, axis, persistKey, snap = null) {
   grip.addEventListener("pointerdown", (eDown) => {
     if (eDown.button !== 0) return;
     eDown.preventDefault();
@@ -190,17 +199,20 @@ function attachSplitter(grip, a, b, axis, persistKey) {
     const p0 = vert ? eDown.clientY : eDown.clientX;
     const a0 = vert ? aRect.height : aRect.width;
 
-    const onMove = (e) => {
-      const d = (vert ? e.clientY : e.clientX) - p0;
-      const aPx = Math.max(0, Math.min(a0 + d, pxRange));
+    const setA = (px) => {
+      const aPx = Math.max(0, Math.min(px, pxRange));
       a.style.flexGrow = String((aPx / pxRange) * sumG);
       b.style.flexGrow = String(((pxRange - aPx) / pxRange) * sumG);
     };
+    const onMove = (e) => setA(a0 + (vert ? e.clientY : e.clientX) - p0);
     const onUp = () => {
       grip.classList.remove("dragging");
       grip.removeEventListener("pointermove", onMove);
       grip.removeEventListener("pointerup", onUp);
       grip.removeEventListener("pointercancel", onUp);
+      const r = a.getBoundingClientRect();
+      const snapped = snap?.(vert ? r.height : r.width);
+      if (snapped != null) setA(snapped);
       persistSplit(persistKey, a, b);
     };
     grip.addEventListener("pointermove", onMove);
@@ -259,7 +271,7 @@ function selectedTournaments(ctx) {
 
 // Activate the bottom-right Standings tab; the wa-tab-show listener persists it.
 function showStandingsTab(ctx) {
-  ctx.bottomRightEl?.querySelector(".studio-tabs")?.setAttribute("active", STUDIO_TAB_STANDINGS);
+  ctx.rightTabsEl?.setAttribute("active", STUDIO_TAB_STANDINGS);
 }
 
 // Games cell: while running, Arena's progress bar (label then bar); otherwise
@@ -304,7 +316,7 @@ function buildTourneyTable(ctx) {
         sortKey: STORAGE_KEY.STUDIO_TOURNEY_SORT,
         stackKey: STORAGE_KEY.STUDIO_TOURNEY_STACK,
       },
-      resize: true, reorder: true, hide: true, fit: true,
+      resize: true, reorder: true, hide: true, fit: true, fade: ctx.rightFade,
       // Arrows move the selection; Shift extends the multi-selection from its
       // lead row.
       rowNav: {
@@ -354,7 +366,7 @@ function renderTourneys(ctx) {
 
 // ---- Ribbon actions ------------------------------------------------------
 // Reuse Arena's tournament verbs via the shared adapter; target the selected
-// tourney. New is always enabled; the rest follow status like Arena.
+// tourney. New follows fastchess like Arena; the rest follow status.
 function wireRibbonActions(ctx) {
   const q = (sel) => ctx.ribbonEl.querySelector(sel);
   ctx.ribbonBtns = {
@@ -384,6 +396,7 @@ function wireRibbonActions(ctx) {
 function syncRibbon(ctx) {
   const b = ctx.ribbonBtns;
   if (!b) return;
+  b.create.disabled = fastchessMissing(ctx.tournSettings);
   const t = selectedTournament(ctx);
   if (!t) {
     for (const k of ["start", "stop", "info", "edit", "duplicate", "remove"]) b[k].disabled = true;
@@ -653,7 +666,7 @@ function buildHistoryTable(ctx) {
     minPct: STUDIO_HISTORY_MIN_PCT,
     traits: {
       sort: { sortKey: STORAGE_KEY.STUDIO_HISTORY_SORT, stackKey: STORAGE_KEY.STUDIO_HISTORY_STACK },
-      resize: true, reorder: true, hide: true, fit: true, rowNav: {},
+      resize: true, reorder: true, hide: true, fit: true, fade: ctx.rightFade, rowNav: {},
     },
     rowAttrs: (r) => ({
       class: HISTORY_ROW_CLASS,
@@ -688,11 +701,15 @@ function renderHistory(ctx) {
   })));
 }
 
+// The selected tournament's event log: live while it runs, else as loaded.
+function logEvents(ctx) {
+  const running = ctx.selectedId && ctx.selectedId === ctx.activeId;
+  return (running && ctx.live) ? ctx.live.eventLog : (ctx.selEvents || []);
+}
+
 function renderLogPane(ctx) {
   if (!ctx.logListEl) return;
-  const running = ctx.selectedId && ctx.selectedId === ctx.activeId;
-  const events = (running && ctx.live) ? ctx.live.eventLog : (ctx.selEvents || []);
-  renderEventLogList(ctx.logListEl, events, ctx.logPaneEl);
+  renderEventLogList(ctx.logListEl, logEvents(ctx), ctx.logPaneEl);
 }
 
 function renderLivePanes(ctx) {
@@ -766,6 +783,9 @@ function renderGamesPane(ctx) {
 // a 4-column grid (see boardCell for sizing). No free drag; re-gridded on
 // open/close/resize.
 
+// Boards taking grid slots (minimized/maximized boards don't).
+const laidOutCount = () => getLiveWindows().filter((wb) => !wb.min && !wb.max).length;
+
 // 4 columns; 1 when narrow and tall (phone portrait). Short = phone landscape.
 function studioCols() {
   return mqMobile.matches && !mqMobileH.matches ? 1 : STUDIO_COLS;
@@ -773,27 +793,43 @@ function studioCols() {
 
 // Cell size: width fills the region across the columns (>= the Arena board
 // minimum), height keeps the board square (width + the fixed window chrome).
+// Desktop: fewer boards than columns widen, at the full grid's height.
 // Height is whole device px off the narrowest column (snapped widths vary by
 // 1px), so no board's own square cap (width + chrome) trims it shorter.
 // x0/dpr: the region's page x and the device pixel ratio, for slotRect.
-function boardCell(ctx) {
-  const cols = studioCols();
+// y0: desktop centers a grid shorter than the region (whole device px);
+// gridBottom: where the grid ends, for the info wall's strip below it.
+// pending: boards not yet open but about to take slots. width: the region's
+// content width to fit (default: as laid out now).
+function boardCell(ctx, pending = 0, width = ctx.boardsEl?.clientWidth ?? 0) {
+  const gridCols = studioCols();
   const el = ctx.boardsEl;
   const dpr = window.devicePixelRatio;
-  const fit = (el?.clientWidth ?? 0) / cols;
+  const laidOut = laidOutCount() + pending;
+  const cols = mqMobile.matches ? gridCols : Math.max(1, Math.min(gridCols, laidOut));
+  const fit = width / cols;
   const cw = Math.max(LIVE_MIN_WIDTH, fit);
-  const chDev = Math.floor(cw * dpr) + Math.floor((LIVE_MIN_HEIGHT() - LIVE_MIN_WIDTH) * dpr);
-  return { cw, ch: chDev / dpr, cols, overflowX: cw > fit, x0: el?.getBoundingClientRect().left ?? 0, dpr };
+  const gridCw = Math.max(LIVE_MIN_WIDTH, width / gridCols);
+  const chDev = Math.floor(gridCw * dpr) + Math.floor((LIVE_MIN_HEIGHT() - LIVE_MIN_WIDTH) * dpr);
+  const ch = chDev / dpr;
+  const gridH = Math.ceil(laidOut / cols) * ch;
+  const centered = !mqMobile.matches && !ctx._maxWb;
+  const spare = centered ? Math.max(0, (el?.clientHeight ?? 0) - gridH) : 0;
+  const y0 = Math.floor((spare / 2) * dpr) / dpr;
+  return {
+    cw, ch, cols, overflowX: cw > fit, x0: el?.getBoundingClientRect().left ?? 0, dpr,
+    y0, gridBottom: y0 + gridH,
+  };
 }
 
 // Edges land on whole device pixels (columns in page coordinates), so the
 // seam two boards share always rounds to the same pixel at any DPR. The last
 // column's right edge is left to CSS (WB_EDGE_RIGHT_CLASS).
-function slotRect(i, { cw, ch, cols, x0, dpr }) {
+function slotRect(i, { cw, ch, cols, x0, dpr, y0 }) {
   const col = i % cols, row = Math.floor(i / cols);
   const colEdge = (c) => Math.round((x0 + c * cw) * dpr) / dpr - x0;
   const x = colEdge(col);
-  return { x, y: row * ch, w: colEdge(col + 1) - x, h: ch };
+  return { x, y: y0 + row * ch, w: colEdge(col + 1) - x, h: ch };
 }
 
 // Reposition every open board into its slot; size the scroll canvas to the
@@ -801,6 +837,7 @@ function slotRect(i, { cw, ch, cols, x0, dpr }) {
 // minimized windows keep their dock geometry.
 function regridBoards(ctx) {
   if (!ctx.boardsEl) return;
+  syncScrollbar(ctx);
   const cell = boardCell(ctx);
   // Only laid-out boards take slots; minimized (trayed) and maximized boards
   // are skipped so visible boards pack with no gaps.
@@ -811,9 +848,12 @@ function regridBoards(ctx) {
     wb.g?.classList.toggle(WB_EDGE_RIGHT_CLASS, lastCol);
     if (wb.max) { fillRegion(ctx, wb); continue; }
     const r = slotRect(slot++, cell);
-    wb.resize(r.w, r.h).move(r.x, r.y);
+    // Same size (a height-only region change): skip the board's resize work.
+    if (wb.width !== r.w || wb.height !== r.h) wb.resize(r.w, r.h);
+    wb.move(r.x, r.y);
   }
   sizeCanvas(ctx, slot, cell);
+  fitWallToStrip(ctx, slot, cell);
   syncRovingTabStop(ctx.boardsEl, BOARD_SEL, BOARD_CONTROL_SELS);
   // Single source of truth for board presence (laid-out or maximized).
   const hasBoards = anyBoardsShown();
@@ -824,6 +864,28 @@ function regridBoards(ctx) {
   // are no boards rather than reserve a blank strip. Desktop lets the flex
   // split govern the height.
   ctx.boardsEl.style.height = mqMobile.matches ? (hasBoards ? `${slotRect(0, cell).h}px` : "0") : "";
+}
+
+// The region's scrollbars, decided from the grid at the region's full size,
+// never from their own presence: one that shrank the region enough for the
+// grid to fit would hide, regrow it past fitting and show again, every frame.
+// (Near both thresholds at once a board may clip by a scrollbar's width.)
+function syncScrollbar(ctx) {
+  const el = ctx.boardsEl;
+  if (!anyBoardsShown()) {
+    el.style.overflowX = el.style.overflowY = "";
+    return;
+  }
+  // Exact (fractional) size: offset/client sizes round to whole px.
+  const cs = getComputedStyle(el);
+  const r = el.getBoundingClientRect();
+  const fullW = r.width - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth);
+  const fullH = r.height - parseFloat(cs.borderTopWidth) - parseFloat(cs.borderBottomWidth);
+  const full = boardCell(ctx, 0, fullW);
+  // Under a device px over (a snapped grip's rounding) clips unseen.
+  const over = full.gridBottom - full.y0 - fullH;
+  el.style.overflowX = full.overflowX ? OVERFLOW_SCROLL : OVERFLOW_HIDDEN;
+  el.style.overflowY = over >= 1 / full.dpr ? OVERFLOW_SCROLL : OVERFLOW_HIDDEN;
 }
 
 // Any board occupying the region (laid-out or maximized; minimized don't count).
@@ -843,9 +905,11 @@ function paintWall(ctx, hasBoards = anyBoardsShown()) {
   // (not only in regridBoards) so the idle first paint, which never re-grids,
   // still clips.
   ctx.boardsEl?.classList.toggle("no-boards", !hasBoards);
-  // No tourneys at all: the wall hosts the New-tournament CTA, not poster art.
-  ctx.boardsWallEl.classList.toggle("is-empty", ctx.tournaments.length === 0);
-  if (ctx.tournaments.length === 0) {
+  // No tourneys at all, or no fastchess to run them: the wall hosts the
+  // empty-state CTA, not the footer.
+  const empty = ctx.tournaments.length === 0 || fastchessMissing(ctx.tournSettings);
+  ctx.boardsWallEl.classList.toggle("is-empty", empty);
+  if (empty) {
     renderEmptyWall(ctx);
     return;
   }
@@ -854,12 +918,12 @@ function paintWall(ctx, hasBoards = anyBoardsShown()) {
   renderInfoWall(ctx.boardsWallEl, t);
 }
 
-// Empty-state CTA on the Boards wall: Arena's shared "+" prose, fired through
-// the ribbon's create verb.
+// Empty-state CTA on the Boards wall: Arena's shared prose, its "+" fired
+// through the ribbon's create verb.
 function renderEmptyWall(ctx) {
   const msg = document.createElement("p");
-  msg.className = "studio-empty";
-  msg.append(...newTournamentCta(() => ctx.actions?.create()));
+  msg.className = "studio-empty empty-pill";
+  msg.append(...emptyStateNodes(ctx.tournSettings, () => ctx.actions?.create()));
   ctx.boardsWallEl.replaceChildren(msg);
 }
 
@@ -880,6 +944,30 @@ function sizeCanvas(ctx, count, cell) {
   const bottom = slotRect(count - 1, cell);
   ctx.boardsCanvasEl.style.width = cell.overflowX ? `${right.x + right.w}px` : "0";
   ctx.boardsCanvasEl.style.height = `${bottom.y + bottom.h}px`;
+}
+
+// A grip release (region px tall) that leaves the strip under the centered
+// grid too short for the progress bar (styles.css hides it) snaps the region
+// to the grid's height.
+function snapToGrid(ctx, px) {
+  if (mqMobile.matches || ctx._maxWb || !anyBoardsShown()) return null;
+  // The last move's regrid waits for the next frame: place the strip now.
+  regridBoards(ctx);
+  const footer = ctx.boardsWallEl?.querySelector(IW_FOOTER_SEL);
+  if (!footer || getComputedStyle(footer).visibility !== HIDDEN_VISIBILITY) return null;
+  const { y0, gridBottom } = boardCell(ctx);
+  const gridH = gridBottom - y0;
+  return px > gridH ? gridH : null;
+}
+
+// Desktop with laid-out boards: the wall is only the strip below the
+// (centered) grid, its footer centered there (hidden when too short).
+function fitWallToStrip(ctx, count, cell) {
+  const wall = ctx.boardsWallEl;
+  if (!wall) return;
+  const inStrip = count > 0 && !mqMobile.matches && !ctx._maxWb;
+  wall.style.top = inStrip ? `${cell.gridBottom}px` : "";
+  wall.classList.toggle(WALL_STRIP_CLASS, inStrip);
 }
 
 // Size a board to fill the visible region, pinned to its top-left. CSS
@@ -973,8 +1061,9 @@ function renderTray(ctx) {
   syncRovingTabStop(tray, CHIP_SEL, [CHIP_CLOSE_SEL]);
 }
 
-function studioSlotRect(ctx, i) {
-  return slotRect(i, boardCell(ctx));
+// pending: boards about to be laid out, counted in the grid's centering.
+function studioSlotRect(ctx, i, pending = 0) {
+  return slotRect(i, boardCell(ctx, pending));
 }
 
 // Sync every watch control's state to the open boards. Called when a board
@@ -1026,9 +1115,9 @@ function remaximize(wb) {
   queueMicrotask(() => { if (wb.g) wb.maximize().focus(); });
 }
 
-// Next laid-out slot index (minimized/maximized boards don't occupy slots).
+// Next laid-out slot.
 function nextSlotRect(ctx) {
-  return studioSlotRect(ctx, getLiveWindows().filter((wb) => !wb.min && !wb.max).length);
+  return studioSlotRect(ctx, laidOutCount(), 1);
 }
 
 // Shared post-open: wire hooks, re-grid, repaint tray, persist.
@@ -1134,8 +1223,8 @@ function restoreBoards(ctx) {
 // Restore each bottom group's active tab and persist changes.
 function wireTabPersistence(ctx) {
   const groups = [
-    [ctx.container.querySelector(".studio-bottom-left .studio-tabs"), STORAGE_KEY.STUDIO_TAB_LEFT, STUDIO_TAB_DEFAULT_LEFT],
-    [ctx.container.querySelector(".studio-bottom-right .studio-tabs"), STORAGE_KEY.STUDIO_TAB_RIGHT, STUDIO_TAB_DEFAULT_RIGHT],
+    [ctx.leftTabsEl, STORAGE_KEY.STUDIO_TAB_LEFT, STUDIO_TAB_DEFAULT_LEFT],
+    [ctx.rightTabsEl, STORAGE_KEY.STUDIO_TAB_RIGHT, STUDIO_TAB_DEFAULT_RIGHT],
   ];
   for (const [el, key, def] of groups) {
     if (!el) continue;
@@ -1153,7 +1242,7 @@ const UNFOLDED_ICON = "minus";
 // Phone landscape: the +/- button folds the Playing | Engines panel down to
 // its tabs (CSS shows the button and applies the fold only there).
 function wireLeftTabsFold(ctx) {
-  const group = ctx.container.querySelector(".studio-bottom-left .studio-tabs");
+  const group = ctx.leftTabsEl;
   const btn = group?.querySelector(".studio-fold");
   if (!btn) return;
   const apply = (folded) => {
@@ -1237,7 +1326,7 @@ function wireBoardKeyboard(ctx) {
   wireArrowKeyNav(ctx.boardsEl, {
     rows: BOARD_SEL,
     selected: BOARD_CURRENT_SEL,
-    cols: studioCols,
+    cols: () => boardCell(ctx).cols,
     // Boards are absolutely placed; landOnBoard scrolls the region by the
     // WinBox geometry instead, so the generic row scroller would double up.
     scroll: () => {},
@@ -1286,7 +1375,8 @@ function wireSplitters(ctx) {
     maxed.restore();
     ctx._restoreViaGrip = false;
   }, true);
-  attachSplitter(ctx.gripRowEl, ctx.boardsEl, ctx.bottomEl, AXIS.Y, STORAGE_KEY.STUDIO_SPLIT_ROW);
+  attachSplitter(ctx.gripRowEl, ctx.boardsEl, ctx.bottomEl, AXIS.Y, STORAGE_KEY.STUDIO_SPLIT_ROW,
+    (px) => snapToGrid(ctx, px));
   attachSplitter(ctx.gripColEl, ctx.bottomLeftEl, ctx.bottomRightEl, AXIS.X, STORAGE_KEY.STUDIO_SPLIT_COL);
 }
 
@@ -1299,12 +1389,15 @@ export function mountTournamentStudio({ container, api, events, log }) {
     api, events, log, container,
     panel: q(".studio-panel"),
     ribbonEl: q(".studio-ribbon"),
+    mainEl: q(".studio-main"),
     boardsEl: q(".studio-boards"),
     boardsCanvasEl: q(".studio-boards-canvas"),
     boardsWallEl: q(".studio-boards-wall"),
     boardsTrayEl: q(".studio-boards-tray"),
     bottomEl: q(".studio-bottom"),
     bottomLeftEl: q(".studio-bottom-left"),
+    leftTabsEl: q(".studio-bottom-left .studio-tabs"),
+    rightTabsEl: q(".studio-bottom-right .studio-tabs"),
     bottomRightEl: q(".studio-bottom-right"),
     gripRowEl: q(".studio-grip-row"),
     gripColEl: q(".studio-grip-col"),
@@ -1337,12 +1430,16 @@ export function mountTournamentStudio({ container, api, events, log }) {
     // Ribbon verbs (shared with Arena) + tournament settings for New/Edit.
     tournSettings: null, ribbonBtns: null, actions: null,
   };
+  // Each tab group owns one fade, shared by its tabs' menus (the fill is on
+  // the group).
+  ctx.leftFade = createPanelFade(ctx.leftTabsEl, { storageKey: STORAGE_KEY.STUDIO_LEFT_FADE });
+  ctx.rightFade = createPanelFade(ctx.rightTabsEl, { storageKey: STORAGE_KEY.STUDIO_RIGHT_FADE });
   // Standings pane reuses the shared resizable-column table; log pane is a
   // plain list the shared renderer fills.
-  ctx.standingsBodyEl = makeStandingsBody();
+  ctx.standingsBodyEl = makeStandingsBody({ fade: ctx.rightFade });
   ctx.standingsPaneEl?.appendChild(ctx.standingsBodyEl);
   // H2H body (build once, resizable columns wired); fill shares standings' cadence.
-  ctx.h2hBodyEl = makeH2HBody();
+  ctx.h2hBodyEl = makeH2HBody({ fade: ctx.rightFade });
   ctx.h2hPaneEl?.appendChild(ctx.h2hBodyEl);
   ctx.logListEl = document.createElement("ul");
   ctx.logListEl.className = "wb-eventlog-list";
@@ -1371,15 +1468,35 @@ export function mountTournamentStudio({ container, api, events, log }) {
   wireEnginesSort(ctx);
   wireLeftTabsFold(ctx);
   wireRibbonActions(ctx);
+  // Before overflow attaches, so its first fit check counts the wallpaper button.
+  // Spans boards and bottom panes; the boards area (background and board
+  // windows) opens the menu, the panes' right-clicks are theirs.
+  ctx.wallpaper = mountWallpaper({
+    ribbonEls: [ctx.ribbonEl], regionEl: ctx.mainEl,
+    isBare: (t) => ctx.boardsEl.contains(t), api: ctx.api, log: ctx.log,
+  });
+  // Right-click Transparency for the tabs without a Columns menu.
+  // The group is a shadow host, so its panes take the Menu key's focus.
+  ctx.leftMenuOff = attachPanelMenu(ctx.leftTabsEl, {
+    fade: ctx.leftFade, hosts: [...ctx.leftTabsEl.querySelectorAll(STUDIO_PANE_SEL)],
+  });
+  ctx.logMenuOff = attachPanelMenu(ctx.logPaneEl, {
+    fade: ctx.rightFade,
+    actions: [{ label: COPY_LABEL, run: () => copyToClipboard(eventLogText(logEvents(ctx)), EVENT_LOG_COPY_WHAT) }],
+  });
   ctx.ribbonOverflow = attachRibbonOverflow(ctx.ribbonEl);
   announceRibbon(ctx.ribbonEl);
 
   ctx.boardStyleReady = ctx.api("GET", SETTINGS_ENDPOINT)
     .then((s) => { ctx.boardStyleCached = s?.board_style || null; })
     .catch(() => {});
-  ctx.api("GET", TOURNAMENT_SETTINGS_ENDPOINT)
-    .then((s) => { ctx.tournSettings = s; })
-    .catch(() => {});
+  // Repaint only when fastchess turns missing or present: a repaint before the
+  // first list load would flash the no-tournaments CTA.
+  ctx.offSettings = watchTournamentSettings(ctx, (s) => {
+    const flipped = fastchessMissing(s) !== fastchessMissing(ctx.tournSettings);
+    ctx.tournSettings = s;
+    if (flipped) { paintWall(ctx); syncRibbon(ctx); }
+  });
 
   // Re-grid boards when one closes or the viewport changes; closing also
   // resets the spawning watch button. If the closed board was the maximized
@@ -1391,7 +1508,8 @@ export function mountTournamentStudio({ container, api, events, log }) {
     refreshWatchButtons(ctx);
     saveBoards(ctx);
   };
-  ctx.onBoardResize = debounce(() => regridBoards(ctx), BOARD_RESIZE_DEBOUNCE_MS);
+  // Once per frame, so a grip drag recenters the grid live.
+  ctx.onBoardResize = rafCoalesce(() => regridBoards(ctx));
   // Re-pin/re-grid immediately when the mobile breakpoint flips (cols and
   // board-area height change between desktop and mobile).
   ctx.onMqMobile = () => regridBoards(ctx);
@@ -1402,7 +1520,9 @@ export function mountTournamentStudio({ container, api, events, log }) {
     saveBoards(ctx);
   };
   window.addEventListener(APP_EVT.LIVEGAME_RESOLVED, ctx.onBoardResolved);
-  window.addEventListener("resize", ctx.onBoardResize);
+  // The region, not the window: a grip drag resizes it too (the grid recenters).
+  ctx.boardsResizeObs = new ResizeObserver(ctx.onBoardResize);
+  ctx.boardsResizeObs.observe(ctx.boardsEl);
   mqMobile.addEventListener("change", ctx.onMqMobile);
 
   // Reload the list on any tournament event (coalesced); initial load now.
@@ -1430,6 +1550,7 @@ function unmountStudio(ctx) {
   ctx.offEvents?.();
   ctx.scheduleRenderTourneys?.cancel();
   window.removeEventListener(APP_EVT.TOURNAMENTS_ROOT_CHANGED, ctx.reload);
+  ctx.offSettings?.();
   // Kill the pending-dim timer before the panes go away, so a late fire
   // can't touch detached nodes.
   setSelPending(ctx, false);
@@ -1437,8 +1558,15 @@ function unmountStudio(ctx) {
   // teardown doesn't re-save (and wipe) the board set.
   window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onBoardClosed);
   window.removeEventListener(APP_EVT.LIVEGAME_RESOLVED, ctx.onBoardResolved);
-  window.removeEventListener("resize", ctx.onBoardResize);
+  ctx.boardsResizeObs?.disconnect();
+  ctx.onBoardResize?.cancel();
   mqMobile.removeEventListener("change", ctx.onMqMobile);
+  ctx.wallpaper?.unmount();
+  ctx.leftMenuOff?.();
+  ctx.logMenuOff?.();
+  ctx.leftFade?.destroy();
+  ctx.rightFade?.destroy();
+  ctx.leftMenuOff = ctx.logMenuOff = ctx.leftFade = ctx.rightFade = null;
   // stopLive unsubscribes, nulls liveTid (so a pending standings refresh
   // no-ops), and closes the boards.
   stopLive(ctx);
@@ -1446,8 +1574,8 @@ function unmountStudio(ctx) {
   ctx.ribbonOverflow?.detach();
   ctx.panel.remove();
   ctx.panel = ctx.ribbonEl = null;
-  ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
-  ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = ctx.tourneyTable = null;
+  ctx.mainEl = ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.leftTabsEl = ctx.bottomRightEl = ctx.rightTabsEl = null;
+  ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = ctx.tourneyTable = ctx.boardsResizeObs = null;
   ctx.enginesPaneEl = ctx.gamesPaneEl = null;
   ctx.standingsPaneEl = ctx.standingsBodyEl = ctx.h2hPaneEl = ctx.h2hBodyEl = ctx.historyPaneEl = ctx.historyTable = ctx.logPaneEl = ctx.logListEl = null;
   ctx.ribbonBtns = ctx.actions = null;

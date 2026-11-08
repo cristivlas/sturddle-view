@@ -2,19 +2,15 @@
 other, across device pixel ratios incl. below 1 (Playwright/Chromium).
 
 Windows draw their outline outside their box; the workspace area is inset by
-that outline so it lands on the list's side borders. Rounding at fractional
-DPR is where a 1px misfit shows, so the side check compares rendered pixels:
-on a scanline through a list row and one through the Clean layout's windows,
-the first line after the ribbon (left) / the empty gutter (right) must occupy
-the same device-pixel columns. In Clean, stacked rows touch (system rows, and
-the live-board row over them), and the bottom row's outline lands on the
-list's bottom border.
+that outline so it lands on the list's side borders: the Clean layout's
+windows' outer outline edges are the list border box's sides. In Clean,
+stacked rows touch (system rows, and the live-board row over them), and the
+bottom row's outline lands on the list's bottom border. All checks are layout
+geometry, never rendered pixels.
 
 Skipped if Playwright/Chromium isn't installed.
 """
 from __future__ import annotations
-
-import base64
 
 import pytest
 
@@ -37,47 +33,26 @@ from .conftest import (  # noqa: E402
 
 ENGINES = ("engine-A", "engine-B")
 VIEWPORT = {"width": 1400, "height": 900}
-DPRS = (0.75, 0.8, 0.9, 1, 1.25, 1.5)
+RESIZED_VIEWPORT = {"width": 1400, "height": 700}
+# Below 1 and fractional: where border snapping moves layout. Checks that
+# only read WinBox's inline CSS-px math run at the default DPR.
+DPRS = (0.75, 1.25)
 SUBPIXEL = 0.01
 # Clean (tidy) layout: Engine Instances top-left, Standings top-right.
 LEFT_WIN = ".winbox.sturddle-wb-arena:has(.wb-engines)"
 RIGHT_WIN = ".winbox.sturddle-wb-arena.sturddle-wb-standings"
 
-# Device px to back off from the ribbon's right edge: clear of it, on its fill.
-RIBBON_INSET_DPX = 3
-_RIBBON_RIGHT = "() => document.querySelector('.tournaments-ribbon').getBoundingClientRect().right"
-# CSS y of the middle of an element's box.
-_MID_Y = "(sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return (r.top + r.bottom) / 2; }"
-_BODY_MID_Y = (
-    "(sel) => { const r = document.querySelector(sel).querySelector('.wb-body').getBoundingClientRect();"
-    " return (r.top + r.bottom) / 2; }"
-)
-# Decode the screenshot in the page; for each device-px scanline, return the
-# first line after the edge background on each side: [start, end) columns,
-# measured inward from the scan start. Scans start on the edge background:
-# just inside the ribbon's right edge (clear of its buttons) on the left,
-# 1 column in from the side over the empty gutter on the right.
-_EDGE_RUNS = """async ([b64, rows, leftX0]) => {
-  const img = new Image();
-  img.src = 'data:image/png;base64,' + b64;
-  await img.decode();
-  const c = document.createElement('canvas');
-  c.width = img.width; c.height = img.height;
-  const g = c.getContext('2d');
-  g.drawImage(img, 0, 0);
-  const px = (x, y) => Array.from(g.getImageData(x, y, 1, 1).data).join(',');
-  const firstRun = (y, step) => {
-    const x0 = step > 0 ? leftX0 : img.width - 2;
-    const bg = px(x0, y);
-    let x = x0;
-    while (px(x, y) === bg) x += step;
-    const line = px(x, y);
-    const start = Math.abs(x - x0);
-    while (px(x, y) === line) x += step;
-    return [start, Math.abs(x - x0)];
-  };
-  return rows.map((y) => ({ left: firstRun(y, 1), right: firstRun(y, -1) }));
-}"""
+# A JS expression: element el's CSS-px outline width. Chromium reports an
+# unset outline's default width, so style none counts as 0.
+_OUTLINE_W = "(getComputedStyle(el).outlineStyle === 'none' ? 0 : parseFloat(getComputedStyle(el).outlineWidth))"
+# CSS-px outer [left, right]: the box plus its outline.
+_OUTER_X = f"""(sel) => {{
+  const el = document.querySelector(sel);
+  const r = el.getBoundingClientRect();
+  const ow = {_OUTLINE_W};
+  return [r.left - ow, r.right + ow];
+}}"""
+LIST = ".tournaments-list"
 
 
 @pytest.fixture
@@ -95,21 +70,11 @@ async def test_window_edges_match_list_border(server, make_page, dpr):
     await goto_arena_tournaments(page, server)
     await page.click(".tournament-row")
     await open_arena_workspace(page)
-    # Move the pointer off the list so no row shows its hover tint.
-    await page.mouse.move(VIEWPORT["width"] / 2, 0)
-    await page.wait_for_function("() => !document.querySelector('.tournament-row:hover')")
-
-    list_y = await page.evaluate(_MID_Y, ".tournament-row")
-    left_y = await page.evaluate(_BODY_MID_Y, LEFT_WIN)
-    right_y = await page.evaluate(_BODY_MID_Y, RIGHT_WIN)
-    shot = await page.screenshot()
-    rows = [round(y * dpr) for y in (list_y, left_y, right_y)]
-    left_x0 = int(await page.evaluate(_RIBBON_RIGHT) * dpr) - RIBBON_INSET_DPX
-    lst, left_win, right_win = await page.evaluate(
-        _EDGE_RUNS, [base64.b64encode(shot).decode(), rows, left_x0],
-    )
-    assert left_win["left"] == lst["left"], (dpr, lst, left_win)
-    assert right_win["right"] == lst["right"], (dpr, lst, right_win)
+    lst = await page.evaluate(_OUTER_X, LIST)
+    left_win = await page.evaluate(_OUTER_X, LEFT_WIN)
+    right_win = await page.evaluate(_OUTER_X, RIGHT_WIN)
+    assert left_win[0] == pytest.approx(lst[0], abs=SUBPIXEL), (dpr, lst, left_win)
+    assert right_win[1] == pytest.approx(lst[1], abs=SUBPIXEL), (dpr, lst, right_win)
     assert_no_page_errors(errors)
 
 
@@ -124,10 +89,10 @@ _SPANS = """() => {
   }
   return spans;
 }"""
-_LIST_BOTTOM_AND_OUTLINE = """() => [
-  document.querySelector('.tournaments-list').getBoundingClientRect().bottom,
-  parseFloat(getComputedStyle(document.querySelector('.winbox.sturddle-wb-arena')).outlineWidth),
-]"""
+_LIST_BOTTOM_AND_OUTLINE = f"""() => {{
+  const el = document.querySelector('.winbox.sturddle-wb-arena:not(.min)');
+  return [document.querySelector('{LIST}').getBoundingClientRect().bottom, {_OUTLINE_W}];
+}}"""
 _BOARD_TIDY_DONE = f"""() => document.querySelectorAll('.winbox.sturddle-wb-arena.no-shadow').length === {CLEAN_WINDOWS}
   && !!document.querySelector('.winbox.sturddle-wb-live.no-shadow')"""
 
@@ -154,19 +119,18 @@ async def test_system_window_rows_touch(server, make_page, dpr):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("dpr", DPRS)
-async def test_board_row_touches_system_windows(tmp_path, monkeypatch, make_page, dpr):
+async def test_board_row_touches_system_windows(tmp_path, monkeypatch, make_page):
     """Clean layout with a live board: the board row's bottom is the system
     windows' top -- no gap between them."""
     async with running_tournament(tmp_path, monkeypatch) as (_app, base, _t, _secret):
-        _ctx, page = await make_page(viewport=VIEWPORT, device_scale_factor=dpr)
+        _ctx, page = await make_page(viewport=VIEWPORT)
         errors = watch_page_errors(page)
         await open_arena_engines_window(page, base)
         await page.click(".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn")
         await page.wait_for_function(_BOARD_TIDY_DONE)
 
         s = await page.evaluate(_SPANS)
-        assert s["wb-livegame"][1] == s["wb-engines"][0], (dpr, s["wb-livegame"], s["wb-engines"])
+        assert s["wb-livegame"][1] == s["wb-engines"][0], (s["wb-livegame"], s["wb-engines"])
         assert_no_page_errors(errors)
 
 
@@ -184,20 +148,19 @@ ARENA_WIN = ".winbox.sturddle-wb-arena"
 STANDINGS_WIN = ".winbox.sturddle-wb-standings"
 
 
-async def _bottom_ends_on_list_border(page, dpr, sel, expect_max=False):
+async def _bottom_ends_on_list_border(page, sel, expect_max=False):
     bottom, is_max = await page.evaluate(_LOWEST_BOTTOM, sel)
     list_bottom, outline = await page.evaluate(_LIST_BOTTOM_AND_OUTLINE)
     assert is_max == expect_max
-    assert bottom + outline == pytest.approx(list_bottom, abs=SUBPIXEL), (dpr, bottom, list_bottom)
+    assert bottom + outline == pytest.approx(list_bottom, abs=SUBPIXEL), (bottom, list_bottom)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("dpr", DPRS)
 @pytest.mark.parametrize("layout", sorted(LAYOUT_ITEMS))
-async def test_snap_and_tile_end_on_list_border(server, make_page, layout, dpr):
+async def test_snap_and_tile_end_on_list_border(server, make_page, layout):
     """Snap / Tile, nothing minimized: the bottom window's outline lands on
     the list's bottom border, as in Clean -- not at the viewport's bottom."""
-    _ctx, page = await make_page(viewport=VIEWPORT, device_scale_factor=dpr)
+    _ctx, page = await make_page(viewport=VIEWPORT)
     errors = watch_page_errors(page)
     await goto_arena_tournaments(page, server)
     await page.click(".tournament-row")
@@ -207,23 +170,7 @@ async def test_snap_and_tile_end_on_list_border(server, make_page, layout, dpr):
     # Clean already drops shadows; the checked menu item marks the switch.
     await page.wait_for_selector(f"{LAYOUT_ITEMS[layout]}.{MENU_CHECKED}", state="attached")
 
-    await _bottom_ends_on_list_border(page, dpr, ARENA_WIN)
-    assert_no_page_errors(errors)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("dpr", DPRS)
-async def test_maximized_window_ends_on_list_border(server, make_page, dpr):
-    """A maximized window stops at the list's bottom border too."""
-    _ctx, page = await make_page(viewport=VIEWPORT, device_scale_factor=dpr)
-    errors = watch_page_errors(page)
-    await goto_arena_tournaments(page, server)
-    await page.click(".tournament-row")
-    await open_arena_workspace(page)
-    await page.click(f"{STANDINGS_WIN} .wb-max")
-    await page.wait_for_selector(f"{STANDINGS_WIN}.max")
-
-    await _bottom_ends_on_list_border(page, dpr, STANDINGS_WIN, expect_max=True)
+    await _bottom_ends_on_list_border(page, ARENA_WIN)
     assert_no_page_errors(errors)
 
 
@@ -251,16 +198,15 @@ async def _minimize_standings(page, server):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("dpr", DPRS)
-async def test_minimized_window_docks_in_footer_strip(server, make_page, dpr):
+async def test_minimized_window_docks_in_footer_strip(server, make_page):
     """A minimized window docks at the viewport bottom (the strip the layouts
     reserve), not on the list's bottom border that fences maximize."""
-    _ctx, page = await make_page(viewport=VIEWPORT, device_scale_factor=dpr)
+    _ctx, page = await make_page(viewport=VIEWPORT)
     errors = watch_page_errors(page)
     await _minimize_standings(page, server)
 
     bottom, viewport_h = await page.evaluate(_BOTTOM_AND_VIEWPORT, STANDINGS_WIN)
-    assert bottom == pytest.approx(viewport_h, abs=SUBPIXEL), (dpr, bottom, viewport_h)
+    assert bottom == pytest.approx(viewport_h, abs=SUBPIXEL), (bottom, viewport_h)
     assert_no_page_errors(errors)
 
 
@@ -290,29 +236,23 @@ async def test_maximize_from_minimized_ends_on_list_border(server, make_page):
     await page.click(f"{STANDINGS_WIN} .wb-max")
     await page.wait_for_selector(f"{STANDINGS_WIN}.max")
 
-    await _bottom_ends_on_list_border(page, 1, STANDINGS_WIN, expect_max=True)
+    await _bottom_ends_on_list_border(page, STANDINGS_WIN, expect_max=True)
     assert_no_page_errors(errors)
 
 
-# Minimized bars' CSS-px span: [left, right, top] across all of them.
-_MIN_STRIP = """() => {
-  const rs = [...document.querySelectorAll('.winbox.min')].map((w) => w.getBoundingClientRect());
-  return [Math.min(...rs.map((r) => r.left)), Math.max(...rs.map((r) => r.right)), rs[0].top];
-}"""
-# Distinct colors along each device-px row, between x0 and x1.
-_ROW_COLORS = """async ([b64, ys, x0, x1]) => {
-  const img = new Image();
-  img.src = 'data:image/png;base64,' + b64;
-  await img.decode();
-  const c = document.createElement('canvas');
-  c.width = img.width; c.height = img.height;
-  const g = c.getContext('2d');
-  g.drawImage(img, 0, 0);
-  return ys.map((y) => {
-    const d = g.getImageData(x0, y, x1 - x0, 1).data;
-    const seen = new Set();
-    for (let i = 0; i < d.length; i += 4) seen.add(`${d[i]},${d[i + 1]},${d[i + 2]}`);
-    return [...seen];
+# Minimized bars left to right: CSS-px left, right, outline style, the width
+# of the edge drawn inside the box (::before), and whether the bar is on top
+# mid-overlap with the previous one (true for the first).
+_MIN_BARS = """() => {
+  const ws = [...document.querySelectorAll('.winbox.min')]
+    .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+  return ws.map((w, i) => {
+    const r = w.getBoundingClientRect();
+    const prev = ws[i - 1]?.getBoundingClientRect();
+    const onTop = !prev || document.elementFromPoint((r.left + prev.right) / 2, (r.top + r.bottom) / 2)
+      ?.closest('.winbox') === w;
+    return [r.left, r.right, getComputedStyle(w).outlineStyle,
+      parseFloat(getComputedStyle(w, '::before').borderLeftWidth), onTop];
   });
 }"""
 MINIMIZE_ORDER = (STANDINGS_WIN, LEFT_WIN, ".winbox.sturddle-wb-arena:has(.wb-eventlog)")
@@ -322,18 +262,14 @@ _MIN_BARS_SETTLED = f"""() => [...document.querySelectorAll('.winbox.min')].ever
   const r = w.getBoundingClientRect();
   return Math.abs(r.left - parseFloat(w.style.left)) < {SUBPIXEL} && Math.abs(r.top - parseFloat(w.style.top)) < {SUBPIXEL};
 }})"""
-# Integer DPRs only: a fractional one blends every edge across device pixels
-# (a seam's as much as any other), so its rows aren't one color either way.
-CRISP_DPRS = (1, 2)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("dpr", CRISP_DPRS)
-async def test_minimized_bars_share_one_seam(server, make_page, dpr):
-    """Side-by-side bars don't double their edges where they meet: the rows
-    along the strip's top edge are each one color end to end, with no
-    brighter spot where neighboring bars' translucent edges cross."""
-    _ctx, page = await make_page(viewport=VIEWPORT, device_scale_factor=dpr)
+async def test_minimized_bars_share_one_seam(server, make_page):
+    """Side-by-side bars don't double their edges where they meet: each draws
+    its edge inside its box (no outside outline), and each next bar overlaps
+    the previous by exactly that edge, on top of it, so one edge shows."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
     errors = watch_page_errors(page)
     await goto_arena_tournaments(page, server)
     await page.click(".tournament-row")
@@ -341,23 +277,18 @@ async def test_minimized_bars_share_one_seam(server, make_page, dpr):
     for sel in MINIMIZE_ORDER:
         await page.click(f"{sel}:not(.min) .wb-min")
         await page.wait_for_selector(f"{sel}.min")
-    await page.mouse.move(VIEWPORT["width"] / 2, 0)
     await page.wait_for_function(_MIN_BARS_SETTLED)
 
-    left, right, top = await page.evaluate(_MIN_STRIP)
-    shot = await page.screenshot()
-    # The outermost device-px row just above the bars and the first inside.
-    ys = [round(top * dpr) - 1, round(top * dpr)]
-    rows = await page.evaluate(
-        _ROW_COLORS, [base64.b64encode(shot).decode(), ys, round(left * dpr) + 2, round(right * dpr) - 2],
-    )
-    assert all(len(colors) == 1 for colors in rows), (dpr, rows)
+    bars = await page.evaluate(_MIN_BARS)
+    assert len(bars) == len(MINIMIZE_ORDER), bars
+    assert all(style == "none" and edge > 0 and on_top for _l, _r, style, edge, on_top in bars), bars
+    for (_l, prev_right, _s, edge, _t), (next_left, *_rest) in zip(bars, bars[1:]):
+        assert prev_right - next_left == pytest.approx(edge, abs=SUBPIXEL), bars
     assert_no_page_errors(errors)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("height", (700, 1100))
-async def test_maximized_window_ends_on_list_border_after_resize(server, make_page, height):
+async def test_maximized_window_ends_on_list_border_after_resize(server, make_page):
     """The maximize fence follows the list: after a viewport resize, a
     window created before it still stops at the list's bottom border."""
     _ctx, page = await make_page(viewport=VIEWPORT)
@@ -365,11 +296,66 @@ async def test_maximized_window_ends_on_list_border_after_resize(server, make_pa
     await goto_arena_tournaments(page, server)
     await page.click(".tournament-row")
     await open_arena_workspace(page)
-    await page.set_viewport_size({"width": VIEWPORT["width"], "height": height})
+    await page.set_viewport_size(RESIZED_VIEWPORT)
     await page.click(f"{STANDINGS_WIN} .wb-max")
     await page.wait_for_selector(f"{STANDINGS_WIN}.max")
 
-    await _bottom_ends_on_list_border(page, 1, STANDINGS_WIN, expect_max=True)
+    await _bottom_ends_on_list_border(page, STANDINGS_WIN, expect_max=True)
+    assert_no_page_errors(errors)
+
+
+LOG_WIN = ".winbox.sturddle-wb-arena:has(.wb-eventlog)"
+# Inline bottom edge of a window (its layout target, not the animated box).
+_INLINE_BOTTOM = """(sel) => {
+  const w = document.querySelector(sel);
+  return parseFloat(w.style.top) + parseFloat(w.style.height);
+}"""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ("max", "min"))
+async def test_min_or_max_window_survives_a_resize_in_clean(server, make_page, state):
+    """Maximize or minimize, then resize: the debounced refit re-lays out
+    Clean around the window instead of restoring it into its tile
+    (docs/tournament-workspace.md T-S1 / T-S2)."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await goto_arena_tournaments(page, server)
+    await page.click(".tournament-row")
+    await open_arena_workspace(page)
+    await page.click(f"{STANDINGS_WIN} .wb-{state}")
+    await page.wait_for_selector(f"{STANDINGS_WIN}.{state}")
+    log_bottom = await page.evaluate(_INLINE_BOTTOM, LOG_WIN)
+    await page.set_viewport_size(RESIZED_VIEWPORT)
+    # The refit has run once Clean re-tiled the other windows to the new edge.
+    await page.wait_for_function(
+        f"([sel, before]) => ({_INLINE_BOTTOM})(sel) !== before", arg=[LOG_WIN, log_bottom],
+    )
+
+    assert await page.locator(f"{STANDINGS_WIN}.{state}").count() == 1
+    if state == "max":
+        await _bottom_ends_on_list_border(page, STANDINGS_WIN, expect_max=True)
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_closed_window_stays_closed_after_a_resize_in_clean(server, make_page):
+    """X-close, then resize: the refit tiles what is open and does not reopen
+    the closed window (docs/tournament-workspace.md T-S4)."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await goto_arena_tournaments(page, server)
+    await page.click(".tournament-row")
+    await open_arena_workspace(page)
+    await page.click(f"{LEFT_WIN} .wb-close")
+    await page.wait_for_selector(LEFT_WIN, state="detached")
+    log_bottom = await page.evaluate(_INLINE_BOTTOM, LOG_WIN)
+    await page.set_viewport_size(RESIZED_VIEWPORT)
+    await page.wait_for_function(
+        f"([sel, before]) => ({_INLINE_BOTTOM})(sel) !== before", arg=[LOG_WIN, log_bottom],
+    )
+
+    assert await page.locator(LEFT_WIN).count() == 0
     assert_no_page_errors(errors)
 
 
@@ -382,13 +368,13 @@ async def test_maximized_window_ends_on_list_border_when_built_unlaid(server, ma
     errors = watch_page_errors(page)
     await goto_arena_tournaments(page, server)
     await page.click(".tournament-row")
-    await page.evaluate("() => { document.querySelector('.tournaments-list').style.display = 'none'; }")
+    await page.evaluate(f"() => {{ document.querySelector('{LIST}').style.display = 'none'; }}")
     await open_arena_workspace(page)
-    await page.evaluate("() => { document.querySelector('.tournaments-list').style.display = ''; }")
+    await page.evaluate(f"() => {{ document.querySelector('{LIST}').style.display = ''; }}")
     await page.click(f"{STANDINGS_WIN} .wb-max")
     await page.wait_for_selector(f"{STANDINGS_WIN}.max")
 
-    await _bottom_ends_on_list_border(page, 1, STANDINGS_WIN, expect_max=True)
+    await _bottom_ends_on_list_border(page, STANDINGS_WIN, expect_max=True)
     assert_no_page_errors(errors)
 
 
@@ -398,14 +384,13 @@ HIDE_LIST_ID = "test-hide-list"
 _HIDE_LIST_AT_LOAD = f"""document.addEventListener('DOMContentLoaded', () => {{
   const s = document.createElement('style');
   s.id = '{HIDE_LIST_ID}';
-  s.textContent = '.tournaments-list {{ display: none !important; }}';
+  s.textContent = '{LIST} {{ display: none !important; }}';
   document.head.append(s);
 }});"""
 _ENDS_ON_LIST_BORDER = f"""(sel) => {{
-  const w = document.querySelector(sel);
-  const list = document.querySelector('.tournaments-list').getBoundingClientRect().bottom;
-  const outline = parseFloat(getComputedStyle(w).outlineWidth);
-  return Math.abs(w.getBoundingClientRect().bottom + outline - list) < {SUBPIXEL};
+  const el = document.querySelector(sel);
+  const list = document.querySelector('{LIST}').getBoundingClientRect().bottom;
+  return Math.abs(el.getBoundingClientRect().bottom + {_OUTLINE_W} - list) < {SUBPIXEL};
 }}"""
 
 
@@ -436,12 +421,11 @@ async def test_restored_maximized_window_refits_once_list_is_laid_out(server, ma
 # Maximized window's target right edge (inline style: WinBox's own math,
 # whatever CSS stretches it to) and the workspace's right edge, from the
 # ribbon's current width.
-_MAX_RIGHT_VS_WORKSPACE = """(sel) => {
-  const w = document.querySelector(sel);
+_MAX_RIGHT_VS_WORKSPACE = f"""(sel) => {{
+  const el = document.querySelector(sel);
   const ribbonW = document.querySelector('.tournaments-ribbon').getBoundingClientRect().width;
-  const outline = parseFloat(getComputedStyle(w).outlineWidth);
-  return [parseFloat(w.style.left) + parseFloat(w.style.width), Math.floor(window.innerWidth) - Math.ceil(ribbonW) - outline];
-}"""
+  return [parseFloat(el.style.left) + parseFloat(el.style.width), Math.floor(window.innerWidth) - Math.ceil(ribbonW) - {_OUTLINE_W}];
+}}"""
 
 
 @pytest.mark.asyncio

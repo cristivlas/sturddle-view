@@ -42,9 +42,9 @@ from ..engines import (
     validate_launch_profile,
 )
 from ..env_utils import env_bool, env_float
-from ..error_detail import MESSAGE_KEY, REASON_KEY
+from ..error_detail import MESSAGE_KEY, REASON_KEY, error_detail
 from ..events import ENVELOPE_KIND, ENVELOPE_PAYLOAD
-from ..tournament.fastchess import FastchessRunner
+from ..tournament.fastchess import FastchessNotFoundError, FastchessRunner
 from ..tournament.orchestrator import (
     LINE_KEY,
     PARSED_KEY,
@@ -137,6 +137,17 @@ def _corrupt_state(e: CorruptStateError) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"corrupt state: {e}",
     )
+
+
+def _no_fastchess(e: FastchessNotFoundError) -> HTTPException:
+    return bad_request(error_detail("no_fastchess_configured", str(e)))
+
+
+def _require_fastchess(request: Request) -> None:
+    try:
+        FastchessRunner.require_binary(request.app.state.settings.tournament_fastchess_path)
+    except FastchessNotFoundError as e:
+        raise _no_fastchess(e) from e
 
 
 def _rescheck_rejected(e: RescheckError) -> HTTPException:
@@ -593,20 +604,24 @@ async def start_tournament(
     except TournamentNotFoundError as e:
         raise not_found(_TOURNAMENT_NOT_FOUND) from e
     needs_wipe = t.status in (STATUS_STOPPED, STATUS_FAILED)
-    if needs_wipe:
-        if not confirm_wipe:
-            raise conflict(_WIPE_REQUIRED_DETAIL)
-        store.wipe_for_restart(tournament_id)
-        # The buffered chatter describes games the wipe just deleted.
-        orch.clear_event_history(tournament_id)
     try:
+        if needs_wipe:
+            if not confirm_wipe:
+                raise conflict(_WIPE_REQUIRED_DETAIL)
+            # A start that can't launch must not cost the games.
+            orch.ensure_startable(tournament_id)
+            _require_fastchess(request)
+            store.wipe_for_restart(tournament_id)
+            # The buffered chatter describes games the wipe just deleted.
+            orch.clear_event_history(tournament_id)
         t = await orch.start(tournament_id)
     except TournamentNotFoundError as e:
         raise not_found(_TOURNAMENT_NOT_FOUND) from e
     except TournamentBusyError as e:
         raise conflict(str(e)) from e
+    except FastchessNotFoundError as e:
+        raise _no_fastchess(e) from e
     except FileNotFoundError as e:
-        # fastchess binary missing
         raise bad_request(str(e)) from e
     except RescheckError as e:
         raise _rescheck_rejected(e) from e
@@ -691,6 +706,13 @@ def _serialize_settings(request: Request) -> dict:
 
 def _default_root_for_settings() -> Path:
     return default_root()
+
+
+@router.get(f"{_SETTINGS_PATH}/fastchess-check")
+def check_fastchess(request: Request) -> dict:
+    """Called before a start's confirms and PATCH: 400 = can't launch."""
+    _require_fastchess(request)
+    return {}
 
 
 @router.get(_SETTINGS_PATH)

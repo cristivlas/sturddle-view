@@ -33,12 +33,12 @@ from sturddle_view.events import EventBus
 from sturddle_view.llm.cancel import CancelToken
 from sturddle_view.play import tools_engine
 from sturddle_view.play.engine_supervisor import EngineSupervisor
-from sturddle_view.play.playbook import (
+from sturddle_view.play.playbook import Situation
+from sturddle_view.play.playbook_tags import (
     MARGIN_LOSING,
     MARGIN_WINNING,
     PHASE_MIDDLEGAME,
     SOURCE_EVAL,
-    Situation,
 )
 from sturddle_view.play.tools_engine import MAX_IDEAS, PlayOutRecord, make_recommend_move_tool
 
