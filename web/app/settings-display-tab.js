@@ -127,7 +127,7 @@ export function buildDisplayTab({ initial, putSettings, initialStyle, onBoardSty
   previewWrap.append(preview);
   function renderPreview(styleId) {
     const def = resolveBoardStyle(styleId);
-    preview.className = `cm-chessboard ${def.cssClass}`;
+    preview.className = `cm-chessboard board-style-preview ${def.cssClass}`;
     preview.innerHTML = "";
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", `0 0 ${cols * tile} ${rows * tile}`);
