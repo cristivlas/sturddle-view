@@ -3911,10 +3911,18 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   backdrop-filter: blur(20px) saturate(1.8) brightness(0.75);
   background: color-mix(in srgb, var(--bg) 25%, transparent);
 }
-/* Its bar stands out from the glass: a dark solid track, edged light. */
-.has-wallpaper .iw-footer .tournament-progress {
+/* Its bars stand out from the glass: a dark solid track, edged light. */
+.has-wallpaper .iw-footer :is(.tournament-progress, .iw-llr-track) {
   background: color-mix(in srgb, var(--bg) 80%, black);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 55%, transparent), 0 1px 4px rgb(0 0 0 / 0.5);
+}
+/* A dark ring keeps the LLR marker and center pip distinct from the image's hues. */
+.has-wallpaper .iw-llr-mark {
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.7), 0 0 6px rgba(var(--accent-rgb), 0.8);
+}
+.has-wallpaper .iw-llr-track::before {
+  background: var(--muted-bright);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.7);
 }
 /* Board transparency (board-fade.js): the board, its box and the tournament
    windows holding one. The SVG group fades as one layer: its full-size border

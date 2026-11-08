@@ -38,7 +38,7 @@ function openParamsPopup({ params }) {
   const result = { params: { ...params } };
   return showDialog({
     label: "SPRT",
-    width: "min(420px, 94vw)",
+    width: "min(520px, 94vw)",
     defaultValue: result,
     body: (resolve, dialog) => {
       dialog.classList.add("sprt-params-dialog");

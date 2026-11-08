@@ -942,6 +942,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         syzygyPath: saved.engine_default_syzygy_path || "",
         pathRow,
         inheritedBook,
+        fallbackRounds: saved.default_template?.rounds,
       });
 
       const sprtCtl = mountSprtButton({
