@@ -60,9 +60,11 @@ async function uploadImage(file) {
   return r.json();
 }
 
+const hasImage = (info) => info.version != null;
+
 // A style submenu. Disabled without an image, since its settings would show
 // nothing (styles.css keeps it shut).
-const styleSubmenuHtml = (label, inner, info) => submenuHtml(label, inner, info.version == null);
+const styleSubmenuHtml = (label, inner, info) => submenuHtml(label, inner, !hasImage(info));
 
 function itemHtml(item, disabled) {
   return `<li><button type="button" class="tmb-dd-item" data-item="${item}"${disabled ? " disabled" : ""}>`
@@ -72,7 +74,7 @@ function itemHtml(item, disabled) {
 // Theme submenu: one item per theme, then None (no image, theme's or custom);
 // disabled when it has nothing to offer.
 function themesHtml(info) {
-  const none = info.version == null;
+  const none = !hasImage(info);
   const items = info.themes.map(({ id, name }) => {
     const cls = id === info.theme ? ` ${MENU_CHECKED_CLASS}` : "";
     return `<li><button type="button" class="tmb-dd-item${cls}" `
@@ -89,17 +91,18 @@ function fitHtml(info) {
     return `<li><button type="button" class="tmb-dd-item${cls}" data-fit="${escapeHtml(f)}">`
       + `${escapeHtml(capitalize(f))}</button></li>`;
   }).join("");
-  return submenuHtml(FIT_LABEL, opts);
+  return styleSubmenuHtml(FIT_LABEL, opts, info);
 }
 
 // Fade flyout: the slider and its live value.
 function fadeHtml(info) {
-  return submenuHtml(FADE_LABEL,
-    sliderRowHtml({ max: info.fade_max, step: FADE_STEP_PCT, value: info.fade, key: SLIDER_KEY.FADE }));
+  return styleSubmenuHtml(FADE_LABEL,
+    sliderRowHtml({ max: info.fade_max, step: FADE_STEP_PCT, value: info.fade, key: SLIDER_KEY.FADE }), info);
 }
 
-// Background flyout: the image's Fit and Fade.
-const backgroundHtml = (info) => styleSubmenuHtml(BACKGROUND_LABEL, fitHtml(info) + fadeHtml(info), info);
+// Background flyout: choosing a custom image, then its Fit and Fade.
+const backgroundHtml = (info) => submenuHtml(BACKGROUND_LABEL,
+  itemHtml(ITEM.CHOOSE, false) + MENU_SEPARATOR_HTML + fitHtml(info) + fadeHtml(info));
 
 // The Board slider shows opacity; board-fade.js keeps transparency.
 const flipPct = (pct) => FADE_MAX_PCT - pct;
@@ -198,8 +201,7 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
 
   // Render and show the menu; place(menu) positions it once laid out.
   const openMenu = (place, keyboard) => {
-    menu.innerHTML = themesHtml(info) + itemHtml(ITEM.CHOOSE, false)
-      + MENU_SEPARATOR_HTML + backgroundHtml(info) + boardHtml(info);
+    menu.innerHTML = themesHtml(info) + MENU_SEPARATOR_HTML + backgroundHtml(info) + boardHtml(info);
     wireSliderRow(menu, { key: SLIDER_KEY.FADE, onInput: setFade, onChange: (fade) => putStyle({ fade }) });
     wireSliderRow(menu, {
       key: SLIDER_KEY.BOARD, onInput: (opacity) => paintBoardFade(flipPct(opacity)), onChange: saveBoardFade,
