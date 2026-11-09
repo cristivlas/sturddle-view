@@ -156,18 +156,13 @@ function applyDockBounds(el) {
   }
 }
 
-function updateDockBounds() {
+// Also called by game-view's board recompute: a rail change moves the board
+// without resizing it, and the dock must follow in that same update (glide).
+export function updateDockBounds() {
   applyDockBounds(dockEl);
 }
 
-// Board horizontal position shifts (e.g. left rail collapsing when the dock
-// empties) don't trigger our ResizeObserver, which only fires on size change.
-// Listen for layout-changed too; defer two frames so game-view's own rAF-driven
-// recompute has settled the board's new left edge before we re-measure.
-window.addEventListener(APP_EVT.LAYOUT_CHANGED, () => {
-  requestAnimationFrame(() =>
-    requestAnimationFrame(() => { updateDockBounds(); reclampFloats(); }));
-});
+window.addEventListener(APP_EVT.LAYOUT_CHANGED, rafCoalesce(reclampFloats));
 
 // The dock column is viewport-fixed: follow the clocks as the document
 // scrolls (a short desktop window). Synchronous, so it moves with them.
@@ -889,9 +884,6 @@ export function createDockableWindow(config) {
     hideDockGhost(container);
     insertInDockOrder(container, slot, inst);
     syncDockVisibility();
-    // The rail's geometry is owned by game-view's positionSideRail; writing
-    // left-column bounds onto it would flash it at the board's left edge.
-    if (container !== railDockEl) applyDockBounds(container);
   }
 
   // Detach the docked slot chrome, keeping the body alive for its next home.

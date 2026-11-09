@@ -1763,7 +1763,8 @@ body .side-popover.popover-floating {
   /* left/top/width/height driven by JS on desktop; reset on mobile */
 }
 /* Left dock: the grid's first (left-gap) column, full board height. Hidden
-   when empty; the column width is unchanged so the board stays put. */
+   until game-view has widened its column for it (dock-sized), so a new dock
+   never shows at the empty column's width. */
 .play-dock-left {
   grid-column: 1;
   grid-row: 1;
@@ -1777,7 +1778,8 @@ body .side-popover.popover-floating {
   overflow: hidden;
   z-index: 9; /* below ribbon (z-index:10) */
 }
-.play-dock-left.dock-empty { visibility: hidden; }
+.play-dock-left.dock-empty,
+.play-dock-left:not(.dock-sized) { visibility: hidden; }
 
 .pgn-comments-body {
   font-size: 0.85rem;
@@ -1827,7 +1829,7 @@ body .side-popover.popover-floating {
 .play-dock-left,
 .play-rail-dock { border-radius: var(--wb-radius); }
 /* Drag-to-dock hint (play-dock-windows.js): a title bar is being dragged, so
-   reveal the drop zone even when dock-empty -- must follow the .dock-empty
+   reveal the drop zone even when dock-empty -- must follow the hidden
    rules to win the specificity tie. The over-the-zone highlight is the
    landing ghost below, not a class on the container. */
 .play-dock-left.dock-drop-eligible {
