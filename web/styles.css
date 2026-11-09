@@ -67,10 +67,15 @@
   --eval-gauge-gap: 3px;
   --eval-gauge-white: #e8e8e8;
   --eval-gauge-black: #3a3f48;
-  --eval-gauge-shadow: 0 2px 14px 4px rgba(0, 0, 0, 0.7);
-  --board-shadow: var(--eval-gauge-shadow);
   /* Play/view board frame; the gauge insets by it to match the squares. */
   --board-border-w: 1px;
+  /* One drop shadow round the board and gauge together (.board-frame), and
+     the clocks. Doubled for thickness: drop-shadow() has no spread. No
+     offset, so it falls evenly on every side. */
+  --board-shadow-1: drop-shadow(0 0 14px rgba(0, 0, 0, 0.7));
+  --board-shadow: var(--board-shadow-1) var(--board-shadow-1);
+  /* Past the shadow's blur, so a clip at this inset keeps all of it. */
+  --board-shadow-reach: 32px;
   /* Ribbon button hover: icon scale and color. */
   --ribbon-hover-scale: 1.25;
   --ribbon-hover-fg: #f06c0c;
@@ -1992,6 +1997,8 @@ body .side-popover.popover-floating {
   flex-direction: column;
   gap: var(--play-gap);
   max-width: 100%;
+  /* Neither casts on the other, so the gauge doesn't read raised. */
+  filter: var(--board-shadow);
 }
 .eval-gauge {
   position: absolute;
@@ -2002,7 +2009,6 @@ body .side-popover.popover-floating {
   display: flex;
   flex-direction: column-reverse;
   background: var(--eval-gauge-black);
-  box-shadow: var(--eval-gauge-shadow);
 }
 .eval-gauge.flipped { flex-direction: column; }
 .eval-gauge-fill {
@@ -2245,6 +2251,16 @@ body .side-popover.popover-floating {
   width: var(--board-max-px, 100%);
   align-self: center;
 }
+/* Play/view clocks: the board's shadow, single (lighter), so they don't read
+   flat beside it. */
+.game-view-board .clock-row {
+  --clip-out: calc(-1 * var(--board-shadow-reach));
+  filter: var(--board-shadow-1);
+}
+/* None toward the board: two shadows in the gap read as the clock's own,
+   lifting it over the board. The bottom clock matches. */
+.game-view-board .clock-top { clip-path: inset(var(--clip-out) var(--clip-out) 0); }
+.game-view-board .clock-bottom { clip-path: inset(0 var(--clip-out) var(--clip-out)); }
 .game-view-meta {
   width: var(--board-max-px, 100%);
   align-self: center;
@@ -2265,7 +2281,6 @@ body .side-popover.popover-floating {
   --board-edge: #333;
   background: var(--board-bg);
   border: var(--board-border-w) solid var(--board-edge);
-  box-shadow: var(--board-shadow);
   width: var(--board-max-px, 100%);
   height: auto;
   align-self: center;
