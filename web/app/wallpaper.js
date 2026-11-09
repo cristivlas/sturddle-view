@@ -71,11 +71,12 @@ function itemHtml(item, disabled) {
     + `${ITEM_LABEL[item]}</button></li>`;
 }
 
-// Theme submenu: one item per theme, then None (no image, theme's or custom);
-// disabled when it has nothing to offer.
+// Theme submenu: one item per theme by name, then None (no image, theme's or
+// custom); disabled when it has nothing to offer.
 function themesHtml(info) {
   const none = !hasImage(info);
-  const items = info.themes.map(({ id, name }) => {
+  const byName = [...info.themes].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  const items = byName.map(({ id, name }) => {
     const cls = id === info.theme ? ` ${MENU_CHECKED_CLASS}` : "";
     return `<li><button type="button" class="tmb-dd-item${cls}" `
       + `data-theme="${escapeHtml(id)}">${escapeHtml(name)}</button></li>`;

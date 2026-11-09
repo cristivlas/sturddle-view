@@ -3876,14 +3876,15 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   pointer-events: none;
   color: var(--muted-bright);
 }
+/* The footer sits close to the bottom tabs; the empty state stays centered. */
+.studio-boards-wall:not(.is-empty) { padding-bottom: 12px; }
 .studio-boards-wall > * { width: 100%; }
 /* Boards laid out (tournament-studio.js fitWallToStrip): the wall is the strip
-   under the centered grid; its footer centers there, unpadded so it fits thin
-   strips, hidden below 24px (the LLR marker, the tallest row part). */
+   under the centered grid; its footer centers there, hidden below 36px (the
+   padded progress pill's height). */
 .studio-boards-wall.in-strip { padding-block: 0; container: studio-strip / size; }
 .studio-boards-wall.in-strip .iw-footer { margin-block: auto; }
-.studio-boards-wall.in-strip .iw-progress { padding-block: 0; }
-@container studio-strip (max-height: 24px) { .iw-footer { visibility: hidden; } }
+@container studio-strip (max-height: 36px) { .iw-footer { visibility: hidden; } }
 /* Empty state: the wall hosts a clickable New-tournament CTA. */
 .studio-boards-wall.is-empty { pointer-events: auto; }
 /* The empty-state pill hugs its text, not the wall's full width. */
@@ -4013,6 +4014,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   /* Its frost (with a wallpaper) reads as a rounded panel, like the windows. */
   border-radius: var(--wb-radius);
 }
+/* Its height sets the studio-strip hide threshold (36px) above. */
 .iw-progress { display: flex; align-items: center; gap: 12px; flex: 1 1 auto; padding: 8px 12px; }
 .iw-progress .tournament-progress { flex: 1 1 auto; height: 10px; }
 .iw-progress .tournament-progress-label { font-size: 0.875rem; }
