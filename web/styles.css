@@ -4014,15 +4014,14 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   /* Its frost (with a wallpaper) reads as a rounded panel, like the windows. */
   border-radius: var(--wb-radius);
 }
-/* Its height sets the studio-strip hide threshold (36px) above. */
-.iw-progress { display: flex; align-items: center; gap: 12px; flex: 1 1 auto; padding: 8px 12px; }
+/* The footer's bars share one pill layout; its height sets the studio-strip
+   hide threshold (36px) above. */
+.iw-progress, .iw-llr { display: flex; align-items: center; gap: 12px; flex: 1 1 auto; padding: 8px 12px; }
 .iw-progress .tournament-progress { flex: 1 1 auto; height: 10px; }
 .iw-progress .tournament-progress-label { font-size: 0.875rem; }
 
 /* SPRT LLR meter: H0 ---[marker]--- H1, the verdict gauge. */
 .iw-llr {
-  display: flex; align-items: center; gap: 10px;
-  flex: 1 1 auto;
   font-family: var(--wa-font-family-code); font-weight: 700;
   font-size: 14px; letter-spacing: 0.12em; color: var(--fg);
 }
