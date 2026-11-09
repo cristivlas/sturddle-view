@@ -10,6 +10,7 @@ import {
   dockSlotCount,
   gridGapPx,
   isMobileLayout,
+  updateDockBounds,
 } from "./play-dock-windows.js";
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
@@ -47,6 +48,7 @@ const RAIL_EDGE_GAP_REM = 1; // viewport-edge breathing room beside the rail
 const RAIL_WIDTH_FRACTION = 0.18;
 const DEFAULT_LEFT_RAIL_EMPTY_RATIO = 0.4;
 const DOCK_GLIDE_CLASS = "dock-glide";
+const DOCK_SIZED_CLASS = "dock-sized";
 // Panels frosted over the wallpaper (styles.css); each gets the frost menu.
 const FROSTED_SEL = ".game-view-meta, .game-view-engine, .game-view-moves";
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
@@ -656,6 +658,8 @@ function recomputeNow(ctx) {
     // otherwise place it next to the top clock row), and set its height
     // to the board's so the moves panel fills down to the board bottom.
     positionSideRail(ctx, { grid, gapW, colGap, railW, leftEmpty, mobile, rem });
+    updateDockBounds();
+    document.querySelector(".play-dock-left")?.classList.toggle(DOCK_SIZED_CLASS, !leftEmpty);
   }
   board.forceResize();
 }
