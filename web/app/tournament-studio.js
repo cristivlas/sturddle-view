@@ -47,6 +47,7 @@ const STANDINGS_REFRESH_DEBOUNCE_MS = 400;
 // Grace before a selection-change fetch dims its panes: below this the fetch
 // usually lands first and dimming would only flash.
 const SEL_PENDING_DIM_DELAY_MS = 150;
+const EVENT_RESIZE = "resize";
 // Dims a selDetail-fed pane; the spinner overlay is armed on its wrapper.
 const PANE_LOADING_CLASS = "studio-pane--loading";
 const PANE_LOADING_HOST_ACTIVE_CLASS = "is-loading";
@@ -107,8 +108,9 @@ const UX_LABEL = Object.freeze({ [TOURNAMENT_UX.ARENA]: "Arena", [TOURNAMENT_UX.
 
 // Splitter drag axis: vertical drag resizes heights, horizontal resizes widths.
 const AXIS = Object.freeze({ Y: "y", X: "x" });
-// Fallback flex-grow when a pane has none computed yet.
+// Fallback total flex-grow for a split whose panes have none.
 const DEFAULT_SPLIT_GROW = 1;
+const DRAGGING_CLASS = "dragging";
 
 // Label for the currently selected UX mode (top-nav tab text).
 export function tournamentUxLabel() {
@@ -178,6 +180,31 @@ function restoreSplit(key, a, b) {
   b.style.flexGrow = String(g[1]);
 }
 
+// Setter of pane a's size (px) for the split as laid out now: trades
+// flex-grow with sibling b, their total grow and total px unchanged. The grow
+// shares only the free px: a zero-basis pane keeps its borders and padding.
+function splitSetter(a, b, axis) {
+  const vert = axis === AXIS.Y;
+  const sides = vert ? ["Top", "Bottom"] : ["Left", "Right"];
+  const measure = (el) => {
+    const cs = getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    const fixed = sides.reduce(
+      (sum, s) => sum + parseFloat(cs[`border${s}Width`]) + parseFloat(cs[`padding${s}`]), 0);
+    return { px: vert ? r.height : r.width, fixed, grow: parseFloat(cs.flexGrow) };
+  };
+  const ma = measure(a), mb = measure(b);
+  const free = ma.px + mb.px - ma.fixed - mb.fixed;
+  const sumG = ma.grow + mb.grow || DEFAULT_SPLIT_GROW;
+  return (px) => {
+    // Not laid out (hidden): nothing to share.
+    if (free <= 0) return;
+    const aFree = Math.max(0, Math.min(px - ma.fixed, free));
+    a.style.flexGrow = String((aFree / free) * sumG);
+    b.style.flexGrow = String(((free - aFree) / free) * sumG);
+  };
+}
+
 // Generic two-pane splitter: dragging the grip trades flex-grow between
 // sibling panes a and b. Total grow maps linearly to total pixels, so the
 // drag tracks the pointer 1:1. Mirrors the play-dock grip math. snap(aPx):
@@ -187,26 +214,16 @@ function attachSplitter(grip, a, b, axis, persistKey, snap = null) {
     if (eDown.button !== 0) return;
     eDown.preventDefault();
     try { grip.setPointerCapture(eDown.pointerId); } catch { /* */ }
-    grip.classList.add("dragging");
+    grip.classList.add(DRAGGING_CLASS);
 
     const vert = axis === AXIS.Y;
     const aRect = a.getBoundingClientRect();
-    const bRect = b.getBoundingClientRect();
-    const pxRange = vert ? aRect.height + bRect.height : aRect.width + bRect.width;
-    const aG0 = parseFloat(getComputedStyle(a).flexGrow) || DEFAULT_SPLIT_GROW;
-    const bG0 = parseFloat(getComputedStyle(b).flexGrow) || DEFAULT_SPLIT_GROW;
-    const sumG = aG0 + bG0;
     const p0 = vert ? eDown.clientY : eDown.clientX;
     const a0 = vert ? aRect.height : aRect.width;
-
-    const setA = (px) => {
-      const aPx = Math.max(0, Math.min(px, pxRange));
-      a.style.flexGrow = String((aPx / pxRange) * sumG);
-      b.style.flexGrow = String(((pxRange - aPx) / pxRange) * sumG);
-    };
+    const setA = splitSetter(a, b, axis);
     const onMove = (e) => setA(a0 + (vert ? e.clientY : e.clientX) - p0);
     const onUp = () => {
-      grip.classList.remove("dragging");
+      grip.classList.remove(DRAGGING_CLASS);
       grip.removeEventListener("pointermove", onMove);
       grip.removeEventListener("pointerup", onUp);
       grip.removeEventListener("pointercancel", onUp);
@@ -798,7 +815,8 @@ function studioCols() {
 // 1px), so no board's own square cap (width + chrome) trims it shorter.
 // x0/dpr: the region's page x and the device pixel ratio, for slotRect.
 // y0: desktop centers a grid shorter than the region (whole device px);
-// gridBottom: where the grid ends, for the info wall's strip below it.
+// gridH: the grid's height; gridBottom: where it ends (the info wall's strip).
+// rows: the grid's row count.
 // pending: boards not yet open but about to take slots. width: the region's
 // content width to fit (default: as laid out now).
 function boardCell(ctx, pending = 0, width = ctx.boardsEl?.clientWidth ?? 0) {
@@ -812,13 +830,14 @@ function boardCell(ctx, pending = 0, width = ctx.boardsEl?.clientWidth ?? 0) {
   const gridCw = Math.max(LIVE_MIN_WIDTH, width / gridCols);
   const chDev = Math.floor(gridCw * dpr) + Math.floor((LIVE_MIN_HEIGHT() - LIVE_MIN_WIDTH) * dpr);
   const ch = chDev / dpr;
-  const gridH = Math.ceil(laidOut / cols) * ch;
+  const rows = Math.ceil(laidOut / cols);
+  const gridH = rows * ch;
   const centered = !mqMobile.matches && !ctx._maxWb;
   const spare = centered ? Math.max(0, (el?.clientHeight ?? 0) - gridH) : 0;
   const y0 = Math.floor((spare / 2) * dpr) / dpr;
   return {
     cw, ch, cols, overflowX: cw > fit, x0: el?.getBoundingClientRect().left ?? 0, dpr,
-    y0, gridBottom: y0 + gridH,
+    y0, gridH, gridBottom: y0 + gridH, rows,
   };
 }
 
@@ -864,6 +883,62 @@ function regridBoards(ctx) {
   // are no boards rather than reserve a blank strip. Desktop lets the flex
   // split govern the height.
   ctx.boardsEl.style.height = mqMobile.matches ? (hasBoards ? `${slotRect(0, cell).h}px` : "0") : "";
+  // A snapped grip's grid changed rows: the snap is off, and the split it
+  // kept adjusting is the one a reload restores.
+  if (ctx._snapRows !== null && !mqMobile.matches && !ctx._maxWb && cell.rows !== ctx._snapRows) {
+    setSnapRows(ctx, null);
+    persistSplit(STORAGE_KEY.STUDIO_SPLIT_ROW, ctx.boardsEl, ctx.bottomEl);
+  }
+}
+
+// The row grip is snapped to the grid's bottom while the grid keeps `rows`
+// rows (null: not snapped). Persisted: a reload restores the snap.
+function setSnapRows(ctx, rows) {
+  ctx._snapRows = rows;
+  saveJson(STORAGE_KEY.STUDIO_SNAP_ROWS, rows);
+}
+
+// Row grip release (region px tall): snap it (snapToGrid), and note whether
+// it now sits at the grid's bottom (within a device px), snapped or dragged.
+function releaseRowGrip(ctx, px) {
+  const snapped = snapToGrid(ctx, px);
+  const eligible = !mqMobile.matches && !ctx._maxWb && anyBoardsShown();
+  // Full width, as keepSnapped measures it.
+  const { gridH, rows, dpr } = boardCell(ctx, 0, regionSize(ctx.boardsEl).w);
+  setSnapRows(ctx, eligible && Math.abs((snapped ?? px) - gridH) < 1 / dpr ? rows : null);
+  return snapped;
+}
+
+// A region resize not from the grip (the window's) keeps a snapped grip at
+// the grid's bottom: the grid's height follows the region's width.
+function keepSnapped(ctx) {
+  if (ctx._snapRows === null || mqMobile.matches || ctx._maxWb) return;
+  if (ctx.gripRowEl.classList.contains(DRAGGING_CLASS)) return;
+  // Full width: a too-short region's own scrollbar must not narrow the grid.
+  const { w, outerH } = regionSize(ctx.boardsEl);
+  const { gridH, rows, dpr } = boardCell(ctx, 0, w);
+  // Rows changed: regridBoards turns the snap off.
+  if (rows !== ctx._snapRows || Math.abs(outerH - gridH) < 1 / dpr) return;
+  splitSetter(ctx.boardsEl, ctx.bottomEl, AXIS.Y)(gridH);
+}
+
+// After the boards are restored: re-apply a saved snap (its rows permitting).
+function restoreSnap(ctx) {
+  if (!ctx.boardsEl) return;
+  ctx._snapRows = loadJson(STORAGE_KEY.STUDIO_SNAP_ROWS);
+  ctx.onBoardResize();
+}
+
+// The region's exact (fractional) content size, scrollbars included, and its
+// border-box height: offset/client sizes round to whole px.
+function regionSize(el) {
+  const cs = getComputedStyle(el);
+  const r = el.getBoundingClientRect();
+  return {
+    w: r.width - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth),
+    h: r.height - parseFloat(cs.borderTopWidth) - parseFloat(cs.borderBottomWidth),
+    outerH: r.height,
+  };
 }
 
 // The region's scrollbars, decided from the grid at the region's full size,
@@ -876,14 +951,10 @@ function syncScrollbar(ctx) {
     el.style.overflowX = el.style.overflowY = "";
     return;
   }
-  // Exact (fractional) size: offset/client sizes round to whole px.
-  const cs = getComputedStyle(el);
-  const r = el.getBoundingClientRect();
-  const fullW = r.width - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth);
-  const fullH = r.height - parseFloat(cs.borderTopWidth) - parseFloat(cs.borderBottomWidth);
-  const full = boardCell(ctx, 0, fullW);
+  const { w, h } = regionSize(el);
+  const full = boardCell(ctx, 0, w);
   // Under a device px over (a snapped grip's rounding) clips unseen.
-  const over = full.gridBottom - full.y0 - fullH;
+  const over = full.gridH - h;
   el.style.overflowX = full.overflowX ? OVERFLOW_SCROLL : OVERFLOW_HIDDEN;
   el.style.overflowY = over >= 1 / full.dpr ? OVERFLOW_SCROLL : OVERFLOW_HIDDEN;
 }
@@ -955,8 +1026,7 @@ function snapToGrid(ctx, px) {
   regridBoards(ctx);
   const footer = ctx.boardsWallEl?.querySelector(IW_FOOTER_SEL);
   if (!footer || getComputedStyle(footer).visibility !== HIDDEN_VISIBILITY) return null;
-  const { y0, gridBottom } = boardCell(ctx);
-  const gridH = gridBottom - y0;
+  const { gridH } = boardCell(ctx);
   return px > gridH ? gridH : null;
 }
 
@@ -1376,7 +1446,7 @@ function wireSplitters(ctx) {
     ctx._restoreViaGrip = false;
   }, true);
   attachSplitter(ctx.gripRowEl, ctx.boardsEl, ctx.bottomEl, AXIS.Y, STORAGE_KEY.STUDIO_SPLIT_ROW,
-    (px) => snapToGrid(ctx, px));
+    (px) => releaseRowGrip(ctx, px));
   attachSplitter(ctx.gripColEl, ctx.bottomLeftEl, ctx.bottomRightEl, AXIS.X, STORAGE_KEY.STUDIO_SPLIT_COL);
 }
 
@@ -1418,6 +1488,8 @@ export function mountTournamentStudio({ container, api, events, log }) {
     live: null, liveTid: null, liveUnsub: null, liveGen: 0, _panesPending: false,
     // Resolves when a running tourney's boards finish restoring (gates reveal).
     boardsRestored: null,
+    // Row count of the grid the row grip is snapped to (setSnapRows).
+    _snapRows: null,
     // Standings/Event Log bound to the selected tourney (any).
     selDetail: null, selEvents: [], selGen: 0, selLoadedId: null,
     // Selection-change fetch in flight: dims the selDetail-fed panes after a
@@ -1509,7 +1581,7 @@ export function mountTournamentStudio({ container, api, events, log }) {
     saveBoards(ctx);
   };
   // Once per frame, so a grip drag recenters the grid live.
-  ctx.onBoardResize = rafCoalesce(() => regridBoards(ctx));
+  ctx.onBoardResize = rafCoalesce(() => { keepSnapped(ctx); regridBoards(ctx); });
   // Re-pin/re-grid immediately when the mobile breakpoint flips (cols and
   // board-area height change between desktop and mobile).
   ctx.onMqMobile = () => regridBoards(ctx);
@@ -1523,6 +1595,9 @@ export function mountTournamentStudio({ container, api, events, log }) {
   // The region, not the window: a grip drag resizes it too (the grid recenters).
   ctx.boardsResizeObs = new ResizeObserver(ctx.onBoardResize);
   ctx.boardsResizeObs.observe(ctx.boardsEl);
+  // The window's resize event precedes the frame's rAF (the observer follows
+  // it), so a snapped grip tracks the window with no frame of lag.
+  window.addEventListener(EVENT_RESIZE, ctx.onBoardResize);
   mqMobile.addEventListener("change", ctx.onMqMobile);
 
   // Reload the list on any tournament event (coalesced); initial load now.
@@ -1537,6 +1612,7 @@ export function mountTournamentStudio({ container, api, events, log }) {
   const built = studioLoadList(ctx)
     .then(() => ctx.boardsRestored)
     .catch(() => {})
+    .then(() => restoreSnap(ctx))
     .then(() => new Promise((r) => requestAnimationFrame(() => r())));
   const ready = Promise.race([
     built,
@@ -1559,6 +1635,7 @@ function unmountStudio(ctx) {
   window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onBoardClosed);
   window.removeEventListener(APP_EVT.LIVEGAME_RESOLVED, ctx.onBoardResolved);
   ctx.boardsResizeObs?.disconnect();
+  window.removeEventListener(EVENT_RESIZE, ctx.onBoardResize);
   ctx.onBoardResize?.cancel();
   mqMobile.removeEventListener("change", ctx.onMqMobile);
   ctx.wallpaper?.unmount();
