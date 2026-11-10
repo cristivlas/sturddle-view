@@ -3881,6 +3881,12 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   position: relative;
   overflow: auto;
 }
+/* Its scrollbar gutter is solid app background, not the backdrop. */
+.studio-boards::-webkit-scrollbar-track,
+.studio-boards::-webkit-scrollbar-corner { background: var(--bg); }
+/* And a flat thumb: outranks the edge gradients (styles near the top). */
+.studio-boards::-webkit-scrollbar-thumb:vertical:not(:hover),
+.studio-boards::-webkit-scrollbar-thumb:horizontal:not(:hover) { background: var(--scrollbar-thumb); }
 /* No boards: the region is only the clipped art backdrop -- never scroll,
    whatever the split height. */
 .studio-boards.no-boards { overflow: hidden; }
