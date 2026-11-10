@@ -16,6 +16,7 @@ import {
 } from "./dialogs.js";
 import { STATUS } from "./tournament-events.js";
 import { ENGINES_NO_PROBE_PATH } from "./engines.js";
+import { isRemote } from "./role.js";
 import { isObject } from "./wb-utils.js";
 
 const CONFIRM_WIPE_QS = "confirm_wipe=true";
@@ -287,7 +288,8 @@ export async function gatedStart({ api, log }, t) {
   } catch (e) {
     log?.(`drift check skipped: ${e.message}`);
   }
-  const drifted = available ? detectEngineDrift(t, available) : false;
+  // A remote client can't re-freeze (PATCH), so it starts the saved roster.
+  const drifted = available && !isRemote() ? detectEngineDrift(t, available) : false;
 
   if (!drifted) {
     if (needsWipe) {

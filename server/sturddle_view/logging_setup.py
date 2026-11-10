@@ -7,12 +7,24 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import re
 from pathlib import Path
 
 from . import APP_NAME, app_log_dir
+from .auth import AUTH_TOKEN_PARAM
 
 _LOG_FILENAME = f"{APP_NAME}.log"
 _configured = False
+_TOKEN_IN_URL = re.compile(rf"([?&]{re.escape(AUTH_TOKEN_PARAM)}=)[^&\s]+")
+_TOKEN_MASK = "***"
+
+
+class _TokenRedactingFormatter(logging.Formatter):
+    """Masks the auth token in entry URLs. File only: the console keeps the
+    full URL, which is how a headless user gets in."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return _TOKEN_IN_URL.sub(rf"\g<1>{_TOKEN_MASK}", super().format(record))
 
 
 def configure_logging(
@@ -38,15 +50,16 @@ def configure_logging(
         logging.getLogger("uvicorn.access").setLevel(max(server_level, logging.WARNING))
         return log_file
 
-    fmt = logging.Formatter(
-        fmt="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    fmt_args = {
+        "fmt": "%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+        "datefmt": "%Y-%m-%d %H:%M:%S",
+    }
+    fmt = logging.Formatter(**fmt_args)
 
     file_handler = logging.handlers.RotatingFileHandler(
         log_file, maxBytes=2_000_000, backupCount=5, encoding="utf-8"
     )
-    file_handler.setFormatter(fmt)
+    file_handler.setFormatter(_TokenRedactingFormatter(**fmt_args))
     file_handler.setLevel(logging.DEBUG)
 
     # Stream level tracks the *minimum* of the requested levels so

@@ -70,10 +70,12 @@ stores. Files: `test_tournaments_api.py`, `test_tournament_proxy_api.py`,
 `test_engines_api.py`, `test_settings_api.py`, `test_pause_api.py`,
 `test_fs_api.py`.
 
-Auth in tests: the server accepts the token via `HttpOnly` cookie (browser
+Auth in tests: the server accepts a token via `HttpOnly` cookie (browser
 path) or `Authorization: Bearer` header (CLI / tests). The `?token=` query
 fallback was removed. Tests that exercise authenticated endpoints either
-set `auth_disabled=True` on `Settings` or attach the header on the client:
+set `auth_disabled=True` on `Settings` or attach the header on the client
+(the host token reaches every route; `test_auth_roles.py` covers the
+remote token's scope):
 
 ```python
 settings = Settings(token="test-token")
@@ -87,6 +89,16 @@ Origin enforcement: `_OriginMiddleware` rejects non-GET requests with an
 (Python `TestClient`, curl, and other non-browser clients don't send one;
 browsers always do on cross-origin requests). Tests therefore need no
 special handling.
+
+Host check: `_HostMiddleware` refuses a `Host` that doesn't name this
+machine. `TestClient` sends `Host: testserver`, so the autouse
+`_isolate_user_config` fixture sets `SV_ALLOWED_HOSTS=testserver`;
+`test_host_check.py` pins its own `allowed_hosts`.
+
+E2E servers run with `SV_AUTH_DISABLED=1` by default; pass
+`env_overrides={"SV_AUTH_DISABLED": "0", "SV_TOKEN": ..., "SV_REMOTE_TOKEN": ...}`
+to `run_uvicorn_subprocess` for a test that needs real tokens
+(`test_e2e_remote_client.py`).
 
 #### End-to-end (Playwright)
 
@@ -186,8 +198,8 @@ Live under `server/tests/perf/`; collected but skipped by default.
 
 ### Security: manual smoke tests
 
-The auth, bind-policy, and TLS code paths are not covered by automated
-tests. Re-run these manually whenever any of the following change:
+Token scopes, the Host check and the log-file token mask have automated
+tests; the bind-policy, desktop and TLS paths do not. Re-run these manually whenever any of the following change:
 `auth.py`, `app.py` (middlewares / `/auth` route), `__main__.py` flag
 validation, `desktop.py` startup, or the cookie/Bearer code in the
 frontend.
@@ -203,11 +215,13 @@ frontend.
    pinned via `SV_TOKEN` so the uvicorn worker's `create_app()`
    sees the same value the window was opened with.
 
-3. Tailscale / trusted-LAN open. `python -m sturddle_view --host 0.0.0.0
-   --no-auth`. Startup logs a warning (`AUTH DISABLED on non-loopback
-   bind ...`). LAN peers can hit `http://<lan-ip>:8765/` and load
-   `/ui/` without a token. `--no-auth` alone (no `--host`) must NOT
-   widen the bind -- it stays on `127.0.0.1`.
+3. Connect from mobile. In desktop mode, About -> Connect from mobile
+   shows a QR; scanning it opens the app on the phone. The phone can play
+   and watch, but shows no Settings gear and no tournament
+   New/Edit/Copy/Delete. Opening the server by a host name that isn't
+   this machine's IP or `localhost` (and not in `SV_ALLOWED_HOSTS`)
+   returns 400 `invalid host`. The log file shows `token=***`, the
+   console the full entry URL.
 
 4. Rejected flag combinations (each exits with code 2, no traceback):
    - `--cert foo.pem` -> `--cert and --key must be provided together.`

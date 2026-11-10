@@ -1148,6 +1148,9 @@ nav button.active::after {
 /* Phone portrait header only: About and Settings fold into it. */
 #header-more-btn { display: none; }
 
+/* Remote client (role.js): controls it can't use are not shown at all. */
+body.remote-client .host-only { display: none !important; }
+
 /* Disconnected: disable the Settings gear and Engines nav. Play stays usable
    for last-known state inspection. */
 body.disconnected #settings-btn,

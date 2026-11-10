@@ -56,13 +56,18 @@ sturddle-view
 The server binds to `127.0.0.1:8765` by default and prints the full
 startup URL (e.g. `http://127.0.0.1:8765/auth?token=...`). Open it once;
 the server sets an `HttpOnly` cookie and redirects to `/ui/`. To expose
-the server on the LAN/tailnet, pass `--host 0.0.0.0` (token still
-required, or add `--no-auth` if you trust the network). In desktop mode,
-About -> Connect from mobile opens the LAN port on demand (Windows Firewall
-asks once) and shows a QR code that opens the app on a phone on the same
-network. When Tailscale is up (Windows/Linux), the QR carries the
-Tailscale address instead (`SV_PREFER_TAILSCALE=0` keeps the LAN one).
-To serve over TLS, supply `--cert PATH --key PATH`.
+the server on the LAN/tailnet, pass `--host 0.0.0.0` (the token is still
+required). In desktop mode, About -> Connect from mobile opens the LAN port
+on demand (Windows Firewall asks once) and shows a QR code that opens the
+app on a phone on the same network. When Tailscale is up (Windows/Linux),
+the QR carries the Tailscale address instead (`SV_PREFER_TAILSCALE=0` keeps
+the LAN one). To serve over TLS, supply `--cert PATH --key PATH`.
+
+The QR carries a *remote* token: a phone or tablet can play, view games and
+watch, start or stop existing tournaments, but Settings, engine setup and
+tournament create/edit/delete stay on the host computer. Open the server by
+IP address or `localhost`; other host names are refused (a DNS-rebinding
+guard) unless listed in `SV_ALLOWED_HOSTS`.
 
 ## Command-line flags
 
@@ -73,7 +78,6 @@ To serve over TLS, supply `--cert PATH --key PATH`.
 | `--engine PATH` | Fallback UCI engine when the registry has no selection. |
 | `--desktop` | Open in a native window instead of a browser tab. |
 | `--width N` / `--height N` | Desktop window size. Default `1280` x `1000`. |
-| `--no-auth` | Disable token auth. Loopback only unless you accept the risk. |
 | `--cert PATH` / `--key PATH` | Serve over TLS (PEM). Must be given together; rejected with `--desktop`. |
 | `--instance TAG` | Isolate config/data dirs so multiple instances run side by side. |
 | `--reload` | Dev: auto-reload on source changes. |
@@ -90,9 +94,9 @@ set.
 `127.0.0.1:8765`). The loopback default keeps the server private; set
 `--host 0.0.0.0` to reach it from other machines on your LAN or tailnet; desktop
 mode instead opens the LAN port for the session when you expand About ->
-Connect from mobile. Token auth still applies on a non-loopback bind unless
-you also pass `--no-auth` -- do that only on a network you trust, since it
-drops the only access control.
+Connect from mobile. Token auth always applies. Desktop mode serves the LAN
+over plain HTTP, so prefer Tailscale (encrypted) on a network you don't
+trust.
 
 **TLS.** `--cert PATH` and `--key PATH` serve HTTPS from a PEM certificate and
 key. They must be supplied together, and are rejected together with `--desktop`
@@ -118,7 +122,7 @@ them for the full firehose.
 ## Environment variables
 
 All knobs use the `SV_` prefix; any CLI flag above has an `SV_*` equivalent
-(e.g. `SV_HOST`, `SV_PORT`, `SV_AUTH_DISABLED`). AI, tournament, and debug
+(e.g. `SV_HOST`, `SV_PORT`). AI, tournament, and debug
 tunables are documented in full in [docs/env-vars.md](docs/env-vars.md).
 
 ## Screenshots

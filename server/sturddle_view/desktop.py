@@ -22,7 +22,14 @@ except ImportError:  # optional: installed with the [desktop] extra
 from . import APP_NAME, app_data_dir, is_windows
 from ._uvicorn_signal import make_signalling_server
 from .app import create_app
-from .config import ENV_TOKEN, LOOPBACK_HOST, WEB_DIR, WILDCARD_HOST, Settings
+from .config import (
+    ENV_REMOTE_TOKEN,
+    ENV_TOKEN,
+    LOOPBACK_HOST,
+    WEB_DIR,
+    WILDCARD_HOST,
+    Settings,
+)
 from .env_utils import env_float
 from .error_detail import ERROR_KEY
 from .lan_listener import LanListener
@@ -293,10 +300,11 @@ def run_desktop(host: str, port: int, width: int, height: int) -> None:
         raise SystemExit(f"port {port} already in use")
 
     settings = Settings(host=host, port=port)
-    # Pin the token so create_app picks up the same value via Settings()
-    # (rather than rolling a new random one) -- the /auth handshake below
-    # validates against this token.
+    # Pin the tokens so create_app picks up the same values via Settings()
+    # (rather than rolling new random ones) -- the /auth handshake below
+    # validates against them.
     os.environ.setdefault(ENV_TOKEN, settings.token)
+    os.environ.setdefault(ENV_REMOTE_TOKEN, settings.remote_token)
 
     # Build the app eagerly so we can hand the same instance to uvicorn
     # AND keep a reference for the close-confirm handler (reads

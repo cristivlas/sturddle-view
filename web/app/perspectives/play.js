@@ -5,10 +5,11 @@
 import { mountGameView } from "../game-view.js";
 import { APP_EVT } from "../app-events.js";
 import { KIND, AI_KIND_PREFIX } from "../game-events.js";
+import { isRemote } from "../role.js";
 import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
 import { sidePovScore } from "../wb-utils.js";
-import { alert as showAlert, apiErrorObject, buildToastActionButton, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, OPEN_ENGINES_ACTION, openSettings, reportAiError, reportError, SETTINGS_PATH, SETTINGS_TAB_ENGINES, stickyToast, toast } from "../dialogs.js";
+import { alert as showAlert, apiErrorObject, buildToastActionButton, confirm, DETAILS_DIALOG_WIDTH, DETAILS_ICON, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportAiError, reportError, SETTINGS_PATH, SETTINGS_TAB_ENGINES, settingsLink, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, revealPvTableWindow, isUciLogOpen, isPvTableOpen, UCI_LOG_TITLE, PV_TABLE_TITLE, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setRailDockContainer, setEvalBarCallbacks, setEvalGraphEnabled, evalBar, getEvalBarApi, setUciLogEngine, clearUciLog, clearSearchLines, isMobileLayout, setPvLineBoard } from "../play-dock-windows.js";
 import {
@@ -102,13 +103,8 @@ function buildDifficultyDetails(engineName, resolve) {
     el.textContent = term;
     return el;
   };
-  const link = document.createElement("a");
-  link.href = "#";
-  link.textContent = MSG.DIFFICULTY_DETAILS_LINK;
-  link.addEventListener("click", (ev) => {
-    ev.preventDefault();
-    resolve();
-    openSettings(SETTINGS_TAB_ENGINES);
+  const link = settingsLink(SETTINGS_TAB_ENGINES, MSG.DIFFICULTY_DETAILS_LINK, {
+    gear: false, before: resolve,
   });
   const frag = document.createDocumentFragment();
   frag.append(
@@ -164,8 +160,10 @@ const SETTING_SHOW_PGN_COMMENTS = "view_show_pgn_comments";
 const SETTING_SHOW_EVAL_GRAPH = "play_show_eval_graph";
 
 // X on a settings-backed dock window is the same gesture as flipping its
-// Display-tab switch off.
+// Display-tab switch off. A remote client can't write Settings: the window
+// just closes for this session.
 function putSettingOff(ctx, key) {
+  if (isRemote()) return;
   ctx.api("PUT", SETTINGS_PATH, { [key]: false })
     .catch((e) => reportError(ctx, MSG.SETTING_SAVE_FAILED, e));
 }

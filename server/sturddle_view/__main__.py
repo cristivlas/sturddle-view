@@ -19,7 +19,6 @@ from ._reload_worker import APP_FACTORY, windows_reload_worker
 from ._runtime import DESKTOP_FLAG, PROXY_SUBCOMMAND, is_frozen
 from .auth import AUTH_DISABLED_LAN_WARNING
 from .config import (
-    ENV_AUTH_DISABLED,
     ENV_ENGINE_PATH,
     ENV_HOST,
     ENV_PORT,
@@ -47,7 +46,6 @@ _STORE_TRUE = "store_true"
 _CERT_FLAG = "--cert"
 _KEY_FLAG = "--key"
 _LOCK_FILENAME = "server.lock"
-_ENV_TRUE = "1"
 
 # Process exit codes: argparse's usage-error code, a generic failure, and
 # the shell convention for death by SIGINT (128 + 2).
@@ -86,11 +84,6 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Desktop window height (default %(default)s)")
     parser.add_argument("--reload", action=_STORE_TRUE, help="Dev mode: auto-reload on changes")
     parser.add_argument("--engine", default=None, help="Path to UCI engine binary")
-    parser.add_argument(
-        "--no-auth",
-        action=_STORE_TRUE,
-        help="Disable token auth (dev convenience; do not use on untrusted networks)",
-    )
     parser.add_argument(_CERT_FLAG, default=None, help=f"TLS cert (PEM). Requires {_KEY_FLAG}.")
     parser.add_argument(_KEY_FLAG, default=None, help=f"TLS key (PEM). Requires {_CERT_FLAG}.")
     add_instance_arg(parser)
@@ -157,8 +150,6 @@ def main() -> None:
         os.environ[ENV_HOST] = args.host
     if args.port:
         os.environ[ENV_PORT] = str(args.port)
-    if args.no_auth:
-        os.environ[ENV_AUTH_DISABLED] = _ENV_TRUE
     if args.cert:
         os.environ[ENV_TLS_CERT] = args.cert
         os.environ[ENV_TLS_KEY] = args.key
@@ -167,8 +158,8 @@ def main() -> None:
     host = settings.host
     port = settings.port
 
-    if args.no_auth and host != LOOPBACK_HOST:
-        # Explicit, intentional combo: warn loudly but allow (tailscale / trusted LAN).
+    if settings.auth_disabled and host != LOOPBACK_HOST:
+        # Test-only SV_AUTH_DISABLED on a LAN bind: warn loudly.
         log.warning(AUTH_DISABLED_LAN_WARNING, host)
 
     if args.desktop:

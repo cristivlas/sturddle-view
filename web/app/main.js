@@ -12,6 +12,10 @@ import { APP_EVT } from "./app-events.js";
 import { getTournamentUx, tournamentUxLabel } from "./tournament-studio.js";
 import { installSelection, installScrollEdgeTracking } from "./wb-utils.js";
 import { SETTINGS_PATH } from "./dialogs.js";
+import { isRemote, loadRole } from "./role.js";
+
+// Before any UI is built: builders hide what a remote client can't use.
+await loadRole();
 
 installSelection();
 installScrollEdgeTracking();
@@ -272,7 +276,7 @@ const settingsBtn = document.getElementById("settings-btn");
 settingsBtn.addEventListener("click", () => {
   openSettingsDialog({ api, reloadPerspective });
 });
-wireHeaderMenu([aboutBtn, settingsBtn]);
+wireHeaderMenu(isRemote() ? [aboutBtn] : [aboutBtn, settingsBtn]);
 // Allow any module to deep-link into the Settings dialog without
 // threading the `api` reference through call chains. detail.tab opens
 // the named tab (e.g. "engines"); detail.focus names a control within it

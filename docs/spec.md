@@ -139,7 +139,7 @@ Tournament:
 - `tournament_root` — root directory for tournament files
 - `tournament_default_template` — default tournament config template
 
-Excluded from persistence: `token`, `host`, `port`, `auth_disabled`, `web_dir`.
+Excluded from persistence: `token`, `remote_token`, `host`, `port`, `auth_disabled`, `web_dir`.
 These come from CLI flags / env vars (`SV_*` prefix or `.env` at repo root).
 
 Client-side (localStorage, server-agnostic):
@@ -170,7 +170,7 @@ Client-side (localStorage, server-agnostic):
 #### `/fs` — REST
 - Directory listing for the file picker dialog (engine binary, PGN dir, etc.)
 - Cross-platform (Windows drives, POSIX paths) via stdlib `pathlib`
-- Token-gated; permissions are whatever the server process has — no allowlist
+- Host token only; permissions are whatever the server process has — no allowlist
 
 #### `/game` — REST
 - Submit human move (snap-back on illegal: server publishes current state so
@@ -217,26 +217,31 @@ Single-user app. Two intended deployment modes:
    the same user, against which TLS and auth tokens are not defenses.
 2. **Trusted LAN / tailnet** (explicit `--host 0.0.0.0`, or desktop's
    About -> Connect from mobile, which opens the LAN port for the
-   session): the About dialog shows the entry URL as a QR code to any
-   authenticated client. The token must keep unauthorized peers out;
-   optionally TLS protects against on-wire sniffing.
+   session): the About dialog shows the entry URL as a QR code carrying
+   the *remote* token (see [Token scopes](#token-scopes)). Tokens keep
+   unauthorized peers out; TLS (server mode) or Tailscale protects them
+   on the wire.
 
-Not in scope: public internet exposure, multi-user isolation, role-based
-access, rate limiting, audit logging.
+Desktop mode serves the LAN over plain HTTP, so on a shared network a
+sniffed remote token can be replayed. The remote scope bounds what that
+gets: playing and watching, never running a program or writing outside
+the app's own stores.
+
+Not in scope: public internet exposure, multi-user isolation, rate
+limiting, audit logging.
 
 ### Bind policy
 
-Default `--host` is `127.0.0.1`. `--no-auth` alone does **not** widen
-the bind. Opening the server to the network requires an explicit `--host`
-argument, or in desktop mode the user's own Connect-from-mobile action
-(for that session only). The unsafe combo of a non-loopback bind
-with `--no-auth` is permitted (the tailscale / trusted-LAN case) but logs
-a startup warning.
+Default `--host` is `127.0.0.1`. Opening the server to the network
+requires an explicit `--host` argument, or in desktop mode the user's own
+Connect-from-mobile action (for that session only). There is no way to
+turn auth off from the CLI.
 
 ### Authentication
 
-Single shared-secret token, generated at startup via
-`secrets.token_urlsafe(24)`. The token is presented two ways:
+Two shared-secret tokens, each generated at startup via
+`secrets.token_urlsafe(24)` and never persisted (see
+[Token scopes](#token-scopes)). A token is presented two ways:
 
 - **Cookie** (`sv_auth`, `HttpOnly`, `SameSite=Lax`, `Secure` when TLS is
   on). Set by a one-shot `GET /auth?token=<secret>` handshake that
@@ -252,18 +257,60 @@ accepts the token in the URL, and only to convert it into a cookie.
 redirect in some embedded webviews. Lax still strips the cookie from
 cross-site POSTs, which is what defeats CSRF.
 
-`--no-auth` disables the token check entirely. The startup banner makes
-this explicit. Combined with a non-loopback `--host`, the warning is
-escalated.
+The startup banner logs the host entry URL (`open: .../auth?token=...`)
+to the console; the log file gets it with the token masked
+(`logging_setup._TokenRedactingFormatter`).
+
+`SV_AUTH_DISABLED` (tests only, no CLI flag) treats every request as the
+host token; on a non-loopback bind it logs a warning.
+
+### Token scopes
+
+| Token | Held by | May |
+|---|---|---|
+| host (`SV_TOKEN`) | the desktop window, the console entry URL | everything |
+| remote (`SV_REMOTE_TOKEN`) | the Connect-from-mobile QR | play and watch: games, importing and opening recent imports, openings, the engine list, watching tournaments and starting/stopping existing ones |
+
+A request with the remote token gets 403 ("only available on the host
+computer") for anything that changes what the server runs or where it
+writes, or deletes the host's data: Settings writes, wallpaper and theme
+changes, engine add/edit/probe, the file browser, the QR itself,
+tournament create/edit/copy/delete (create and edit take engine
+`cmd`/`args`/`env` from the request), and deleting recent imports.
+
+Enforcement is per router: every API module has a host-only `router`
+(`Depends(auth.require_host)`) and, where needed, a `remote_router`
+(`Depends(auth.require_token)`, any valid token). A route is host-only
+unless it is declared on `remote_router`. WebSocket streams are read-only
+and accept either token (`auth.ws_allowed`).
+
+The UI asks `GET /auth/role` once at startup (`web/app/role.js`) and, for
+a remote client, hides what the server would refuse: the Settings gear
+and every deep link into Settings, the Appearance menu, Connect from
+mobile, the recents dropdown's delete buttons, and the tournament
+create/edit/copy/delete controls. Closing a settings-backed dock window
+closes it for that session only. The server check is the real gate; the
+UI only avoids dead ends.
+
+### Host check
+
+`_HostMiddleware` refuses (400; WebSocket: close 1008) any HTTP or
+WebSocket request whose `Host` header doesn't name this server:
+`localhost` or a loopback address, the `--host` value (so the banner's
+`open:` URL always works), the address the request arrived on (the
+socket's own end, IPv4 or IPv6), or a name listed in `SV_ALLOWED_HOSTS`
+(comma-separated, e.g. a TLS certificate's name, a Tailscale MagicDNS
+name, or a reverse proxy's name). No interface enumeration per request. This defeats DNS
+rebinding: a page whose domain was re-pointed at this server sends that
+domain as both `Host` and `Origin`, so the Origin check alone passes it.
 
 ### Origin enforcement
 
 `_OriginMiddleware` rejects non-`GET`/`HEAD`/`OPTIONS` requests whose
 `Origin` header doesn't match `Host`. Missing `Origin` is allowed —
 browsers always send it on cross-origin requests, so this defeats CSRF
-and DNS-rebinding from a malicious page on the same machine. Non-browser
-clients (curl, `TestClient`, Python `requests`) don't send `Origin` and
-pass through unchanged.
+from a malicious page. Non-browser clients (curl, `TestClient`, Python
+`requests`) don't send `Origin` and pass through unchanged.
 
 The same check runs on every WebSocket upgrade.
 

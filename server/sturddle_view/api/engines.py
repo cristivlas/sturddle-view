@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from .. import is_windows
-from ..auth import require_token
+from ..auth import require_host, require_token
 from ..engines import (
     UNSET,
     DuplicateEngineError,
@@ -59,7 +59,11 @@ def _validate_engine_path(raw: str) -> str:
     return str(p)
 
 
-router = APIRouter(prefix="/engines", tags=["engines"], dependencies=[Depends(require_token)])
+router = APIRouter(prefix="/engines", tags=["engines"], dependencies=[Depends(require_host)])
+# Routes the remote token may call (auth.ROLE_REMOTE); `router` is host-only.
+remote_router = APIRouter(
+    prefix="/engines", tags=["engines"], dependencies=[Depends(require_token)],
+)
 
 
 class EngineCreate(BaseModel):
@@ -180,7 +184,7 @@ async def _ensure_schema(reg: EngineRegistry, e: Engine) -> Engine:
         return e
 
 
-@router.get("")
+@remote_router.get("")
 async def list_engines(request: Request, probe: bool = True) -> dict:
     """``probe=false`` skips the lazy schema probe -- read-only consumers
     (e.g. the start-time drift check) must not pay an engine-spawn per
@@ -234,7 +238,7 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
     return _serialize(e)
 
 
-@router.get(_ENGINE_PATH)
+@remote_router.get(_ENGINE_PATH)
 def get_engine(engine_id: str, request: Request) -> dict:
     reg = _registry(request)
     try:
@@ -291,7 +295,7 @@ def remove_engine(engine_id: str, request: Request) -> None:
         raise not_found(_ENGINE_NOT_FOUND) from exc
 
 
-@router.post("/{engine_id}/select")
+@remote_router.post("/{engine_id}/select")
 async def select_engine(engine_id: str, request: Request) -> dict:
     reg = _registry(request)
     try:

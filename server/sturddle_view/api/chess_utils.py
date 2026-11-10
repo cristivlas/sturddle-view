@@ -16,7 +16,9 @@ from ._http import bad_request
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/chess", tags=["chess"], dependencies=[Depends(require_token)])
+remote_router = APIRouter(
+    prefix="/api/chess", tags=["chess"], dependencies=[Depends(require_token)],
+)
 
 
 class ApplyMoveRequest(BaseModel):
@@ -24,7 +26,7 @@ class ApplyMoveRequest(BaseModel):
     move: str  # UCI, e.g. "e2e4" or "a7a8q"
 
 
-@router.post("/apply-move")
+@remote_router.post("/apply-move")
 def apply_move(body: ApplyMoveRequest) -> dict:
     try:
         board = board_from(body.fen)

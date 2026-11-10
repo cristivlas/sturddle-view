@@ -17,10 +17,10 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .. import is_windows
-from ..auth import require_token
+from ..auth import require_host
 from ._http import bad_request, not_found
 
-router = APIRouter(prefix="/fs", tags=["fs"], dependencies=[Depends(require_token)])
+router = APIRouter(prefix="/fs", tags=["fs"], dependencies=[Depends(require_host)])
 
 _DEFAULT_WIN_PATHEXT = ".COM;.EXE;.BAT;.CMD"
 _PATHEXT_SEP = ";"

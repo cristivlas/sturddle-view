@@ -7,7 +7,7 @@ import psutil
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from .. import __author__, __copyright__, __version__
-from ..auth import require_token
+from ..auth import require_host, require_token
 from ..config import (
     AI_ANALYZE_MAX_DEPTH_KEY,
     AI_API_KEY_KEY,
@@ -61,7 +61,11 @@ from ._http import bad_request
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_token)])
+router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_host)])
+# Routes the remote token may call (auth.ROLE_REMOTE); `router` is host-only.
+remote_router = APIRouter(
+    prefix="/settings", tags=["settings"], dependencies=[Depends(require_token)],
+)
 
 # Sentinel echoed to the UI when an API key is set. UI never sees the
 # real key back; user "Update"s by sending a new value.
@@ -147,7 +151,7 @@ def _serialize(s) -> dict:
     }
 
 
-@router.get("")
+@remote_router.get("")
 def get_settings(request: Request) -> dict:
     return _serialize(request.app.state.settings)
 

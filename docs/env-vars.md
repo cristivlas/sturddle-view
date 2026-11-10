@@ -16,8 +16,8 @@ by the CLI or by `desktop.py`.
 |---|---|---|
 | `SV_HOST` | `--host` | Bind address. Default `127.0.0.1`. |
 | `SV_PORT` | `--port` | Bind port. Default `8765`. |
-| `SV_TOKEN` | random / `desktop.py` | Shared-secret auth token. |
-| `SV_AUTH_DISABLED` | `--no-auth` | Disable token auth. |
+| `SV_TOKEN` | random / `desktop.py` | Host auth token: full access. |
+| `SV_REMOTE_TOKEN` | random / `desktop.py` | Remote auth token carried by the Connect-from-mobile QR: play and watch only (see [spec.md](spec.md#token-scopes)). |
 | `SV_TLS_CERT` | `--cert` | TLS certificate path. Requires `SV_TLS_KEY`. |
 | `SV_TLS_KEY` | `--key` | TLS private key path. Requires `SV_TLS_CERT`. |
 | `SV_ENGINE_PATH` | `--engine` | Fallback engine when registry has no selection. |
@@ -27,6 +27,7 @@ by the CLI or by `desktop.py`.
 
 | Var | Default | Effect | Where |
 |---|---|---|---|
+| `SV_ALLOWED_HOSTS` | empty | Comma-separated host names accepted in the `Host` header besides `localhost`, the `--host` value and the address a request arrived on (DNS-rebinding guard), e.g. a TLS certificate's name, a Tailscale MagicDNS name or a reverse proxy's name. | `server/sturddle_view/netinfo.py` |
 | `SV_PREFER_TAILSCALE` | `1` | The QR carries the Tailscale address when its interface is up (matched by name; macOS `utunN` is missed); `0` keeps the default-route LAN address. | `server/sturddle_view/config.py` |
 | `SV_AUTH_COOKIE_MAX_AGE_S` | `604800` | Lifetime (seconds) of the auth cookie set by the `/auth` handshake; one week. | `server/sturddle_view/app.py` |
 
@@ -190,10 +191,12 @@ source; check the file when a precise value matters.
 
 ## Test-only
 
-Set or read only by the test suite; the app reads just `SV_READY_PORT`.
+Set or read only by the test suite; the app reads just `SV_READY_PORT`
+and `SV_AUTH_DISABLED`.
 
 | Var | Default | Effect | Where |
 |---|---|---|---|
+| `SV_AUTH_DISABLED` | `0` | Treat every request as the host token (no CLI flag). The e2e harness sets it; a test turns auth back on with `SV_AUTH_DISABLED=0`. | `server/sturddle_view/auth.py` |
 | `SV_READY_PORT` | unset | Harness-owned loopback port the app connects to once after startup, a deterministic ready signal. | `server/sturddle_view/app.py` |
 | `SVTEST_SYZYGY_PATH` | unset | Syzygy tablebase directory; tablebase tests skip without it (or `--syzygy-path`). | `server/tests/test_tablebase.py` |
 | `SVTEST_WS_STRESS` | unset | Opt in to the WebSocket shutdown stress repro. | `server/tests/test_ws_shutdown_repro.py` |

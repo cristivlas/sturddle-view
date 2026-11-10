@@ -1,5 +1,6 @@
 import { SETTINGS_PATH, showDialog } from "./dialogs.js";
 import { KIND } from "./game-events.js";
+import { isRemote } from "./role.js";
 
 const CONNECT_SUMMARY = "Connect from mobile";
 const HINT_OPENING = "Opening the LAN port...";
@@ -17,6 +18,8 @@ const REPO_URL = "https://github.com/cristivlas/sturddle-view";
 const WA_AFTER_SHOW = "wa-after-show";
 // Touch-only device = the phone itself; its own QR is useless.
 const TOUCH_ONLY_MQ = "(hover: none) and (pointer: coarse)";
+// The QR is for the host computer to show; a remote client is already here.
+const showsConnect = () => !isRemote() && !window.matchMedia(TOUCH_ONLY_MQ).matches;
 
 async function fetchOrNull(api, method, path) {
   try {
@@ -93,7 +96,7 @@ export async function openAboutDialog({ api, events }) {
         textDiv("about-meta", `(c) ${copyright}`),
         repoLink(),
       );
-      if (!window.matchMedia(TOUCH_ONLY_MQ).matches) wrap.append(buildConnectSection(api));
+      if (showsConnect()) wrap.append(buildConnectSection(api));
       dialog.append(wrap);
     },
   });

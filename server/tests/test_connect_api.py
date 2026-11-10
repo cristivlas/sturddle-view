@@ -13,6 +13,7 @@ from sturddle_view.engines import EngineRegistry
 from .conftest import REGISTRY_FILE
 
 TOKEN = "test-token"
+REMOTE_TOKEN = "test-remote-token"
 LOCAL = ("127.0.0.1", 50000)
 REMOTE = ("192.168.1.9", 50000)
 LAN = ["192.168.1.5", "172.18.0.1"]
@@ -44,8 +45,8 @@ def make_client(tmp_path, monkeypatch):
 
     def _make(client_addr, *, host=LOOPBACK_HOST, auth_disabled=False, listener=None,
               prefer_tailscale=True):
-        settings = Settings(token=TOKEN, host=host, auth_disabled=auth_disabled,
-                            prefer_tailscale=prefer_tailscale)
+        settings = Settings(token=TOKEN, remote_token=REMOTE_TOKEN, host=host,
+                            auth_disabled=auth_disabled, prefer_tailscale=prefer_tailscale)
         registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
         app = create_app(settings=settings, engine_registry=registry)
         app.state.lan_listener = listener
@@ -56,7 +57,7 @@ def make_client(tmp_path, monkeypatch):
 
 
 def _qr_for(host: str) -> str:
-    return f"qr:http://{host}:{DEFAULT_PORT}/auth?token={TOKEN}"
+    return f"qr:http://{host}:{DEFAULT_PORT}/auth?token={REMOTE_TOKEN}"
 
 
 def test_qr_data_uri_is_inline_svg():

@@ -144,8 +144,8 @@ ENV_PREFIX = "SV_"
 ENV_HOST = f"{ENV_PREFIX}HOST"
 ENV_PORT = f"{ENV_PREFIX}PORT"
 ENV_TOKEN = f"{ENV_PREFIX}TOKEN"
+ENV_REMOTE_TOKEN = f"{ENV_PREFIX}REMOTE_TOKEN"
 ENV_ENGINE_PATH = f"{ENV_PREFIX}ENGINE_PATH"
-ENV_AUTH_DISABLED = f"{ENV_PREFIX}AUTH_DISABLED"
 ENV_TLS_CERT = f"{ENV_PREFIX}TLS_CERT"
 ENV_TLS_KEY = f"{ENV_PREFIX}TLS_KEY"
 
@@ -196,8 +196,8 @@ AI_VERIFICATION_DEPTH_KEY = "ai_verification_depth"
 ANALYSIS_ENGINE_KEY = "analysis_engine_id"
 ANALYSIS_MULTIPV_KEY = "analysis_multipv"
 
-# Fields persisted to disk. Excludes secrets (token), bind config (host/port),
-# auth_disabled (CLI flag), and web_dir (deployment).
+# Fields persisted to disk. Excludes secrets (token, remote_token), bind config
+# (host/port), auth_disabled (tests only), and web_dir (deployment).
 PERSISTED_FIELDS = (
     PGN_AUTOSAVE_KEY,
     PGN_DIR_KEY,
@@ -262,6 +262,9 @@ class Settings(BaseSettings):
     host: str = LOOPBACK_HOST
     port: int = DEFAULT_PORT
     token: str = Field(default_factory=lambda: secrets.token_urlsafe(_TOKEN_BYTES))
+    # Handed out in the Connect-from-mobile QR: play and watch, but nothing
+    # that changes what the server runs or where it writes (auth.ROLE_REMOTE).
+    remote_token: str = Field(default_factory=lambda: secrets.token_urlsafe(_TOKEN_BYTES))
     # Enables /_test/* endpoints (HVE install/state) used by the e2e
     # test subprocess fixture. Never set in production.
     test_mode: bool = False
@@ -269,6 +272,7 @@ class Settings(BaseSettings):
     pgn_autosave: bool = False
     pgn_dir: Path | None = None
     engine_path: Path | None = None
+    # Test-only (SV_AUTH_DISABLED): every request is treated as the host token.
     auth_disabled: bool = False
     # TLS: paths set via CLI (--cert/--key). Both must be present or both None.
     tls_cert: Path | None = None
@@ -276,6 +280,10 @@ class Settings(BaseSettings):
     # Connect-from-mobile QR: hand out the Tailscale address when its
     # interface is up (reachable off-LAN too) instead of the LAN one.
     prefer_tailscale: bool = True
+    # Comma-separated host names accepted in the Host header besides
+    # localhost and this machine's own addresses (netinfo.host_allowed),
+    # e.g. a TLS certificate's name or a Tailscale MagicDNS name.
+    allowed_hosts: str = ""
 
     tc_initial_seconds: float = DEFAULT_TC_INITIAL_SECONDS
     tc_increment_seconds: float = DEFAULT_TC_INCREMENT_SECONDS
@@ -381,6 +389,10 @@ class Settings(BaseSettings):
     # Empty string means "use the active HvE engine".
     analysis_engine_id: str = ""
     analysis_multipv: int = _DEFAULT_ANALYSIS_MULTIPV
+
+    @property
+    def allowed_host_names(self) -> frozenset[str]:
+        return frozenset(n.strip().lower() for n in self.allowed_hosts.split(",") if n.strip())
 
     @property
     def ai_model(self) -> str:
