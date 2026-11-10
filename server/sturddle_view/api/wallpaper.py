@@ -20,14 +20,18 @@ from fastapi.responses import FileResponse
 
 from .. import app_data_dir
 from .._atomic import atomic_write_bytes, atomic_write_json, atomic_write_text
-from ..auth import require_token
+from ..auth import require_host, require_token
 from ..config import WEB_DIR
 from ..env_utils import env_int, env_path
 from ._http import bad_request, not_found
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/wallpaper", tags=["wallpaper"], dependencies=[Depends(require_token)])
+router = APIRouter(prefix="/wallpaper", tags=["wallpaper"], dependencies=[Depends(require_host)])
+# Routes the remote token may call (auth.ROLE_REMOTE); `router` is host-only.
+remote_router = APIRouter(
+    prefix="/wallpaper", tags=["wallpaper"], dependencies=[Depends(require_token)],
+)
 
 MAX_WALLPAPER_BYTES = env_int("SV_MAX_WALLPAPER_BYTES", 20 * 1024 * 1024, min_value=1)
 # Fade blends the image into the app background, in percent (100 = gone).
@@ -189,13 +193,13 @@ async def _read_capped(request: Request) -> bytes:
     return bytes(buf)
 
 
-@router.get("/info")
+@remote_router.get("/info")
 def wallpaper_info() -> dict:
     """Image ``version`` (null when none is set), the style, and its bounds."""
     return _info()
 
 
-@router.get("")
+@remote_router.get("")
 def get_wallpaper() -> FileResponse:
     path = _stored()
     if path is None:

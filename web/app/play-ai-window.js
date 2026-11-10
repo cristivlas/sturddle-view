@@ -20,6 +20,7 @@ import {
   markSelectable,
   scrollToBottom,
 } from "./wb-utils.js";
+import { isRemote } from "./role.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import {
@@ -586,7 +587,7 @@ const inst = createDockableWindow({
   defaultH: DEFAULT_WIN_H,
   defaultY: () => DEFAULT_WIN_Y,
   build(_events, { setActions }) {
-    setActions([{ label: SETTINGS_MENU_LABEL, run: openAiSettings }]);
+    setActions(isRemote() ? [] : [{ label: SETTINGS_MENU_LABEL, run: openAiSettings }]);
     return buildBody();
   },
   dockOrder: DOCK_ORDER.AI_ANALYSIS,

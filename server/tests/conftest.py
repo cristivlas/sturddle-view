@@ -426,6 +426,8 @@ def free_port() -> int:
 
 # Registry file under tmp_path; tests seed it before the server starts.
 REGISTRY_FILE = "engines.json"
+# Host header fastapi.testclient.TestClient sends by default.
+TEST_CLIENT_HOST = "testserver"
 STARTPOS_FEN = chess.STARTING_FEN
 
 
@@ -494,8 +496,10 @@ def run_uvicorn_subprocess(
     env["SV_READY_PORT"] = str(ready_sock.getsockname()[1])
 
     try:
+        # Auth comes from SV_AUTH_DISABLED (on by default above), so a test
+        # can turn it back on with env_overrides.
         with subprocess.Popen(
-            [sys.executable, "-m", "sturddle_view", "--no-auth",
+            [sys.executable, "-m", "sturddle_view",
              "--host", "127.0.0.1", "--port", str(port)],
             env=env,
             stdout=log_fh,
@@ -1047,16 +1051,9 @@ async def open_arena_workspace(page) -> None:
 
 
 # Minimal fake fastchess: stays alive so the tournament stays "running".
-_FAKE_FASTCHESS = r"""
-import sys, time
-i = 1
-while i < len(sys.argv):
-    if sys.argv[i] == "--sleep":
-        time.sleep(float(sys.argv[i + 1])); i += 2
-    else:
-        i += 1
-"""
-_FAKE_FASTCHESS_SLEEP_S = "60"
+# Runs until running_tournament's stop() kills it. No timed exit: that would
+# end the tournament (closing every watcher) mid-test on a slow machine.
+_FAKE_FASTCHESS = "import threading; threading.Event().wait()"
 LIVE_ENGINE_A = "Engine A"
 LIVE_ENGINE_B = "Engine B"
 # The proxy running_tournament registers (a LIVE_ENGINE_A process).
@@ -1075,7 +1072,7 @@ async def running_tournament(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         fc_mod, "build_command",
-        lambda spec: [sys.executable, "-c", _FAKE_FASTCHESS, "--sleep", _FAKE_FASTCHESS_SLEEP_S],
+        lambda spec: [sys.executable, "-c", _FAKE_FASTCHESS],
     )
 
     port = free_port()
@@ -1232,6 +1229,8 @@ def _isolate_user_config(tmp_path, monkeypatch):
     monkeypatch.setenv("SV_ENGINE_TMP_ROOT", str(tmp_path / "engine-tmp"))
     monkeypatch.setenv("SV_WALLPAPER_DIR", str(tmp_path / "wallpaper"))
     monkeypatch.setenv("SV_THEMES_DIR", str(tmp_path / "themes"))
+    # TestClient's default Host; the DNS-rebinding guard refuses unknown names.
+    monkeypatch.setenv("SV_ALLOWED_HOSTS", TEST_CLIENT_HOST)
     # Shipped playbook text only: never the developer's own overrides.
     monkeypatch.setattr(pc_mod, "default_user_dir", lambda: tmp_path / "playbook")
     pc_mod.default_catalog.cache_clear()

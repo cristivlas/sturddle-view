@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hmac
 import logging
 import socket
 from asyncio import proactor_events, trsock
@@ -10,9 +9,10 @@ from datetime import timedelta
 from pathlib import Path
 
 import chess.engine
-from fastapi import FastAPI, Query, Request, status
+from fastapi import Depends, FastAPI, Query, Request, status
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import Headers
 from starlette.middleware.base import BaseHTTPMiddleware
 
 try:
@@ -23,7 +23,19 @@ except ImportError:  # optional: uvicorn falls back to its websockets impl
     wsproto = wsproto_impl = ConnectionState = None
 
 from . import APP_NAME, __version__, is_windows
-from .auth import AUTH_COOKIE, AUTH_PATH, AUTH_TOKEN_PARAM, INVALID_TOKEN_DETAIL, origin_ok
+from .auth import (
+    AUTH_COOKIE,
+    AUTH_PATH,
+    AUTH_ROLE_PATH,
+    AUTH_TOKEN_PARAM,
+    INVALID_TOKEN_DETAIL,
+    ROLE_HOST,
+    ROLE_REMOTE,
+    connection_role,
+    origin_ok,
+    require_token,
+    token_role,
+)
 from .api import chess_utils as chess_api
 from .api import connect as connect_api
 from .api import engines as engines_api
@@ -52,7 +64,14 @@ from .llm import CannedProvider, LLMProvider, ToolRegistry
 from .llm.anthropic import AnthropicProvider
 from .llm.gemini import DEFAULT_BASE_URL as _DEFAULT_GEMINI_BASE_URL, GeminiProvider
 from .llm.ollama import DEFAULT_BASE_URL as _DEFAULT_OLLAMA_BASE_URL, OllamaProvider
-from .netinfo import SCHEME_HTTPS, entry_url, is_this_machine, reachable_hosts, url_scheme
+from .netinfo import (
+    SCHEME_HTTPS,
+    entry_url,
+    host_allowed,
+    is_this_machine,
+    reachable_hosts,
+    url_scheme,
+)
 from .openings import OpeningBook
 from .play.ai_analysis import (
     AIAnalysisCoordinator,
@@ -115,6 +134,9 @@ _WS_CLOSE_SERVICE_RESTART = 1012
 # cpython's own default listen backlog for loop.create_server.
 _DEFAULT_ACCEPT_BACKLOG = 100
 _ACCEPT_FAILED_MSG = "Accept failed on a socket"
+_SCOPE_WEBSOCKET = "websocket"
+_HOST_CHECKED_SCOPES = ("http", _SCOPE_WEBSOCKET)
+INVALID_HOST_DETAIL = "invalid host -- open this server by IP address or localhost"
 # asyncio exception-handler context key.
 _CTX_EXCEPTION = "exception"
 
@@ -160,15 +182,39 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 class _OriginMiddleware(BaseHTTPMiddleware):
-    # CSRF / DNS-rebinding mitigation: state-changing REST must come from
-    # an Origin matching the server's own. Same-origin browser fetches and
-    # loopback CLI tools (no Origin header) are unaffected.
+    # CSRF mitigation: state-changing REST must come from an Origin matching
+    # the server's own. Same-origin browser fetches and loopback CLI tools
+    # (no Origin header) are unaffected. DNS rebinding: _HostMiddleware.
     SAFE = {"GET", "HEAD", "OPTIONS"}
 
     async def dispatch(self, request: Request, call_next):
         if request.method not in self.SAFE and not origin_ok(request):
             return PlainTextResponse("bad origin", status_code=status.HTTP_403_FORBIDDEN)
         return await call_next(request)
+
+
+class _HostMiddleware:
+    # DNS-rebinding guard (netinfo.host_allowed) for every HTTP and WebSocket
+    # request. Plain ASGI: BaseHTTPMiddleware never sees WebSocket scopes.
+    def __init__(self, app, settings: Settings):
+        self._app = app
+        self._settings = settings
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in _HOST_CHECKED_SCOPES:
+            host = Headers(scope=scope).get("host", "")
+            local = scope.get("server")
+            if not host_allowed(self._settings, host, local[0] if local else None):
+                if scope["type"] == _SCOPE_WEBSOCKET:
+                    await send({
+                        "type": "websocket.close", "code": status.WS_1008_POLICY_VIOLATION,
+                    })
+                else:
+                    await PlainTextResponse(
+                        INVALID_HOST_DETAIL, status_code=status.HTTP_400_BAD_REQUEST,
+                    )(scope, receive, send)
+                return
+        await self._app(scope, receive, send)
 
 
 # WinError codes asyncio-on-Windows mishandles on the listener socket
@@ -243,18 +289,20 @@ def _install_uvicorn_ws_shutdown_state_guard() -> None:
     """Gate uvicorn's WSProtocol.shutdown on wsproto state.
 
     Upstream uvicorn's WSProtocol.shutdown() sends CloseConnection(1012)
-    without checking conn.state. When a client cleanly closes right
-    before server shutdown iterates connections, state is already CLOSED
-    and the send raises wsproto LocalProtocolError on the loop thread.
-    Idempotent and applied once per process.
+    without checking conn.state. wsproto only accepts a close in OPEN or
+    REMOTE_CLOSING: when the client closed cleanly just before shutdown
+    (CLOSED), or the handler already sent its own close and awaits the
+    reply (LOCAL_CLOSING), the send raises wsproto LocalProtocolError on
+    the loop thread. Idempotent and applied once per process.
     """
     global _ws_shutdown_patched
     if _ws_shutdown_patched or wsproto is None:
         return
+    can_send_close = (ConnectionState.OPEN, ConnectionState.REMOTE_CLOSING)
 
     def _safe_shutdown(self):
         self.stop_keepalive()
-        if self.handshake_complete and self.conn.state != ConnectionState.CLOSED:
+        if self.handshake_complete and self.conn.state in can_send_close:
             self.queue.put_nowait(
                 {"type": "websocket.disconnect", "code": _WS_CLOSE_SERVICE_RESTART}
             )
@@ -407,15 +455,20 @@ def create_app(
     _setup_ai(app)
     _setup_tournament(app, settings)
 
-    app.include_router(chess_api.router)
+    app.include_router(chess_api.remote_router)
     app.include_router(connect_api.router)
+    app.include_router(settings_api.remote_router)
     app.include_router(settings_api.router)
+    app.include_router(engines_api.remote_router)
     app.include_router(engines_api.router)
     app.include_router(fs_api.router)
+    app.include_router(game_api.remote_router)
     app.include_router(game_api.router)
-    app.include_router(openings_api.router)
+    app.include_router(openings_api.remote_router)
+    app.include_router(tournaments_api.remote_router)
     app.include_router(tournaments_api.router)
     app.include_router(tournaments_api.internal_router)
+    app.include_router(wallpaper_api.remote_router)
     app.include_router(wallpaper_api.router)
     app.include_router(ws_api.router)
     if settings.test_mode:
@@ -437,7 +490,7 @@ def create_app(
     @app.get(ROOT_PATH, include_in_schema=False)
     async def root(request: Request) -> RedirectResponse:
         # Token-less redirect; client carries the cookie set by /auth.
-        # With --no-auth this is the entry URL itself (netinfo.entry_url).
+        # With auth disabled (tests) this is the entry URL itself (netinfo.entry_url).
         if settings.auth_disabled:
             await _announce_remote(request)
         return RedirectResponse(url=_UI_ENTRY)
@@ -449,14 +502,16 @@ def create_app(
         """One-shot handshake: validate ?token=, set HttpOnly cookie, redirect
         to a token-less URL so the token never appears in history or Referer.
         """
-        if not settings.auth_disabled:
-            if not token or not hmac.compare_digest(token, settings.token):
-                return PlainTextResponse(
-                    INVALID_TOKEN_DETAIL, status_code=status.HTTP_401_UNAUTHORIZED,
-                )
+        role = token_role(settings, token)
+        if role is None:
+            return PlainTextResponse(
+                INVALID_TOKEN_DETAIL, status_code=status.HTTP_401_UNAUTHORIZED,
+            )
         await _announce_remote(request)
         resp = RedirectResponse(url=_UI_ENTRY, status_code=status.HTTP_303_SEE_OTHER)
-        if not settings.auth_disabled:
+        # The QR opened in the host's own browser must not downgrade it.
+        downgrade = role == ROLE_REMOTE and connection_role(request) == ROLE_HOST
+        if not settings.auth_disabled and not downgrade:
             secure = request.url.scheme == SCHEME_HTTPS
             # SameSite=Lax: still defeats CSRF (cross-site POSTs strip the
             # cookie) but lets top-level GET navigations (including the 303
@@ -464,7 +519,7 @@ def create_app(
             # embedded webviews.
             resp.set_cookie(
                 AUTH_COOKIE,
-                settings.token,
+                token,
                 httponly=True,
                 samesite="lax",
                 secure=secure,
@@ -472,6 +527,10 @@ def create_app(
                 max_age=_AUTH_COOKIE_MAX_AGE_S,
             )
         return resp
+
+    @app.get(AUTH_ROLE_PATH, include_in_schema=False, dependencies=[Depends(require_token)])
+    async def auth_role(request: Request) -> dict:
+        return {"role": connection_role(request)}
 
     if settings.web_dir.is_dir():
         app.mount(_UI_PATH, StaticFiles(directory=settings.web_dir, html=True), name="ui")
@@ -481,6 +540,8 @@ def create_app(
     app.add_middleware(_NoCacheUIMiddleware)
     app.add_middleware(_SecurityHeadersMiddleware, csp=_CSP_ALLOW_EVAL if allow_eval else _CSP)
     app.add_middleware(_OriginMiddleware)
+    # Added last, so it runs first.
+    app.add_middleware(_HostMiddleware, settings=settings)
 
     _print_banner(settings)
     return app

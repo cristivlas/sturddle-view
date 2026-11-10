@@ -6,13 +6,15 @@ from fastapi import APIRouter, Depends, Request
 from ..auth import require_token
 from ._http import bad_request
 
-router = APIRouter(prefix="/openings", tags=["openings"], dependencies=[Depends(require_token)])
+remote_router = APIRouter(
+    prefix="/openings", tags=["openings"], dependencies=[Depends(require_token)],
+)
 
 _FEN_KEY = "fen"
 _MOVES_KEY = "moves"
 
 
-@router.get("")
+@remote_router.get("")
 def list_openings(request: Request) -> dict:
     """Full opening list (one row per name); the client filters locally."""
     return {
@@ -20,7 +22,7 @@ def list_openings(request: Request) -> dict:
     }
 
 
-@router.post("/line")
+@remote_router.post("/line")
 def line_openings(payload: dict, request: Request) -> dict:
     """The book opening at each position a played line reaches (null where
     none), so the board's opening label can follow the line."""

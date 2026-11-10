@@ -14,6 +14,7 @@ import { STORAGE_KEY } from "./storage-keys.js";
 import { createTable, RENDER_REASON } from "./data-table.js";
 import { wireInlineSearch } from "./inline-search.js";
 import { SORT_DIR, attachButtonSort, scrollSortedRowIntoView, SORT_ASC_LABEL, SORT_DESC_LABEL } from "./col-sort.js";
+import { isRemote } from "./role.js";
 import { loadJson, saveJson } from "./storage.js";
 import { mqNarrowDialog } from "./breakpoints.js";
 import { escapeHtml, makeIconButton, markSelectable, suppressMultiClickSelect } from "./wb-utils.js";
@@ -538,6 +539,8 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
       opt.append(tag);
       return opt;
     }
+    // A remote client can neither delete nor reach Settings: open-only rows.
+    if (isRemote()) return opt;
     // A row with forks can't be deleted here: the gear hands it to the
     // Settings Recents tab, which shows the forks.
     opt.append(entry.forks > 0

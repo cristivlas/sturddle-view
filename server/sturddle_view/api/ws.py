@@ -5,7 +5,7 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
-from ..auth import AUTH_COOKIE, check_token_value, origin_ok
+from ..auth import ws_allowed
 from ..events import (
     ENVELOPE_GAME_ID,
     ENVELOPE_KIND,
@@ -29,23 +29,9 @@ def _event_to_json(event: Event) -> dict:
     }
 
 
-def _ws_presented_token(websocket: WebSocket) -> str | None:
-    cookie = websocket.cookies.get(AUTH_COOKIE)
-    if cookie:
-        return cookie
-    auth = websocket.headers.get("authorization", "")
-    if auth.lower().startswith("bearer "):
-        return auth.split(None, 1)[1].strip()
-    return None
-
-
 @router.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket) -> None:
-    settings = websocket.app.state.settings
-    if not origin_ok(websocket):
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-    if not check_token_value(settings, _ws_presented_token(websocket)):
+    if not ws_allowed(websocket):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 

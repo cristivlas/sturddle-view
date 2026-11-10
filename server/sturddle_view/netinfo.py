@@ -4,7 +4,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 from collections.abc import Iterator
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import psutil
 
@@ -40,6 +40,27 @@ def is_loopback(host: str) -> bool:
         return True
     addr = _canonical(host)
     return addr is not None and addr.is_loopback
+
+
+def host_allowed(settings: Settings, host_header: str, local_addr: str | None) -> bool:
+    """DNS-rebinding guard: the Host header must name this server --
+    localhost, the --host value, the address the request arrived on
+    (``local_addr``, the socket's own end), or a name in
+    settings.allowed_hosts. A web page whose domain was re-pointed at this
+    server sends its own domain as Host (and a matching Origin), so it is
+    refused here."""
+    try:
+        name = urlsplit(f"//{host_header}").hostname
+    except ValueError:
+        return False
+    if not name:
+        return False
+    if name in settings.allowed_host_names or is_loopback(name):
+        return True
+    if settings.host not in _WILDCARD_BINDS and name == settings.host.lower():
+        return True
+    addr = _canonical(name)
+    return addr is not None and local_addr is not None and addr == _canonical(local_addr)
 
 
 def is_this_machine(host: str) -> bool:
@@ -118,11 +139,21 @@ def url_scheme(settings: Settings) -> str:
     return SCHEME_HTTPS if settings.tls_cert else _SCHEME_HTTP
 
 
-def entry_url(settings: Settings, host: str) -> str:
-    """URL a fresh client opens: the /auth handshake carrying the token,
-    or the bare root when auth is disabled."""
+def _url_host(host: str) -> str:
+    """``host`` as it goes in a URL: an IPv6 literal needs brackets."""
+    try:
+        is_v6 = ipaddress.ip_address(host).version == 6
+    except ValueError:
+        is_v6 = False
+    return f"[{host}]" if is_v6 else host
+
+
+def entry_url(settings: Settings, host: str, remote: bool = False) -> str:
+    """URL a fresh client opens: the /auth handshake carrying the host (or
+    remote) token, or the bare root when auth is disabled."""
     if settings.auth_disabled:
         path = ROOT_PATH
     else:
-        path = f"{AUTH_PATH}?{urlencode({AUTH_TOKEN_PARAM: settings.token})}"
-    return f"{url_scheme(settings)}://{host}:{settings.port}{path}"
+        token = settings.remote_token if remote else settings.token
+        path = f"{AUTH_PATH}?{urlencode({AUTH_TOKEN_PARAM: token})}"
+    return f"{url_scheme(settings)}://{_url_host(host)}:{settings.port}{path}"

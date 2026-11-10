@@ -4,6 +4,7 @@ import hmac
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request, status
+from starlette.requests import HTTPConnection
 
 from .config import Settings
 
@@ -15,7 +16,17 @@ AUTH_COOKIE = "sv_auth"
 # route and the entry-URL builder (netinfo.entry_url).
 AUTH_PATH = "/auth"
 AUTH_TOKEN_PARAM = "token"
+# The UI asks which scope its cookie carries, to hide what would be refused.
+AUTH_ROLE_PATH = f"{AUTH_PATH}/role"
 INVALID_TOKEN_DETAIL = "invalid token"
+HOST_ONLY_DETAIL = "only available on the host computer"
+
+# Two token scopes. Host (desktop window, console link) can do anything.
+# Remote (the Connect-from-mobile QR) can play and watch, but not change what
+# the server runs or where it writes: routes are host-only unless they sit
+# on a module's remote_router.
+ROLE_HOST = "host"
+ROLE_REMOTE = "remote"
 
 # Logged whenever an auth-less server becomes reachable beyond loopback:
 # at startup for a --host bind, or when desktop opens the LAN port.
@@ -25,46 +36,70 @@ AUTH_DISABLED_LAN_WARNING = (
 )
 
 
-def _settings(request: Request) -> Settings:
-    return request.app.state.settings
-
-
-def _present_token(request: Request) -> str | None:
-    """Pull a candidate token from cookie or Authorization: Bearer."""
-    cookie = request.cookies.get(AUTH_COOKIE)
+def presented_token(conn: HTTPConnection) -> str | None:
+    """Candidate token from cookie (browser) or Authorization: Bearer (CLI).
+    Works for both Request and WebSocket."""
+    cookie = conn.cookies.get(AUTH_COOKIE)
     if cookie:
         return cookie
-    auth = request.headers.get("authorization", "")
+    auth = conn.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         return auth.split(None, 1)[1].strip()
     return None
 
 
-def require_token(request: Request) -> None:
-    """Token check: cookie (browser) or Authorization: Bearer (CLI)."""
-    settings = _settings(request)
-    if settings.auth_disabled:
-        return
-    presented = _present_token(request)
-    if presented is None or not hmac.compare_digest(presented, settings.token):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=INVALID_TOKEN_DETAIL,
-        )
+def _same_token(presented: str, token: str) -> bool:
+    # Bytes: compare_digest raises TypeError on non-ASCII str.
+    return hmac.compare_digest(presented.encode(), token.encode())
 
 
-def check_token_value(settings: Settings, presented: str | None) -> bool:
-    """Constant-time token compare. Honors auth_disabled. For WS handlers."""
+def token_role(settings: Settings, presented: str | None) -> str | None:
+    """Role the token grants, or None when it is neither. Constant-time."""
     if settings.auth_disabled:
-        return True
+        return ROLE_HOST
     if not presented:
-        return False
-    return hmac.compare_digest(presented, settings.token)
+        return None
+    if _same_token(presented, settings.token):
+        return ROLE_HOST
+    if _same_token(presented, settings.remote_token):
+        return ROLE_REMOTE
+    return None
+
+
+def connection_role(conn: HTTPConnection) -> str | None:
+    return token_role(conn.app.state.settings, presented_token(conn))
+
+
+def _unauthorized() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=INVALID_TOKEN_DETAIL)
+
+
+def require_host(request: Request) -> None:
+    role = connection_role(request)
+    if role is None:
+        raise _unauthorized()
+    if role != ROLE_HOST:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=HOST_ONLY_DETAIL)
+
+
+def require_token(request: Request) -> None:
+    """Any valid token: host or remote."""
+    if connection_role(request) is None:
+        raise _unauthorized()
+
+
+def ws_allowed(conn: HTTPConnection) -> bool:
+    """WebSocket gate: Origin check plus any valid token (streams are
+    read-only, so remote clients may watch)."""
+    return origin_ok(conn) and connection_role(conn) is not None
 
 
 def origin_ok(request_or_ws) -> bool:
     """If Origin is present, it must match Host. Missing Origin is allowed
     (non-browser clients don't send it; browsers always do on cross-origin
-    requests, so this still defeats CSRF and DNS rebinding from a page).
+    requests, so this still defeats CSRF). It does not stop DNS rebinding --
+    the attacker's domain is then both Origin and Host; netinfo.host_allowed
+    does.
     """
     headers = request_or_ws.headers
     origin = headers.get("origin")

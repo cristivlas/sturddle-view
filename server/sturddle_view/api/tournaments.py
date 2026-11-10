@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .. import is_windows
-from ..auth import AUTH_COOKIE, check_token_value, origin_ok, require_token
+from ..auth import require_host, require_token, ws_allowed
 from ..config import (
     ENGINE_BOOK_ORDER_KEY,
     ENGINE_BOOK_PATH_KEY,
@@ -125,11 +125,12 @@ _TOURNAMENT_PATH = f"{_TOURNAMENTS_PATH}/{{tournament_id}}"
 _SETTINGS_PATH = "/api/tournament-settings"
 
 
-router = APIRouter(tags=["tournaments"], dependencies=[Depends(require_token)])
+router = APIRouter(tags=["tournaments"], dependencies=[Depends(require_host)])
+# Routes the remote token may call (auth.ROLE_REMOTE): watch, start, stop.
+remote_router = APIRouter(tags=["tournaments"], dependencies=[Depends(require_token)])
 
 # Internal router: no user-token auth on REST (proxy uses a per-tournament
-# secret). WS endpoints are authenticated by cookie / Bearer / ?token= and
-# must pass the Origin check.
+# secret). WS endpoints take any valid token (auth.ws_allowed).
 internal_router = APIRouter(tags=["tournaments-internal"])
 
 
@@ -153,17 +154,6 @@ def _require_fastchess(request: Request) -> None:
 def _rescheck_rejected(e: RescheckError) -> HTTPException:
     """Structured {reason, message, details} for the UI to render."""
     return bad_request({REASON_KEY: e.reason, MESSAGE_KEY: str(e), **e.details})
-
-
-def _check_ws_auth(websocket: WebSocket, settings) -> bool:
-    if not origin_ok(websocket):
-        return False
-    presented = websocket.cookies.get(AUTH_COOKIE)
-    if not presented:
-        auth = websocket.headers.get("authorization", "")
-        if auth.lower().startswith("bearer "):
-            presented = auth.split(None, 1)[1].strip()
-    return check_token_value(settings, presented)
 
 
 class EngineRef(BaseModel):
@@ -465,7 +455,7 @@ def _serialize(
 # ---------------------------------------------------------------------------
 
 
-@router.get(_TOURNAMENTS_PATH)
+@remote_router.get(_TOURNAMENTS_PATH)
 def list_tournaments(request: Request) -> dict:
     s = _store(request)
     return {
@@ -491,7 +481,7 @@ def create_tournament(payload: TournamentCreate, request: Request) -> dict:
     return _serialize(t)
 
 
-@router.get(_TOURNAMENT_PATH)
+@remote_router.get(_TOURNAMENT_PATH)
 def get_tournament(tournament_id: str, request: Request) -> dict:
     s = _store(request)
     try:
@@ -542,7 +532,7 @@ def delete_tournament(tournament_id: str, request: Request) -> None:
     orch.clear_event_history(tournament_id)
 
 
-@router.get(f"{_TOURNAMENT_PATH}/events")
+@remote_router.get(f"{_TOURNAMENT_PATH}/events")
 def get_tournament_events(tournament_id: str, request: Request) -> dict:
     """Recent emitted events for this tournament, oldest first.
 
@@ -562,7 +552,7 @@ def get_tournament_events(tournament_id: str, request: Request) -> dict:
     }
 
 
-@router.get(f"{_TOURNAMENT_PATH}/games/{{game_n}}/pgn")
+@remote_router.get(f"{_TOURNAMENT_PATH}/games/{{game_n}}/pgn")
 def get_tournament_game_pgn(
     tournament_id: str,
     game_n: Annotated[int, FastApiPath(ge=1)],
@@ -590,7 +580,7 @@ def get_tournament_game_pgn(
     return record
 
 
-@router.post(f"{_TOURNAMENT_PATH}/start")
+@remote_router.post(f"{_TOURNAMENT_PATH}/start")
 async def start_tournament(
     tournament_id: str, request: Request, confirm_wipe: bool = False,
 ) -> dict:
@@ -658,7 +648,7 @@ def rescheck_tournament(payload: RescheckRequest) -> dict:
     return {"ok": True, "warnings": warnings}
 
 
-@router.post(f"{_TOURNAMENT_PATH}/stop")
+@remote_router.post(f"{_TOURNAMENT_PATH}/stop")
 async def stop_tournament(tournament_id: str, request: Request) -> dict:
     orch = _orch(request)
     try:
@@ -708,14 +698,14 @@ def _default_root_for_settings() -> Path:
     return default_root()
 
 
-@router.get(f"{_SETTINGS_PATH}/fastchess-check")
+@remote_router.get(f"{_SETTINGS_PATH}/fastchess-check")
 def check_fastchess(request: Request) -> dict:
     """Called before a start's confirms and PATCH: 400 = can't launch."""
     _require_fastchess(request)
     return {}
 
 
-@router.get(_SETTINGS_PATH)
+@remote_router.get(_SETTINGS_PATH)
 def get_tournament_settings(request: Request) -> dict:
     return _serialize_settings(request)
 
@@ -891,8 +881,7 @@ async def proxy_subscribe(
 
       ``{"proxy_id": ..., "ended": true}``
     """
-    settings = websocket.app.state.settings
-    if not _check_ws_auth(websocket, settings):
+    if not ws_allowed(websocket):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
@@ -918,8 +907,7 @@ async def game_subscribe(
 
     Same frame format as ``/ws/tournament/proxy/{proxy_id}`` but the
     stream closes automatically when the pairing dissolves."""
-    settings = websocket.app.state.settings
-    if not _check_ws_auth(websocket, settings):
+    if not ws_allowed(websocket):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 

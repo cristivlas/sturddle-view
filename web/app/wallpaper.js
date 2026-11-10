@@ -9,6 +9,7 @@ import { APP_EVT } from "./app-events.js";
 import { boardFadePct, paintBoardFade, saveBoardFade } from "./board-fade.js";
 import { mqMobile } from "./breakpoints.js";
 import { reportError } from "./dialogs.js";
+import { isRemote } from "./role.js";
 import {
   attachMenuNav, focusFirstItem, isContextMenuClaimed, isKeyboardContextMenu, makeMenuHost, MENU_CHECKED_CLASS,
   MENU_SEPARATOR_HTML, positionMenu, positionMenuAt, setFlyoutSide, sliderRowHtml, submenuHtml, wireMenuToggle,
@@ -126,6 +127,8 @@ function ribbonButton(ribbonEl) {
   const sep = document.createElement("span");
   sep.className = "ribbon-sep";
   sep.setAttribute("aria-hidden", "true");
+  // Never shown to a remote client (paint() keeps it so): no flash on mount.
+  btn.hidden = sep.hidden = isRemote();
   ribbonEl.append(sep, btn);
   return { btn, sep };
 }
@@ -180,10 +183,11 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
       window.dispatchEvent(new CustomEvent(APP_EVT.WALLPAPER_TOGGLED));
     }
     // Disabled (not hidden) until info loads: showing it later wouldn't
-    // resize the ribbon, so its overflow wouldn't re-fit.
+    // resize the ribbon, so its overflow wouldn't re-fit. A remote client
+    // sees the wallpaper but can't change it (host-only routes).
     for (const { btn, sep } of buttons) {
       btn.disabled = !info;
-      btn.hidden = sep.hidden = mobile;
+      btn.hidden = sep.hidden = mobile || isRemote();
     }
     if (mobile) closeMenu();
   };
@@ -222,7 +226,7 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
   const onContextMenu = (ev) => {
     // The region itself: the Menu key with focus on it (a bare-spot click).
     const bare = (isKeyboardContextMenu(ev) && ev.target === regionEl) || isBare(ev.target);
-    if (!info || isMobile() || menu.contains(ev.target) || !bare || isContextMenuClaimed(ev)) return;
+    if (!info || isMobile() || isRemote() || menu.contains(ev.target) || !bare || isContextMenuClaimed(ev)) return;
     closeMenu();
     returnFocus = document.activeElement;
     openMenu((m) => positionMenuAt(m, { top: ev.clientY, bottom: ev.clientY, left: ev.clientX }),

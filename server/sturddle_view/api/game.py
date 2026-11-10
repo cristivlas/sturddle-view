@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 
-from ..auth import require_token
+from ..auth import require_host, require_token
 from ..chess.pgn_tags import TAG_BLACK, TAG_RESULT, TAG_TERMINATION, TAG_WHITE
 from ..chess.results import SIDE_BLACK, SIDE_WHITE
 from ..config import (
@@ -102,7 +102,9 @@ _PGN_MEDIA_TYPE = "application/x-chess-pgn; charset=utf-8"
 _RECENT_IMPORT_PATH = "/recent-imports/{h}"
 _ANALYSIS_REPLAY_PATH = "/analysis/replay"
 
-router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_token)])
+router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_host)])
+# Routes the remote token may call (auth.ROLE_REMOTE): play, view, import.
+remote_router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_token)])
 
 
 def _engine_not_found(e: FileNotFoundError) -> HTTPException:
@@ -183,7 +185,7 @@ def _resolve_human_white(side: str) -> bool:
     return side != SIDE_BLACK
 
 
-@router.post("/new")
+@remote_router.post("/new")
 async def new_game(payload: dict, request: Request) -> dict:
     hve = await _get_hve(request)
     s = request.app.state.settings
@@ -320,7 +322,7 @@ def _resolve_game_id_for_import(recents, payload: dict, view_hash: str) -> str:
     return supplied_id or str(uuid.uuid4())
 
 
-@router.post("/import/validate")
+@remote_router.post("/import/validate")
 async def import_validate(payload: dict) -> dict:
     """Parse a FEN/PGN payload and report the resulting position. Read-only.
     Returns ``hash`` (SHA-256 of stripped text) so the caller can compare
@@ -336,7 +338,7 @@ async def import_validate(payload: dict) -> dict:
     }
 
 
-@router.post("/import")
+@remote_router.post("/import")
 async def import_game(payload: dict, request: Request) -> dict:
     """Import a FEN or PGN into VIEW MODE at the start (or `land_at_ply`).
 
@@ -428,7 +430,7 @@ async def import_game(payload: dict, request: Request) -> dict:
     return {_GAME_ID_KEY: game_id, _VIEWING_KEY: True, _HASH_KEY: h, _SUMMARY_KEY: summary}
 
 
-@router.get("/recent-imports")
+@remote_router.get("/recent-imports")
 async def list_recent_imports(request: Request) -> dict:
     """Return the recent-imports index sorted by ts desc.
 
@@ -454,7 +456,7 @@ def _recent_import_payload(recents, h, game_id, row: dict, text: str) -> dict:
     }
 
 
-@router.get("/recent-imports/by-id/{game_id}")
+@remote_router.get("/recent-imports/by-id/{game_id}")
 async def get_recent_import_by_id(game_id: str, request: Request) -> dict:
     """Resolve a recent import by ``game_id`` instead of hash.
 
@@ -480,7 +482,7 @@ async def get_recent_import_by_id(game_id: str, request: Request) -> dict:
     return _recent_import_payload(recents, h, game_id, row, text)
 
 
-@router.get(_RECENT_IMPORT_PATH)
+@remote_router.get(_RECENT_IMPORT_PATH)
 async def get_recent_import(h: str, request: Request) -> dict:
     """Return the full text + metadata for a single recent import.
 
@@ -525,7 +527,7 @@ async def delete_recent_import(h: str, request: Request, cascade: bool = False) 
     return _OK
 
 
-@router.get("/pgn")
+@remote_router.get("/pgn")
 async def export_pgn(request: Request) -> Response:
     """Download the current game as a PGN file.
 
@@ -555,7 +557,7 @@ async def export_pgn(request: Request) -> Response:
     )
 
 
-@router.post("/view/start")
+@remote_router.post("/view/start")
 async def view_start(payload: dict, request: Request) -> dict:
     """Scrub back: suspend the live game into a live clone (same game_id)
     at ``land_at_ply``, a past ply (1 to one less than the move count; else
@@ -571,7 +573,7 @@ async def view_start(payload: dict, request: Request) -> dict:
     return {_GAME_ID_KEY: game_id, _VIEWING_KEY: True}
 
 
-@router.post("/view/first")
+@remote_router.post("/view/first")
 async def view_first(request: Request) -> dict:
     hve = await _get_hve(request)
     with _runtime_error_is_bad_request():
@@ -579,7 +581,7 @@ async def view_first(request: Request) -> dict:
     return _OK
 
 
-@router.post("/view/back")
+@remote_router.post("/view/back")
 async def view_back(request: Request) -> dict:
     hve = await _get_hve(request)
     with _runtime_error_is_bad_request():
@@ -587,7 +589,7 @@ async def view_back(request: Request) -> dict:
     return _OK
 
 
-@router.post("/view/forward")
+@remote_router.post("/view/forward")
 async def view_forward(request: Request) -> dict:
     hve = await _get_hve(request)
     with _runtime_error_is_bad_request():
@@ -595,7 +597,7 @@ async def view_forward(request: Request) -> dict:
     return _OK
 
 
-@router.post("/view/last")
+@remote_router.post("/view/last")
 async def view_last(request: Request) -> dict:
     hve = await _get_hve(request)
     with _runtime_error_is_bad_request():
@@ -603,7 +605,7 @@ async def view_last(request: Request) -> dict:
     return _OK
 
 
-@router.post("/view/goto")
+@remote_router.post("/view/goto")
 async def view_goto(payload: dict, request: Request) -> dict:
     hve = await _get_hve(request)
     ply = payload.get("ply")
@@ -614,7 +616,7 @@ async def view_goto(payload: dict, request: Request) -> dict:
     return _OK
 
 
-@router.post("/view/play-from-here")
+@remote_router.post("/view/play-from-here")
 async def view_play_from_here(payload: dict, request: Request) -> dict:
     """Exit view mode by seeding a fresh play game from plies 0..cursor."""
     hve = await _get_hve(request)
@@ -632,7 +634,7 @@ async def view_play_from_here(payload: dict, request: Request) -> dict:
     return {_GAME_ID_KEY: game_id, _VIEWING_KEY: False}
 
 
-@router.post("/edit/start")
+@remote_router.post("/edit/start")
 async def edit_start(request: Request) -> dict:
     hve = await _get_hve(request)
     await _cancel_ai_analysis(request)
@@ -641,7 +643,7 @@ async def edit_start(request: Request) -> dict:
     return {_FEN_KEY: fen}
 
 
-@router.post("/edit/commit")
+@remote_router.post("/edit/commit")
 async def edit_commit(payload: dict, request: Request) -> dict:
     hve = await _get_hve(request)
     fen = payload.get(_FEN_KEY)
@@ -695,7 +697,7 @@ async def edit_commit(payload: dict, request: Request) -> dict:
     return {_GAME_ID_KEY: result.game_id, _HASH_KEY: h, _SUMMARY_KEY: summary}
 
 
-@router.post("/edit/cancel")
+@remote_router.post("/edit/cancel")
 async def edit_cancel(request: Request) -> dict:
     hve = await _get_hve(request)
     with _runtime_error_is_bad_request():
@@ -710,7 +712,7 @@ async def _republish_best_effort(hve) -> None:
         log.warning("republish_state failed", exc_info=True)
 
 
-@router.post("/move")
+@remote_router.post("/move")
 async def submit_move(payload: dict, request: Request) -> dict:
     hve = await _get_hve(request)
     uci = payload.get("uci")
@@ -725,14 +727,14 @@ async def submit_move(payload: dict, request: Request) -> dict:
     return _OK
 
 
-@router.post("/resign")
+@remote_router.post("/resign")
 async def resign(request: Request) -> dict:
     hve = await _get_hve(request)
     await hve.resign()
     return _OK
 
 
-@router.post("/sync")
+@remote_router.post("/sync")
 async def sync(request: Request) -> dict:
     """Re-emit the current state (board + clock) so a freshly-mounted client
     can resync without server-side mutation."""
@@ -742,7 +744,7 @@ async def sync(request: Request) -> dict:
     return _OK
 
 
-@router.get("/status")
+@remote_router.get("/status")
 async def game_status(request: Request) -> dict:
     """Authoritative state for the client's discard/replace confirmations
     (tournament replay). Client mirrors of this die on page reload; this
@@ -753,7 +755,7 @@ async def game_status(request: Request) -> dict:
     return await s.hve.status()
 
 
-@router.post("/pause")
+@remote_router.post("/pause")
 async def pause(request: Request) -> dict:
     hve = await _get_hve(request)
     with _runtime_error_is_bad_request():
@@ -761,7 +763,7 @@ async def pause(request: Request) -> dict:
     return _OK
 
 
-@router.post("/resume")
+@remote_router.post("/resume")
 async def resume(request: Request) -> dict:
     hve = await _get_hve(request)
     with _runtime_error_is_bad_request():
@@ -787,7 +789,7 @@ async def _cancel_ai_analysis(request: Request) -> None:
     _clear_replay(request)
 
 
-@router.post("/analysis/start")
+@remote_router.post("/analysis/start")
 async def analysis_start(request: Request) -> dict:
     """Enter analysis mode. The server picks the path:
     - engine go-infinite (default): HVE drives a live PV stream
@@ -808,7 +810,7 @@ async def analysis_start(request: Request) -> dict:
     return _OK
 
 
-@router.get(_ANALYSIS_REPLAY_PATH)
+@remote_router.get(_ANALYSIS_REPLAY_PATH)
 async def analysis_replay(request: Request) -> dict:
     """Return the buffered AI events for the in-flight analysis turn, and
     whether one is running. Lets a client reconnecting mid-analysis rebuild
@@ -824,7 +826,7 @@ async def analysis_replay(request: Request) -> dict:
     }
 
 
-@router.delete(_ANALYSIS_REPLAY_PATH)
+@remote_router.delete(_ANALYSIS_REPLAY_PATH)
 async def analysis_replay_ack(request: Request) -> dict:
     """Ack a failed turn's error once a client has shown it. Until then the
     replay keeps it, so a client away when the turn failed still gets the
@@ -835,7 +837,7 @@ async def analysis_replay_ack(request: Request) -> dict:
     return _OK
 
 
-@router.post("/analysis/stop")
+@remote_router.post("/analysis/stop")
 async def analysis_stop(request: Request) -> dict:
     # Cancel before flipping out of ANALYZING so the agent stops cleanly.
     await _cancel_ai_analysis(request)
@@ -845,7 +847,7 @@ async def analysis_stop(request: Request) -> dict:
     return _OK
 
 
-@router.post("/switch-sides")
+@remote_router.post("/switch-sides")
 async def switch_sides(request: Request) -> dict:
     hve = await _get_hve(request)
     with _runtime_error_is_bad_request():
@@ -853,7 +855,7 @@ async def switch_sides(request: Request) -> dict:
     return _OK
 
 
-@router.post("/takeback")
+@remote_router.post("/takeback")
 async def takeback(request: Request) -> dict:
     s = request.app.state.settings
     if not getattr(s, ALLOW_TAKEBACK_KEY, True):

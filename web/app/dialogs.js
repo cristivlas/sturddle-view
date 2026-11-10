@@ -6,6 +6,7 @@ import { APP_EVT } from "./app-events.js";
 import { scrollSortedRowIntoView, SORT_DIR } from "./col-sort.js";
 import { createTable, RENDER_REASON } from "./data-table.js";
 import { STORAGE_KEY } from "./storage-keys.js";
+import { HOST_ONLY_CLASS, isRemote } from "./role.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import { collapseWhitespace } from "./text-utils.js";
 import { escapeHtml, isObject, markSelectable, rafCoalesce, splitPath, suppressMultiClickSelect } from "./wb-utils.js";
@@ -641,8 +642,10 @@ export const AI_THINKING_MODE_CLASS = "ai-thinking-mode";
  *  that tab to focus once the dialog is showing, so a link that exists to
  *  fix one setting lands on it. `select` optionally names an item for the
  *  tab to select (a recents hash for the Recents tab). Main wires up the
- *  actual open in main.js. */
+ *  actual open in main.js. A remote client has no Settings (role.js); the
+ *  links and gears that lead here are not shown to it. */
 export function openSettings(tab, focusClass, select) {
+  if (isRemote()) return;
   window.dispatchEvent(new CustomEvent(APP_EVT.OPEN_SETTINGS, {
     detail: { tab, focus: focusClass, select },
   }));
@@ -662,12 +665,20 @@ export function deepLink(text, onClick) {
 }
 
 /** In-prose "⚙ Settings" link opening `tab`. The gear sits inside the link:
- *  same target, so no second tab stop. Icon-only gears use openSettingsAction. */
-export function settingsLink(tab, label = "Settings") {
-  const gear = document.createElement("wa-icon");
-  gear.name = "gear";
-  const link = deepLink(label, () => openSettings(tab));
-  link.prepend(gear);
+ *  same target, so no second tab stop. Icon-only gears use openSettingsAction.
+ *  `gear: false` drops the icon; `before` runs first (e.g. resolving the popup
+ *  the link sits in -- one modal at a time). Plain text for a remote client. */
+export function settingsLink(tab, label = "Settings", { gear = true, before } = {}) {
+  if (isRemote()) return document.createTextNode(label);
+  const link = deepLink(label, () => {
+    before?.();
+    openSettings(tab);
+  });
+  if (gear) {
+    const icon = document.createElement("wa-icon");
+    icon.name = "gear";
+    link.prepend(icon);
+  }
   return link;
 }
 
@@ -702,6 +713,7 @@ function openSettingsAction(tab, ariaLabel, focusClass) {
   return {
     icon: "gear",
     ariaLabel,
+    hostOnly: true,
     onClick: () => openSettings(tab, focusClass),
   };
 }
@@ -739,15 +751,17 @@ const ERROR_CODE_ACTIONS = {
  *  Same source the toast path uses, so inline renderers (e.g. the AI
  *  tool-call timeline) attach the identical gear affordance. */
 export function errorActionsFor(code) {
-  return ERROR_CODE_ACTIONS[code] || [];
+  const actions = ERROR_CODE_ACTIONS[code] || [];
+  return isRemote() ? actions.filter((a) => !a.hostOnly) : actions;
 }
 
 /** Build a single inline toast action button. `action` is
- *  {icon|label, ariaLabel?, onClick}. */
+ *  {icon|label, ariaLabel?, hostOnly?, onClick}. */
 export function buildToastActionButton(action) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "toast-action-btn";
+  if (action.hostOnly) btn.classList.add(HOST_ONLY_CLASS);
   if (action.icon) {
     // Icon variant gets the square icon-button sizing; text variant
     // keeps toast-action-btn's padding so the label fits.

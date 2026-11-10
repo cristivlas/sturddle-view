@@ -1,7 +1,6 @@
-"""Connect-from-mobile: a QR code of the LAN entry URL, for any
-authenticated client (the token in the QR is the one the caller already
-holds). Desktop mode opens the LAN port on the first request (see
-lan_listener)."""
+"""Connect-from-mobile: a QR code of the LAN entry URL carrying the remote
+token (auth.ROLE_REMOTE). Desktop mode opens the LAN port on the first
+request (see lan_listener)."""
 from __future__ import annotations
 
 import logging
@@ -9,13 +8,13 @@ import logging
 import segno
 from fastapi import APIRouter, Depends, Request
 
-from ..auth import AUTH_DISABLED_LAN_WARNING, require_token
+from ..auth import AUTH_DISABLED_LAN_WARNING, require_host
 from ..config import WILDCARD_HOST
 from ..netinfo import entry_url, is_loopback, lan_hosts, preferred_host
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/connect", tags=["connect"], dependencies=[Depends(require_token)])
+router = APIRouter(prefix="/connect", tags=["connect"], dependencies=[Depends(require_host)])
 
 # Black on white regardless of UI theme: phone cameras need the contrast.
 _QR_DARK = "#000"
@@ -33,7 +32,7 @@ def _qr_data_uri(url: str) -> str:
 
 async def _desktop_lan_hosts(listener, settings) -> list[str]:
     """Open the LAN port on demand. A loopback launch never logged the
-    --no-auth warning, so it is raised here when the exposure happens."""
+    auth-disabled warning, so it is raised here when the exposure happens."""
     before = set(listener.hosts())
     hosts = await listener.ensure()
     if settings.auth_disabled and any(h not in before for h in hosts):
@@ -55,6 +54,6 @@ async def enable_lan(request: Request) -> dict:
         hosts = lan_hosts(settings.host)
     if hosts:
         host = preferred_host(hosts, settings.prefer_tailscale)
-        return {"qr": _qr_data_uri(entry_url(settings, host)), "reason": None}
+        return {"qr": _qr_data_uri(entry_url(settings, host, remote=True)), "reason": None}
     bind_failed = listener is not None and bool(lan_hosts(WILDCARD_HOST))
     return {"qr": None, "reason": REASON_BIND_FAILED if bind_failed else REASON_OFFLINE}

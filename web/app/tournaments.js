@@ -17,6 +17,7 @@ import { wireInlineSearch } from "./inline-search.js";
 import { attachRibbonOverflow } from "./ribbon-overflow.js";
 import { mountWallpaper } from "./wallpaper.js";
 import { attachMenuNav, focusFirstItem, MENU_CHECKED_CLASS, MENU_OPEN_CLASS, MENU_SEPARATOR_HTML } from "./menu-nav.js";
+import { HOST_ONLY_CLASS, isRemote } from "./role.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import {
@@ -63,6 +64,9 @@ const CONFIRM_MULTILINE_CLASS = "confirm-message--multiline";
 const COPY_SUFFIX = " (copy)";
 const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
 const EMPTY_CTA_SUFFIX = " to create one.";
+// A remote client can't create tournaments or set up fastchess.
+const EMPTY_REMOTE_MSG = "No tournaments yet.";
+const EMPTY_REMOTE_NO_FASTCHESS_MSG = "fastchess is not configured on the host computer.";
 const SHOW_STANDINGS_TITLE = "Show standings";
 const REVEAL_COOLDOWN_MS = 1500;
 // Workspace windows' outside outline width (styles.css :root).
@@ -96,24 +100,26 @@ const IS_LOCAL = ["localhost", "127.0.0.1", "::1"].includes(window.location.host
 // search buttons. Search sits with New: both act on the list, not on the
 // selected tournament.
 export function ribbonHtml({ className, ariaLabel, prefix, withWorkspace, withSearch }) {
-  const sep = '<span class="ribbon-sep" aria-hidden="true"></span>';
-  const btn = (suffix, icon, title, { danger = false, enabled = false, iconClass = "" } = {}) => `
-          <button class="ribbon-btn ${danger ? "ribbon-btn--danger " : ""}${prefix}-${suffix}"${enabled ? "" : " disabled"} aria-label="${title}" title="${title}">
+  const sep = (hostOnly = false) =>
+    `<span class="ribbon-sep${hostOnly ? ` ${HOST_ONLY_CLASS}` : ""}" aria-hidden="true"></span>`;
+  // hostOnly: create/edit/copy/delete, which a remote client can't use.
+  const btn = (suffix, icon, title, { danger = false, enabled = false, iconClass = "", hostOnly = false } = {}) => `
+          <button class="ribbon-btn ${danger ? "ribbon-btn--danger " : ""}${hostOnly ? `${HOST_ONLY_CLASS} ` : ""}${prefix}-${suffix}"${enabled ? "" : " disabled"} aria-label="${title}" title="${title}">
             <wa-icon${iconClass ? ` class="${iconClass}"` : ""} name="${icon}"></wa-icon>
           </button>`;
   return `<div class="${className}" role="toolbar" aria-label="${ariaLabel}">
-          ${btn("new", "plus", NEW_TOURNAMENT_LABEL, { enabled: true })}
+          ${btn("new", "plus", NEW_TOURNAMENT_LABEL, { enabled: true, hostOnly: true })}
           ${withSearch ? btn("search", "magnifying-glass", SEARCH_TOURNAMENTS_LABEL, { enabled: true }) : ""}
-          ${sep}
+          ${sep(!withSearch)}
           ${btn("start", "play", START_TOURNAMENT_LABEL, { iconClass: `${prefix}-start-icon` })}
           ${btn("stop", "hand", STOP_TOURNAMENT_LABEL)}
-          ${sep}
+          ${sep()}
           ${withWorkspace ? btn("workspace", "window-restore", OPEN_WORKSPACE_LABEL) : ""}
           ${btn("info", "circle-info", TOURNAMENT_DETAILS_LABEL)}
-          ${btn("edit", "pen-to-square", EDIT_TOURNAMENT_LABEL)}
-          ${btn("duplicate", "copy", COPY_TOURNAMENT_LABEL)}
-          ${sep}
-          ${btn("remove", "trash", DELETE_TOURNAMENT_LABEL, { danger: true })}
+          ${btn("edit", "pen-to-square", EDIT_TOURNAMENT_LABEL, { hostOnly: true })}
+          ${btn("duplicate", "copy", COPY_TOURNAMENT_LABEL, { hostOnly: true })}
+          ${sep(true)}
+          ${btn("remove", "trash", DELETE_TOURNAMENT_LABEL, { danger: true, hostOnly: true })}
         </div>`;
 }
 
@@ -638,16 +644,19 @@ export function tournamentActions({ api, log, getSettings, reload, onStatusClick
 // One guard()ed wrapper per tournament verb. Every verb awaits network or a
 // confirm before acting, so an unguarded double-click stacks dialogs or
 // doubles POSTs. Shared by Arena's ribbon and the Studio adapter above.
+// Host-only verbs are no-ops for a remote client: its ribbon hides them, and
+// this also covers keyboard shortcuts and other entry points.
 function guardedVerbs(ctx) {
+  const hostOnly = (fn) => (isRemote() ? () => {} : guard(fn));
   return {
-    create: guard(() => openNewTournamentDialog(ctx)),
-    edit: guard((t) => openEditTournamentDialog(ctx, t)),
-    duplicate: guard((t) => openDuplicateTournamentDialog(ctx, t)),
+    create: hostOnly(() => openNewTournamentDialog(ctx)),
+    edit: hostOnly((t) => openEditTournamentDialog(ctx, t)),
+    duplicate: hostOnly((t) => openDuplicateTournamentDialog(ctx, t)),
     info: guard((t) => openInfoDialog(ctx, t)),
     start: guard((t) => startOne(ctx, t)),
     stop: guard((t) => stopOne(ctx, t)),
-    remove: guard((t) => removeOne(ctx, t)),
-    removeMany: guard((list) => removeMany(ctx, list)),
+    remove: hostOnly((t) => removeOne(ctx, t)),
+    removeMany: hostOnly((list) => removeMany(ctx, list)),
   };
 }
 
@@ -675,6 +684,7 @@ export function fastchessMissing(settings) {
 // is missing, else the New-tournament CTA. Returns the nodes to append into a
 // host so each perspective drops them into its own container.
 export function emptyStateNodes(settings, onCreate) {
+  if (isRemote()) return [fastchessMissing(settings) ? EMPTY_REMOTE_NO_FASTCHESS_MSG : EMPTY_REMOTE_MSG];
   if (!fastchessMissing(settings)) return newTournamentCta(onCreate);
   return [
     "fastchess not configured \u2014 open ",

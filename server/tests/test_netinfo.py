@@ -81,3 +81,9 @@ def test_entry_url_uses_https_with_tls(tmp_path):
     s = Settings(token=TOKEN, port=PORT, tls_cert=tmp_path / "c.pem", tls_key=tmp_path / "k.pem")
     assert netinfo.url_scheme(s) == "https"
     assert netinfo.entry_url(s, PRIMARY) == f"https://{PRIMARY}:{PORT}/auth?token={TOKEN}"
+
+
+@pytest.mark.parametrize(("host", "url_host"), [("::1", "[::1]"), ("fd00::5", "[fd00::5]")])
+def test_entry_url_brackets_ipv6(host, url_host):
+    s = Settings(token=TOKEN, port=PORT)
+    assert netinfo.entry_url(s, host) == f"http://{url_host}:{PORT}/auth?token={TOKEN}"
