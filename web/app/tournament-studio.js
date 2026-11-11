@@ -111,6 +111,8 @@ const AXIS = Object.freeze({ Y: "y", X: "x" });
 // Fallback total flex-grow for a split whose panes have none.
 const DEFAULT_SPLIT_GROW = 1;
 const DRAGGING_CLASS = "dragging";
+// On the row grip while snapped: styles.css draws its handle.
+const SNAPPED_CLASS = "snapped";
 
 // Label for the currently selected UX mode (top-nav tab text).
 export function tournamentUxLabel() {
@@ -456,8 +458,14 @@ function applyEndTimes(ctx) {
 }
 
 // Fetch the tournament list; a generation guard drops out-of-order
-// responses so a slow reload can't clobber a newer one.
-async function studioLoadList(ctx, { deferRender = false } = {}) {
+// responses so a slow reload can't clobber a newer one. Settles once the
+// latest load has landed (see loadList).
+function studioLoadList(ctx, opts) {
+  ctx.listLoad = loadList(ctx, opts);
+  return ctx.listLoad;
+}
+
+async function loadList(ctx, { deferRender = false } = {}) {
   const gen = ++ctx.listGen;
   let body;
   try {
@@ -466,7 +474,10 @@ async function studioLoadList(ctx, { deferRender = false } = {}) {
     reportError({ log: ctx.log }, LOAD_FAIL_MSG, e);
     return;
   }
-  if (gen !== ctx.listGen || !ctx.tourneysPaneEl) return;
+  // Superseded: settle with the newer load, so a caller (the reveal gate)
+  // waits for the list, live view and boards that land, not none.
+  if (gen !== ctx.listGen) return ctx.listLoad;
+  if (!ctx.tourneysPaneEl) return;
   ctx.tournaments = body.tournaments || [];
   ctx.activeId = body.active_id ?? null;
   ctx.endTimesReady = applyEndTimes(ctx);
@@ -913,6 +924,11 @@ function regridBoards(ctx) {
 function setSnapRows(ctx, rows) {
   ctx._snapRows = rows;
   saveJson(STORAGE_KEY.STUDIO_SNAP_ROWS, rows);
+  showSnap(ctx);
+}
+
+function showSnap(ctx) {
+  ctx.gripRowEl?.classList.toggle(SNAPPED_CLASS, ctx._snapRows !== null);
 }
 
 // Row grip release (region px tall): snap it (snapToGrid), and note whether
@@ -943,6 +959,7 @@ function keepSnapped(ctx) {
 function restoreSnap(ctx) {
   if (!ctx.boardsEl) return;
   ctx._snapRows = loadJson(STORAGE_KEY.STUDIO_SNAP_ROWS);
+  showSnap(ctx);
   ctx.onBoardResize();
 }
 
@@ -1502,7 +1519,7 @@ export function mountTournamentStudio({ container, api, events, log }) {
     historyPaneEl: q(".studio-pane-history"),
     logPaneEl: q(".studio-pane-log"),
     // Tourneys data + selection (selection restored from last session).
-    tournaments: [], activeId: null, listGen: 0,
+    tournaments: [], activeId: null, listGen: 0, listLoad: null,
     selectedId: loadRaw(STORAGE_KEY.STUDIO_SELECTED_ID),
     enginesSort: loadSortDir(STORAGE_KEY.STUDIO_ENGINES_SORT),
     // data-table.js instances set by build{Tourney,History}Table.
