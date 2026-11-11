@@ -4292,7 +4292,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .studio-tourney-row.marked td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
 .studio-history-num, .studio-history-result { color: var(--muted); }
 .studio-history-result { font-family: var(--wa-font-family-code); }
-.studio-tourney-created, .studio-tourney-started { color: var(--muted); }
+.studio-tourney-created, .studio-tourney-started, .studio-tourney-ended { color: var(--muted); }
 /* Status + optional SPRT pill: clip (no ellipsis) rather than widen. */
 .studio-tourney-tbl tbody td.studio-tourney-status { text-overflow: clip; }
 /* Running tourney's Games cell: Arena's progress bar + inline label. */

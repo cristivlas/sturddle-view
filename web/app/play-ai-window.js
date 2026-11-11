@@ -23,6 +23,7 @@ import {
 import { isRemote } from "./role.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
+import { formatElapsed, MS_PER_SECOND } from "./time-format.js";
 import {
   deepLink,
   openSettings,
@@ -120,11 +121,6 @@ function usageTotal(u) {
 // the signal the model finished thinking for this round.
 const THINKING_LABEL_ACTIVE = "Thinking";
 const THINKING_LABEL_DONE_PREFIX = "Thought for ";
-
-const MS_PER_SECOND = 1000;
-const SECONDS_PER_MINUTE = 60;
-const SECONDS_PER_HOUR = 3600;
-const SECONDS_PAD = 2;
 
 // Panel DOM classes shared between builders and selectors.
 const IS_ACTIVE_CLASS = "is-active";
@@ -346,27 +342,10 @@ function freezeThinkingLabel(entry, serverMs = null) {
   entry.thinking.summary.classList.remove(IS_ACTIVE_CLASS);
 }
 
-// Elapsed-timer text: "0s".."59s", "m:ss", "h:mm:ss" (engine-only runs
-// are open-ended). Floors, unlike the thinking label, so it ticks from 0s.
-function formatElapsed(ms) {
-  const total = Math.max(0, Math.floor(ms / MS_PER_SECOND));
-  if (total < SECONDS_PER_MINUTE) return `${total}s`;
-  const pad = n => String(n).padStart(SECONDS_PAD, "0");
-  const h = Math.floor(total / SECONDS_PER_HOUR);
-  const m = Math.floor((total % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE);
-  const s = total % SECONDS_PER_MINUTE;
-  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
-}
-
+// formatElapsed, but rounded and at least 1s, so sub-second flashes don't
+// read as "0s".
 function formatThinkingDuration(ms) {
-  // Under a minute: "Ns" (minimum 1s so sub-second flashes don't read
-  // as "0s"). At/over a minute: "m:ss". Hours are unrealistic for a
-  // single turn so we don't format past minutes.
-  const totalSeconds = Math.max(1, Math.round(ms / MS_PER_SECOND));
-  if (totalSeconds < SECONDS_PER_MINUTE) return `${totalSeconds}s`;
-  const m = Math.floor(totalSeconds / SECONDS_PER_MINUTE);
-  const s = totalSeconds % SECONDS_PER_MINUTE;
-  return `${m}:${String(s).padStart(SECONDS_PAD, "0")}`;
+  return formatElapsed(Math.max(1, Math.round(ms / MS_PER_SECOND)) * MS_PER_SECOND);
 }
 
 function ensureRoundPanel(root, roundIndex) {

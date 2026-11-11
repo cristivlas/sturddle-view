@@ -31,7 +31,7 @@ import {
 import { BOOK_KEYS, mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { makePathRow } from "./settings-path-row.js";
 import { mountSprtButton } from "./tournament-sprt-button.js";
-import { formatDraw, formatResign, formatStamp, formatType } from "./tournament-format.js";
+import { formatDraw, formatResign, formatStamp, formatType, STAMP_LABEL, stampWithDuration } from "./tournament-format.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace, STANDINGS_VIEW } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
 import { applyListClick, createMultiSelect, selectionTargets } from "./multi-select.js";
@@ -143,8 +143,8 @@ const PANEL_HTML = `
           <ul class="tmb-dropdown">
             <li><button class="tmb-dd-item tmb-sort-opt" data-sort="${SORT_BY.NAME}">Name</button></li>
             <li><button class="tmb-dd-item tmb-sort-opt" data-sort="${SORT_BY.STATUS}">Status</button></li>
-            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="${SORT_BY.CREATED}">Created</button></li>
-            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="${SORT_BY.STARTED}">Started</button></li>
+            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="${SORT_BY.CREATED}">${STAMP_LABEL.CREATED}</button></li>
+            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="${SORT_BY.STARTED}">${STAMP_LABEL.STARTED}</button></li>
           </ul>
         </li>
         <li class="tmb-menu tmb-window-menu">
@@ -834,9 +834,9 @@ function buildInfoContent(ctx, t, onStatusClick) {
     row("Book plies", ed.book_plies);
     row("Book order", ed.book_order);
   }
-  row("Created", formatStamp(t.created_at));
-  if (t.status === STATUS.RUNNING || t.status === STATUS.FAILED || t.status === STATUS.STOPPED) row("Started", formatStamp(t.started_at));
-  if (t.status === STATUS.STOPPED) row("Stopped", formatStamp(t.stopped_at));
+  row(STAMP_LABEL.CREATED, formatStamp(t.created_at));
+  if (t.started_at) row(STAMP_LABEL.STARTED, formatStamp(t.started_at));
+  if (t.stopped_at) row(t.status === STATUS.STOPPED ? STAMP_LABEL.STOPPED : STAMP_LABEL.ENDED, stampWithDuration(t.started_at, t.stopped_at));
 
   const enginesList = document.createElement("ul");
   enginesList.className = "tournament-info-engines";

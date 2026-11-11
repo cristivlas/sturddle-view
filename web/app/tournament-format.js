@@ -1,6 +1,13 @@
-// Shared adjudication/type formatters for the dialog rows (formatResign/
-// formatDraw). Both return null when unset; the dialog supplies its own "Off"
-// sentinel so its row still renders.
+// Shared tournament formatters: timestamps, durations, type and adjudication
+// (formatResign/formatDraw return null when unset; the dialog supplies its own
+// "Off" sentinel so its row still renders).
+
+import { formatDuration } from "./time-format.js";
+
+// Timestamp labels shared by the info dialog, sort menu and Studio columns.
+export const STAMP_LABEL = Object.freeze({
+  CREATED: "Created", STARTED: "Started", STOPPED: "Stopped", ENDED: "Ended",
+});
 
 const TYPE_LABEL = Object.freeze({ roundrobin: "Round-robin", gauntlet: "Gauntlet" });
 
@@ -10,6 +17,14 @@ export function formatStamp(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   return isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
+// End stamp plus the run's duration in parens; the bare stamp when the start
+// is missing or either time is unparseable.
+export function stampWithDuration(startIso, endIso) {
+  const stamp = formatStamp(endIso);
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
+  return startIso && Number.isFinite(ms) ? `${stamp} (${formatDuration(ms)})` : stamp;
 }
 
 const SHORT_DATE = Object.freeze({ month: "short", day: "numeric" });
@@ -30,18 +45,20 @@ export function fmtSignedElo(v) {
   return (v >= 0 ? "+" : "") + v.toFixed(1);
 }
 
+const PLUS_MINUS = "\u00B1";
+
 // " +/- m.m" margin suffix, or "" when no 95% interval is available.
 export function fmtMargin(m) {
-  return m == null ? "" : ` ± ${m.toFixed(1)}`;
+  return m == null ? "" : ` ${PLUS_MINUS} ${m.toFixed(1)}`;
 }
 
 export function formatResign(r) {
   if (!r || r.movecount == null || r.score == null) return null;
-  const base = `after ${r.movecount} move${r.movecount === 1 ? "" : "s"} at ±${r.score} cp`;
+  const base = `after ${r.movecount} move${r.movecount === 1 ? "" : "s"} at ${PLUS_MINUS}${r.score} cp`;
   return r.twosided ? `${base} (two-sided)` : base;
 }
 
 export function formatDraw(d) {
   if (!d || d.movenumber == null) return null;
-  return `from move ${d.movenumber}, ${d.movecount} move${d.movecount === 1 ? "" : "s"} within ±${d.score} cp`;
+  return `from move ${d.movenumber}, ${d.movecount} move${d.movecount === 1 ? "" : "s"} within ${PLUS_MINUS}${d.score} cp`;
 }

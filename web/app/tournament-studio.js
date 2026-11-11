@@ -15,7 +15,7 @@ import { engineRowEntries, ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow, progre
 import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, loadSortDir, nextDir, scrollSortedRowIntoView } from "./col-sort.js";
 import { createTable, RENDER_REASON } from "./data-table.js";
 import { ACTIVATE_KEYS } from "./keys.js";
-import { formatStamp } from "./tournament-format.js";
+import { formatStamp, STAMP_LABEL } from "./tournament-format.js";
 import { copyToClipboard, reportError, toast } from "./dialogs.js";
 import { debounce, escapeHtml, flashWindow, markSelectable, rafCoalesce, roveTabStop, setStartTab, suppressModifierClickSelect, syncRovingTabStop, WB_EDGE_RIGHT_CLASS, WB_NO_SHADOW_CLASS, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
 import { createMultiSelect, selectionTargets } from "./multi-select.js";
@@ -307,10 +307,12 @@ function gamesCell(t) {
 const TOURNEY_COLUMNS = [
   { key: "status", label: "Status", width: 17, firstDir: SORT_DIR.ASC, rank: STATUS_RANK,
     tdClass: "studio-tourney-status", cell: (t) => statusBadgeHtml(t.status) + sprtBadgeHtml(t) },
-  { key: "created", label: "Created", width: 20, firstDir: SORT_DIR.DESC, field: "created_at", tiebreak: true,
+  { key: "created", label: STAMP_LABEL.CREATED, width: 20, firstDir: SORT_DIR.DESC, field: "created_at", tiebreak: true,
     tdClass: "studio-tourney-created", cell: (t) => escapeHtml(formatStamp(t.created_at)) },
-  { key: "started", label: "Started", width: 20, firstDir: SORT_DIR.DESC, field: "started_at",
+  { key: "started", label: STAMP_LABEL.STARTED, width: 20, firstDir: SORT_DIR.DESC, field: "started_at",
     tdClass: "studio-tourney-started", cell: (t) => escapeHtml(formatStamp(t.started_at)) },
+  { key: "ended", label: STAMP_LABEL.ENDED, width: 20, firstDir: SORT_DIR.DESC, field: "stopped_at", defaultHidden: true,
+    tdClass: "studio-tourney-ended", cell: (t) => escapeHtml(formatStamp(t.stopped_at)) },
   { key: "name", label: "Name", width: 14, alwaysOn: true, firstDir: SORT_DIR.ASC,
     tdClass: "studio-tourney-name", tdTitle: (t) => t.name, cell: (t) => escapeHtml(t.name) },
   { key: "games", label: "Completed", width: 29, sortable: false,
@@ -819,7 +821,7 @@ function studioCols() {
 // rows: the grid's row count.
 // pending: boards not yet open but about to take slots. width: the region's
 // content width to fit (default: as laid out now).
-function boardCell(ctx, pending = 0, width = ctx.boardsEl?.clientWidth ?? 0) {
+function boardCell(ctx, pending = 0, width = ctx.boardsEl ? regionSize(ctx.boardsEl).innerW : 0) {
   const gridCols = studioCols();
   const el = ctx.boardsEl;
   const dpr = window.devicePixelRatio;
@@ -929,13 +931,19 @@ function restoreSnap(ctx) {
   ctx.onBoardResize();
 }
 
-// The region's exact (fractional) content size, scrollbars included, and its
-// border-box height: offset/client sizes round to whole px.
+// The region's exact (fractional) content size, scrollbars included, its
+// border-box height, and innerW: w less a shown vertical scrollbar (the
+// width boards lay out in). offset/client sizes round to whole px, so only
+// a shown scrollbar (syncScrollbar's) is measured with them.
 function regionSize(el) {
   const cs = getComputedStyle(el);
   const r = el.getBoundingClientRect();
+  const borderX = parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+  const w = r.width - borderX;
+  const scrollbarW = cs.overflowY === OVERFLOW_SCROLL ? el.offsetWidth - el.clientWidth - borderX : 0;
   return {
-    w: r.width - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth),
+    w,
+    innerW: w - scrollbarW,
     h: r.height - parseFloat(cs.borderTopWidth) - parseFloat(cs.borderBottomWidth),
     outerH: r.height,
   };
