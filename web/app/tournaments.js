@@ -9,7 +9,7 @@
 
 import { mqMobile, mqMobileH, mqMobileHPlay } from "./breakpoints.js";
 import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, SETTINGS_TAB_TOURNAMENT, settingsLink, shakeField, showDialog, toast, TOAST_DURATION_MS } from "./dialogs.js";
-import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, sprtParamErrors, STATUS, STATUS_RANK } from "./tournament-events.js";
+import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, sprtParamErrors, STATUS, STATUS_RANK, TOURNAMENTS_ENDPOINT } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
 import { baseCompare, scrollSortedRowIntoView } from "./col-sort.js";
 import { rankCmp } from "./sort-stack.js";
@@ -31,6 +31,7 @@ import {
 import { BOOK_KEYS, mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { makePathRow } from "./settings-path-row.js";
 import { mountSprtButton } from "./tournament-sprt-button.js";
+import { resolveEndTime } from "./tournament-end-time.js";
 import { formatDraw, formatResign, formatStamp, formatType, STAMP_LABEL, stampWithDuration } from "./tournament-format.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace, STANDINGS_VIEW } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
@@ -562,7 +563,7 @@ async function stopOne(ctx, t) {
   });
   if (!ok) return;
   try {
-    await ctx.api("POST", `/api/tournaments/${t.id}/stop`);
+    await ctx.api("POST", `${TOURNAMENTS_ENDPOINT}/${t.id}/stop`);
   } catch (e) {
     reportError({ log: ctx.log }, `Stopping "${t.name}" failed`, e);
   }
@@ -570,7 +571,7 @@ async function stopOne(ctx, t) {
 }
 
 async function deleteTournament(ctx, t) {
-  await ctx.api("DELETE", `/api/tournaments/${t.id}`);
+  await ctx.api("DELETE", `${TOURNAMENTS_ENDPOINT}/${t.id}`);
   if (getActiveWorkspace()?.tournamentId === t.id) getActiveWorkspace().close();
   clearWorkspaceState(t.id);
 }
@@ -712,10 +713,12 @@ function newTournamentCta(onCreate) {
 async function openInfoDialog(ctx, t) {
   let detailed = t;
   try {
-    detailed = await ctx.api("GET", `/api/tournaments/${t.id}`);
+    detailed = await ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${t.id}`);
   } catch (e) {
     ctx.log?.("Loading tournament details failed:", e);
   }
+  // null: unknown (no game finished, or the fetch failed).
+  const endedAt = await resolveEndTime(ctx.api, detailed, { log: ctx.log, retry: true });
   showDialog({
     label: detailed.name,
     width: "520px",
@@ -729,13 +732,14 @@ async function openInfoDialog(ctx, t) {
       const onStatus = ctx.onStatusClick
         ? () => { resolve(); ctx.onStatusClick(detailed); }
         : null;
-      wrap.appendChild(buildInfoContent(ctx, detailed, onStatus));
+      wrap.appendChild(buildInfoContent(ctx, detailed, onStatus, endedAt));
       dialog.appendChild(wrap);
     },
   });
 }
 
-function buildInfoContent(ctx, t, onStatusClick) {
+// endedAt: the end time to measure the run to (null: unknown, no duration).
+function buildInfoContent(ctx, t, onStatusClick, endedAt) {
   const tpl = t.template || {};
   const dl = document.createElement("dl");
   dl.className = "tournament-info-grid";
@@ -763,7 +767,7 @@ function buildInfoContent(ctx, t, onStatusClick) {
       btn.innerHTML = `<wa-icon name="folder-open"></wa-icon>`;
       btn.addEventListener("click", cooldown(async () => {
         try {
-          await ctx.api("POST", `/api/tournaments/${t.id}/reveal`);
+          await ctx.api("POST", `${TOURNAMENTS_ENDPOINT}/${t.id}/reveal`);
         } catch (e) {
           reportError({ log: ctx.log }, "Could not open folder", e);
         }
@@ -836,7 +840,8 @@ function buildInfoContent(ctx, t, onStatusClick) {
   }
   row(STAMP_LABEL.CREATED, formatStamp(t.created_at));
   if (t.started_at) row(STAMP_LABEL.STARTED, formatStamp(t.started_at));
-  if (t.stopped_at) row(t.status === STATUS.STOPPED ? STAMP_LABEL.STOPPED : STAMP_LABEL.ENDED, stampWithDuration(t.started_at, t.stopped_at));
+  if (t.stopped_at) row(t.status === STATUS.STOPPED ? STAMP_LABEL.STOPPED : STAMP_LABEL.ENDED,
+    endedAt ? stampWithDuration(t.started_at, endedAt) : formatStamp(t.stopped_at));
 
   const enginesList = document.createElement("ul");
   enginesList.className = "tournament-info-engines";
@@ -1023,7 +1028,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         actionBtn.loading = true;
         let rescheckResult;
         try {
-          rescheckResult = await ctx.api("POST", "/api/tournaments/rescheck", resolved);
+          rescheckResult = await ctx.api("POST", `${TOURNAMENTS_ENDPOINT}/rescheck`, resolved);
         } catch (e) {
           const detail = apiErrorDetail(e);
           const msg = (detail && detail.message) || detail || "Resource check failed";
@@ -1103,7 +1108,7 @@ async function loadAvailableEngines(ctx) {
 // name-taken failure rethrows flagged so the dialog shakes the name field.
 async function postTournament(ctx, data, failMsg) {
   try {
-    await ctx.api("POST", "/api/tournaments", data);
+    await ctx.api("POST", TOURNAMENTS_ENDPOINT, data);
     toast(`Created new tournament "${data.name}"`, { variant: "success" });
   } catch (e) {
     reportError({ log: ctx.log }, failMsg, e);
@@ -1211,7 +1216,7 @@ async function openEditTournamentDialog(ctx, t) {
       }
       let failed = false;
       try {
-        await ctx.api("PATCH", `/api/tournaments/${t.id}`, data);
+        await ctx.api("PATCH", `${TOURNAMENTS_ENDPOINT}/${t.id}`, data);
         toast(`Updated "${data.name}"`, { variant: "success" });
       } catch (e) {
         reportError({ log: ctx.log }, "Updating tournament failed", e);
@@ -1242,7 +1247,7 @@ async function openDuplicateTournamentDialog(ctx, t) {
   // which case the POST's 409 shake is the backstop.
   let existing = ctx.tournaments;
   if (!existing) {
-    const list = await ctx.api("GET", "/api/tournaments").catch(() => null);
+    const list = await ctx.api("GET", TOURNAMENTS_ENDPOINT).catch(() => null);
     existing = list?.tournaments || [];
   }
   const initialName = suggestCopyName(t.name, existing.map((x) => x.name));
@@ -1413,7 +1418,7 @@ async function pollTick(ctx) {
   if (!t || t.status !== STATUS.RUNNING) return;
   let fresh;
   try {
-    fresh = await ctx.api("GET", `/api/tournaments/${t.id}`);
+    fresh = await ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${t.id}`);
   } catch (e) {
     ctx.log?.(`tournaments poll failed: ${e.message}`);
     return;
@@ -1686,7 +1691,7 @@ export function mountTournaments({ container, wallpaperEl, api, events, log }) {
   ctx.scheduleRenderList = rafCoalesce(() => renderList(ctx));
   ctx.scheduleProgress = rafCoalesce(() => updateProgressInPlace(ctx, ctx.progressPending));
   ctx.loadList = lastWriteWins(
-    () => ctx.api("GET", "/api/tournaments"),
+    () => ctx.api("GET", TOURNAMENTS_ENDPOINT),
     (body, opts) => {
       ctx.tournaments = body.tournaments;
       ctx.activeId = body.active_id;

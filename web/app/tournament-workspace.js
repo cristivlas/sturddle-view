@@ -18,7 +18,7 @@ import {
   syncWaitingOverlays,
   LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT, DEBUG_WATCH,
 } from "./tournament-live-game.js";
-import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
+import { EVT, EVT_PREFIX, KIND, STATUS, TOURNAMENTS_ENDPOINT } from "./tournament-events.js";
 import { SIDE } from "./chess-consts.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
@@ -666,7 +666,7 @@ function refreshWatchButtons(ctx) {
 async function refresh(ctx) {
   let fresh;
   try {
-    fresh = await ctx.api("GET", `/api/tournaments/${ctx.tournament.id}`);
+    fresh = await ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${ctx.tournament.id}`);
   } catch (e) {
     ctx.log?.(`workspace refresh failed: ${e.message}`);
     return;
@@ -764,7 +764,7 @@ function armSubscriptions(ctx) {
 
 async function backfillEvents(ctx) {
   try {
-    const res = await ctx.api("GET", `/api/tournaments/${ctx.tournament.id}/events`);
+    const res = await ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${ctx.tournament.id}/events`);
     let added = false;
     for (const e of (res.events || [])) {
       if (!e.kind?.startsWith(EVT_PREFIX)) continue;

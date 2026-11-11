@@ -15,11 +15,12 @@ import { engineRowEntries, ICON_ENGINE_ROW, ICON_GAME_ROW, markEngineRow, progre
 import { SORT_DIR, ARROW_CLASS, ARROW_ASC, ARROW_DESC, loadSortDir, nextDir, scrollSortedRowIntoView } from "./col-sort.js";
 import { createTable, RENDER_REASON } from "./data-table.js";
 import { ACTIVATE_KEYS } from "./keys.js";
+import { knownEndTime, resolveEndTime } from "./tournament-end-time.js";
 import { formatStamp, STAMP_LABEL } from "./tournament-format.js";
 import { copyToClipboard, reportError, toast } from "./dialogs.js";
 import { debounce, escapeHtml, flashWindow, markSelectable, rafCoalesce, roveTabStop, setStartTab, suppressModifierClickSelect, syncRovingTabStop, WB_EDGE_RIGHT_CLASS, WB_NO_SHADOW_CLASS, wireArrowKeyNav, wireSpanButton } from "./wb-utils.js";
 import { createMultiSelect, selectionTargets } from "./multi-select.js";
-import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS, STATUS_RANK } from "./tournament-events.js";
+import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS, STATUS_RANK, TOURNAMENTS_ENDPOINT } from "./tournament-events.js";
 import { emptyStateNodes, fastchessMissing, removeSelected, ribbonHtml, setStartVerb, tournamentActions, watchTournamentSettings } from "./tournaments.js";
 import { RESULT, SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, backfillEvent, createLiveState, seedFromDetail } from "./tournament-live-state.js";
@@ -34,7 +35,6 @@ import { attachPanelMenu, COPY_LABEL, createPanelFade } from "./panel-fade.js";
 import { mqMobile, mqMobileH } from "./breakpoints.js";
 import { attachRibbonOverflow } from "./ribbon-overflow.js";
 
-const TOURNAMENTS_ENDPOINT = "/api/tournaments";
 const SETTINGS_ENDPOINT = "/settings";
 const LOAD_FAIL_MSG = "Loading tournaments failed";
 const NO_ENGINES_MSG = "No active engines.";
@@ -311,8 +311,8 @@ const TOURNEY_COLUMNS = [
     tdClass: "studio-tourney-created", cell: (t) => escapeHtml(formatStamp(t.created_at)) },
   { key: "started", label: STAMP_LABEL.STARTED, width: 20, firstDir: SORT_DIR.DESC, field: "started_at",
     tdClass: "studio-tourney-started", cell: (t) => escapeHtml(formatStamp(t.started_at)) },
-  { key: "ended", label: STAMP_LABEL.ENDED, width: 20, firstDir: SORT_DIR.DESC, field: "stopped_at", defaultHidden: true,
-    tdClass: "studio-tourney-ended", cell: (t) => escapeHtml(formatStamp(t.stopped_at)) },
+  { key: "ended", label: STAMP_LABEL.ENDED, width: 20, firstDir: SORT_DIR.DESC, field: "ended_at", defaultHidden: true,
+    tdClass: "studio-tourney-ended", cell: (t) => escapeHtml(formatStamp(t.ended_at)) },
   { key: "name", label: "Name", width: 14, alwaysOn: true, firstDir: SORT_DIR.ASC,
     tdClass: "studio-tourney-name", tdTitle: (t) => t.name, cell: (t) => escapeHtml(t.name) },
   { key: "games", label: "Completed", width: 29, sortable: false,
@@ -441,6 +441,20 @@ function syncRibbon(ctx) {
   setStartVerb(b.start, isRestart);
 }
 
+// Each row's ended_at (the Ended column): its end time as known now; a row
+// the server died under shows the server's late stamp until its last game's
+// end is fetched (tournament-end-time.js). Resolves once all are in.
+function applyEndTimes(ctx) {
+  const fetches = [];
+  for (const t of ctx.tournaments) {
+    const known = knownEndTime(t);
+    t.ended_at = known ?? t.stopped_at;
+    if (known === undefined) fetches.push(resolveEndTime(ctx.api, t, { log: ctx.log }));
+  }
+  if (!fetches.length) return Promise.resolve();
+  return Promise.all(fetches).then(() => { applyEndTimes(ctx); ctx.scheduleRenderTourneys?.(); });
+}
+
 // Fetch the tournament list; a generation guard drops out-of-order
 // responses so a slow reload can't clobber a newer one.
 async function studioLoadList(ctx, { deferRender = false } = {}) {
@@ -455,6 +469,7 @@ async function studioLoadList(ctx, { deferRender = false } = {}) {
   if (gen !== ctx.listGen || !ctx.tourneysPaneEl) return;
   ctx.tournaments = body.tournaments || [];
   ctx.activeId = body.active_id ?? null;
+  ctx.endTimesReady = applyEndTimes(ctx);
   if (deferRender) {
     // In the frame: a running row's pulse animation, started by a style
     // update in a hidden window, is never run or freed.
@@ -1496,6 +1511,8 @@ export function mountTournamentStudio({ container, api, events, log }) {
     live: null, liveTid: null, liveUnsub: null, liveGen: 0, _panesPending: false,
     // Resolves when a running tourney's boards finish restoring (gates reveal).
     boardsRestored: null,
+    // Resolves when the listed rows' end times are in (applyEndTimes; gates reveal).
+    endTimesReady: null,
     // Row count of the grid the row grip is snapped to (setSnapRows).
     _snapRows: null,
     // Standings/Event Log bound to the selected tourney (any).
@@ -1614,10 +1631,11 @@ export function mountTournamentStudio({ container, api, events, log }) {
   ctx.offEvents = ctx.events.on((evt) => { toastRunnerCrash(ctx, evt); ctx.reload(); });
   window.addEventListener(APP_EVT.TOURNAMENTS_ROOT_CHANGED, ctx.reload);
 
-  // `ready` gates the router's reveal until built: first list load (table +
-  // wall), then any restored boards drawn (boardsRestored), then a flushed
+  // `ready` gates the router's reveal until built: first list load and its
+  // end times, then restored boards drawn (boardsRestored), then a flushed
   // frame. Raced against a timeout so a stuck fetch can't hide the UI forever.
   const built = studioLoadList(ctx)
+    .then(() => ctx.endTimesReady)
     .then(() => ctx.boardsRestored)
     .catch(() => {})
     .then(() => restoreSnap(ctx))
