@@ -4,6 +4,8 @@
   --muted: #9a9a9a;
   --muted-bright: #aaa;
   --scrollbar-thumb: rgba(255, 255, 255, 0.18);
+  /* WebKit/Chromium scrollbar thickness (Firefox keeps its own thin). */
+  --scrollbar-size: 7px;
   --scrollbar-thumb-min-h: 50px;
   --wb-outline: rgba(136, 136, 136, 0.4);
   /* Inline search bar height (.inline-search). */
@@ -190,7 +192,7 @@ body { -webkit-user-select: none; user-select: none; }
     scrollbar-color: var(--scrollbar-thumb) transparent;
   }
 }
-*::-webkit-scrollbar { width: 5px; height: 5px; }
+*::-webkit-scrollbar { width: var(--scrollbar-size); height: var(--scrollbar-size); }
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-thumb {
   border-radius: 4px;
@@ -225,22 +227,27 @@ body { -webkit-user-select: none; user-select: none; }
 *::-webkit-scrollbar-corner { background: transparent; }
 /* *::-webkit-scrollbar-button { display: none; } */
 /* Arena only: its page panel plus its body-mounted workspace and board windows. */
-:is(.tournaments-panel, .winbox.sturddle-wb-arena, .winbox.sturddle-wb-live) *::-webkit-scrollbar {
-  width: 8px; height: 8px;
-}
-/* `*` doesn't pierce shadow DOM, so wa-select's listbox keeps the chunky
-   default; reach into its part. Chromium ignores ::-webkit-scrollbar-* on
-   any element that also sets scrollbar-width/color, so (as with the global
-   rule above) the standard properties are gated to the Firefox-only path. */
+:is(.tournaments-panel, .winbox.sturddle-wb-arena, .winbox.sturddle-wb-live) * { --scrollbar-size: 10px; }
+/* `*` doesn't pierce shadow DOM, so WA's own scrollers (a select's listbox,
+   a dialog's body, a textarea's box) keep the chunky default; reach into
+   their parts. Chromium ignores ::-webkit-scrollbar-* on any element that
+   also sets scrollbar-width/color, so (as with the global rule above) the
+   standard properties are gated to the Firefox-only path. */
 @supports not selector(::-webkit-scrollbar) {
-  wa-select::part(listbox) {
+  wa-select::part(listbox), wa-dialog::part(body), wa-textarea::part(textarea) {
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-thumb) transparent;
   }
 }
-wa-select::part(listbox)::-webkit-scrollbar { width: 5px; height: 5px; }
-wa-select::part(listbox)::-webkit-scrollbar-track { background: transparent; }
-wa-select::part(listbox)::-webkit-scrollbar-thumb {
+wa-select::part(listbox)::-webkit-scrollbar,
+wa-dialog::part(body)::-webkit-scrollbar,
+wa-textarea::part(textarea)::-webkit-scrollbar { width: var(--scrollbar-size); height: var(--scrollbar-size); }
+wa-select::part(listbox)::-webkit-scrollbar-track,
+wa-dialog::part(body)::-webkit-scrollbar-track,
+wa-textarea::part(textarea)::-webkit-scrollbar-track { background: transparent; }
+wa-select::part(listbox)::-webkit-scrollbar-thumb,
+wa-dialog::part(body)::-webkit-scrollbar-thumb,
+wa-textarea::part(textarea)::-webkit-scrollbar-thumb {
   border-radius: 4px;
   background: var(--scrollbar-thumb);
 }
@@ -248,19 +255,31 @@ wa-select::part(listbox)::-webkit-scrollbar-thumb {
    -bottom (JS, wb-utils.js installScrollEdgeTracking) live on the host,
    since ::part() can't take a class selector of its own. Desktop only. */
 @media (min-width: 801px) {
-  wa-select::part(listbox)::-webkit-scrollbar-thumb:not(:hover) {
+  wa-select::part(listbox)::-webkit-scrollbar-thumb:not(:hover),
+  wa-dialog::part(body)::-webkit-scrollbar-thumb:not(:hover),
+  wa-textarea::part(textarea)::-webkit-scrollbar-thumb:not(:hover) {
     background: linear-gradient(to top, transparent, var(--scrollbar-thumb));
   }
-  wa-select.v-scroll-pos-mid::part(listbox)::-webkit-scrollbar-thumb:not(:hover) {
+  wa-select.v-scroll-pos-mid::part(listbox)::-webkit-scrollbar-thumb:not(:hover),
+  wa-dialog.v-scroll-pos-mid::part(body)::-webkit-scrollbar-thumb:not(:hover),
+  wa-textarea.v-scroll-pos-mid::part(textarea)::-webkit-scrollbar-thumb:not(:hover) {
     background: var(--scrollbar-thumb);
   }
-  wa-select.v-scroll-pos-bottom::part(listbox)::-webkit-scrollbar-thumb:not(:hover) {
+  wa-select.v-scroll-pos-bottom::part(listbox)::-webkit-scrollbar-thumb:not(:hover),
+  wa-dialog.v-scroll-pos-bottom::part(body)::-webkit-scrollbar-thumb:not(:hover),
+  wa-textarea.v-scroll-pos-bottom::part(textarea)::-webkit-scrollbar-thumb:not(:hover) {
     background: linear-gradient(to bottom, transparent, var(--scrollbar-thumb));
   }
 }
-wa-select::part(listbox)::-webkit-scrollbar-thumb:hover { background: var(--wa-color-focus); }
-wa-select::part(listbox)::-webkit-scrollbar-corner { background: transparent; }
-wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
+wa-select::part(listbox)::-webkit-scrollbar-thumb:hover,
+wa-dialog::part(body)::-webkit-scrollbar-thumb:hover,
+wa-textarea::part(textarea)::-webkit-scrollbar-thumb:hover { background: var(--wa-color-focus); }
+wa-select::part(listbox)::-webkit-scrollbar-corner,
+wa-dialog::part(body)::-webkit-scrollbar-corner,
+wa-textarea::part(textarea)::-webkit-scrollbar-corner { background: transparent; }
+wa-select::part(listbox)::-webkit-scrollbar-button,
+wa-dialog::part(body)::-webkit-scrollbar-button,
+wa-textarea::part(textarea)::-webkit-scrollbar-button { display: none; }
 /* WA rings a focused switch's thumb in the focus orange, which vanishes on
    the near-identical orange "on" track: ring it in the text color instead.
    Overrides the composed token (its color var resolves at :root). */

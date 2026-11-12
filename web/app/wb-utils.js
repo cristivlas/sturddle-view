@@ -454,26 +454,52 @@ function markScrollEdges(el, target) {
 
 // Content can resize without a scroll event, going stale; a shared
 // ResizeObserver on each known scroller + its content wrapper re-marks.
-// Multi-child scrollers self-correct on the next scroll instead.
-const edgeTracked = new WeakSet();
+// Multi-child scrollers self-correct on the next scroll instead. A scroller
+// removed from the page (its removal reports a resize) is dropped.
+// edgeTracked: scroller -> { pair, observed }: its { el, target } and the
+// elements observed for it. edgeROTargets:
+// observed element -> the scrollers it re-marks (a dialog body's slotted
+// child can be a scroller of its own).
+const edgeTracked = new WeakMap();
 const edgeROTargets = new WeakMap();
 let edgeRO = null;
 
+// A scroller's content wrapper; a shadow scroller's is its slot's content
+// (a slot itself has no box, so never resizes).
+function contentEls(el) {
+  const child = el.firstElementChild;
+  if (child?.tagName === "SLOT") return child.assignedElements();
+  return child ? [child] : [];
+}
+
 function trackScrollEdges(el, target) {
   if (edgeTracked.has(el)) return;
-  edgeTracked.add(el);
   edgeRO ??= new ResizeObserver((entries) => {
     for (const entry of entries) {
-      const pair = edgeROTargets.get(entry.target);
-      if (pair) markScrollEdges(pair.el, pair.target);
+      for (const pair of [...(edgeROTargets.get(entry.target) ?? [])]) {
+        if (pair.el.isConnected) markScrollEdges(pair.el, pair.target);
+        else untrackScrollEdges(pair.el);
+      }
     }
   });
-  edgeROTargets.set(el, { el, target });
-  edgeRO.observe(el);
-  const child = el.firstElementChild;
-  if (child) {
-    edgeROTargets.set(child, { el, target });
-    edgeRO.observe(child);
+  const pair = { el, target };
+  const observed = [el, ...contentEls(el)];
+  edgeTracked.set(el, { pair, observed });
+  for (const o of observed) {
+    if (!edgeROTargets.has(o)) edgeROTargets.set(o, new Set());
+    edgeROTargets.get(o).add(pair);
+    edgeRO.observe(o);
+  }
+}
+
+function untrackScrollEdges(el) {
+  const tracked = edgeTracked.get(el);
+  if (!tracked) return;
+  edgeTracked.delete(el);
+  for (const o of tracked.observed) {
+    const pairs = edgeROTargets.get(o);
+    pairs.delete(tracked.pair);
+    if (!pairs.size) edgeRO.unobserve(o);
   }
 }
 
@@ -486,20 +512,49 @@ export function installScrollEdgeTracking() {
     trackScrollEdges(el, el);
   }, true);
 
-  // wa-select's listbox is a shadow-DOM div; native `scroll` never crosses
-  // the boundary, so `document`'s delegated listener above can't see it.
-  // wa-after-show (composed) fires once the listbox exists, so attach a
-  // direct listener there and mark the edge classes on the host, where the
-  // CSS (::part() can't take a class selector directly) can still reach it.
+  // WA's own scrollers (SHADOW_SCROLLERS) sit in shadow DOM; native `scroll`
+  // never crosses the boundary, so `document`'s delegated listener above
+  // can't see them. wa-after-show (composed) fires once a select's listbox
+  // or a dialog's body exists (a dialog's textareas too), so attach direct
+  // listeners there and mark the edge classes on the host, where the CSS
+  // (::part() can't take a class selector directly) can still reach it.
   document.addEventListener("wa-after-show", (ev) => {
-    const host = ev.target;
-    if (host?.tagName !== "WA-SELECT") return;
-    const listbox = host.shadowRoot?.querySelector('[part~="listbox"]');
-    if (!listbox || edgeTracked.has(listbox)) return;
-    markScrollEdges(listbox, host);
-    trackScrollEdges(listbox, host);
-    listbox.addEventListener("scroll", () => markScrollEdges(listbox, host));
+    for (const host of shownHosts(ev.target)) trackShadowScroller(host);
   });
+}
+
+// The hosts a shown host brings with it: itself, and for a dialog its nested
+// ones (selects, textareas).
+function shownHosts(host) {
+  if (host?.tagName !== "WA-DIALOG") return [host];
+  return [host, ...host.querySelectorAll(SHADOW_HOSTS_SEL)];
+}
+
+// WA hosts whose scroller is a shadow part: tag -> part name.
+const SHADOW_SCROLLERS = Object.freeze({
+  "WA-SELECT": "listbox",
+  "WA-DIALOG": "body",
+  "WA-TEXTAREA": "textarea",
+});
+const SHADOW_HOSTS_SEL = Object.keys(SHADOW_SCROLLERS).join(",").toLowerCase();
+
+function shadowScroller(host) {
+  const part = SHADOW_SCROLLERS[host?.tagName];
+  return part ? host.shadowRoot?.querySelector(`[part~="${part}"]`) : null;
+}
+
+// Shadow scrollers with their scroll listener: one each, though a scroller
+// detached and shown again is re-tracked.
+const shadowListened = new WeakSet();
+
+function trackShadowScroller(host) {
+  const el = shadowScroller(host);
+  if (!el || edgeTracked.has(el)) return;
+  markScrollEdges(el, host);
+  trackScrollEdges(el, host);
+  if (shadowListened.has(el)) return;
+  shadowListened.add(el);
+  el.addEventListener("scroll", () => markScrollEdges(el, host));
 }
 
 // Install once. Ctrl/Cmd+A inside a selectable region selects that region's
