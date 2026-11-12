@@ -186,9 +186,10 @@ const router = new PerspectiveRouter({ root, ctx });
 router.register(playPerspective);
 router.register(enginesPerspective);
 
-// View mode renames the "Play" tab to "View" so the active mode is
-// unambiguous from the top-level nav. Toggled by play.js dispatching
-// a sturddle:viewing-changed event.
+// View mode renames the "Play" tab to "Game" so the active mode is
+// unambiguous from the top-level nav ("View" would read as an echo of the
+// SturddleView logo). Toggled by play.js dispatching a
+// sturddle:viewing-changed event.
 let inViewMode = false;
 // Tab a dropped socket pushed us off, pending restore on reconnect. Any
 // deliberate pick clears it, so we never yank the user back to a tab they
@@ -211,7 +212,7 @@ function renderNav() {
     btn.dataset.perspective = p.id;
     // Tournaments tab tracks the UX-mode setting (Arena vs Studio).
     btn.textContent =
-      p.id === "play" && inViewMode ? "View"
+      p.id === "play" && inViewMode ? "Game"
       : p.id === enginesPerspective.id ? tournamentUxLabel()
       : p.label;
     btn.addEventListener("click", () => pickPerspective(p.id));
