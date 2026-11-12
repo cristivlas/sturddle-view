@@ -3911,6 +3911,8 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .studio-boards-wall.in-strip { padding-block: 0; container: studio-strip / size; }
 .studio-boards-wall.in-strip .iw-footer { margin-block: auto; }
 @container studio-strip (max-height: 36px) { .iw-footer { visibility: hidden; } }
+/* Releasing the row grip would snap it up to this edge (previewSnap). */
+.studio-boards-wall.in-strip.snap-preview { box-shadow: inset 0 1px 0 var(--accent); }
 /* Empty state: the wall hosts a clickable New-tournament CTA. */
 .studio-boards-wall.is-empty { pointer-events: auto; }
 /* The empty-state pill hugs its text, not the wall's full width. */
@@ -4156,8 +4158,10 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   --studio-snap-dots: 3;
   --studio-snap-glow: 2px;
 }
-/* Snapped: a handle of glowing accent dots centered on the grip. */
-.studio-grip-row.snapped::after {
+/* Snapped: a handle of glowing accent dots centered on the grip. While
+   dragging they preview the release instead (tournament-studio.js
+   previewSnap), dimmed. */
+.studio-grip-row:is(.snapped:not(.dragging), .snap-preview)::after {
   content: ""; position: absolute; left: 50%; top: 50%; pointer-events: none;
   height: var(--studio-snap-dot);
   width: calc(var(--studio-snap-dots) * var(--studio-snap-dot) + (var(--studio-snap-dots) - 1) * var(--studio-snap-dot-gap));
@@ -4167,6 +4171,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
     calc(var(--studio-snap-dot-gap) / -2) 0 / calc(var(--studio-snap-dot) + var(--studio-snap-dot-gap)) var(--studio-snap-dot) repeat-x;
   filter: drop-shadow(0 0 var(--studio-snap-glow) var(--accent));
 }
+.studio-grip-row.snap-preview::after { opacity: 0.5; }
 .studio-grip-col {
   flex: 0 0 var(--studio-grip-col-w); cursor: col-resize; background: transparent; z-index: 1;
 }
