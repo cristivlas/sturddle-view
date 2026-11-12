@@ -113,6 +113,8 @@ const DEFAULT_SPLIT_GROW = 1;
 const DRAGGING_CLASS = "dragging";
 // On the row grip while snapped: styles.css draws its handle.
 const SNAPPED_CLASS = "snapped";
+// On the row grip and info wall while a release would snap (previewSnap).
+const SNAP_PREVIEW_CLASS = "snap-preview";
 
 // Label for the currently selected UX mode (top-nav tab text).
 export function tournamentUxLabel() {
@@ -901,6 +903,7 @@ function regridBoards(ctx) {
   }
   sizeCanvas(ctx, slot, cell);
   fitWallToStrip(ctx, slot, cell);
+  previewSnap(ctx);
   syncRovingTabStop(ctx.boardsEl, BOARD_SEL, BOARD_CONTROL_SELS);
   // Single source of truth for board presence (laid-out or maximized).
   const hasBoards = anyBoardsShown();
@@ -935,11 +938,31 @@ function showSnap(ctx) {
 // it now sits at the grid's bottom (within a device px), snapped or dragged.
 function releaseRowGrip(ctx, px) {
   const snapped = snapToGrid(ctx, px);
-  const eligible = !mqMobile.matches && !ctx._maxWb && anyBoardsShown();
+  setSnapRows(ctx, bottomRows(ctx, snapped ?? px));
+  return snapped;
+}
+
+// The grid's row count when a region px tall ends at its bottom (within a
+// device px), else null.
+function bottomRows(ctx, px) {
+  if (!snapEligible(ctx)) return null;
   // Full width, as keepSnapped measures it.
   const { gridH, rows, dpr } = boardCell(ctx, 0, regionSize(ctx.boardsEl).w);
-  setSnapRows(ctx, eligible && Math.abs((snapped ?? px) - gridH) < 1 / dpr ? rows : null);
-  return snapped;
+  return Math.abs(px - gridH) < 1 / dpr ? rows : null;
+}
+
+// While the row grip drags: mark whether releasing here snaps it, the grip
+// with dimmed dots and the info wall's strip with a guide on its top edge
+// (the grid's bottom, which the grip closes up to).
+function previewSnap(ctx) {
+  const dragging = ctx.gripRowEl?.classList.contains(DRAGGING_CLASS);
+  let on = false;
+  if (dragging && snapEligible(ctx)) {
+    const px = regionSize(ctx.boardsEl).outerH;
+    on = bottomRows(ctx, gridSnap(ctx, px) ?? px) !== null;
+  }
+  ctx.gripRowEl?.classList.toggle(SNAP_PREVIEW_CLASS, on);
+  ctx.boardsWallEl?.classList.toggle(SNAP_PREVIEW_CLASS, on);
 }
 
 // A region resize not from the grip (the window's) keeps a snapped grip at
@@ -1061,9 +1084,19 @@ function sizeCanvas(ctx, count, cell) {
 // grid too short for the progress bar (styles.css hides it) snaps the region
 // to the grid's height.
 function snapToGrid(ctx, px) {
-  if (mqMobile.matches || ctx._maxWb || !anyBoardsShown()) return null;
+  if (!snapEligible(ctx)) return null;
   // The last move's regrid waits for the next frame: place the strip now.
   regridBoards(ctx);
+  return gridSnap(ctx, px);
+}
+
+// Desktop with boards and none maximized: the row grip can snap.
+function snapEligible(ctx) {
+  return !mqMobile.matches && !ctx._maxWb && anyBoardsShown();
+}
+
+// snapToGrid's target for a region px tall, off the strip as laid out now.
+function gridSnap(ctx, px) {
   const footer = ctx.boardsWallEl?.querySelector(IW_FOOTER_SEL);
   if (!footer || getComputedStyle(footer).visibility !== HIDDEN_VISIBILITY) return null;
   const { gridH } = boardCell(ctx);
@@ -1487,6 +1520,8 @@ function wireSplitters(ctx) {
   }, true);
   attachSplitter(ctx.gripRowEl, ctx.boardsEl, ctx.bottomEl, AXIS.Y, STORAGE_KEY.STUDIO_SPLIT_ROW,
     (px) => releaseRowGrip(ctx, px));
+  // After the splitter's handler (now dragging): preview before the first move.
+  ctx.gripRowEl.addEventListener("pointerdown", () => previewSnap(ctx));
   attachSplitter(ctx.gripColEl, ctx.bottomLeftEl, ctx.bottomRightEl, AXIS.X, STORAGE_KEY.STUDIO_SPLIT_COL);
 }
 
