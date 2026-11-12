@@ -15,7 +15,7 @@ import {
 } from "./menu-nav.js";
 import { loadJson, saveJson } from "./storage.js";
 import { themePanelFade } from "./theme-preset.js";
-import { escapeHtml, PCT_SUFFIX } from "./wb-utils.js";
+import { escapeHtml, PCT_SUFFIX, WALLPAPER_CLASS } from "./wb-utils.js";
 
 // Panel-menu action labels shared across panels.
 export const COPY_LABEL = "Copy";
@@ -47,13 +47,19 @@ const VIEW_ROOT_SEL = "#perspective-root";
 const MOBILE_QUERIES = [mqMobile, mqMobileHPlay];
 const isMobile = () => MOBILE_QUERIES.some((mq) => mq.matches);
 
-// Transparency's slider: its label and range.
-const FADE_SLIDER = Object.freeze({ label: FADE_LABEL, max: FADE_MAX_PCT, step: FADE_STEP_PCT });
+// The page shows one view at a time, so any wallpaper is the current view's.
+const wallpaperShown = () => document.querySelector(`.${WALLPAPER_CLASS}`) !== null;
 
-// A slider submenu: { label, min?, max, step, unit? } at `value`; key tells
-// a menu's sliders apart.
-function sliderSubmenuHtml({ label, min, max, step, unit }, value, key = null) {
-  return submenuHtml(label, sliderRowHtml({ min, max, step, unit, value, key }));
+// Transparency's slider: its label and range; grayed out with no wallpaper to
+// show through, like the wallpaper menu's Fit, Fade and Board.
+const FADE_SLIDER = Object.freeze({
+  label: FADE_LABEL, max: FADE_MAX_PCT, step: FADE_STEP_PCT, disabled: () => !wallpaperShown(),
+});
+
+// A slider submenu: { label, min?, max, step, unit?, disabled? } at `value`;
+// key tells a menu's sliders apart.
+function sliderSubmenuHtml({ label, min, max, step, unit, disabled }, value, key = null) {
+  return submenuHtml(label, sliderRowHtml({ min, max, step, unit, value, key }), !!disabled?.());
 }
 
 // The Transparency submenu at `pct`; "" where fading is off (mobile).
@@ -229,9 +235,10 @@ export function createPanelFade(panel, { storageKey }) {
 // A panel's right-click menu (a top-layer popover, so no host clips it):
 // actions [{ label, run, checked?, disabled? }] on top (checked/disabled are
 // read at each open), then, with a fade (its fader), its Transparency, then
-// sliders [{ label, min?, max, step, unit?, get, set, save }] (set while
-// dragging, save on release), then tailActions; separators between. Opens
-// only while shown(ev) holds. A right-click a menu inside already took (a
+// sliders [{ label, min?, max, step, unit?, disabled?, get, set, save }] (set
+// while dragging, save on release; disabled read at each open), then
+// tailActions; separators between. Opens only while shown(ev) holds and some
+// item is enabled. A right-click a menu inside already took (a
 // table's Columns menu) is left to it. hosts take focus on a click so the
 // Menu key reaches the menu: the panel, or its parts when it is a shadow host
 // (makeMenuHost). Returns the teardown.
@@ -278,12 +285,14 @@ export function attachPanelMenu(panel, {
   // Desktop only: on a phone a long-press would pop it.
   function onContextMenu(ev) {
     if (isContextMenuClaimed(ev) || isMobile() || !shown(ev)) return;
+    // All grayed out (a lone Transparency with no wallpaper): leave the
+    // right-click to the browser or an outer menu.
+    if (![...actions, ...allSliders, ...tailActions].some((item) => !item.disabled?.())) return;
     const html = [
       actions.map(actionHtml).join(""),
       allSliders.map((s, i) => sliderSubmenuHtml(s, s.get(), i)).join(""),
       tailActions.map((a, i) => actionHtml(a, actions.length + i)).join(""),
     ].filter(Boolean).join(MENU_SEPARATOR_HTML);
-    if (!html) return;
     ev.preventDefault();
     // Taken: an outer menu (the wallpaper's, on a bare region) leaves it be.
     claimContextMenu(ev);

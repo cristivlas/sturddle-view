@@ -4537,8 +4537,8 @@ wa-dialog.tournament-form-dialog::part(body) {
   padding-block-end: calc(var(--spacing) - 2px);
 }
 /* New/Edit/Copy: the header line mirrored above the footer, the buttons
-   centered between it and the dialog's bottom edge (the same total padding,
-   split evenly). */
+   centered between it and the dialog's bottom edge: the gap plus WA's bottom
+   inset, split evenly. */
 wa-dialog.tournament-form-dialog::part(footer) {
   padding-block: calc((var(--rule-gap) + var(--spacing)) / 2);
   border-top: var(--dialog-rule);
