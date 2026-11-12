@@ -645,10 +645,10 @@ export function openAiEngineOnly(showLines) {
   setAiStatus(AI_STATE.ENGINE);
   const note = document.createElement("p");
   note.className = ENGINE_ONLY_CLASS;
-  note.append(
-    ENGINE_ONLY_LEAD, deepLink(PV_TABLE_TITLE, showLines),
-    ENGINE_ONLY_MID, settingsLink(SETTINGS_TAB_ANALYSIS), ".",
-  );
+  note.append(ENGINE_ONLY_LEAD, deepLink(PV_TABLE_TITLE, showLines));
+  // Remote clients can't open Settings.
+  if (isRemote()) note.append(".");
+  else note.append(ENGINE_ONLY_MID, settingsLink(SETTINGS_TAB_ANALYSIS), ".");
   inst.body?._rounds.append(note);
   engineOnly = true;
 }
