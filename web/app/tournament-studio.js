@@ -832,6 +832,11 @@ function renderGamesPane(ctx) {
 
 // Boards taking grid slots (minimized/maximized boards don't).
 const laidOutCount = () => getLiveWindows().filter((wb) => !wb.min && !wb.max).length;
+const minimizedCount = () => getLiveWindows().filter((wb) => wb.min).length;
+
+// The grid's rows with its minimized boards back in: what a snap keeps, so
+// minimizing a board suspends it (the grip stays) and restoring resumes it.
+const snapGridRows = (ctx) => boardCell(ctx, minimizedCount()).rows;
 
 // 4 columns; 1 when narrow and tall (phone portrait). Short = phone landscape.
 function studioCols() {
@@ -916,7 +921,7 @@ function regridBoards(ctx) {
   ctx.boardsEl.style.height = mqMobile.matches ? (hasBoards ? `${slotRect(0, cell).h}px` : "0") : "";
   // A snapped grip's grid changed rows: the snap is off, and the split it
   // kept adjusting is the one a reload restores.
-  if (ctx._snapRows !== null && !mqMobile.matches && !ctx._maxWb && cell.rows !== ctx._snapRows) {
+  if (ctx._snapRows !== null && !mqMobile.matches && !ctx._maxWb && snapGridRows(ctx) !== ctx._snapRows) {
     setSnapRows(ctx, null);
     persistSplit(STORAGE_KEY.STUDIO_SPLIT_ROW, ctx.boardsEl, ctx.bottomEl);
   }
@@ -948,6 +953,8 @@ function bottomRows(ctx, px) {
   if (!snapEligible(ctx)) return null;
   // Full width, as keepSnapped measures it.
   const { gridH, rows, dpr } = boardCell(ctx, 0, regionSize(ctx.boardsEl).w);
+  // Minimized boards that take rows away: a snap here couldn't be kept.
+  if (rows !== snapGridRows(ctx)) return null;
   return Math.abs(px - gridH) < 1 / dpr ? rows : null;
 }
 
@@ -973,7 +980,8 @@ function keepSnapped(ctx) {
   // Full width: a too-short region's own scrollbar must not narrow the grid.
   const { w, outerH } = regionSize(ctx.boardsEl);
   const { gridH, rows, dpr } = boardCell(ctx, 0, w);
-  // Rows changed: regridBoards turns the snap off.
+  // Rows changed: regridBoards turns the snap off, or minimized boards
+  // suspend it (snapGridRows), the grip staying put.
   if (rows !== ctx._snapRows || Math.abs(outerH - gridH) < 1 / dpr) return;
   splitSetter(ctx.boardsEl, ctx.bottomEl, AXIS.Y)(gridH);
 }
@@ -1245,7 +1253,13 @@ function wireBoardHooks(ctx, wb) {
   wb.onrestore = () => {
     if (wb._wasMax) { wb._wasMax = false; remaximize(wb); }
     else if (wb === ctx._maxWb) restoreBoard(ctx, !ctx._restoreViaGrip);
-    else { unmaximizeOthers(wb); regridBoards(ctx); }
+    else {
+      unmaximizeOthers(wb);
+      regridBoards(ctx);
+      // A snap minimizing suspended resumes here: the window may have
+      // resized meanwhile, and a restore doesn't resize the region.
+      keepSnapped(ctx);
+    }
     repaint();
   };
 }
