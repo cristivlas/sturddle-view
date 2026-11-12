@@ -76,6 +76,7 @@ export const STORAGE_KEY = {
   TOURNAMENT_UX: "sturddle:tournament:ux",
   STUDIO_SPLIT_ROW: "sturddle:studio:splitRow",
   STUDIO_SPLIT_COL: "sturddle:studio:splitCol",
+  STUDIO_SNAP_ROWS: "sturddle:studio:snapRows",
   STUDIO_SELECTED_ID: "sturddle:studio:selectedId",
   STUDIO_BOARDS_PREFIX: "sturddle:studio:boards:",
   STUDIO_TAB_LEFT: "sturddle:studio:tabLeft",

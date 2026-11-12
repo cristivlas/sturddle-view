@@ -14,7 +14,7 @@ import {
   toast,
   TOAST_DURATION_MS,
 } from "./dialogs.js";
-import { STATUS } from "./tournament-events.js";
+import { STATUS, TOURNAMENTS_ENDPOINT } from "./tournament-events.js";
 import { ENGINES_NO_PROBE_PATH } from "./engines.js";
 import { isRemote } from "./role.js";
 import { isObject } from "./wb-utils.js";
@@ -228,7 +228,7 @@ async function updateAndStart(api, t, available) {
   const resolved = resolveResourceParams(template, picked, globalDefaults);
   let rescheck;
   try {
-    rescheck = await api("POST", "/api/tournaments/rescheck", resolved);
+    rescheck = await api("POST", `${TOURNAMENTS_ENDPOINT}/rescheck`, resolved);
   } catch (e) {
     const detail = apiErrorDetail(e);
     const msg = (detail && detail.message) || detail || "Resource check failed";
@@ -245,8 +245,8 @@ async function updateAndStart(api, t, available) {
 
   // PATCH resets to idle and wipes games server-side, so the follow-up
   // start needs no confirm_wipe.
-  await api("PATCH", `/api/tournaments/${t.id}`, { name: t.name, template, engines });
-  await api("POST", `/api/tournaments/${t.id}/start`);
+  await api("PATCH", `${TOURNAMENTS_ENDPOINT}/${t.id}`, { name: t.name, template, engines });
+  await api("POST", `${TOURNAMENTS_ENDPOINT}/${t.id}/start`);
   return true;
 }
 
@@ -296,13 +296,13 @@ export async function gatedStart({ api, log }, t) {
       const ok = await confirm(buildRestartConfirm(t.name, t.standings?.games ?? 0));
       if (!ok) return false;
     }
-    await api("POST", `/api/tournaments/${t.id}/start${wipeQs}`);
+    await api("POST", `${TOURNAMENTS_ENDPOINT}/${t.id}/start${wipeQs}`);
     return true;
   }
 
   const choice = await openDriftDialog(t);
   if (choice === "saved") {
-    await api("POST", `/api/tournaments/${t.id}/start${wipeQs}`);
+    await api("POST", `${TOURNAMENTS_ENDPOINT}/${t.id}/start${wipeQs}`);
     return true;
   }
   if (choice === "update") return updateAndStart(api, t, available);

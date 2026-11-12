@@ -1,6 +1,11 @@
-// Shared event-kind and tournament-status string constants.
+// Shared event-kind and tournament-status string constants, and the API path.
 // Server emits these verbatim; treat as a wire-protocol enum.
 // Cross-ref: server/sturddle_view/tournament/{orchestrator,fastchess,store}.py
+
+export const TOURNAMENTS_ENDPOINT = "/api/tournaments";
+// REST path of a tournament's Nth completed game (PGN + final position).
+export const gamePgnPath = (tournamentId, gameN) =>
+  `${TOURNAMENTS_ENDPOINT}/${encodeURIComponent(tournamentId)}/games/${gameN}/pgn`;
 
 export const EVT_PREFIX = "tournament_";
 export const EVT = {

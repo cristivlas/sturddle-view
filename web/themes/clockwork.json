@@ -1,19 +1,19 @@
 {
   "name": "Clockwork",
   "fit": "cover",
-  "fade": 25,
+  "fade": 0,
   "frost": {
     "blur": 2,
-    "brightness": 70
+    "brightness": 45
   },
   "panels": {
-    "ai": 5,
-    "evalbar": 10,
-    "ucilog": 10,
-    "pvtable": 5,
-    "studioLeft": 5,
-    "studioRight": 5
+    "ai": 20,
+    "evalbar": 30,
+    "ucilog": 30,
+    "pvtable": 15,
+    "studioLeft": 10,
+    "studioRight": 10
   },
   "board": "blue",
-  "boardFade": 25
+  "boardFade": 0
 }

@@ -4150,6 +4150,22 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
    selected row. */
 .studio-grip-row {
   flex: 0 0 var(--studio-grip-row-h); cursor: row-resize; background: transparent; z-index: 1;
+  position: relative;
+  --studio-snap-dot: 3px;
+  --studio-snap-dot-gap: 3px;
+  --studio-snap-dots: 3;
+  --studio-snap-glow: 2px;
+}
+/* Snapped: a handle of glowing accent dots centered on the grip. */
+.studio-grip-row.snapped::after {
+  content: ""; position: absolute; left: 50%; top: 50%; pointer-events: none;
+  height: var(--studio-snap-dot);
+  width: calc(var(--studio-snap-dots) * var(--studio-snap-dot) + (var(--studio-snap-dots) - 1) * var(--studio-snap-dot-gap));
+  transform: translate(-50%, -50%);
+  /* One dot per tile, centered: shifting by half a gap puts the first at 0. */
+  background: radial-gradient(circle closest-side, var(--accent) 90%, transparent)
+    calc(var(--studio-snap-dot-gap) / -2) 0 / calc(var(--studio-snap-dot) + var(--studio-snap-dot-gap)) var(--studio-snap-dot) repeat-x;
+  filter: drop-shadow(0 0 var(--studio-snap-glow) var(--accent));
 }
 .studio-grip-col {
   flex: 0 0 var(--studio-grip-col-w); cursor: col-resize; background: transparent; z-index: 1;
@@ -4292,7 +4308,7 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
 .studio-tourney-row.marked td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
 .studio-history-num, .studio-history-result { color: var(--muted); }
 .studio-history-result { font-family: var(--wa-font-family-code); }
-.studio-tourney-created, .studio-tourney-started { color: var(--muted); }
+.studio-tourney-created, .studio-tourney-started, .studio-tourney-ended { color: var(--muted); }
 /* Status + optional SPRT pill: clip (no ellipsis) rather than widen. */
 .studio-tourney-tbl tbody td.studio-tourney-status { text-overflow: clip; }
 /* Running tourney's Games cell: Arena's progress bar + inline label. */

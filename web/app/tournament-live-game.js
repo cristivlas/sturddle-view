@@ -17,6 +17,7 @@ import { terminationPhrase } from "./format-termination.js";
 import { mqMobile } from "./breakpoints.js";
 import { connect } from "./ws.js";
 import { createWinBox } from "./winbox-factory.js";
+import { gamePgnPath } from "./tournament-events.js";
 
 // Eval-row info strings (shared by own-side and opponent rows). Each blanks
 // when its field is absent. Format: "d:<depth>/<seldepth>", "nps:<count>",
@@ -105,7 +106,7 @@ export async function replayTournamentGame({ tournamentId, gameN, pairId = null 
     // Play/view state comes from the server, not a client mirror: mirrors
     // are unseeded on a fresh page load and would skip the confirmations.
     const [res, statusRes] = await Promise.all([
-      fetch(`/api/tournaments/${encodeURIComponent(tournamentId)}/games/${gameN}/pgn`, { headers }),
+      fetch(gamePgnPath(tournamentId, gameN), { headers }),
       fetch(GAME_STATUS_PATH, { headers }),
     ]);
     if (!res.ok) throw new Error(`fetch pgn -> ${res.status}`);
@@ -974,7 +975,7 @@ export function openFrozenGameWindow({
   setReplayGameN(gameN);
 
   const headers = { "Content-Type": "application/json" };
-  fetch(`/api/tournaments/${encodeURIComponent(tournamentId)}/games/${gameN}/pgn`, { headers })
+  fetch(gamePgnPath(tournamentId, gameN), { headers })
     .then(async (res) => {
       if (!res.ok) throw new Error(`fetch pgn -> ${res.status}`);
       return res.json();
