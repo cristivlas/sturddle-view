@@ -2755,7 +2755,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   }
 }
 wa-dialog:has(.engine-settings-tabs)::part(footer) {
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  border-top: var(--dialog-rule);
   padding-top: 12px;
 }
 /* Settings Reset: the row carries the line (spanning like the Engines
@@ -3135,6 +3135,8 @@ wa-dialog {
   --dialog-accent: var(--panel-accent);
   --border-subtle: var(--dialog-accent);
   --border-faint: #3a4a5f;
+  /* Thin line between a dialog's header or footer and its body. */
+  --dialog-rule: 1px solid rgba(255, 255, 255, 0.12);
 }
 /* Scoped to the tab rail only (not the whole dialog): blends its track into
    the dialog background (the active-tab indicator is the only wanted
@@ -4517,12 +4519,29 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   50%      { box-shadow: 0 0 0 5px rgba(var(--accent-rgb), 0); }
 }
 
-wa-dialog.tournament-info-dialog::part(header) {
-  padding-block-end: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+/* --rule-gap: the space between a line and the buttons beside it (the X;
+   Apply/Create), tight enough that the New/Edit/Copy form still fits its
+   dialog's fixed height. */
+wa-dialog:is(.tournament-info-dialog, .tournament-form-dialog) { --rule-gap: 4px; }
+/* Title and X centered between the dialog's top edge and the line: WA's
+   top inset plus the gap, split evenly. */
+wa-dialog:is(.tournament-info-dialog, .tournament-form-dialog)::part(header) {
+  padding-block: calc((var(--spacing) - var(--wa-form-control-padding-block) + var(--rule-gap)) / 2);
+  border-bottom: var(--dialog-rule);
 }
-wa-dialog.tournament-info-dialog::part(body) {
+wa-dialog:is(.tournament-info-dialog, .tournament-form-dialog)::part(body) {
   padding-block-start: 10px;
+}
+/* New/Edit/Copy: 2px off the body's bottom so the form fits too. */
+wa-dialog.tournament-form-dialog::part(body) {
+  padding-block-end: calc(var(--spacing) - 2px);
+}
+/* New/Edit/Copy: the header line mirrored above the footer, the buttons
+   centered between it and the dialog's bottom edge (the same total padding,
+   split evenly). */
+wa-dialog.tournament-form-dialog::part(footer) {
+  padding-block: calc((var(--rule-gap) + var(--spacing)) / 2);
+  border-top: var(--dialog-rule);
 }
 .tournament-info {
   padding-top: 0;
