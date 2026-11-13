@@ -664,7 +664,7 @@ const PLAY_PERSPECTIVE_HTML = `
         <button id="import-pos" class="ribbon-btn desktop-only" aria-label="Open position from FEN or PGN" title="Open">
           <wa-icon name="folder-open"></wa-icon>
         </button>
-        <button id="edit-pos" class="ribbon-btn" aria-label="Edit position" title="Edit position">
+        <button id="edit-pos" class="ribbon-btn" disabled aria-label="Edit position" title="Edit position">
           <wa-icon name="pencil"></wa-icon>
         </button>
         <button id="save-pgn" class="ribbon-btn desktop-only" aria-label="Save game as PGN" title="Save PGN">
@@ -1432,6 +1432,9 @@ function refreshButtons(state) {
   });
   configureBtn(state.el.switchSidesBtn, { disabled: state.analyzing || state.gameOver || !state.resignAvailable });
   configureBtn(state.el.resignBtn, { disabled: state.paused || state.analyzing || state.gameOver || !state.resignAvailable });
+  // Idle (neither a live nor a just-finished game): the server has no position
+  // to edit. Starts disabled in the markup, before any event.
+  configureBtn(state.el.editPosBtn, { disabled: !state.resignAvailable && !state.gameOver });
   // AI turn done but server still ANALYZING: show the button as normal
   // "Analysis mode" (enabled); the reachability gates below still apply.
   const showAsActive = analysisActive(state);
@@ -2418,7 +2421,7 @@ export const playPerspective = {
       editSideTogglePill, editCastleCb, editAnnotateBtn, editRibbon, playRibbon, viewRibbon,
       pauseBtn, takebackBtn, savePgnBtn, switchSidesBtn, resignBtn, analyzeBtn,
       viewFirstBtn, viewBackBtn, viewForwardBtn, viewLastBtn, viewSavePgnBtn,
-      viewPlayFromHereBtn, viewAnalyzeBtn, boardHost, newGameBtn,
+      viewPlayFromHereBtn, viewAnalyzeBtn, boardHost, newGameBtn, editPosBtn,
     };
 
     // Tracks "server has zero engines registered." Drives both the

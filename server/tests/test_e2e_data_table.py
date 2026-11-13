@@ -511,8 +511,9 @@ async def test_keyboard_tab_order_and_enter(server, make_page):
 
 
 _FOCUSED_FID = "() => document.activeElement.dataset.fid"
-_FOCUSED_TEXT = "() => document.activeElement.textContent.trim()"
 _FADE_LABEL = "Transparency"
+_FADE_DISABLED = f"""() => [...document.querySelectorAll('{MENU} .tmb-dd-submenu > button')]
+  .find((b) => b.textContent.trim() === '{_FADE_LABEL}')?.disabled ?? null"""
 
 
 @pytest.mark.asyncio
@@ -539,10 +540,10 @@ async def test_columns_menu_arrow_keys(server, make_page):
     await wait_eval(page, f"() => ({_LABELS})().includes('G')", False)
     await wait_eval(page, _FOCUSED_FID, "games:toggle")
 
-    # The Transparency submenu trigger is the last row; Reset sits above it.
+    # The Transparency submenu trigger is the last row, grayed out with no
+    # wallpaper, so End skips it to Reset above.
+    await wait_eval(page, _FADE_DISABLED, True)
     await page.keyboard.press("End")
-    await wait_eval(page, _FOCUSED_TEXT, _FADE_LABEL)
-    await page.keyboard.press("ArrowUp")
     await wait_eval(page, _FOCUSED_FID, "reset")
     await page.keyboard.press("Home")
     await wait_eval(page, _FOCUSED_FID, "name:1")

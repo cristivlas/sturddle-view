@@ -471,6 +471,14 @@ function saveRecentsCache(entries) {
 const EXT_PGN = ".pgn";
 const EXT_EPD = ".epd";
 
+// Replace a textarea's text and, once rendered, show it from the top. The
+// scroll also re-marks its scrollbar's edge gradient, which a value set alone
+// wouldn't.
+function loadText(ta, text) {
+  ta.value = text;
+  ta.updateComplete.then(() => ta.scrollPosition({ top: 0 }));
+}
+
 function detectFormatFromName(name) {
   const n = (name || "").toLowerCase();
   if (n.endsWith(EXT_PGN)) return TAB.PGN;
@@ -739,7 +747,7 @@ export function showImportPositionDialog({ api, viewingHash = null, playingGameI
       // Loads a recents pick into the matching tab's textarea. Passed to
       // the recents dropdown so it stays unaware of the textarea map.
       const applyText = (fmt, text) => {
-        textareas[fmt].value = text;
+        loadText(textareas[fmt], text);
         syncSubmitEnabled();
       };
       const { recentSel } = buildRecentsDropdown(ctx, {
@@ -867,7 +875,7 @@ export function showImportPositionDialog({ api, viewingHash = null, playingGameI
         const text = await f.text();
         const hint = detectFormatFromName(f.name) ?? ctx.format;
         if (hint !== ctx.format) selectTab(hint);
-        textareas[hint].value = text;
+        loadText(textareas[hint], text);
         syncSubmitEnabled();
         setStatus(`Loaded ${f.name}`, STATUS.MUTED);
       }

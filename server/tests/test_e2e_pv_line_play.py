@@ -33,7 +33,7 @@ PV_OPEN_KEY = "sturddle:pvtable:open"
 PV_ROW = ".wb-pvtable-tbl tbody tr"
 SHOWABLE_CLASS = "wb-pv-showable"
 PLAYING_CLASS = "wb-pv-row-playing"
-SHOWABLE_TOOLTIP = "Double-click to play line"
+SHOWABLE_TOOLTIP = "Double-click to play out the line"
 VIEWPORT = {"width": 1600, "height": 1000}
 # Minimal view-mode board_update at the start position; analyzing/editing
 # vary per test.

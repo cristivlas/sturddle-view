@@ -4,6 +4,8 @@
   --muted: #9a9a9a;
   --muted-bright: #aaa;
   --scrollbar-thumb: rgba(255, 255, 255, 0.18);
+  /* WebKit/Chromium scrollbar thickness (Firefox keeps its own thin). */
+  --scrollbar-size: 7px;
   --scrollbar-thumb-min-h: 50px;
   --wb-outline: rgba(136, 136, 136, 0.4);
   /* Inline search bar height (.inline-search). */
@@ -190,7 +192,7 @@ body { -webkit-user-select: none; user-select: none; }
     scrollbar-color: var(--scrollbar-thumb) transparent;
   }
 }
-*::-webkit-scrollbar { width: 5px; height: 5px; }
+*::-webkit-scrollbar { width: var(--scrollbar-size); height: var(--scrollbar-size); }
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-thumb {
   border-radius: 4px;
@@ -225,22 +227,27 @@ body { -webkit-user-select: none; user-select: none; }
 *::-webkit-scrollbar-corner { background: transparent; }
 /* *::-webkit-scrollbar-button { display: none; } */
 /* Arena only: its page panel plus its body-mounted workspace and board windows. */
-:is(.tournaments-panel, .winbox.sturddle-wb-arena, .winbox.sturddle-wb-live) *::-webkit-scrollbar {
-  width: 8px; height: 8px;
-}
-/* `*` doesn't pierce shadow DOM, so wa-select's listbox keeps the chunky
-   default; reach into its part. Chromium ignores ::-webkit-scrollbar-* on
-   any element that also sets scrollbar-width/color, so (as with the global
-   rule above) the standard properties are gated to the Firefox-only path. */
+:is(.tournaments-panel, .winbox.sturddle-wb-arena, .winbox.sturddle-wb-live) * { --scrollbar-size: 10px; }
+/* `*` doesn't pierce shadow DOM, so WA's own scrollers (a select's listbox,
+   a dialog's body, a textarea's box) keep the chunky default; reach into
+   their parts. Chromium ignores ::-webkit-scrollbar-* on any element that
+   also sets scrollbar-width/color, so (as with the global rule above) the
+   standard properties are gated to the Firefox-only path. */
 @supports not selector(::-webkit-scrollbar) {
-  wa-select::part(listbox) {
+  wa-select::part(listbox), wa-dialog::part(body), wa-textarea::part(textarea) {
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-thumb) transparent;
   }
 }
-wa-select::part(listbox)::-webkit-scrollbar { width: 5px; height: 5px; }
-wa-select::part(listbox)::-webkit-scrollbar-track { background: transparent; }
-wa-select::part(listbox)::-webkit-scrollbar-thumb {
+wa-select::part(listbox)::-webkit-scrollbar,
+wa-dialog::part(body)::-webkit-scrollbar,
+wa-textarea::part(textarea)::-webkit-scrollbar { width: var(--scrollbar-size); height: var(--scrollbar-size); }
+wa-select::part(listbox)::-webkit-scrollbar-track,
+wa-dialog::part(body)::-webkit-scrollbar-track,
+wa-textarea::part(textarea)::-webkit-scrollbar-track { background: transparent; }
+wa-select::part(listbox)::-webkit-scrollbar-thumb,
+wa-dialog::part(body)::-webkit-scrollbar-thumb,
+wa-textarea::part(textarea)::-webkit-scrollbar-thumb {
   border-radius: 4px;
   background: var(--scrollbar-thumb);
 }
@@ -248,19 +255,31 @@ wa-select::part(listbox)::-webkit-scrollbar-thumb {
    -bottom (JS, wb-utils.js installScrollEdgeTracking) live on the host,
    since ::part() can't take a class selector of its own. Desktop only. */
 @media (min-width: 801px) {
-  wa-select::part(listbox)::-webkit-scrollbar-thumb:not(:hover) {
+  wa-select::part(listbox)::-webkit-scrollbar-thumb:not(:hover),
+  wa-dialog::part(body)::-webkit-scrollbar-thumb:not(:hover),
+  wa-textarea::part(textarea)::-webkit-scrollbar-thumb:not(:hover) {
     background: linear-gradient(to top, transparent, var(--scrollbar-thumb));
   }
-  wa-select.v-scroll-pos-mid::part(listbox)::-webkit-scrollbar-thumb:not(:hover) {
+  wa-select.v-scroll-pos-mid::part(listbox)::-webkit-scrollbar-thumb:not(:hover),
+  wa-dialog.v-scroll-pos-mid::part(body)::-webkit-scrollbar-thumb:not(:hover),
+  wa-textarea.v-scroll-pos-mid::part(textarea)::-webkit-scrollbar-thumb:not(:hover) {
     background: var(--scrollbar-thumb);
   }
-  wa-select.v-scroll-pos-bottom::part(listbox)::-webkit-scrollbar-thumb:not(:hover) {
+  wa-select.v-scroll-pos-bottom::part(listbox)::-webkit-scrollbar-thumb:not(:hover),
+  wa-dialog.v-scroll-pos-bottom::part(body)::-webkit-scrollbar-thumb:not(:hover),
+  wa-textarea.v-scroll-pos-bottom::part(textarea)::-webkit-scrollbar-thumb:not(:hover) {
     background: linear-gradient(to bottom, transparent, var(--scrollbar-thumb));
   }
 }
-wa-select::part(listbox)::-webkit-scrollbar-thumb:hover { background: var(--wa-color-focus); }
-wa-select::part(listbox)::-webkit-scrollbar-corner { background: transparent; }
-wa-select::part(listbox)::-webkit-scrollbar-button { display: none; }
+wa-select::part(listbox)::-webkit-scrollbar-thumb:hover,
+wa-dialog::part(body)::-webkit-scrollbar-thumb:hover,
+wa-textarea::part(textarea)::-webkit-scrollbar-thumb:hover { background: var(--wa-color-focus); }
+wa-select::part(listbox)::-webkit-scrollbar-corner,
+wa-dialog::part(body)::-webkit-scrollbar-corner,
+wa-textarea::part(textarea)::-webkit-scrollbar-corner { background: transparent; }
+wa-select::part(listbox)::-webkit-scrollbar-button,
+wa-dialog::part(body)::-webkit-scrollbar-button,
+wa-textarea::part(textarea)::-webkit-scrollbar-button { display: none; }
 /* WA rings a focused switch's thumb in the focus orange, which vanishes on
    the near-identical orange "on" track: ring it in the text color instead.
    Overrides the composed token (its color var resolves at :root). */
@@ -2755,7 +2774,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   }
 }
 wa-dialog:has(.engine-settings-tabs)::part(footer) {
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  border-top: var(--dialog-rule);
   padding-top: 12px;
 }
 /* Settings Reset: the row carries the line (spanning like the Engines
@@ -3135,6 +3154,8 @@ wa-dialog {
   --dialog-accent: var(--panel-accent);
   --border-subtle: var(--dialog-accent);
   --border-faint: #3a4a5f;
+  /* Thin line between a dialog's header or footer and its body. */
+  --dialog-rule: 1px solid rgba(255, 255, 255, 0.12);
 }
 /* Scoped to the tab rail only (not the whole dialog): blends its track into
    the dialog background (the active-tab indicator is the only wanted
@@ -4517,12 +4538,29 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   50%      { box-shadow: 0 0 0 5px rgba(var(--accent-rgb), 0); }
 }
 
-wa-dialog.tournament-info-dialog::part(header) {
-  padding-block-end: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+/* --rule-gap: the space between a line and the buttons beside it (the X;
+   Apply/Create), tight enough that the New/Edit/Copy form still fits its
+   dialog's fixed height. */
+wa-dialog:is(.tournament-info-dialog, .tournament-form-dialog) { --rule-gap: 4px; }
+/* Title and X centered between the dialog's top edge and the line: WA's
+   top inset plus the gap, split evenly. */
+wa-dialog:is(.tournament-info-dialog, .tournament-form-dialog)::part(header) {
+  padding-block: calc((var(--spacing) - var(--wa-form-control-padding-block) + var(--rule-gap)) / 2);
+  border-bottom: var(--dialog-rule);
 }
-wa-dialog.tournament-info-dialog::part(body) {
+wa-dialog:is(.tournament-info-dialog, .tournament-form-dialog)::part(body) {
   padding-block-start: 10px;
+}
+/* New/Edit/Copy: 2px off the body's bottom so the form fits too. */
+wa-dialog.tournament-form-dialog::part(body) {
+  padding-block-end: calc(var(--spacing) - 2px);
+}
+/* New/Edit/Copy: the header line mirrored above the footer, the buttons
+   centered between it and the dialog's bottom edge: the gap plus WA's bottom
+   inset, split evenly. */
+wa-dialog.tournament-form-dialog::part(footer) {
+  padding-block: calc((var(--rule-gap) + var(--spacing)) / 2);
+  border-top: var(--dialog-rule);
 }
 .tournament-info {
   padding-top: 0;
@@ -5039,12 +5077,12 @@ wa-dialog.tournament-info-dialog::part(body) {
 .wb-sprt--h1 { box-shadow: inset 3px 0 0 #2d6a3f; }
 .wb-sprt--h0 { box-shadow: inset 3px 0 0 #7a2222; }
 /* Top margin: headroom under the Studio tabs (the table header sits flush). */
-.wb-sprt--studio { background: var(--row-bg-selected); margin: 8px 8px 10px; }
+.wb-sprt--studio { background: var(--row-bg-selected); margin: 8px var(--scrollbar-size) 10px 0; }
 /* Studio Head-to-Head: a fixed 2-engine banner + an internally scrolled
    table (split-table pattern above, tournament-h2h.js); the head th is
    positioned so it anchors the .th-grip handles. */
 .wb-h2h { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-.h2h-banner { margin: 8px 8px 10px; background: var(--row-bg-selected); }
+.h2h-banner { margin: 8px var(--scrollbar-size) 10px 0; background: var(--row-bg-selected); }
 .h2h-table-wrap { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .h2h-tbl { table-layout: fixed; }
 .h2h-head-tbl th { position: relative; background: var(--bg); }

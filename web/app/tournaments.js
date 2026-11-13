@@ -923,6 +923,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
     height: "min(780px, 92vh)",
     defaultValue: null,
     body: (resolve, dialog) => {
+      dialog.classList.add("tournament-form-dialog");
       const wrap = document.createElement("div");
       wrap.className = "new-tournament-form";
       wrap.innerHTML = `
