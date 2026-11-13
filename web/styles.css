@@ -5077,12 +5077,12 @@ wa-dialog.tournament-form-dialog::part(footer) {
 .wb-sprt--h1 { box-shadow: inset 3px 0 0 #2d6a3f; }
 .wb-sprt--h0 { box-shadow: inset 3px 0 0 #7a2222; }
 /* Top margin: headroom under the Studio tabs (the table header sits flush). */
-.wb-sprt--studio { background: var(--row-bg-selected); margin: 8px 8px 10px; }
+.wb-sprt--studio { background: var(--row-bg-selected); margin: 8px var(--scrollbar-size) 10px 0; }
 /* Studio Head-to-Head: a fixed 2-engine banner + an internally scrolled
    table (split-table pattern above, tournament-h2h.js); the head th is
    positioned so it anchors the .th-grip handles. */
 .wb-h2h { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-.h2h-banner { margin: 8px 8px 10px; background: var(--row-bg-selected); }
+.h2h-banner { margin: 8px var(--scrollbar-size) 10px 0; background: var(--row-bg-selected); }
 .h2h-table-wrap { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .h2h-tbl { table-layout: fixed; }
 .h2h-head-tbl th { position: relative; background: var(--bg); }
