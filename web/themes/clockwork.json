@@ -1,7 +1,7 @@
 {
   "name": "Clockwork",
   "fit": "cover",
-  "fade": 0,
+  "fade": 40,
   "frost": {
     "blur": 2,
     "brightness": 45
