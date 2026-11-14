@@ -455,14 +455,16 @@ def _san_run_re(sans: Iterable[str], prefix: str) -> re.Pattern | None:
 
 
 def _without_line_moves(text: str, lines: Iterable[str]) -> str:
-    """`text` with every move of the numbered-SAN `lines` blanked (move
+    """`text` with the later moves of the numbered-SAN `lines` blanked (move
     number included), so a board check skips moves the server replayed. A
+    line's first move is played from the live board, so it stays checked
+    (claims bind to it) unless it is also a later move of another line. A
     pawn push reads as a bare square ('d4'), so it is blanked only when
     numbered ('3.d4', '...d5'): unnumbered, it may be a piece-on-square
     claim, which stays checked."""
     sans = {
         tok.rstrip(_SAN_CHECK_SUFFIX)
-        for line in lines for tok in _LINE_MOVE_NUMBER_RE.sub(" ", line).split()
+        for line in lines for tok in _LINE_MOVE_NUMBER_RE.sub(" ", line).split()[1:]
     }
     pushes = {san for san in sans if _BARE_SQUARE_RE.fullmatch(san)}
     for pattern in (
@@ -482,8 +484,8 @@ def make_delegate_tool(
     the live board and checks `aim` is shaped like one move, dispatches the
     narrator's question to a verifier sub-run, and echoes the canonical
     `move_uci` back. Malformed input returns a structured error so the
-    narrator can recover. A verdict that misstates the board (moves its
-    test_aim lines replayed exempt), a "refuted" no test_aim result in the
+    narrator can recover. A verdict that misstates the board (later moves
+    of its test_aim lines exempt), a "refuted" no test_aim result in the
     sub-run backs, or a "holds" past one that refuted, is withheld; the
     refuting line rides along whenever there is one."""
     async def delegate(input_: dict, *, cancel_token: CancelToken) -> dict:
@@ -516,15 +518,9 @@ def make_delegate_tool(
             if result.round_cap:
                 return tool_error(_NO_VERDICT_ERROR, _NO_CONCLUSION_DETAIL)
             return tool_error(_VERDICT_WITHHELD_ERROR, _UNUSABLE_REPLY_DETAIL)
-        # Strict non-LLM validation of the verdict prose. The verdict restates
-        # the move under test (legal pre-move) and reasons about its replies
-        # (legal post-move), so it straddles the move boundary; validate against
-        # both boards and flag only a claim wrong on NEITHER -- a real illegal
-        # move/false claim, not a boundary artifact. Moves of the lines test_aim
-        # replayed are exempt: a cited line runs past both boards. A false
-        # reason discredits the verdict word too, so the narrator never sees
-        # it. Full stack on the copy so numbered history refs keep their
-        # replay free-pass.
+        # The verdict straddles the move under test: flag only claims wrong on
+        # both boards (replayed later moves exempt), and withhold it whole. Full
+        # stack on the copy keeps numbered history refs' replay free-pass.
         after = board.copy()
         after.push(move)
         if has_position_flags(_without_line_moves(verdict, result.lines), board, after):
@@ -881,7 +877,7 @@ def _tool_results_message(
             result = json.dumps(result, ensure_ascii=False)
         content.append({"type": TOOL_RESULT_BLOCK, "tool_use_id": tool_use_id, "content": result})
         if card:
-            cards.append({"type": "text", "text": card})
+            cards.append({"type": "text", "text": _harness_text(card)})
     return {"role": "user", "content": content + cards}
 
 
@@ -2091,9 +2087,9 @@ class AIAnalysisCoordinator:
     ) -> _PositionCheck:
         """Run the single-board checks on a round's assembled prose, capturing
         each flag's prose surface (for striking) plus its normalized label.
-        Moves of `replayed_lines` are exempt (blanked first): the server
-        replayed them. Empty when no board_provider, no live board, or no
-        prose."""
+        Later moves of `replayed_lines` are exempt (blanked first): the
+        server replayed them. Empty when no board_provider, no live board,
+        or no prose."""
         board = self._board_provider() if self._board_provider else None
         if board is None:
             return _PositionCheck(None, [], [], [])

@@ -76,8 +76,9 @@ verdict and nothing else -- never a question, a request, a greeting, or \
 conversation. Nobody will answer.
 """
 
-# Marks every user message the agent loop injects (corrections, nudges).
-HARNESS_TAG = "[automated check, NOT from the user]"
+# Marks every user message the agent loop injects (corrections, nudges,
+# tool cards).
+HARNESS_TAG = "[automated message, NOT from the user]"
 
 _SHARED_RULES = f"""\
 - Notation: SAN. Prefix a move with its move number ("19.Ke2", "19...Qxa1") \
