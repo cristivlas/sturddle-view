@@ -47,6 +47,7 @@ from ..events import (
 )
 from ..llm import (
     ContextFull,
+    HARNESS_TAG,
     LLMProvider,
     Message,
     PromptMode,
@@ -209,7 +210,6 @@ _QUESTION_ARG_KEY = "question"
 # gentle, fact-anchored correction. Move and claim errors get separate asks:
 # a bad move may just be the other side's reply or another ply (the checker
 # accepts "..." or a move number), but a square's content is plain truth.
-_POSITION_CHECK_PREFIX = "[position check] "
 _POSITION_CHECK_LEAD = "Quick check on the current position."
 # Move/line clause: offer the outs the checker honors before asking to restate.
 _POSITION_CHECK_MOVE_CLAUSE = (
@@ -843,7 +843,17 @@ def _inject_nudge(
     `_assistant_message`) so the post-recommend nudge can still prompt a
     model that went silent after its accepting call."""
     messages.append(_assistant_message(round_chunks))
-    messages.append({"role": "user", "content": content})
+    messages.append(_harness_message(content))
+
+
+def _harness_text(content: str) -> str:
+    return f"{HARNESS_TAG} {content}"
+
+
+def _harness_message(content: str) -> Message:
+    """User-role message injected by the loop, tagged so the model knows
+    the user didn't write it (see the Automated messages rule)."""
+    return {"role": "user", "content": _harness_text(content)}
 
 
 def _tool_results_message(
@@ -1614,7 +1624,7 @@ class AIAnalysisCoordinator:
         st.fallback = True
         self._turn_fallback = True
         st.force_tool_next = True
-        messages.append({"role": "user", "content": _FALLBACK_NUDGE})
+        messages.append(_harness_message(_FALLBACK_NUDGE))
 
     async def _stream_round(
         self,
@@ -1878,7 +1888,7 @@ class AIAnalysisCoordinator:
         # Correct a mismatch in this round's prose. After the tool_results
         # so every assistant tool_use is paired before this user message.
         if correction is not None:
-            messages.append({"role": "user", "content": correction})
+            messages.append(_harness_message(correction))
         # Steer to a new play_out idea after enough failed recommend attempts.
         # After the tool_results (every tool_use needs a matching result
         # before a user-role nudge). One-shot until a play_out re-arms it.
@@ -1891,9 +1901,7 @@ class AIAnalysisCoordinator:
                 config.mode, st.consecutive_recommend_failures,
             )
             st.recommend_failure_nudge_armed = False
-            messages.append(
-                {"role": "user", "content": _RECOMMEND_FAILURE_NUDGE}
-            )
+            messages.append(_harness_message(_RECOMMEND_FAILURE_NUDGE))
         await _flush_think(config.emit, rnd.think_timer, config.game_id, rnd.index)
 
     async def _run_round_call(
@@ -2314,7 +2322,7 @@ class AIAnalysisCoordinator:
             clauses.append(_POSITION_CHECK_LEAK_CLAUSE.format(leaks=_quote_join(pc.leak_surfaces)))
         if rephrase:
             clauses.append(_POSITION_CHECK_REPHRASE_CLAUSE.format(items=_quote_join(rephrase)))
-        return _POSITION_CHECK_PREFIX + " ".join([_POSITION_CHECK_LEAD, *clauses])
+        return " ".join([_POSITION_CHECK_LEAD, *clauses])
 
     @staticmethod
     def _needs_nudge(

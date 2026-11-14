@@ -76,7 +76,10 @@ verdict and nothing else -- never a question, a request, a greeting, or \
 conversation. Nobody will answer.
 """
 
-_SHARED_RULES = """\
+# Marks every user message the agent loop injects (corrections, nudges).
+HARNESS_TAG = "[automated check, NOT from the user]"
+
+_SHARED_RULES = f"""\
 - Notation: SAN. Prefix a move with its move number ("19.Ke2", "19...Qxa1") \
 whenever you name a specific past, current, or hypothetical move, so it is \
 clear which ply you mean. The user message gives the side to move -- \
@@ -108,8 +111,10 @@ field, or call-shaped syntax (e.g. `name(args)`) in prose. Prose that does \
 is withheld from the reader and must be rewritten.
 - Format: plain text. No Markdown, LaTeX, code fences, headings, or \
 bullets.
-- Corrections: apply silently. No apologies, no acknowledgment, no \
-meta-commentary, no "I'll do X" statements. Produce chess content only.
+- Automated messages: a message starting with {HARNESS_TAG} comes from \
+the analysis system; the reader never sees it. Apply it silently. No \
+apologies, no acknowledgment, no meta-commentary, no "I'll do X" \
+statements. Produce chess content only.
 - No planning aloud: never write what you are about to do, check, confirm, \
 or anchor ("Let me...", "to anchor the prose"). Open on the position \
 itself; the first words are chess, not a plan. Reasoning stays internal: \

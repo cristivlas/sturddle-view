@@ -26,6 +26,7 @@ from sturddle_view.llm.position_check import iter_stm_moves
 from sturddle_view.play.ai_analysis import (
     AIAnalysisCoordinator,
     _RECOMMEND_MISMATCH_NUDGE,
+    _harness_text,
 )
 
 
@@ -290,7 +291,7 @@ async def test_loop_reprompts_once_then_accepts_the_correction():
     assert provider.stream_calls == 3
     injected = _last_user_texts(provider)
     assert any(
-        t == _RECOMMEND_MISMATCH_NUDGE.format(san="Qg3", named="Ne3")
+        t == _harness_text(_RECOMMEND_MISMATCH_NUDGE.format(san="Qg3", named="Ne3"))
         for t in injected
     )
     # Corrected prose ships clean -- nothing struck.

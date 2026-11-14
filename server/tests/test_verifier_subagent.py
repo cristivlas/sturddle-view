@@ -51,6 +51,7 @@ from sturddle_view.play.ai_analysis import (
     _VERDICT_LEAD_RE,
     _VERIFIER_SEARCH_NUDGE,
     _assistant_message,
+    _harness_text,
     make_delegate_tool,
 )
 
@@ -1155,7 +1156,7 @@ async def test_repeated_recommend_failures_force_new_idea_nudge():
     # The nudge user message is in the history the r2 round was sent.
     r2_msgs = provider.calls[2]["messages"]
     assert any(
-        m["role"] == "user" and m["content"] == _RECOMMEND_FAILURE_NUDGE
+        m["role"] == "user" and m["content"] == _harness_text(_RECOMMEND_FAILURE_NUDGE)
         for m in r2_msgs
     ), "new-idea nudge should fire after 2 failed recommend_move calls"
 
@@ -1209,7 +1210,7 @@ async def test_play_out_call_rearms_the_failure_nudge():
         for c in provider.calls for m in c["messages"]
         if m.get("role") == "user"
     ]
-    assert _RECOMMEND_FAILURE_NUDGE not in all_user_content
+    assert _harness_text(_RECOMMEND_FAILURE_NUDGE) not in all_user_content
 
 
 @pytest.mark.asyncio
@@ -1263,7 +1264,7 @@ async def test_errored_play_out_does_not_rearm_the_failure_nudge():
         for c in provider.calls for m in c["messages"]
         if m.get("role") == "user"
     ]
-    assert _RECOMMEND_FAILURE_NUDGE in all_user_content
+    assert _harness_text(_RECOMMEND_FAILURE_NUDGE) in all_user_content
 
 
 def _last_user_content(call: dict):
@@ -1295,7 +1296,7 @@ async def test_verifier_concluding_without_search_gets_one_nudge():
     verifier_rounds = [
         c for c in provider.calls if _VERIFIER_PROMPT_MARKER in c["system"]
     ]
-    assert _last_user_content(verifier_rounds[1]) == _VERIFIER_SEARCH_NUDGE
+    assert _last_user_content(verifier_rounds[1]) == _harness_text(_VERIFIER_SEARCH_NUDGE)
     assert _delegate_output(events)["verdict"] == "Holds: e4 is sound."
 
 
@@ -1322,7 +1323,7 @@ async def test_verifier_verdict_without_searching_the_move_is_dropped():
     await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
     events = await _drain_until_done(queue)
 
-    assert _last_user_content(provider.calls[3]) == _VERIFIER_SEARCH_NUDGE
+    assert _last_user_content(provider.calls[3]) == _harness_text(_VERIFIER_SEARCH_NUDGE)
     assert _delegate_output(events) == {
         "error": "verdict_withheld", "detail": _UNUSABLE_REPLY_DETAIL,
     }
@@ -1352,7 +1353,7 @@ async def test_verifier_ranking_alone_does_not_count():
     await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
     events = await _drain_until_done(queue)
 
-    assert _last_user_content(provider.calls[3]) == _VERIFIER_SEARCH_NUDGE
+    assert _last_user_content(provider.calls[3]) == _harness_text(_VERIFIER_SEARCH_NUDGE)
     assert _delegate_output(events)["verdict"] == "Holds: e5 does not stop d4."
 
 
@@ -1832,7 +1833,7 @@ async def test_verifier_unsound_reply_does_not_count_as_tested():
     await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
     events = await _drain_until_done(queue)
 
-    assert _last_user_content(provider.calls[3]) == _VERIFIER_SEARCH_NUDGE
+    assert _last_user_content(provider.calls[3]) == _harness_text(_VERIFIER_SEARCH_NUDGE)
     assert _delegate_output(events) == {
         "error": "verdict_withheld", "detail": _UNUSABLE_REPLY_DETAIL,
     }
@@ -1879,7 +1880,7 @@ async def test_verifier_untested_reply_does_not_count_as_tested():
     await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
     events = await _drain_until_done(queue)
 
-    assert _last_user_content(provider.calls[3]) == _VERIFIER_SEARCH_NUDGE
+    assert _last_user_content(provider.calls[3]) == _harness_text(_VERIFIER_SEARCH_NUDGE)
     assert _delegate_output(events) == {
         "error": "verdict_withheld", "detail": _UNUSABLE_REPLY_DETAIL,
     }

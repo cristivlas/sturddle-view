@@ -2,7 +2,7 @@
 
 Every round's prose is checked against the live board. A mismatch emits an
 ai_position_note event (UI self-correction) and injects a fact-anchored
-[position check] user message so the model corrects itself next round. A
+tagged user message so the model corrects itself next round. A
 re-flagged item is struck again but draws no second corrective.
 """
 from __future__ import annotations
@@ -15,8 +15,11 @@ from sturddle_view.llm import ProviderChunk, ScriptedProvider, ToolRegistry, Too
 from sturddle_view.play.ai_analysis import (
     AIAnalysisCoordinator,
     _PositionCheck,
-    _POSITION_CHECK_PREFIX,
+    _POSITION_CHECK_LEAD,
+    _harness_text,
 )
+
+_POSITION_CHECK_HEAD = _harness_text(_POSITION_CHECK_LEAD)
 
 
 # These tests lock pure regex-loop behavior (note emission, corrective
@@ -98,7 +101,7 @@ async def test_false_claim_emits_note_and_injects_corrective():
     # The corrective is injected, forcing a second round.
     assert provider.stream_calls == 2
     injected = _last_user_texts(provider)
-    assert any(t.startswith(_POSITION_CHECK_PREFIX) for t in injected)
+    assert any(t.startswith(_POSITION_CHECK_HEAD) for t in injected)
     # Fact-anchored: the corrective states the square is empty.
     assert any("h6 is empty" in t for t in injected)
 
@@ -123,7 +126,7 @@ async def test_false_pin_claim_emits_note_and_injects_tactics_fact():
     assert notes[0].payload["surfaces"] == ["The knight on f3 is pinned"]
     assert provider.stream_calls == 2
     injected = _last_user_texts(provider)
-    assert any(t.startswith(_POSITION_CHECK_PREFIX) for t in injected)
+    assert any(t.startswith(_POSITION_CHECK_HEAD) for t in injected)
     assert any(
         "black knight on c6 pinned to black king on e8 by white bishop on b5" in t
         for t in injected
@@ -171,7 +174,7 @@ async def test_false_bishop_color_emits_note_and_injects_corrective():
     assert notes[0].payload["surfaces"] == ["the dark-squared bishop"]
     assert provider.stream_calls == 2
     injected = _last_user_texts(provider)
-    assert any(t.startswith(_POSITION_CHECK_PREFIX) for t in injected)
+    assert any(t.startswith(_POSITION_CHECK_HEAD) for t in injected)
     # Fact-anchored: bare ref (no side named) lists the real bishops, both
     # light-squared, so the model sees there is no dark-squared bishop at all.
     assert any(
@@ -318,7 +321,7 @@ async def test_false_file_claim_emits_note_and_injects_corrective():
     assert notes[0].payload["surfaces"] == ["white queen on the c-file"]
     injected = _last_user_texts(provider)
     assert any(
-        t.startswith(_POSITION_CHECK_PREFIX)
+        t.startswith(_POSITION_CHECK_HEAD)
         and "no white queen on the c-file; the white queen is on b2" in t
         for t in injected
     )
@@ -364,7 +367,7 @@ async def test_false_file_openness_emits_note_and_injects_corrective():
     assert notes[0].payload["surfaces"] == ["a semi-open file"]
     injected = _last_user_texts(provider)
     assert any(
-        t.startswith(_POSITION_CHECK_PREFIX)
+        t.startswith(_POSITION_CHECK_HEAD)
         and "the c-file is open: no pawns on it" in t
         for t in injected
     )
@@ -391,7 +394,7 @@ async def test_false_illegality_claim_emits_note_and_injects_legal_fact():
     assert [n.payload["surfaces"] for n in notes] == [["Re6 is illegal"]]
     injected = _last_user_texts(provider)
     assert any(
-        t.startswith(_POSITION_CHECK_PREFIX) and "Re6 is legal here" in t
+        t.startswith(_POSITION_CHECK_HEAD) and "Re6 is legal here" in t
         for t in injected
     )
 
@@ -441,7 +444,7 @@ async def test_tool_label_leak_hides_prose_corrected_once():
     assert provider.stream_calls == 2
     injected = _last_user_texts(provider)
     assert any(
-        t.startswith(_POSITION_CHECK_PREFIX) and '"Verdict:"' in t for t in injected
+        t.startswith(_POSITION_CHECK_HEAD) and '"Verdict:"' in t for t in injected
     )
 
 

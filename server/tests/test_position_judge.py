@@ -22,7 +22,11 @@ from sturddle_view.llm.position_judge import (
     _parse_other_position_labels,
     judge_other_position,
 )
-from sturddle_view.play.ai_analysis import _POSITION_CHECK_PREFIX, AIAnalysisCoordinator
+from sturddle_view.play.ai_analysis import (
+    _POSITION_CHECK_LEAD,
+    AIAnalysisCoordinator,
+    _harness_text,
+)
 
 
 # Black to move; e4 empty, so "Be4" is illegal-on-this-board -> a regex flag.
@@ -178,7 +182,7 @@ def _position_check_asks(messages: list[Message]) -> list[str]:
     return [
         m["content"] for m in messages
         if m["role"] == "user" and isinstance(m["content"], str)
-        and m["content"].startswith(_POSITION_CHECK_PREFIX)
+        and m["content"].startswith(_harness_text(_POSITION_CHECK_LEAD))
     ]
 
 
