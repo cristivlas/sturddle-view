@@ -14,13 +14,28 @@ const PX_SUFFIX = "px";
 const PCT_PER_UNIT = 100;
 // Computed backdrop-filter of an unfrosted element.
 const NO_FILTER = "none";
+const SLIDER_STEP = 1;
+const BLUR_MIN_PX = 0;
+const BLUR_MAX_PX = 20;
+const BLUR_DEFAULT_PX = 2;
+const BRIGHTNESS_MIN_PCT = 20;
+const BRIGHTNESS_MAX_PCT = 120;
+const BRIGHTNESS_DEFAULT_PCT = 60;
 // Slider specs (panel menu) keyed by their stored field.
 const SLIDERS = Object.freeze({
-  blur: { label: "Blur", min: 0, max: 20, step: 1, unit: PX_SUFFIX, initial: 2 },
-  brightness: { label: "Brightness", min: 20, max: 120, step: 1, unit: PCT_SUFFIX, initial: 60 },
+  blur: {
+    label: "Blur", min: BLUR_MIN_PX, max: BLUR_MAX_PX, step: SLIDER_STEP, unit: PX_SUFFIX,
+    initial: BLUR_DEFAULT_PX,
+  },
+  brightness: {
+    label: "Brightness", min: BRIGHTNESS_MIN_PCT, max: BRIGHTNESS_MAX_PCT, step: SLIDER_STEP, unit: PCT_SUFFIX,
+    initial: BRIGHTNESS_DEFAULT_PCT,
+  },
 });
+export const FROST_DEFAULTS = Object.freeze(Object.fromEntries(
+  Object.entries(SLIDERS).map(([key, spec]) => [key, spec.initial])));
 
-const inRange = (v, { min, max }) => Number.isFinite(v) && v >= min && v <= max;
+const inRange =(v, { min, max }) => Number.isFinite(v) && v >= min && v <= max;
 
 // Stored values over the defaults; a missing or out-of-range field reads as default.
 function load() {

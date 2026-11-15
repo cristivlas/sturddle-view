@@ -3,7 +3,8 @@ or a bundled theme's.
 
 Stored as a single ``image.<ext>`` under the app data dir; its mtime is the
 version the client cache-busts the image URL with. The display style (fade,
-fit) lives beside it in ``style.json`` and survives image changes. A theme is
+fit) lives beside it in ``style.json`` and survives image changes, except
+leaving a theme, which resets it. A theme is
 an image under the themes dir plus an optional ``<id>.json`` preset tuned
 for it: its name is the menu's label (else the id), its fit/fade set the
 style here, the rest is the client's to apply. The applied theme's id
@@ -115,12 +116,19 @@ def _stored() -> Path | None:
 
 
 def _remove_all(keep: str | None = None) -> None:
-    """Delete the stored image(s), sparing the ``keep`` extension, and the
-    applied theme's id."""
+    """Delete the stored image(s), sparing the ``keep`` extension."""
     for ext in _TYPE_BY_EXT:
         if ext != keep:
             (_root() / f"{_STEM}{ext}").unlink(missing_ok=True)
-    (_root() / _THEME_FILENAME).unlink(missing_ok=True)
+
+
+def _drop_theme() -> None:
+    """Forget the applied theme, if any, and reset the style it set."""
+    try:
+        (_root() / _THEME_FILENAME).unlink()
+    except FileNotFoundError:
+        return
+    atomic_write_json(_root() / _STYLE_FILENAME, _DEFAULT_STYLE)
 
 
 def _current_theme(themes: dict[str, tuple[Path, dict, str]]) -> str | None:
@@ -218,6 +226,7 @@ async def put_wallpaper(request: Request) -> dict:
     if not data:
         raise bad_request("empty image")
     _store(data, ext)
+    _drop_theme()
     return _info()
 
 
@@ -240,6 +249,7 @@ def put_theme(theme_id: str) -> dict:
 @router.delete("")
 def delete_wallpaper() -> dict:
     _remove_all()
+    _drop_theme()
     return _info()
 
 

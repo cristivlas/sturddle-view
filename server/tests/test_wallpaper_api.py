@@ -177,10 +177,12 @@ def test_theme_without_preset_name_shows_its_id(client, theme, tmp_path, preset)
     lambda c: _put_image(c, PNG_BYTES, PNG),
     lambda c: c.delete(URL),
 ])
-def test_other_image_change_clears_current_theme(client, theme, change):
+def test_other_image_change_clears_current_theme_and_its_style(client, theme, change):
     client.put(f"{THEME_URL}/{theme}")
     assert change(client).json()["theme"] is None
-    assert client.get(INFO_URL).json()["theme"] is None
+    info = client.get(INFO_URL).json()
+    assert info["theme"] is None
+    assert (info["fade"], info["fit"]) == (0, wallpaper_api.FITS[0])
 
 
 def test_put_unknown_theme_is_404(client, theme):
