@@ -2461,6 +2461,7 @@ body .side-popover.popover-floating {
 .cm-chessboard.chess-club { --sb-arrow: var(--theme-arrow, #334155); --sb-arrow-secondary: var(--theme-arrow-secondary, #166534); }
 /* One end shape: the vendor's butt-ended secondary would leave a stacked
    round end showing. */
+.cm-chessboard .arrow { filter: drop-shadow(0 0 1px #333); }
 .cm-chessboard .arrow .arrow-line { stroke-linecap: round; }
 .cm-chessboard .arrow-success .arrow-head { fill: var(--sb-arrow); }
 .cm-chessboard .arrow-success .arrow-line { stroke: var(--sb-arrow); opacity: 0.75; }
