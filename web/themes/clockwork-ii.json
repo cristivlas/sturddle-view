@@ -1,0 +1,23 @@
+{
+  "name": "Clockwork II",
+  "fit": "cover",
+  "fade": 10,
+  "frost": {
+    "blur": 3,
+    "brightness": 28
+  },
+  "panels": {
+    "ai": 12,
+    "evalbar": 12,
+    "ucilog": 12,
+    "pvtable": 12,
+    "studioLeft": 10,
+    "studioRight": 10
+  },
+  "board": "sturddle-staunty",
+  "boardFade": 0,
+  "arrows": {
+    "engine": "#f5f0e1",
+    "ai": "#7cc4ff"
+  }
+}
