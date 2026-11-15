@@ -197,7 +197,7 @@ and `SV_AUTH_DISABLED`.
 | Var | Default | Effect | Where |
 |---|---|---|---|
 | `SV_AUTH_DISABLED` | `0` | Treat every request as the host token (no CLI flag). The e2e harness sets it; a test turns auth back on with `SV_AUTH_DISABLED=0`. | `server/sturddle_view/auth.py` |
-| `SV_READY_PORT` | unset | Harness-owned loopback port the app connects to once after startup, a deterministic ready signal. | `server/sturddle_view/app.py` |
+| `SV_READY_PORT` | unset | Harness-owned loopback port the server connects to once it is listening, a deterministic ready signal. | `server/sturddle_view/_uvicorn_signal.py` |
 | `SVTEST_SYZYGY_PATH` | unset | Syzygy tablebase directory; tablebase tests skip without it (or `--syzygy-path`). | `server/tests/test_tablebase.py` |
 | `SVTEST_WS_STRESS` | unset | Opt in to the WebSocket shutdown stress repro. | `server/tests/test_ws_shutdown_repro.py` |
 | `SVTEST_WS_STRESS_ITERS` | `20` | Stress iterations. | `server/tests/test_ws_shutdown_repro.py` |

@@ -486,9 +486,9 @@ def run_uvicorn_subprocess(
     log_fh = open(log_path, "wb")
 
     # Event-based startup handshake: listen on an ephemeral port and
-    # pass it to the subprocess via SV_READY_PORT. The app's lifespan
-    # startup connects to it after uvicorn has bound the listen socket,
-    # giving us a deterministic ready signal with no polling.
+    # pass it to the subprocess via SV_READY_PORT. Its ReadyPortServer
+    # connects to it once uvicorn has bound the listen socket, giving us a
+    # deterministic ready signal with no polling.
     ready_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     ready_sock.bind(("127.0.0.1", 0))
     ready_sock.listen(1)
