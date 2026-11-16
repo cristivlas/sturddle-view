@@ -40,6 +40,9 @@ python -m pytest -k frozen_window -q
   `SVTEST_SYZYGY_PATH`) when the user has tablebase files locally;
   otherwise they skip. Test-only env vars use the `SVTEST_` prefix (see
   [env-vars.md](env-vars.md#test-only)).
+- `--server-per-test`: e2e files whose `server` fixture uses
+  `scope=server_scope` share one server per file; this flag gives each
+  test its own, to rule sharing out when troubleshooting.
 
 #### Test data fixtures
 
@@ -129,13 +132,20 @@ at module load, so a checkout without Playwright skips the whole e2e suite
 at import. The files also carry `pytestmark = pytest.mark.e2e`, so
 `-m e2e` / `-m "not e2e"` selects or excludes them.
 
+Run them in parallel with pytest-xdist: `pytest -m e2e -n auto --dist loadfile`.
+`loadfile` keeps each file on one worker, so a shared per-file server
+starts once. Every server gets its own port and `tmp_path` data dirs.
+
 Patterns to reuse from existing files:
 
 - Spawning the server: `run_uvicorn_subprocess(...)` in `conftest.py` runs
   uvicorn as a real subprocess on a free port; the OS owns its lifecycle
   (kill on teardown, no proactor-cleanup races). Per-test isolation flows
   through `SV_*` env overrides (`SV_PGN_DIR`, `SV_TOURNAMENT_ROOT`,
-  `SV_IMPORTS_DIR`, `SV_SETTINGS_FILE`, ...).
+  `SV_IMPORTS_DIR`, `SV_SETTINGS_FILE`, ...). A file whose tests leave the
+  server's state as they found it declares `server` with
+  `scope=server_scope` (one server per file) and seeds it under
+  `tmp_path_factory.mktemp(...)`.
 - Seeding state into that subprocess: test-only `/_test/...` HTTP hooks
   (e.g. `/_test/ai/publish_event`, `/_test/ai/seed_replay`,
   `/_test/hve/install`, `/_test/recents/seed_fork`) -- the test can't reach

@@ -24,6 +24,7 @@ from .conftest import (  # noqa: E402
     e2e_env,
     pin_arena_tournament_ux,
     run_uvicorn_subprocess,
+    server_scope,
     wait_perspective_ready,
 )
 
@@ -52,14 +53,15 @@ def _make_fake_uci(root: Path, id_name: str) -> str:
     return str(py)
 
 
-@pytest.fixture
-def server(tmp_path):
-    registry_path = tmp_path / REGISTRY_FILE
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    root = tmp_path_factory.mktemp("server")
+    registry_path = root / REGISTRY_FILE
     seed = EngineRegistry(path=registry_path)
     for n in ENGINE_NAMES:
-        seed.add(name=n, path=_make_fake_uci(tmp_path, n))
+        seed.add(name=n, path=_make_fake_uci(root, n))
     env = {
-        **e2e_env(tmp_path),
+        **e2e_env(root),
         # sys.executable is a real file, so detect_binary picks it up
         # and the "New tournament" button is enabled.
         "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,

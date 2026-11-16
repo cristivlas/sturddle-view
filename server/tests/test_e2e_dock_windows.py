@@ -12,7 +12,13 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from .conftest import assert_no_page_errors, e2e_env, run_uvicorn_subprocess, wait_winbox_settled  # noqa: E402
+from .conftest import (  # noqa: E402
+    assert_no_page_errors,
+    e2e_env,
+    run_uvicorn_subprocess,
+    server_scope,
+    wait_winbox_settled,
+)
 
 
 PLAY_PERSP = "#play-perspective"
@@ -51,9 +57,9 @@ _FOOTER_COVERS_DOCK_JS = """() => {
 }"""
 
 
-@pytest.fixture
-def server(tmp_path):
-    env = e2e_env(tmp_path)
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    env = e2e_env(tmp_path_factory.mktemp("server"))
     with run_uvicorn_subprocess(env_overrides=env) as base:
         yield base
 

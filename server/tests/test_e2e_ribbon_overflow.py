@@ -22,6 +22,7 @@ from .conftest import (  # noqa: E402
     goto_arena_tournaments,
     run_uvicorn_subprocess,
     seed_tournament,
+    server_scope,
     TOURNAMENT_UX_KEY,
     TOURNAMENT_UX_STUDIO,
     tournament_server_env,
@@ -36,6 +37,7 @@ TALL = {"width": 1400, "height": 1000}
 PLAY_RIBBON = "#board-controls"
 ARENA_RIBBON = ".tournaments-ribbon"
 STUDIO_RIBBON = ".studio-ribbon"
+STUDIO_SELECTED_ROW = ".studio-tourney-row.selected"
 MORE_BTN = ".ribbon-more"
 MORE_MENU = ".ribbon-more-menu:popover-open"
 
@@ -66,10 +68,11 @@ _MENU_ITEMS = f"""() => [...document.querySelectorAll('{MORE_MENU} .tmb-dd-item'
   .map((b) => [b.textContent.trim(), b.disabled])"""
 
 
-@pytest.fixture
-def server(tmp_path):
-    seed_tournament(tmp_path, "overflow", list(ENGINES), [])
-    with run_uvicorn_subprocess(env_overrides=tournament_server_env(tmp_path, ENGINES)) as base:
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    root = tmp_path_factory.mktemp("server")
+    seed_tournament(root, "overflow", list(ENGINES), [])
+    with run_uvicorn_subprocess(env_overrides=tournament_server_env(root, ENGINES)) as base:
         yield base
 
 
@@ -145,6 +148,9 @@ async def test_studio_ribbon_overflows_into_menu(server, make_page):
     await _goto_play(page, server)
     await page.click('button[data-perspective="engines"]')
     await page.wait_for_selector(STUDIO_RIBBON)
+    # The list loads after the ribbon; its first render selects a row and
+    # syncs the ribbon's disabled states in the same task.
+    await page.wait_for_selector(STUDIO_SELECTED_ROW)
 
     await _check_overflow(page, STUDIO_RIBBON)
     await _check_restored(page, STUDIO_RIBBON)

@@ -21,6 +21,7 @@ from .conftest import (  # noqa: E402
     open_arena_workspace,
     run_uvicorn_subprocess,
     seed_tournament,
+    server_scope,
     tournament_server_env,
     wait_eval,
     watch_page_errors,
@@ -39,11 +40,12 @@ _WINDOWS = "() => { const w = [...document.querySelectorAll('.winbox.sturddle-wb
 NAMES = "() => [...document.querySelectorAll('.tournament-row .tournament-name')].map((e) => e.textContent).sort()"
 
 
-@pytest.fixture
-def server(tmp_path):
-    seed_tournament(tmp_path, "spring-cup", [A, B], [])
-    seed_tournament(tmp_path, "summer-cup", [B, C], [])
-    with run_uvicorn_subprocess(env_overrides=tournament_server_env(tmp_path, (A, B, C))) as base:
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    root = tmp_path_factory.mktemp("server")
+    seed_tournament(root, "spring-cup", [A, B], [])
+    seed_tournament(root, "summer-cup", [B, C], [])
+    with run_uvicorn_subprocess(env_overrides=tournament_server_env(root, (A, B, C))) as base:
         yield base
 
 

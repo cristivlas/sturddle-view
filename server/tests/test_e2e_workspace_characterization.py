@@ -33,6 +33,7 @@ from .conftest import (  # noqa: E402
     make_fake_uci,
     open_arena_workspace,
     run_uvicorn_subprocess,
+    server_scope,
 )
 
 # Title text WinBox renders for each system window; the only stable way
@@ -49,23 +50,24 @@ TITLE_TO_KEY = {
 ROUND_SLACK = 2
 
 
-@pytest.fixture
-def server(tmp_path):
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    root = tmp_path_factory.mktemp("server")
     # Seed engine registry and one tournament on disk, then launch an
     # out-of-process server pointed at those paths (SV_* -> Settings).
     # tournament_fastchess_path is sys.executable (a real file detect_binary
     # echoes back), but fastchess is never spawned -- this test only opens
     # and lays out workspace windows.
-    registry = EngineRegistry(path=tmp_path / REGISTRY_FILE)
+    registry = EngineRegistry(path=root / REGISTRY_FILE)
     for name in ("engine-A", "engine-B"):
-        registry.add(name=name, path=make_fake_uci(tmp_path, name))
-    TournamentStore(tmp_path / "tournaments").create(
+        registry.add(name=name, path=make_fake_uci(root, name))
+    TournamentStore(root / "tournaments").create(
         name="alpha",
         template={"tc": "10+0.1"},
         engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
     )
     env = {
-        **e2e_env(tmp_path),
+        **e2e_env(root),
         "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,
     }
     with run_uvicorn_subprocess(env_overrides=env) as base:

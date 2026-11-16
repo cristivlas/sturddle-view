@@ -17,6 +17,7 @@ from .conftest import (  # noqa: E402
     open_studio_tab,
     run_uvicorn_subprocess,
     seed_tournament,
+    server_scope,
     tournament_server_env,
     wait_eval,
     wait_eval_not,
@@ -41,11 +42,12 @@ _LABELS = f"() => [...document.querySelectorAll('{HEAD} th .th-label')].map(e =>
 NAME_TH = f'{HEAD} th:has(> .th-label:text-is("Name"))'
 
 
-@pytest.fixture
-def server(tmp_path):
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    root = tmp_path_factory.mktemp("server")
     for name in NAMES:
-        seed_tournament(tmp_path, name, ENGINES, [])
-    with run_uvicorn_subprocess(env_overrides=tournament_server_env(tmp_path, ENGINES)) as base:
+        seed_tournament(root, name, ENGINES, [])
+    with run_uvicorn_subprocess(env_overrides=tournament_server_env(root, ENGINES)) as base:
         yield base
 
 

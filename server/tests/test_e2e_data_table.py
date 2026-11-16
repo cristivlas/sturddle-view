@@ -18,6 +18,7 @@ from .conftest import (  # noqa: E402
     open_studio_tab,
     run_uvicorn_subprocess,
     seed_tournament,
+    server_scope,
     tournament_server_env,
     wait_eval,
     wait_perspective_ready,
@@ -129,10 +130,11 @@ async def _fit(page):
     await page.wait_for_function(f"([k, b]) => ({_STORED_LAYOUT})(k) !== b", arg=[LAYOUT_KEY, before])
 
 
-@pytest.fixture
-def server(tmp_path):
-    seed_tournament(tmp_path, "dt", list(ENGINES), GAMES)
-    with run_uvicorn_subprocess(env_overrides=tournament_server_env(tmp_path, ENGINES)) as base:
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    root = tmp_path_factory.mktemp("server")
+    seed_tournament(root, "dt", list(ENGINES), GAMES)
+    with run_uvicorn_subprocess(env_overrides=tournament_server_env(root, ENGINES)) as base:
         yield base
 
 
