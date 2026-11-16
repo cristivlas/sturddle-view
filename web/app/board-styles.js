@@ -15,6 +15,14 @@ export const BOARD_STYLES = {
 
 export const DEFAULT_BOARD_STYLE = "classic";
 
+// A mounted board's element attribute naming its style id: styles shared by
+// two ids (cssClass) can't tell them apart.
+export const BOARD_STYLE_ATTR = "data-board-style";
+
+export function resolveBoardStyleId(id) {
+  return Object.hasOwn(BOARD_STYLES, id) ? id : DEFAULT_BOARD_STYLE;
+}
+
 export function resolveBoardStyle(id) {
-  return BOARD_STYLES[id] || BOARD_STYLES[DEFAULT_BOARD_STYLE];
+  return BOARD_STYLES[resolveBoardStyleId(id)];
 }
