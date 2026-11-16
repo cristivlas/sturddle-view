@@ -11,11 +11,13 @@ from typing import NoReturn
 
 import uvicorn
 from uvicorn import Config
+from uvicorn.main import STARTUP_FAILURE
 from uvicorn.supervisors import ChangeReload
 
 from . import APP_NAME, add_instance_arg, app_config_dir, apply_instance, is_windows
 from ._instance_lock import acquire as _acquire_lock
 from ._reload_worker import APP_FACTORY, windows_reload_worker
+from ._uvicorn_signal import ReadyPortServer
 from ._runtime import DESKTOP_FLAG, PROXY_SUBCOMMAND, is_frozen
 from .auth import AUTH_DISABLED_LAN_WARNING
 from .config import (
@@ -186,11 +188,9 @@ def main() -> None:
         )
         return
 
-    uvicorn.run(
-        APP_FACTORY,
+    server_config = dict(
         host=host,
         port=port,
-        reload=args.reload,
         loop=loop,
         factory=True,
         # Use the project's logging config (configure_logging above), not
@@ -201,6 +201,22 @@ def main() -> None:
         ssl_certfile=args.cert,
         ssl_keyfile=args.key,
     )
+    if args.reload:
+        uvicorn.run(APP_FACTORY, reload=True, **server_config)
+    else:
+        _serve(Config(APP_FACTORY, **server_config))
+
+
+def _serve(config: Config) -> None:
+    """uvicorn.run's single-process path, on a server that tells the test
+    harness once it is listening."""
+    server = ReadyPortServer(config)
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass
+    if not server.started:
+        sys.exit(STARTUP_FAILURE)
 
 
 def _run_windows_reload(

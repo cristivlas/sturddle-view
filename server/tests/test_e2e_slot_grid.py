@@ -11,7 +11,7 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from .conftest import e2e_env, run_uvicorn_subprocess  # noqa: E402
+from .conftest import e2e_env, run_uvicorn_subprocess, server_scope  # noqa: E402
 
 
 VIEWPORT = {"width": 1280, "height": 720}
@@ -24,9 +24,9 @@ EXPECTED_ROWS = 4
 EXPECTED_CAP = EXPECTED_COLS * EXPECTED_ROWS
 
 
-@pytest.fixture
-def server(tmp_path):
-    env = e2e_env(tmp_path)
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    env = e2e_env(tmp_path_factory.mktemp("server"))
     with run_uvicorn_subprocess(env_overrides=env) as base:
         yield base
 

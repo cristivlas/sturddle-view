@@ -27,6 +27,7 @@ from .conftest import (  # noqa: E402
     running_tournament,
     run_uvicorn_subprocess,
     seed_tournament,
+    server_scope,
     tournament_server_env,
     watch_page_errors,
 )
@@ -55,10 +56,11 @@ _OUTER_X = f"""(sel) => {{
 LIST = ".tournaments-list"
 
 
-@pytest.fixture
-def server(tmp_path):
-    seed_tournament(tmp_path, "edges", list(ENGINES), [("1", *ENGINES, "1-0")])
-    with run_uvicorn_subprocess(env_overrides=tournament_server_env(tmp_path, ENGINES)) as base:
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    root = tmp_path_factory.mktemp("server")
+    seed_tournament(root, "edges", list(ENGINES), [("1", *ENGINES, "1-0")])
+    with run_uvicorn_subprocess(env_overrides=tournament_server_env(root, ENGINES)) as base:
         yield base
 
 

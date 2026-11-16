@@ -22,6 +22,7 @@ from sturddle_view.play.ai_analysis import (
     FALLBACK_ROUNDS_LEFT,
     AIAnalysisCoordinator,
     _FALLBACK_NUDGE,
+    _harness_text,
 )
 from sturddle_view.play.tools_engine import (
     MAX_IDEAS,
@@ -124,7 +125,7 @@ async def test_fallback_takes_the_played_out_move_without_a_hold(monkeypatch):
     events = await _drain(queue)
 
     nudged = provider.calls[nudge_round]
-    assert nudged["messages"][-1]["content"] == _FALLBACK_NUDGE
+    assert nudged["messages"][-1]["content"] == _harness_text(_FALLBACK_NUDGE)
     assert nudged["force"] is True
     assert all(_FALLBACK_NUDGE not in str(c["messages"]) for c in provider.calls[:nudge_round])
     outputs = {
@@ -234,7 +235,7 @@ async def test_fallback_fires_on_a_later_round_once_something_is_played_out(monk
     )
     events = await _drain(queue)
 
-    assert provider.calls[late]["messages"][-1]["content"] == _FALLBACK_NUDGE
+    assert provider.calls[late]["messages"][-1]["content"] == _harness_text(_FALLBACK_NUDGE)
     assert all(_FALLBACK_NUDGE not in str(c["messages"]) for c in provider.calls[:late])
     accepted = next(
         e.payload["output"] for e in events

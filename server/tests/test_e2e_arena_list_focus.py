@@ -18,6 +18,7 @@ from .conftest import (  # noqa: E402
     goto_arena_tournaments,
     run_uvicorn_subprocess,
     seed_tournament,
+    server_scope,
     tournament_server_env,
     wait_eval,
     watch_page_errors,
@@ -39,11 +40,12 @@ _ROW_RINGS = (
 )
 
 
-@pytest.fixture
-def server(tmp_path):
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    root = tmp_path_factory.mktemp("server")
     for name in ("focus-a", "focus-b"):
-        seed_tournament(tmp_path, name, list(ENGINES), [])
-    with run_uvicorn_subprocess(env_overrides=tournament_server_env(tmp_path, ENGINES)) as base:
+        seed_tournament(root, name, list(ENGINES), [])
+    with run_uvicorn_subprocess(env_overrides=tournament_server_env(root, ENGINES)) as base:
         yield base
 
 

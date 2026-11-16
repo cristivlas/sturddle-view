@@ -1,14 +1,15 @@
 // Themes: a bundled wallpaper plus a preset tuned for it. The server sets the
 // image and the preset's fit/fade; this applies the rest: frost, panel and
 // board fades here, the board style as the display setting. Keys a preset
-// leaves out stay as they are. Arrow colors ({ engine?, ai?, alt? }) are
-// painted by theme-preset.js while the theme is active.
+// leaves out stay as they are; leaving a theme applies the defaults. Arrow
+// colors ({ engine?, ai?, alt? }) are painted by theme-preset.js while the
+// theme is active.
 
 import { setBoardFade } from "./board-fade.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE } from "./board-styles.js";
 import { SETTINGS_PATH } from "./dialogs.js";
-import { setFrost } from "./frost.js";
-import { setPanelFades } from "./panel-fade.js";
+import { FROST_DEFAULTS, setFrost } from "./frost.js";
+import { FADE_DEFAULT_PCT, setPanelFades } from "./panel-fade.js";
 import { PANEL_FADE_KEY } from "./theme-preset.js";
 import { isObject } from "./wb-utils.js";
 
@@ -36,4 +37,15 @@ export async function applyThemePreset({ frost, panels, board, boardFade }, api)
   }
   if (reload) location.reload();
   return reload;
+}
+
+// The defaults as a preset; no board key, so the board style stays.
+const DEFAULT_PRESET = Object.freeze({
+  frost: FROST_DEFAULTS,
+  panels: Object.fromEntries(Object.keys(PANEL_FADE_KEY).map((name) => [name, FADE_DEFAULT_PCT])),
+  boardFade: FADE_DEFAULT_PCT,
+});
+
+export function clearThemePreset(api) {
+  return applyThemePreset(DEFAULT_PRESET, api);
 }

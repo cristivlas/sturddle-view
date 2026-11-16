@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import socket
 from asyncio import proactor_events, trsock
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -125,10 +124,6 @@ _UI_ENTRY = f"{_UI_PATH}/"
 _AUTH_COOKIE_MAX_AGE_S = env_int(
     "SV_AUTH_COOKIE_MAX_AGE_S", int(timedelta(weeks=1).total_seconds()), min_value=1,
 )
-_READY_PORT_ENV = "SV_READY_PORT"
-# SV_READY_PORT unset: not launched by the test harness.
-_NO_READY_PORT = 0
-_READY_SIGNAL_TIMEOUT_S = 2.0
 # WebSocket close code 1012 "service restart".
 _WS_CLOSE_SERVICE_RESTART = 1012
 # cpython's own default listen backlog for loop.create_server.
@@ -364,7 +359,6 @@ async def _lifespan(app: FastAPI):
         log.error("tournament reconcile failed", exc_info=True)
     # A bad shipped playbook fails boot, not a live plan call.
     default_catalog()
-    _signal_ready_port()
     yield
     # Best-effort: stop any active tournament on shutdown.
     try:
@@ -865,19 +859,3 @@ def _print_banner(settings: Settings) -> None:
         log.info("  open: %s", entry_url(settings, h))
 
 
-def _signal_ready_port() -> None:
-    """Test hook: connect once to SV_READY_PORT to signal startup completion.
-
-    The test harness opens a listening socket on an ephemeral port before
-    spawning this subprocess and passes the port via SV_READY_PORT. By
-    connecting here (after lifespan startup, before uvicorn enters the
-    serve loop), the harness gets a deterministic ready event with no
-    polling. Silent no-op when the env var is unset or unreachable.
-    """
-    port = env_int(_READY_PORT_ENV, _NO_READY_PORT, min_value=1)
-    if port == _NO_READY_PORT:
-        return
-    try:
-        socket.create_connection((LOOPBACK_HOST, port), timeout=_READY_SIGNAL_TIMEOUT_S).close()
-    except OSError:
-        pass

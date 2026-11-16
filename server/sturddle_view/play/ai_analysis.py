@@ -47,6 +47,7 @@ from ..events import (
 )
 from ..llm import (
     ContextFull,
+    HARNESS_TAG,
     LLMProvider,
     Message,
     PromptMode,
@@ -209,7 +210,6 @@ _QUESTION_ARG_KEY = "question"
 # gentle, fact-anchored correction. Move and claim errors get separate asks:
 # a bad move may just be the other side's reply or another ply (the checker
 # accepts "..." or a move number), but a square's content is plain truth.
-_POSITION_CHECK_PREFIX = "[position check] "
 _POSITION_CHECK_LEAD = "Quick check on the current position."
 # Move/line clause: offer the outs the checker honors before asking to restate.
 _POSITION_CHECK_MOVE_CLAUSE = (
@@ -455,14 +455,16 @@ def _san_run_re(sans: Iterable[str], prefix: str) -> re.Pattern | None:
 
 
 def _without_line_moves(text: str, lines: Iterable[str]) -> str:
-    """`text` with every move of the numbered-SAN `lines` blanked (move
+    """`text` with the later moves of the numbered-SAN `lines` blanked (move
     number included), so a board check skips moves the server replayed. A
+    line's first move is played from the live board, so it stays checked
+    (claims bind to it) unless it is also a later move of another line. A
     pawn push reads as a bare square ('d4'), so it is blanked only when
     numbered ('3.d4', '...d5'): unnumbered, it may be a piece-on-square
     claim, which stays checked."""
     sans = {
         tok.rstrip(_SAN_CHECK_SUFFIX)
-        for line in lines for tok in _LINE_MOVE_NUMBER_RE.sub(" ", line).split()
+        for line in lines for tok in _LINE_MOVE_NUMBER_RE.sub(" ", line).split()[1:]
     }
     pushes = {san for san in sans if _BARE_SQUARE_RE.fullmatch(san)}
     for pattern in (
@@ -482,8 +484,8 @@ def make_delegate_tool(
     the live board and checks `aim` is shaped like one move, dispatches the
     narrator's question to a verifier sub-run, and echoes the canonical
     `move_uci` back. Malformed input returns a structured error so the
-    narrator can recover. A verdict that misstates the board (moves its
-    test_aim lines replayed exempt), a "refuted" no test_aim result in the
+    narrator can recover. A verdict that misstates the board (later moves
+    of its test_aim lines exempt), a "refuted" no test_aim result in the
     sub-run backs, or a "holds" past one that refuted, is withheld; the
     refuting line rides along whenever there is one."""
     async def delegate(input_: dict, *, cancel_token: CancelToken) -> dict:
@@ -516,15 +518,9 @@ def make_delegate_tool(
             if result.round_cap:
                 return tool_error(_NO_VERDICT_ERROR, _NO_CONCLUSION_DETAIL)
             return tool_error(_VERDICT_WITHHELD_ERROR, _UNUSABLE_REPLY_DETAIL)
-        # Strict non-LLM validation of the verdict prose. The verdict restates
-        # the move under test (legal pre-move) and reasons about its replies
-        # (legal post-move), so it straddles the move boundary; validate against
-        # both boards and flag only a claim wrong on NEITHER -- a real illegal
-        # move/false claim, not a boundary artifact. Moves of the lines test_aim
-        # replayed are exempt: a cited line runs past both boards. A false
-        # reason discredits the verdict word too, so the narrator never sees
-        # it. Full stack on the copy so numbered history refs keep their
-        # replay free-pass.
+        # The verdict straddles the move under test: flag only claims wrong on
+        # both boards (replayed later moves exempt), and withhold it whole. Full
+        # stack on the copy keeps numbered history refs' replay free-pass.
         after = board.copy()
         after.push(move)
         if has_position_flags(_without_line_moves(verdict, result.lines), board, after):
@@ -843,7 +839,17 @@ def _inject_nudge(
     `_assistant_message`) so the post-recommend nudge can still prompt a
     model that went silent after its accepting call."""
     messages.append(_assistant_message(round_chunks))
-    messages.append({"role": "user", "content": content})
+    messages.append(_harness_message(content))
+
+
+def _harness_text(content: str) -> str:
+    return f"{HARNESS_TAG} {content}"
+
+
+def _harness_message(content: str) -> Message:
+    """User-role message injected by the loop, tagged so the model knows
+    the user didn't write it (see the Automated messages rule)."""
+    return {"role": "user", "content": _harness_text(content)}
 
 
 def _tool_results_message(
@@ -871,7 +877,7 @@ def _tool_results_message(
             result = json.dumps(result, ensure_ascii=False)
         content.append({"type": TOOL_RESULT_BLOCK, "tool_use_id": tool_use_id, "content": result})
         if card:
-            cards.append({"type": "text", "text": card})
+            cards.append({"type": "text", "text": _harness_text(card)})
     return {"role": "user", "content": content + cards}
 
 
@@ -1614,7 +1620,7 @@ class AIAnalysisCoordinator:
         st.fallback = True
         self._turn_fallback = True
         st.force_tool_next = True
-        messages.append({"role": "user", "content": _FALLBACK_NUDGE})
+        messages.append(_harness_message(_FALLBACK_NUDGE))
 
     async def _stream_round(
         self,
@@ -1878,7 +1884,7 @@ class AIAnalysisCoordinator:
         # Correct a mismatch in this round's prose. After the tool_results
         # so every assistant tool_use is paired before this user message.
         if correction is not None:
-            messages.append({"role": "user", "content": correction})
+            messages.append(_harness_message(correction))
         # Steer to a new play_out idea after enough failed recommend attempts.
         # After the tool_results (every tool_use needs a matching result
         # before a user-role nudge). One-shot until a play_out re-arms it.
@@ -1891,9 +1897,7 @@ class AIAnalysisCoordinator:
                 config.mode, st.consecutive_recommend_failures,
             )
             st.recommend_failure_nudge_armed = False
-            messages.append(
-                {"role": "user", "content": _RECOMMEND_FAILURE_NUDGE}
-            )
+            messages.append(_harness_message(_RECOMMEND_FAILURE_NUDGE))
         await _flush_think(config.emit, rnd.think_timer, config.game_id, rnd.index)
 
     async def _run_round_call(
@@ -2083,9 +2087,9 @@ class AIAnalysisCoordinator:
     ) -> _PositionCheck:
         """Run the single-board checks on a round's assembled prose, capturing
         each flag's prose surface (for striking) plus its normalized label.
-        Moves of `replayed_lines` are exempt (blanked first): the server
-        replayed them. Empty when no board_provider, no live board, or no
-        prose."""
+        Later moves of `replayed_lines` are exempt (blanked first): the
+        server replayed them. Empty when no board_provider, no live board,
+        or no prose."""
         board = self._board_provider() if self._board_provider else None
         if board is None:
             return _PositionCheck(None, [], [], [])
@@ -2314,7 +2318,7 @@ class AIAnalysisCoordinator:
             clauses.append(_POSITION_CHECK_LEAK_CLAUSE.format(leaks=_quote_join(pc.leak_surfaces)))
         if rephrase:
             clauses.append(_POSITION_CHECK_REPHRASE_CLAUSE.format(items=_quote_join(rephrase)))
-        return _POSITION_CHECK_PREFIX + " ".join([_POSITION_CHECK_LEAD, *clauses])
+        return " ".join([_POSITION_CHECK_LEAD, *clauses])
 
     @staticmethod
     def _needs_nudge(

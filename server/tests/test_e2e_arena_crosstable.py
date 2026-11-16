@@ -24,6 +24,7 @@ from .conftest import (  # noqa: E402
     open_arena_workspace,
     run_uvicorn_subprocess,
     seed_tournament,
+    server_scope,
     tournament_server_env,
     wait_eval,
     watch_page_errors,
@@ -59,10 +60,11 @@ _MENU_TOGGLES = """() => Object.fromEntries([...document.querySelectorAll('.dt-m
   .map((b) => [b.textContent.trim(), !b.disabled]))"""
 
 
-@pytest.fixture
-def server(tmp_path):
-    seed_tournament(tmp_path, "xt", list(ENGINES), GAMES)
-    with run_uvicorn_subprocess(env_overrides=tournament_server_env(tmp_path, ENGINES)) as base:
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    root = tmp_path_factory.mktemp("server")
+    seed_tournament(root, "xt", list(ENGINES), GAMES)
+    with run_uvicorn_subprocess(env_overrides=tournament_server_env(root, ENGINES)) as base:
         yield base
 
 

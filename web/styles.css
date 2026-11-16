@@ -2461,6 +2461,7 @@ body .side-popover.popover-floating {
 .cm-chessboard.chess-club { --sb-arrow: var(--theme-arrow, #334155); --sb-arrow-secondary: var(--theme-arrow-secondary, #166534); }
 /* One end shape: the vendor's butt-ended secondary would leave a stacked
    round end showing. */
+.cm-chessboard .arrow { filter: drop-shadow(0 0 1px #333); }
 .cm-chessboard .arrow .arrow-line { stroke-linecap: round; }
 .cm-chessboard .arrow-success .arrow-head { fill: var(--sb-arrow); }
 .cm-chessboard .arrow-success .arrow-line { stroke: var(--sb-arrow); opacity: 0.75; }
@@ -4842,6 +4843,10 @@ wa-dialog.tournament-form-dialog::part(footer) {
   outline: var(--wb-outline-w) solid var(--wb-outline);
   opacity: 1 !important;
   border-radius: var(--wb-radius);
+}
+/* WinBox slides every move/resize/min/max (0.3s) */
+@media (prefers-reduced-motion: reduce) {
+  .winbox { transition: none; }
 }
 /* Round the header/body corners rather than overflow:hidden on the window,
    which would clip the edge resize handles extending outside it. */

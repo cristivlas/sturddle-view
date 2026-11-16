@@ -29,6 +29,7 @@ from sturddle_view.llm import (
 from sturddle_view.play.ai_analysis import (
     AIAnalysisCoordinator,
     ERROR_DETAIL_MAX_LEN,
+    _harness_text,
 )
 
 
@@ -781,7 +782,7 @@ async def test_card_injected_after_first_tool_call():
     blocks = tr_msgs[0]["content"]
     # First block is the tool_result data; second is the card text.
     assert blocks[0]["type"] == "tool_result"
-    assert blocks[1] == {"type": "text", "text": "USE_THE_CARD"}
+    assert blocks[1] == {"type": "text", "text": _harness_text("USE_THE_CARD")}
 
 
 @pytest.mark.asyncio
@@ -810,7 +811,7 @@ async def test_card_not_reinjected_on_repeat_calls():
     tr_msgs = _tool_result_user_msgs(provider.last_call["messages"])
     assert len(tr_msgs) == 2
     # First tool_result message carries the card; second does not.
-    assert any(b.get("type") == "text" and b.get("text") == "USE_THE_CARD"
+    assert any(b.get("type") == "text" and b.get("text") == _harness_text("USE_THE_CARD")
                for b in tr_msgs[0]["content"])
     assert all(b.get("type") != "text" for b in tr_msgs[1]["content"])
 
@@ -880,7 +881,7 @@ async def test_distinct_tools_each_inject_their_own_card():
     texts = [
         b["text"] for m in tr_msgs for b in m["content"] if b.get("type") == "text"
     ]
-    assert texts == ["VM_CARD", "PA_CARD"]
+    assert texts == [_harness_text("VM_CARD"), _harness_text("PA_CARD")]
 
 
 # ---------- Per-round event labeling for the UI -----------------------

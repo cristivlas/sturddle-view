@@ -20,6 +20,7 @@ from .conftest import (  # noqa: E402
     assert_no_page_errors,
     e2e_env,
     run_uvicorn_subprocess,
+    server_scope,
     wait_eval,
     watch_page_errors,
 )
@@ -88,9 +89,10 @@ async def _open_menu(page, i=0):
     await page.wait_for_selector(MENU)
 
 
-@pytest.fixture
-def server(tmp_path):
-    with run_uvicorn_subprocess(env_overrides=e2e_env(tmp_path)) as base:
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    root = tmp_path_factory.mktemp("server")
+    with run_uvicorn_subprocess(env_overrides=e2e_env(root)) as base:
         yield base
 
 

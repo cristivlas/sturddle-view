@@ -18,6 +18,7 @@ from .conftest import (  # noqa: E402
     assert_no_page_errors,
     e2e_env,
     run_uvicorn_subprocess,
+    server_scope,
     wait_eval,
     wait_eval_not,
     wait_perspective_ready,
@@ -43,9 +44,10 @@ async def _search(page, text):
     )
 
 
-@pytest.fixture
-def server(tmp_path):
-    with run_uvicorn_subprocess(env_overrides=e2e_env(tmp_path)) as base:
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    root = tmp_path_factory.mktemp("server")
+    with run_uvicorn_subprocess(env_overrides=e2e_env(root)) as base:
         yield base
 
 

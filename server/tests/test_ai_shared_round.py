@@ -17,6 +17,7 @@ from sturddle_view.llm import ProviderChunk, ScriptedProvider, ToolRegistry, Too
 from sturddle_view.play.ai_analysis import (
     AIAnalysisCoordinator,
     _ONE_STEP_PER_IDEA_ERROR,
+    _harness_text,
     _tool_results_message,
 )
 
@@ -133,7 +134,9 @@ def test_results_message_puts_every_tool_result_before_cards():
         "tool_result", "tool_result", "tool_result", "text", "text",
     ]
     assert msg["content"][1]["content"] == "raw"
-    assert [b["text"] for b in msg["content"][3:]] == ["card A", "card C"]
+    assert [b["text"] for b in msg["content"][3:]] == [
+        _harness_text("card A"), _harness_text("card C"),
+    ]
 
 
 def test_narrator_prose_check_exempts_moves_of_played_out_lines():
@@ -164,3 +167,29 @@ def test_exemption_keeps_the_cut_at_a_future_line():
         kind="text", text="1.e4 e5 2.Nf3 Nc6 3.Bc4, and the bishop on c4 eyes f7.",
     )]
     assert not coord._position_check(prose, ["1.e4 e5 2.Nf3 Nc6 3.Bc4"]).hit
+
+
+def test_exemption_keeps_a_lines_first_move_checked():
+    # A line's first move is played from the live board, so a claim bound
+    # to it stays checked: Be8 can only be the d7 bishop, a light-squared one.
+    board = chess.Board("2kr4/1p1bb1q1/pnp1p2r/3p2p1/P2PP3/1PN2BRP/2P1N3/1KQR4 b - - 0 22")
+    coord = AIAnalysisCoordinator(
+        EventBus(), ScriptedProvider([]), board_provider=lambda: board,
+    )
+    prose = [ProviderChunk(
+        kind="text", text="22...Be8 relocates the dark-squared bishop to safety.",
+    )]
+    pc = coord._position_check(prose, ["22...Be8 23.Bg4"])
+    assert pc.surfaces == ["the dark-squared bishop"]
+
+
+def test_exemption_holds_for_a_later_move_that_opens_another_line():
+    # White's 1.Rd1 opens one line; Black's ...Rd1+ (blocked by d4 now) is a
+    # later move of another, so it stays exempt.
+    board = chess.Board("3rk3/8/8/8/3N4/8/8/R3K3 w - - 0 1")
+    coord = AIAnalysisCoordinator(
+        EventBus(), ScriptedProvider([]), board_provider=lambda: board,
+    )
+    prose = [ProviderChunk(kind="text", text="After 1.Nf5 the reply ...Rd1+ hits the king.")]
+    assert coord._position_check(prose).hit
+    assert not coord._position_check(prose, ["1.Rd1", "1.Nf5 Rd1+"]).hit

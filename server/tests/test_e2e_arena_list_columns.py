@@ -19,6 +19,7 @@ from .conftest import (  # noqa: E402
     goto_arena_tournaments,
     run_uvicorn_subprocess,
     seed_tournament,
+    server_scope,
     tournament_server_env,
     watch_page_errors,
 )
@@ -46,11 +47,12 @@ _ROWS = """() => Object.fromEntries([...document.querySelectorAll('.tournament-r
 }))"""
 
 
-@pytest.fixture
-def server(tmp_path):
-    seed_tournament(tmp_path, RR_NAME, list(ENGINES), ONE_GAME, template=RR_TEMPLATE)
-    seed_tournament(tmp_path, SPRT_NAME, list(ENGINES), ONE_GAME, template=SPRT_TEMPLATE)
-    with run_uvicorn_subprocess(env_overrides=tournament_server_env(tmp_path, ENGINES)) as base:
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    root = tmp_path_factory.mktemp("server")
+    seed_tournament(root, RR_NAME, list(ENGINES), ONE_GAME, template=RR_TEMPLATE)
+    seed_tournament(root, SPRT_NAME, list(ENGINES), ONE_GAME, template=SPRT_TEMPLATE)
+    with run_uvicorn_subprocess(env_overrides=tournament_server_env(root, ENGINES)) as base:
         yield base
 
 

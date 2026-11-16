@@ -17,7 +17,7 @@ import {
 } from "./menu-nav.js";
 import { FADE_MAX_PCT, FADE_STEP_PCT } from "./panel-fade.js";
 import { ribbonAnchor } from "./ribbon-overflow.js";
-import { applyThemePreset } from "./theme.js";
+import { applyThemePreset, clearThemePreset } from "./theme.js";
 import { rememberThemePreset, syncThemePreset } from "./theme-preset.js";
 import { escapeHtml, PCT_SUFFIX, WALLPAPER_CLASS } from "./wb-utils.js";
 
@@ -196,6 +196,11 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
     syncThemePreset(next.theme);
     paint();
   };
+  // Leaving a theme (None, a custom image) puts its look back to defaults.
+  const applyNoTheme = (next) => {
+    if (info?.theme) clearThemePreset(api);
+    apply(next);
+  };
   // A failed save repaints the stored style and closes the menu, so a reopen
   // renders the slider from it too.
   const putStyle = (patch) => api("PUT", STYLE_PATH, patch).then(apply, (e) => {
@@ -249,7 +254,7 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
     } else if (item.dataset.item === ITEM.CHOOSE) {
       input.click();
     } else {
-      api("DELETE", WALLPAPER_PATH).then(apply, (e) => reportError(errCtx, REMOVE_FAIL_MSG, e));
+      api("DELETE", WALLPAPER_PATH).then(applyNoTheme, (e) => reportError(errCtx, REMOVE_FAIL_MSG, e));
     }
   });
   attachMenuNav(menu, { close: closeMenu });
@@ -260,7 +265,7 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
     const file = input.files?.[0];
     input.value = "";
     if (!file) return;
-    uploadImage(file).then(apply, (e) => reportError(errCtx, SET_FAIL_MSG, e));
+    uploadImage(file).then(applyNoTheme, (e) => reportError(errCtx, SET_FAIL_MSG, e));
   });
   mobileQueries.forEach((mq) => mq.addEventListener("change", paint));
 

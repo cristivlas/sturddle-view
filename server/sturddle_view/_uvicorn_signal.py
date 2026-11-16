@@ -1,10 +1,20 @@
-"""Uvicorn Server subclass that signals startup outcome via threading.Event."""
+"""Uvicorn Server subclasses that signal their startup outcome: to the
+launcher thread (threading.Event), or to the test harness (SV_READY_PORT)."""
 from __future__ import annotations
 
+import socket
 import threading
 from dataclasses import dataclass, field
 
 import uvicorn
+
+from .config import LOOPBACK_HOST
+from .env_utils import env_int
+
+_READY_PORT_ENV = "SV_READY_PORT"
+# SV_READY_PORT unset: not launched by the test harness.
+_NO_READY_PORT = 0
+_READY_SIGNAL_TIMEOUT_S = 2.0
 
 
 @dataclass
@@ -39,3 +49,25 @@ def make_signalling_server(config: uvicorn.Config) -> tuple[uvicorn.Server, Star
             signal.done.set()
 
     return _SignallingServer(config), signal
+
+
+def _signal_ready_port() -> None:
+    """Connect once to SV_READY_PORT, the harness's listening socket. Silent
+    no-op when the env var is unset or unreachable."""
+    port = env_int(_READY_PORT_ENV, _NO_READY_PORT, min_value=1)
+    if port == _NO_READY_PORT:
+        return
+    try:
+        socket.create_connection((LOOPBACK_HOST, port), timeout=_READY_SIGNAL_TIMEOUT_S).close()
+    except OSError:
+        pass
+
+
+class ReadyPortServer(uvicorn.Server):
+    """Signals SV_READY_PORT once startup() has bound the listen sockets, so
+    the harness's ready event means connections are accepted. Lifespan
+    startup runs before the bind; a failed startup exits instead."""
+
+    async def startup(self, sockets=None):  # type: ignore[override]
+        await super().startup(sockets=sockets)
+        _signal_ready_port()

@@ -22,6 +22,7 @@ from .conftest import (  # noqa: E402
     open_arena_workspace,
     run_uvicorn_subprocess,
     seed_tournament,
+    server_scope,
     tournament_server_env,
     wait_eval,
     wait_winbox_settled,
@@ -46,10 +47,11 @@ GRAB_FRACS = [0.34, 0.9]
 TOL_PX = 2
 
 
-@pytest.fixture
-def server(tmp_path):
-    seed_tournament(tmp_path, "drag", ENGINES, [("1", *ENGINES, "1-0")])
-    with run_uvicorn_subprocess(env_overrides=tournament_server_env(tmp_path, ENGINES)) as base:
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    root = tmp_path_factory.mktemp("server")
+    seed_tournament(root, "drag", ENGINES, [("1", *ENGINES, "1-0")])
+    with run_uvicorn_subprocess(env_overrides=tournament_server_env(root, ENGINES)) as base:
         yield base
 
 

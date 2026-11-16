@@ -21,6 +21,7 @@ from .conftest import (  # noqa: E402
     open_arena_workspace,
     run_uvicorn_subprocess,
     seed_tournament,
+    server_scope,
     tournament_server_env,
     wait_eval,
     watch_page_errors,
@@ -33,11 +34,12 @@ _FOCUSED_TEXT = "() => document.activeElement.textContent.trim()"
 _OPEN_MENUS = "() => [...document.querySelectorAll('.tmb-menu.open, .tmb-dd-submenu.open')].length"
 
 
-@pytest.fixture
-def server(tmp_path):
+@pytest.fixture(scope=server_scope)
+def server(tmp_path_factory):
+    root = tmp_path_factory.mktemp("server")
     # One game so the workspace Standings table (and its columns button) shows.
-    seed_tournament(tmp_path, "menus", list(ENGINES), [("1", *ENGINES, "1-0")])
-    with run_uvicorn_subprocess(env_overrides=tournament_server_env(tmp_path, ENGINES)) as base:
+    seed_tournament(root, "menus", list(ENGINES), [("1", *ENGINES, "1-0")])
+    with run_uvicorn_subprocess(env_overrides=tournament_server_env(root, ENGINES)) as base:
         yield base
 
 

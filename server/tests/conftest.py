@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import itertools
 import json
 import os
@@ -46,6 +47,7 @@ from sturddle_view.tournament.fastchess import FastchessRunner
 
 
 SNAPSHOT_UPDATE_FLAG = "--snapshot-update"
+SERVER_PER_TEST_FLAG = "--server-per-test"
 _UVICORN_STARTUP_TIMEOUT = 10.0
 _UVICORN_SHUTDOWN_TIMEOUT = 10.0
 
@@ -444,6 +446,9 @@ def e2e_env(tmp_path: Path) -> dict[str, str]:
         "SV_AI_PLAYBOOK_DIR": str(tmp_path / "playbook"),
         "SV_WALLPAPER_DIR": str(tmp_path / "wallpaper"),
         "SV_THEMES_DIR": str(tmp_path / "themes"),
+        # Also set by _isolate_user_config, but a per-file server starts
+        # before that per-test fixture patches the environment.
+        "SV_ENGINE_TMP_ROOT": str(tmp_path / "engine-tmp"),
     }
 
 
@@ -486,9 +491,9 @@ def run_uvicorn_subprocess(
     log_fh = open(log_path, "wb")
 
     # Event-based startup handshake: listen on an ephemeral port and
-    # pass it to the subprocess via SV_READY_PORT. The app's lifespan
-    # startup connects to it after uvicorn has bound the listen socket,
-    # giving us a deterministic ready signal with no polling.
+    # pass it to the subprocess via SV_READY_PORT. Its ReadyPortServer
+    # connects to it once uvicorn has bound the listen socket, giving us a
+    # deterministic ready signal with no polling.
     ready_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     ready_sock.bind(("127.0.0.1", 0))
     ready_sock.listen(1)
@@ -649,6 +654,21 @@ def pytest_addoption(parser):
         default="http://localhost:11434",
         help="Base URL of the Ollama daemon when --ollama is set.",
     )
+    parser.addoption(
+        SERVER_PER_TEST_FLAG,
+        action="store_true",
+        default=False,
+        help="Start a fresh server for each e2e test instead of one per file "
+             "(isolation when troubleshooting).",
+    )
+
+
+def server_scope(fixture_name, config) -> str:
+    """Scope for an e2e file's `server` fixture: one server per file, or per
+    test under --server-per-test. Only for files whose tests leave the
+    server's state as they found it; such a fixture takes
+    tmp_path_factory, not the per-test tmp_path."""
+    return "function" if config.getoption(SERVER_PER_TEST_FLAG) else "module"
 
 
 _E2E_DUMP_SCRIPT = """
@@ -713,6 +733,9 @@ def pytest_runtest_makereport(item, call):
         sections.append(f"[page {idx}] url={page.url}")
         sections.append(f"  console/pageerror ({len(errors)}):")
         sections.extend(f"    {e}" for e in errors[-50:])
+        requests = getattr(page, _E2E_REQUESTS_ATTR, None)
+        if requests is not None:
+            sections.extend(requests.report())
 
         try:
             dump = loop.run_until_complete(page.evaluate(_E2E_DUMP_SCRIPT))
@@ -787,6 +810,7 @@ async def browser():
 
 _E2E_PAGES_ATTR = "_sv_e2e_pages"
 _E2E_ERRORS_ATTR = "_sv_console_errors"
+_E2E_REQUESTS_ATTR = "_sv_requests"
 # Instant dock changes: a view-transition glide would show tests mid-move.
 _E2E_REDUCED_MOTION = "reduce"
 
@@ -807,7 +831,40 @@ def _attach_console_capture(page):
         lambda msg: errors.append(f"console.{msg.type}: {msg.text}")
         if msg.type in ("error", "warning") else None,
     )
+    _attach_request_tracker(page)
     return errors
+
+
+@dataclasses.dataclass
+class _RequestLog:
+    """A page's requests still in flight (with their start time) and how
+    many finished, so a stalled page shows what it was waiting on."""
+    in_flight: dict = dataclasses.field(default_factory=dict)
+    finished: int = 0
+
+    def start(self, req) -> None:
+        self.in_flight[req] = time.monotonic()
+
+    def end(self, req) -> None:
+        if self.in_flight.pop(req, None) is not None:
+            self.finished += 1
+
+    def report(self) -> list[str]:
+        now = time.monotonic()
+        lines = [f"  requests: {self.finished} finished, {len(self.in_flight)} in flight"]
+        lines.extend(
+            f"    {now - t:6.1f}s {req.method} {req.url}"
+            for req, t in sorted(self.in_flight.items(), key=lambda kv: kv[1])
+        )
+        return lines
+
+
+def _attach_request_tracker(page) -> None:
+    log = _RequestLog()
+    setattr(page, _E2E_REQUESTS_ATTR, log)
+    page.on("request", log.start)
+    page.on("requestfinished", log.end)
+    page.on("requestfailed", log.end)
 
 
 @pytest_asyncio.fixture
