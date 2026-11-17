@@ -2453,7 +2453,7 @@ body .side-popover.popover-floating {
 
 /* Arrow colors, per board style below: --sb-arrow the engine's line,
    --sb-arrow-secondary the AI's pick, --sb-arrow-alt its book alternatives.
-   A theme's --theme-arrow* (set on the root) wins over each. */
+   A theme's --theme-arrow* (set on its own board style) wins over each. */
 .cm-chessboard { --sb-arrow: var(--theme-arrow, #1e3a8a); --sb-arrow-secondary: var(--theme-arrow-secondary, #334155); --sb-arrow-alt: var(--theme-arrow-alt, #0f766e); }
 .cm-chessboard.green { --sb-arrow-secondary: var(--theme-arrow-secondary, #1f2937); --sb-arrow-alt: var(--theme-arrow-alt, #c2410c); }
 .cm-chessboard.blue { --sb-arrow-secondary: var(--theme-arrow-secondary, #7e22ce); --sb-arrow-alt: var(--theme-arrow-alt, #15803d); }
@@ -3559,6 +3559,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   box-shadow: inset 3px 0 0 var(--accent-line);
 }
 .tmb-dd-item.tmb-active::before { content: "\2713"; position: absolute; left: 8px; }
+/* A theme changed since picked (wallpaper.js). */
+.tmb-dd-item.theme-modified::after { content: "\2022"; color: var(--accent); margin-left: 6px; }
 /* Inset ring: a scrolling dropdown (columns menu) clips outer outlines. */
 .tmb-dropdown button:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 /* Click-focusable for the Menu key (menu-nav.js makeMenuHost); never ringed. */

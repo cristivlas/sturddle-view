@@ -17,8 +17,8 @@ import {
 } from "./menu-nav.js";
 import { FADE_MAX_PCT, FADE_STEP_PCT } from "./panel-fade.js";
 import { ribbonAnchor } from "./ribbon-overflow.js";
-import { applyThemePreset, clearThemePreset } from "./theme.js";
-import { rememberThemePreset, syncThemePreset } from "./theme-preset.js";
+import { applyThemePreset, clearThemePreset, isThemeModified } from "./theme.js";
+import { activeThemePreset, rememberThemePreset, syncThemePreset } from "./theme-preset.js";
 import { escapeHtml, PCT_SUFFIX, WALLPAPER_CLASS } from "./wb-utils.js";
 
 const WALLPAPER_PATH = "/wallpaper";
@@ -45,6 +45,9 @@ const THEME_FAIL_MSG = "Set theme failed";
 const REMOVE_FAIL_MSG = "Remove wallpaper failed";
 const LOAD_FAIL_MSG = "Load wallpaper failed";
 const STYLE_FAIL_MSG = "Save wallpaper style failed";
+const SETTINGS_FAIL_MSG = "Load settings failed";
+const MODIFIED_CLASS = "theme-modified";
+const MODIFIED_TIP = "Modified -- click to reset";
 
 // Last info any mount loaded: a view switch paints at once, then refreshes.
 let cachedInfo = null;
@@ -209,12 +212,32 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
     reportError(errCtx, STYLE_FAIL_MSG, e);
   });
 
+  // Dots the checked theme once its look differs from the preset's; the
+  // board style is a server setting, so the dot lands after the menu shows.
+  // The latest check wins: a reopen or newer change supersedes one in flight.
+  let modifiedSeq = 0;
+  const markModified = () => {
+    const seq = ++modifiedSeq;
+    const preset = activeThemePreset();
+    if (!preset || !info?.theme) return;
+    isThemeModified(preset, info, api).then((modified) => {
+      const item = menu.querySelector(`[data-theme].${MENU_CHECKED_CLASS}`);
+      if (seq !== modifiedSeq || !item) return;
+      item.classList.toggle(MODIFIED_CLASS, modified);
+      item.title = modified ? MODIFIED_TIP : "";
+    }, (e) => reportError(errCtx, SETTINGS_FAIL_MSG, e));
+  };
+
   // Render and show the menu; place(menu) positions it once laid out.
   const openMenu = (place, keyboard) => {
     menu.innerHTML = themesHtml(info) + MENU_SEPARATOR_HTML + backgroundHtml(info) + boardHtml(info);
-    wireSliderRow(menu, { key: SLIDER_KEY.FADE, onInput: setFade, onChange: (fade) => putStyle({ fade }) });
+    markModified();
     wireSliderRow(menu, {
-      key: SLIDER_KEY.BOARD, onInput: (opacity) => paintBoardFade(flipPct(opacity)), onChange: saveBoardFade,
+      key: SLIDER_KEY.FADE, onInput: setFade, onChange: (fade) => putStyle({ fade }).then(markModified),
+    });
+    wireSliderRow(menu, {
+      key: SLIDER_KEY.BOARD, onInput: (opacity) => paintBoardFade(flipPct(opacity)),
+      onChange: () => { saveBoardFade(); markModified(); },
     });
     menu.showPopover();
     place(menu);

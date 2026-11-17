@@ -13,7 +13,7 @@ import {
   PromotionDialog,
 } from "../vendor/cm-chessboard/src/extensions/promotion-dialog/PromotionDialog.js";
 import { PositionEditor } from "../vendor/cm-chessboard-position-editor/src/PositionEditor.js";
-import { resolveBoardStyle } from "./board-styles.js";
+import { BOARD_STYLE_ATTR, BOARD_STYLES, resolveBoardStyleId } from "./board-styles.js";
 import { SIDE, uciSquares } from "./chess-consts.js";
 import { createLineShow } from "./line-show.js";
 import { NumberedArrows } from "./numbered-arrows.js";
@@ -191,7 +191,9 @@ async function _installLocalSprite(board, piecesFile) {
 }
 
 export function mountBoard({ element, onMove, styleId }) {
-  const s = resolveBoardStyle(styleId);
+  const styleKey = resolveBoardStyleId(styleId);
+  const s = BOARD_STYLES[styleKey];
+  element.setAttribute(BOARD_STYLE_ATTR, styleKey);
   const board = new Chessboard(element, {
     position: FEN.start,
     assetsUrl: ASSETS_URL,

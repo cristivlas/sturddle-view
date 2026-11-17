@@ -2,6 +2,7 @@
 // restore the theme's values, not the built-in defaults. Stored when a theme is
 // picked; dropped once the wallpaper info names another theme or none.
 
+import { BOARD_STYLE_ATTR, BOARD_STYLES } from "./board-styles.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, removeKey, saveJson } from "./storage.js";
 import { isObject } from "./wb-utils.js";
@@ -16,7 +17,7 @@ export const PANEL_FADE_KEY = Object.freeze({
   studioRight: STORAGE_KEY.STUDIO_RIGHT_FADE,
 });
 
-// A preset's arrow names and the root property each sets; the board styles'
+// A preset's arrow names and the board property each sets; the board styles'
 // arrow colors fall back to their own when one is unset.
 const ARROW_PROP = Object.freeze({
   engine: "--theme-arrow",
@@ -24,16 +25,22 @@ const ARROW_PROP = Object.freeze({
   alt: "--theme-arrow-alt",
 });
 
+// Holds the theme's arrow colors, scoped to the theme's board style: any other
+// board keeps its own.
+const arrowSheet = new CSSStyleSheet();
+document.adoptedStyleSheets = [...document.adoptedStyleSheets, arrowSheet];
+
 const isEntry = (v) => isObject(v) && typeof v.id === "string" && v.id !== "" && isObject(v.preset);
 
 function paintArrows() {
-  const arrows = active?.preset.arrows;
-  const style = document.documentElement.style;
-  for (const [name, prop] of Object.entries(ARROW_PROP)) {
-    const color = isObject(arrows) ? arrows[name] : undefined;
-    if (typeof color === "string" && CSS.supports("color", color)) style.setProperty(prop, color);
-    else style.removeProperty(prop);
-  }
+  const preset = active?.preset;
+  const arrows = isObject(preset?.arrows) ? preset.arrows : {};
+  const known = Object.hasOwn(BOARD_STYLES, preset?.board);
+  const decls = Object.entries(ARROW_PROP)
+    .filter(([name]) => typeof arrows[name] === "string" && CSS.supports("color", arrows[name]))
+    .map(([name, prop]) => `${prop}: ${arrows[name]};`);
+  arrowSheet.replaceSync(known && decls.length
+    ? `[${BOARD_STYLE_ATTR}="${preset.board}"] { ${decls.join(" ")} }` : "");
 }
 
 let active = loadJson(STORAGE_KEY.THEME_PRESET);
@@ -49,6 +56,8 @@ export function rememberThemePreset(id, preset) {
   }
   paintArrows();
 }
+
+export const activeThemePreset = () => active?.preset ?? null;
 
 // The wallpaper info's current theme id (null: none).
 export function syncThemePreset(id) {
