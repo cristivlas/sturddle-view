@@ -45,6 +45,7 @@ function load() {
 }
 
 const frost = load();
+export const frostValues = () => ({ ...frost });
 
 function apply() {
   const root = document.documentElement.style;

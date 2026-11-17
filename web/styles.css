@@ -3559,6 +3559,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   box-shadow: inset 3px 0 0 var(--accent-line);
 }
 .tmb-dd-item.tmb-active::before { content: "\2713"; position: absolute; left: 8px; }
+/* A theme changed since picked (wallpaper.js). */
+.tmb-dd-item.theme-modified::after { content: "\2022"; color: var(--accent); margin-left: 6px; }
 /* Inset ring: a scrolling dropdown (columns menu) clips outer outlines. */
 .tmb-dropdown button:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 /* Click-focusable for the Menu key (menu-nav.js makeMenuHost); never ringed. */

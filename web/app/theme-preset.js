@@ -57,6 +57,8 @@ export function rememberThemePreset(id, preset) {
   paintArrows();
 }
 
+export const activeThemePreset = () => active?.preset ?? null;
+
 // The wallpaper info's current theme id (null: none).
 export function syncThemePreset(id) {
   if (active && active.id !== id) rememberThemePreset(null);
