@@ -7,7 +7,7 @@
 
 import { APP_EVT } from "./app-events.js";
 import { boardFadePct, paintBoardFade, saveBoardFade } from "./board-fade.js";
-import { mqMobile } from "./breakpoints.js";
+import { mqTouch, NO_WALLPAPER_QUERIES, noWallpaper } from "./breakpoints.js";
 import { reportError } from "./dialogs.js";
 import { isRemote } from "./role.js";
 import {
@@ -138,11 +138,10 @@ function ribbonButton(ribbonEl) {
 
 // Mount a button (last on each of ribbonEls, after a separator) sharing one
 // menu, and paint the stored wallpaper on regionEl. A right-click on regionEl
-// opens the menu where isBare(target) holds. Any of mobileQueries matching
-// is the view's mobile layout. Returns { unmount }.
-export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [mqMobile], api, log }) {
+// opens the menu where isBare(target) holds. A touch device or a mobile-width
+// view gets neither. Returns { unmount }.
+export function mountWallpaper({ ribbonEls, regionEl, isBare, api, log }) {
   const errCtx = { log };
-  const isMobile = () => mobileQueries.some((mq) => mq.matches);
   let info = cachedInfo;
   // A request settling after unmount must not repaint the (shared) region.
   let mounted = true;
@@ -168,12 +167,13 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
     regionEl.removeAttribute(FIT_ATTR);
   };
 
-  // Desktop only: phones get neither the image nor the buttons.
+  // Desktop only: touch devices and mobile-width views get neither the image
+  // nor the buttons.
   const paint = () => {
     if (!mounted) return;
-    const mobile = isMobile();
+    const off = noWallpaper();
     const had = regionEl.classList.contains(WALLPAPER_CLASS);
-    if (info?.version != null && !mobile) {
+    if (info?.version != null && !off) {
       regionEl.classList.add(WALLPAPER_CLASS);
       regionEl.style.setProperty(URL_VAR, `url("${WALLPAPER_PATH}?v=${info.version}")`);
       regionEl.setAttribute(FIT_ATTR, info.fit);
@@ -190,9 +190,9 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
     // sees the wallpaper but can't change it (host-only routes).
     for (const { btn, sep } of buttons) {
       btn.disabled = !info;
-      btn.hidden = sep.hidden = mobile || isRemote();
+      btn.hidden = sep.hidden = off || isRemote();
     }
-    if (mobile) closeMenu();
+    if (off) closeMenu();
   };
   const apply = (next) => {
     info = cachedInfo = next;
@@ -254,7 +254,7 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
   const onContextMenu = (ev) => {
     // The region itself: the Menu key with focus on it (a bare-spot click).
     const bare = (isKeyboardContextMenu(ev) && ev.target === regionEl) || isBare(ev.target);
-    if (!info || isMobile() || isRemote() || menu.contains(ev.target) || !bare || isContextMenuClaimed(ev)) return;
+    if (!info || noWallpaper() || isRemote() || menu.contains(ev.target) || !bare || isContextMenuClaimed(ev)) return;
     closeMenu();
     returnFocus = document.activeElement;
     openMenu((m) => positionMenuAt(m, { top: ev.clientY, bottom: ev.clientY, left: ev.clientX }),
@@ -290,15 +290,27 @@ export function mountWallpaper({ ribbonEls, regionEl, isBare, mobileQueries = [m
     if (!file) return;
     uploadImage(file).then(applyNoTheme, (e) => reportError(errCtx, SET_FAIL_MSG, e));
   });
-  mobileQueries.forEach((mq) => mq.addEventListener("change", paint));
+  // Info loads once, off touch devices: a phone never asks for it. A narrow
+  // desktop view loads it too, keeping the theme preset in sync.
+  let requested = false;
+  const load = () => {
+    if (requested || mqTouch.matches) return;
+    requested = true;
+    api("GET", INFO_PATH).then(apply, (e) => reportError(errCtx, LOAD_FAIL_MSG, e));
+  };
+  const onMediaChange = () => {
+    load();
+    paint();
+  };
+  NO_WALLPAPER_QUERIES.forEach((mq) => mq.addEventListener("change", onMediaChange));
 
   paint();
-  api("GET", INFO_PATH).then(apply, (e) => reportError(errCtx, LOAD_FAIL_MSG, e));
+  load();
 
   return {
     unmount() {
       mounted = false;
-      mobileQueries.forEach((mq) => mq.removeEventListener("change", paint));
+      NO_WALLPAPER_QUERIES.forEach((mq) => mq.removeEventListener("change", onMediaChange));
       regionEl.removeEventListener("contextmenu", onContextMenu);
       unhost();
       closeMenu();

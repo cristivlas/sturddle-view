@@ -3,6 +3,7 @@
 // picked; dropped once the wallpaper info names another theme or none.
 
 import { BOARD_STYLE_ATTR, BOARD_STYLES } from "./board-styles.js";
+import { TOUCH_POINTER } from "./breakpoints.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, removeKey, saveJson } from "./storage.js";
 import { isObject } from "./wb-utils.js";
@@ -25,8 +26,8 @@ const ARROW_PROP = Object.freeze({
   alt: "--theme-arrow-alt",
 });
 
-// Holds the theme's arrow colors, scoped to the theme's board style: any other
-// board keeps its own.
+// Holds the theme's arrow colors, scoped to the theme's board style (any other
+// board keeps its own) and off touch devices, where no theme shows.
 const arrowSheet = new CSSStyleSheet();
 document.adoptedStyleSheets = [...document.adoptedStyleSheets, arrowSheet];
 
@@ -40,7 +41,7 @@ function paintArrows() {
     .filter(([name]) => typeof arrows[name] === "string" && CSS.supports("color", arrows[name]))
     .map(([name, prop]) => `${prop}: ${arrows[name]};`);
   arrowSheet.replaceSync(known && decls.length
-    ? `[${BOARD_STYLE_ATTR}="${preset.board}"] { ${decls.join(" ")} }` : "");
+    ? `@media not all and ${TOUCH_POINTER} { [${BOARD_STYLE_ATTR}="${preset.board}"] { ${decls.join(" ")} } }` : "");
 }
 
 let active = loadJson(STORAGE_KEY.THEME_PRESET);

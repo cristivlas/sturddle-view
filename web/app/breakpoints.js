@@ -35,8 +35,13 @@ export const mqMobilePortrait = matchMedia(`(max-width: ${BP.mobile}) and (orien
 export const mqMobileH      = matchMedia(`(max-height: ${BP.mobileH})`);
 // Touch only: short-but-wide mouse viewports are laptops (1366x768), not phones.
 // Source of truth; styles.css height-gate @media rules repeat it (drift-checked).
-const HEIGHT_GATE_POINTER = "(pointer: coarse)";
-export const mqMobileHPlay  = matchMedia(`(max-height: ${BP.mobileHPlay}) and ${HEIGHT_GATE_POINTER}`);
+export const TOUCH_POINTER = "(pointer: coarse)";
+export const mqMobileHPlay  = matchMedia(`(max-height: ${BP.mobileHPlay}) and ${TOUCH_POINTER}`);
+// A touch device (phone, tablet) at any size or orientation.
+export const mqTouch        = matchMedia(TOUCH_POINTER);
+// Any match: no wallpaper (wallpaper.js), so no panel Transparency (panel-fade.js).
+export const NO_WALLPAPER_QUERIES = Object.freeze([mqTouch, mqMobile]);
+export const noWallpaper = () => NO_WALLPAPER_QUERIES.some((mq) => mq.matches);
 export const mqWide         = matchMedia(`(min-width: ${BP.wide})`);
 
 // Drift guard: styles.css @media rules hardcode these breakpoints in px (no
@@ -72,7 +77,7 @@ const _squash = (s) => s.replace(/\s+/g, "");
 function _checkHeightGatePointerDrift() {
   const [, gatePx] = _MEDIA_LITERALS_PX.find(([name]) => name === BP_VAR.mobileHPlay);
   const heightClause = _squash(`max-height: ${gatePx}px`);
-  const pointerClause = _squash(HEIGHT_GATE_POINTER);
+  const pointerClause = _squash(TOUCH_POINTER);
   for (const sheet of document.styleSheets) {
     let rules;
     try { rules = sheet.cssRules; } catch { continue; }
@@ -81,7 +86,7 @@ function _checkHeightGatePointerDrift() {
       const cond = rule.conditionText;
       const squashed = _squash(cond);
       if (squashed.includes(heightClause) && !squashed.includes(pointerClause)) {
-        console.error(`breakpoint drift: @media ${cond} lacks ${HEIGHT_GATE_POINTER}. Resync with mqMobileHPlay.`);
+        console.error(`breakpoint drift: @media ${cond} lacks ${TOUCH_POINTER}. Resync with mqMobileHPlay.`);
       }
     }
   }
