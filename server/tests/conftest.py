@@ -14,7 +14,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock
 from urllib.parse import urlparse, urlsplit
@@ -48,8 +48,8 @@ from sturddle_view.tournament.fastchess import FastchessRunner
 
 SNAPSHOT_UPDATE_FLAG = "--snapshot-update"
 SERVER_PER_TEST_FLAG = "--server-per-test"
-_UVICORN_STARTUP_TIMEOUT = 10.0
-_UVICORN_SHUTDOWN_TIMEOUT = 10.0
+# How often a blocking accept() wakes so Ctrl+C lands; a wake only retries.
+_ACCEPT_WAKE_S = float(os.environ.get("SV_TEST_ACCEPT_WAKE_S", "1.0"))
 
 # Per-test registry: base URL -> server log path. Populated by
 # run_uvicorn_subprocess so the failure hook can dump server output.
@@ -452,6 +452,21 @@ def e2e_env(tmp_path: Path) -> dict[str, str]:
     }
 
 
+def _await_ready(sock: socket.socket, proc: subprocess.Popen) -> bool:
+    """True once the server connects to `sock`, False if `proc` exits first.
+    Wakes every _ACCEPT_WAKE_S so Ctrl+C lands (Windows ignores it in a
+    blocking accept); a wake only re-checks, never fails."""
+    sock.settimeout(_ACCEPT_WAKE_S)
+    while proc.poll() is None:
+        try:
+            conn, _addr = sock.accept()
+        except TimeoutError:
+            continue
+        conn.close()
+        return True
+    return False
+
+
 @contextlib.contextmanager
 def run_uvicorn_subprocess(
     *,
@@ -497,7 +512,6 @@ def run_uvicorn_subprocess(
     ready_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     ready_sock.bind(("127.0.0.1", 0))
     ready_sock.listen(1)
-    ready_sock.settimeout(_UVICORN_STARTUP_TIMEOUT)
     env["SV_READY_PORT"] = str(ready_sock.getsockname()[1])
 
     try:
@@ -512,21 +526,17 @@ def run_uvicorn_subprocess(
         ) as proc:
             _SERVER_LOGS[base] = log_path
             try:
-                try:
-                    conn, _addr = ready_sock.accept()
-                    conn.close()
-                except (socket.timeout, OSError) as e:
+                # The ready signal or the server's exit, never a deadline.
+                if not _await_ready(ready_sock, proc):
                     log_fh.flush()
                     try:
                         tail = log_path.read_bytes().decode(errors="replace")
                     except OSError:
                         tail = "(log unreadable)"
                     raise RuntimeError(
-                        f"uvicorn subprocess startup signal not received "
-                        f"within {_UVICORN_STARTUP_TIMEOUT}s "
-                        f"(exit code={proc.poll()}; accept err={e})\n"
-                        f"LOG ({log_path}):\n{tail}"
-                    ) from e
+                        f"uvicorn subprocess exited before its startup signal "
+                        f"(exit code={proc.returncode})\nLOG ({log_path}):\n{tail}"
+                    )
                 yield base
             finally:
                 proc.kill()
@@ -598,33 +608,64 @@ def start_ai_analysis(base: str) -> None:
     httpx.post(base + _START_AI_ANALYSIS_PATH).raise_for_status()
 
 
-@contextlib.contextmanager
-def run_uvicorn(app, *, port: int | None = None) -> Iterator[tuple[str, object]]:
+@contextlib.asynccontextmanager
+async def run_uvicorn(app, *, port: int | None = None) -> AsyncIterator[tuple[str, object]]:
     """Run a uvicorn server in a background thread.
 
     Startup waits on a ``threading.Event`` set by the server inside its
     own loop -- no sleep-polling. Teardown signals ``should_exit`` and
     lets uvicorn run its full lifespan shutdown (so app.state.hve
-    cleanup, etc. actually runs) before the loop is closed. The
-    ``page``/``make_page`` fixtures close Playwright contexts before
-    this teardown runs, so WS connections drain cleanly."""
+    cleanup, etc. actually runs) before the loop is closed. Both waits
+    run off the caller's loop: the shutdown can need it (work the test
+    started there), so blocking it would deadlock."""
     if port is None:
         port = free_port()
     config = uvicorn.Config(
         app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto"
     )
     s, signal = make_signalling_server(config)
-    thread = threading.Thread(target=s.run, daemon=True)
+
+    # done also fires if run() ends before startup (a config error), so the
+    # wait below has an event either way and never a deadline.
+    def run():
+        try:
+            s.run()
+        finally:
+            signal.done.set()
+
+    thread = threading.Thread(target=run, daemon=True)
     thread.start()
-    if not signal.ready.wait(timeout=_UVICORN_STARTUP_TIMEOUT):
-        s.should_exit = True
-        thread.join(timeout=_UVICORN_SHUTDOWN_TIMEOUT)
-        raise RuntimeError("uvicorn did not start within timeout")
+    await asyncio.to_thread(signal.done.wait)
+    if not signal.ready.is_set():
+        await asyncio.to_thread(thread.join)
+        raise RuntimeError("uvicorn did not start") from signal.error
     try:
         yield f"http://127.0.0.1:{port}", s
     finally:
         s.should_exit = True
-        thread.join(timeout=_UVICORN_SHUTDOWN_TIMEOUT)
+        # PROBE (temporary): dump the server loop's state while shutdown stalls.
+        loop = s.servers[0].get_loop()
+        join = asyncio.ensure_future(asyncio.to_thread(thread.join))
+        while not (await asyncio.wait({join}, timeout=_PROBE_DUMP_S))[0]:
+            _probe_dump(s, loop, port)
+        await join
+
+
+_PROBE_DUMP_S = float(os.environ.get("SV_TEST_PROBE_DUMP_S", "30"))
+
+
+def _probe_dump(s, loop, port):
+    path = Path(tempfile.gettempdir()) / f"sturddle-test-shutdown-{port}.log"
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(f"=== {time.strftime('%H:%M:%S')} stalled shutdown, port {port}\n")
+        for c in list(s.server_state.connections):
+            w = getattr(c, "writable", None)
+            fh.write(f"conn {type(c).__name__} writable={w.is_set() if w else None} "
+                     f"closing={c.transport.is_closing()}\n")
+        fh.write(f"tasks={len(s.server_state.tasks)}\n")
+        for t in list(asyncio.all_tasks(loop)):
+            t.print_stack(file=fh)
+    print(f"PROBE: stalled uvicorn shutdown dumped to {path}", file=sys.stderr, flush=True)
 
 
 def pytest_addoption(parser):
@@ -893,14 +934,21 @@ async def make_page(browser, request):
         pages.append(page)
         return ctx, page
 
-    try:
-        yield _make
-    finally:
+    # Callable early by a server the test owns (running_tournament): its
+    # teardown must follow the pages' so their sockets drain first.
+    async def close_all():
         for ctx in reversed(contexts):
             try:
                 await ctx.close()
             except Exception:
                 pass
+        contexts.clear()
+
+    _make.close_all = close_all
+    try:
+        yield _make
+    finally:
+        await close_all()
 
 
 @pytest_asyncio.fixture
@@ -1118,11 +1166,18 @@ LIVE_PROXY_ID = "proxy-white"
 PROXY_POST_PATH = "/internal/proxy"
 
 
+def on_server_loop(app, coro):
+    """Await `coro` on running_tournament's server loop: the orchestrator's
+    asyncio state belongs to that loop, and a wait on another never wakes."""
+    return asyncio.wrap_future(asyncio.run_coroutine_threadsafe(coro, app.state.e2e_server_loop))
+
+
 @contextlib.asynccontextmanager
-async def running_tournament(tmp_path, monkeypatch):
+async def running_tournament(tmp_path, monkeypatch, make_page):
     """Serve the app with a running tournament (fake fastchess) and one
     registered proxy, LIVE_PROXY_ID. Yields (app, base, tournament, proxy
-    secret)."""
+    secret). A clean exit closes make_page's pages before the server stops,
+    so their sockets drain while its loop still runs."""
     monkeypatch.setattr(
         FastchessRunner, "detect_binary",
         staticmethod(lambda configured: configured),
@@ -1143,14 +1198,15 @@ async def running_tournament(tmp_path, monkeypatch):
         registry.add(name=name, path=path)
     app = create_app(settings=s, engine_registry=registry)
 
-    with run_uvicorn(app, port=port) as (base, _s):
+    async with run_uvicorn(app, port=port) as (base, server):
+        app.state.e2e_server_loop = server.servers[0].get_loop()
         store = app.state.tournament_store
         t = store.create(
             name="live-e2e",
             template={"tc": "5+0.1", "rounds": 1, "games_in_parallel": 1},
             engines=[{"name": name, "cmd": path} for name, path in paths.items()],
         )
-        await app.state.tournament_orch.start(t.id)
+        await on_server_loop(app, app.state.tournament_orch.start(t.id))
         try:
             # Posting over HTTP runs proxy_session_started in uvicorn's event
             # loop (not the test's), so the WS subscriber queue is correctly
@@ -1161,11 +1217,10 @@ async def running_tournament(tmp_path, monkeypatch):
             await post_proxy(base, secret, [], engine_name=LIVE_ENGINE_A)
             assert orch.engine_name_for(LIVE_PROXY_ID) == LIVE_ENGINE_A
             yield app, base, t, secret
+            # Not on a failure: the forensics hook still needs the pages.
+            await make_page.close_all()
         finally:
-            try:
-                await app.state.tournament_orch.stop(t.id)
-            except Exception:
-                pass
+            await on_server_loop(app, app.state.tournament_orch.stop(t.id))
 
 
 async def post_proxy(base, secret, lines, *, proxy_id=LIVE_PROXY_ID, client=None, **extra):

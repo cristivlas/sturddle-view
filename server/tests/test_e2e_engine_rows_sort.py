@@ -51,7 +51,7 @@ async def _add_dups(base, secret):
 
 @pytest.mark.asyncio
 async def test_studio_engines_sort_ties_by_proxy_id(tmp_path, monkeypatch, make_page):
-    async with running_tournament(tmp_path, monkeypatch) as (_app, base, _t, secret):
+    async with running_tournament(tmp_path, monkeypatch, make_page) as (_app, base, _t, secret):
         await _add_dups(base, secret)
         _ctx, page = await make_page()
         errors = watch_page_errors(page)
@@ -67,7 +67,7 @@ async def test_studio_engines_sort_ties_by_proxy_id(tmp_path, monkeypatch, make_
 
 @pytest.mark.asyncio
 async def test_arena_engines_sort_ties_by_proxy_id(tmp_path, monkeypatch, make_page):
-    async with running_tournament(tmp_path, monkeypatch) as (_app, base, _t, secret):
+    async with running_tournament(tmp_path, monkeypatch, make_page) as (_app, base, _t, secret):
         await _add_dups(base, secret)
         _ctx, page = await make_page()
         errors = watch_page_errors(page)

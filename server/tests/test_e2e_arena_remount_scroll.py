@@ -60,7 +60,7 @@ async def _start_pairs(base, secret):
 
 @pytest.mark.asyncio
 async def test_remount_opens_live_lists_at_top(tmp_path, monkeypatch, make_page):
-    async with running_tournament(tmp_path, monkeypatch) as (_app, base, _t, secret):
+    async with running_tournament(tmp_path, monkeypatch, make_page) as (_app, base, _t, secret):
         _ctx, page = await make_page(viewport=VIEWPORT)
         errors = watch_page_errors(page)
         await open_arena_engines_window(page, base)
