@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 from asyncio import proactor_events, trsock
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -277,6 +278,35 @@ def _install_proactor_accept_resilience() -> None:
     proactor_events.BaseProactorEventLoop._start_serving = _start_serving
 
 
+def _install_proactor_connection_lost_guard() -> None:
+    """Stock cpython lets an OSError from sock.shutdown() (peer already
+    reset) skip sock.close() and server._detach(): the socket leaks and
+    Server.wait_closed() -- uvicorn's last shutdown step -- never returns."""
+    if not is_windows():
+        return
+
+    def _call_connection_lost(self, exc):
+        if self._called_connection_lost:
+            return
+        try:
+            self._protocol.connection_lost(exc)
+        finally:
+            if hasattr(self._sock, "shutdown") and self._sock.fileno() != -1:
+                try:
+                    self._sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            self._sock.close()
+            self._sock = None
+            server = self._server
+            if server is not None:
+                server._detach()
+                self._server = None
+            self._called_connection_lost = True
+
+    proactor_events._ProactorBasePipeTransport._call_connection_lost = _call_connection_lost
+
+
 _ws_shutdown_patched = False
 
 
@@ -338,6 +368,7 @@ def _install_engine_sigkill_filter() -> None:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     _install_proactor_accept_resilience()
+    _install_proactor_connection_lost_guard()
     _install_uvicorn_ws_shutdown_state_guard()
     _install_engine_sigkill_filter()
     # Orphaned engine temp dirs (crashed/killed engines from a previous
