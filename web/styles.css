@@ -3006,8 +3006,8 @@ wa-dialog:has(.engine-settings-tabs)::part(body) {
   cursor: col-resize;
   user-select: none;
   /* pan-y: vertical swipes from the grip still scroll the table; horizontal
-     drags (past the JS slop) resize. */
-  touch-action: pan-y;
+     drags (past the JS slop) resize. pinch-zoom: a pinch from a grip zooms. */
+  touch-action: pan-y pinch-zoom;
   z-index: 2;
 }
 .th-grip::after {
