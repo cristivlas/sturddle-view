@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import gc
 import itertools
 import json
 import os
@@ -420,10 +421,17 @@ async def wait_board_settled(page) -> None:
 
 
 def free_port() -> int:
-    """Allocate an ephemeral TCP port on localhost."""
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
+    """Allocate an ephemeral TCP port on localhost. It is released before
+    the caller binds it, so another process can take it first."""
+    with bound_socket() as s:
         return s.getsockname()[1]
+
+
+def bound_socket() -> socket.socket:
+    """A socket bound to an ephemeral localhost port, held until closed."""
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    return s
 
 
 # Registry file under tmp_path; tests seed it before the server starts.
@@ -467,6 +475,15 @@ def _await_ready(sock: socket.socket, proc: subprocess.Popen) -> bool:
     return False
 
 
+class _PortTaken(Exception):
+    """The server lost its port to another process between free_port() and
+    its own bind (parallel workers)."""
+
+
+# uvicorn's log line for a failed bind, on every platform.
+_BIND_FAILED_MARK = "error while attempting to bind"
+
+
 @contextlib.contextmanager
 def run_uvicorn_subprocess(
     *,
@@ -477,15 +494,28 @@ def run_uvicorn_subprocess(
 
     On teardown the process is killed -- WS/HTTP transports are reclaimed
     by the OS instantly, with no proactor-cleanup races. Yields the
-    server's base URL.
+    server's base URL. A picked port taken before the server binds it is
+    replaced and the server relaunched.
 
     Per-test isolation flows through env vars (``SV_*``):
     ``SV_PGN_DIR``, ``SV_TOURNAMENT_ROOT``, ``SV_ENGINE_REGISTRY_PATH``,
     ``SV_IMPORTS_DIR``, ``SV_SETTINGS_FILE``, ``SV_GAME_STATE_PATH``,
     ``SV_TOKEN``, ``SV_AUTH_DISABLED``. Pass them in ``env_overrides``.
     """
-    if port is None:
-        port = free_port()
+    while True:
+        with contextlib.ExitStack() as stack:
+            try:
+                base = stack.enter_context(_uvicorn_subprocess(port or free_port(), env_overrides))
+            except _PortTaken:
+                if port is not None:
+                    raise
+                continue
+            yield base
+            return
+
+
+@contextlib.contextmanager
+def _uvicorn_subprocess(port: int, env_overrides: dict[str, str] | None) -> Iterator[str]:
     env = dict(os.environ)
     env.setdefault("SV_AUTH_DISABLED", "1")
     env.setdefault("SV_TOKEN", "test-token")
@@ -533,6 +563,8 @@ def run_uvicorn_subprocess(
                         tail = log_path.read_bytes().decode(errors="replace")
                     except OSError:
                         tail = "(log unreadable)"
+                    if _BIND_FAILED_MARK in tail:
+                        raise _PortTaken(port)
                     raise RuntimeError(
                         f"uvicorn subprocess exited before its startup signal "
                         f"(exit code={proc.returncode})\nLOG ({log_path}):\n{tail}"
@@ -609,8 +641,9 @@ def start_ai_analysis(base: str) -> None:
 
 
 @contextlib.asynccontextmanager
-async def run_uvicorn(app, *, port: int | None = None) -> AsyncIterator[tuple[str, object]]:
-    """Run a uvicorn server in a background thread.
+async def run_uvicorn(app, sock: socket.socket) -> AsyncIterator[tuple[str, object]]:
+    """Run a uvicorn server in a background thread on `sock`, already bound
+    (bound_socket()): no other process can take its port first.
 
     Startup waits on a ``threading.Event`` set by the server inside its
     own loop -- no sleep-polling. Teardown signals ``should_exit`` and
@@ -618,8 +651,7 @@ async def run_uvicorn(app, *, port: int | None = None) -> AsyncIterator[tuple[st
     cleanup, etc. actually runs) before the loop is closed. Both waits
     run off the caller's loop: the shutdown can need it (work the test
     started there), so blocking it would deadlock."""
-    if port is None:
-        port = free_port()
+    port = sock.getsockname()[1]
     config = uvicorn.Config(
         app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto"
     )
@@ -629,7 +661,7 @@ async def run_uvicorn(app, *, port: int | None = None) -> AsyncIterator[tuple[st
     # wait below has an event either way and never a deadline.
     def run():
         try:
-            s.run()
+            s.run(sockets=[sock])
         finally:
             signal.done.set()
 
@@ -638,6 +670,7 @@ async def run_uvicorn(app, *, port: int | None = None) -> AsyncIterator[tuple[st
     await asyncio.to_thread(signal.done.wait)
     if not signal.ready.is_set():
         await asyncio.to_thread(thread.join)
+        sock.close()
         raise RuntimeError("uvicorn did not start") from signal.error
     try:
         yield f"http://127.0.0.1:{port}", s
@@ -663,9 +696,32 @@ def _probe_dump(s, loop, port):
             fh.write(f"conn {type(c).__name__} writable={w.is_set() if w else None} "
                      f"closing={c.transport.is_closing()}\n")
         fh.write(f"tasks={len(s.server_state.tasks)}\n")
+        servers = list(s.servers)
+        fh.write(f"active_count={[srv._active_count for srv in servers]}\n")
+        for o in gc.get_objects():
+            if getattr(o, "_server", None) in servers and hasattr(o, "_protocol"):
+                p = o._protocol
+                fh.write(
+                    f"transport {type(o).__name__} closing={o._closing} conn_lost={o._conn_lost} "
+                    f"pending_write={getattr(o, '_pending_write', None)} read_fut={o._read_fut!r} "
+                    f"write_fut={getattr(o, '_write_fut', None)!r} protocol={type(p).__name__} "
+                    f"tracked={p in s.server_state.connections} extra={o._extra}\n"
+                )
         for t in list(asyncio.all_tasks(loop)):
-            t.print_stack(file=fh)
+            fh.write(f"task {t.get_name()}\n")
+            _probe_await_chain(t.get_coro(), fh)
     print(f"PROBE: stalled uvicorn shutdown dumped to {path}", file=sys.stderr, flush=True)
+
+
+def _probe_await_chain(obj, fh):
+    """Every frame down a coroutine's await chain, then what it waits on."""
+    while obj is not None:
+        frame = getattr(obj, "cr_frame", None) or getattr(obj, "ag_frame", None) or getattr(obj, "gi_frame", None)
+        if frame is None:
+            break
+        fh.write(f"  {frame.f_code.co_filename}:{frame.f_lineno} {frame.f_code.co_name}\n")
+        obj = getattr(obj, "cr_await", None) or getattr(obj, "ag_await", None) or getattr(obj, "gi_yieldfrom", None)
+    fh.write(f"  awaits: {obj!r}\n")
 
 
 def pytest_addoption(parser):
@@ -1187,7 +1243,8 @@ async def running_tournament(tmp_path, monkeypatch, make_page):
         lambda spec: [sys.executable, "-c", _FAKE_FASTCHESS],
     )
 
-    port = free_port()
+    sock = bound_socket()
+    port = sock.getsockname()[1]
     s = Settings(token="test", auth_disabled=True, port=port)
     s.tournament_root = str(tmp_path / "tournaments")
     s.tournament_fastchess_path = sys.executable
@@ -1198,7 +1255,7 @@ async def running_tournament(tmp_path, monkeypatch, make_page):
         registry.add(name=name, path=path)
     app = create_app(settings=s, engine_registry=registry)
 
-    async with run_uvicorn(app, port=port) as (base, server):
+    async with run_uvicorn(app, sock) as (base, server):
         app.state.e2e_server_loop = server.servers[0].get_loop()
         store = app.state.tournament_store
         t = store.create(
