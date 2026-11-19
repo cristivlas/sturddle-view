@@ -15,7 +15,7 @@ import {
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
-import { BEST_RANK, SIDE, FEN_STM, fenSide, firstSanMove, stmSide, uciSquares } from "./chess-consts.js";
+import { BEST_RANK, RESULT, SIDE, FEN_STM, fenSide, firstSanMove, stmSide, uciSquares } from "./chess-consts.js";
 import { fmtClock, fmtCount, fmtMoveNo, fmtScore, markSelectable, rafCoalesce } from "./wb-utils.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { EVAL_GAUGE_HTML, setEvalGauge, setEvalGaugeFlipped } from "./eval-gauge.js";
@@ -820,6 +820,14 @@ function applyBoardUpdate(ctx, evt) {
   announcePlayLineGate(ctx);
 }
 
+// White-POV gauge scores for a finished game's result: full to the winner,
+// a draw at 50%.
+const RESULT_SCORE = Object.freeze({
+  [RESULT.WHITE_WIN]: Object.freeze({ mate: 1 }),
+  [RESULT.BLACK_WIN]: Object.freeze({ mate: -1 }),
+  [RESULT.DRAW]: Object.freeze({ cp: 0 }),
+});
+
 // View mode: surface PGN-derived eval (white POV) in the engine info
 // panel so scrubbing through the game shows per-ply scores.
 function applyViewEval(ctx, evt) {
@@ -829,14 +837,12 @@ function applyViewEval(ctx, evt) {
     setEngineSectionEmpty(ctx, false);
     clearEngineInfoFields(ctx);
     if (ctx.engineScore) ctx.engineScore.textContent = fmtScore(ev, { signed: true });
-    setEvalGauge(ctx.evalGauge, ev, { whiteToMove: isWhiteToMove(ctx) });
     if (ctx.engineDepth) ctx.engineDepth.textContent = ev.depth ?? "";
   } else if (!hasAnyEval) {
     // PGN has no eval anywhere -- hide the panel so subsequent imports of
     // bare PGNs don't inherit visibility from a prior import that had evals.
     if (ctx.engineScore) ctx.engineScore.textContent = "";
     if (ctx.engineDepth) ctx.engineDepth.textContent = "";
-    setEvalGauge(ctx.evalGauge, null);
     setEngineSectionEmpty(ctx, true);
   } else {
     // PGN has evals elsewhere but this specific ply doesn't (e.g. last
@@ -845,8 +851,11 @@ function applyViewEval(ctx, evt) {
     // blank the per-ply fields so stale values don't leak through.
     setEngineSectionEmpty(ctx, false);
     clearEngineInfoFields(ctx);
-    setEvalGauge(ctx.evalGauge, null);
   }
+  // A finished game's final position: the result sets the gauge.
+  const { game_over: over, result } = evt.payload.view;
+  const final = over ? RESULT_SCORE[result] : null;
+  setEvalGauge(ctx.evalGauge, final ?? ev, { whiteToMove: isWhiteToMove(ctx) });
 }
 
 function resetArrowNumbering(ctx) {
