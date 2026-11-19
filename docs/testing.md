@@ -132,7 +132,10 @@ at module load, so a checkout without Playwright skips the whole e2e suite
 at import. The files also carry `pytestmark = pytest.mark.e2e`, so
 `-m e2e` / `-m "not e2e"` selects or excludes them.
 
-Run them in parallel with pytest-xdist: `pytest -m e2e -n auto --dist loadfile`.
+Run them in parallel with pytest-xdist:
+`pytest -m e2e -n auto --dist loadfile --benchmark-disable`. Without
+`--benchmark-disable`, pytest-benchmark warns under xdist and
+`filterwarnings = error` fails the run.
 `loadfile` keeps each file on one worker, so a shared per-file server
 starts once. Every server gets its own port and `tmp_path` data dirs.
 

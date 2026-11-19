@@ -55,7 +55,6 @@ import { editAnnotation } from "../annotation-dialog.js";
 import { collapseWhitespace } from "../text-utils.js";
 import { attachRibbonOverflow } from "../ribbon-overflow.js";
 import { mountWallpaper } from "../wallpaper.js";
-import { mqMobile, mqMobileHPlay } from "../breakpoints.js";
 import { ENGINES_NO_PROBE_PATH } from "../engines.js";
 
 // Tool name the AI uses to inspect hypothetical positions; the live
@@ -2399,8 +2398,7 @@ export const playPerspective = {
     // Before overflow attaches, so its first fit check counts the wallpaper button.
     const wallpaper = mountWallpaper({
       ribbonEls: [playRibbon, viewRibbon], regionEl: root, isBare: (t) => t.matches(PLAY_BARE_SEL),
-      // Play's mobile layout (isMobileLayout) also covers short touch screens.
-      mobileQueries: [mqMobile, mqMobileHPlay], api: ctx.api, log: ctx.log,
+      api: ctx.api, log: ctx.log,
     });
     // Short window: a vertical ribbon's spare buttons move into a "more" menu.
     const ribbonOverflows = [playRibbon, viewRibbon, editRibbon].map(attachRibbonOverflow);

@@ -7,7 +7,7 @@
 // panel's own actions too).
 
 import { APP_EVT } from "./app-events.js";
-import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
+import { NO_WALLPAPER_QUERIES, noWallpaper } from "./breakpoints.js";
 import {
   attachMenuNav, claimContextMenu, focusFirstItem, isContextMenuClaimed, isKeyboardContextMenu,
   makeMenuHost, MENU_CHECKED_CLASS, MENU_SEPARATOR_HTML, positionMenuAt, sliderRowHtml, submenuHtml,
@@ -43,9 +43,6 @@ const NO_LINE = "none";
 // Outermost host a fade reaches (the view; a wallpaper region inside it
 // paints over its own ancestors, so they needn't stop the walk).
 const VIEW_ROOT_SEL = "#perspective-root";
-// Phone layouts (Play counts landscape too): no wallpaper, so no Transparency.
-const MOBILE_QUERIES = [mqMobile, mqMobileHPlay];
-const isMobile = () => MOBILE_QUERIES.some((mq) => mq.matches);
 
 // The page shows one view at a time, so any wallpaper is the current view's.
 const wallpaperShown = () => document.querySelector(`.${WALLPAPER_CLASS}`) !== null;
@@ -64,7 +61,7 @@ function sliderSubmenuHtml({ label, min, max, step, unit, disabled }, value, key
 
 // The Transparency submenu at `pct`; "" where fading is off (mobile).
 export function fadeMenuHtml(pct) {
-  return isMobile() ? "" : sliderSubmenuHtml(FADE_SLIDER, pct);
+  return noWallpaper() ? "" : sliderSubmenuHtml(FADE_SLIDER, pct);
 }
 
 // Live faders by storage key, so a theme's preset repaints them.
@@ -155,7 +152,7 @@ export function createPanelFade(panel, { storageKey }) {
     }
   }
   function apply(force = false) {
-    if (!panel || !pct || isMobile() || !panel.getClientRects().length) {
+    if (!panel || !pct || noWallpaper() || !panel.getClientRects().length) {
       release();
       return;
     }
@@ -183,7 +180,7 @@ export function createPanelFade(panel, { storageKey }) {
       else observer.unobserve(body);
     }
   };
-  MOBILE_QUERIES.forEach((mq) => mq.addEventListener("change", refresh));
+  NO_WALLPAPER_QUERIES.forEach((mq) => mq.addEventListener("change", refresh));
   const rescan = () => apply(true);
   window.addEventListener(APP_EVT.WALLPAPER_TOGGLED, rescan);
   function attach(el) {
@@ -221,7 +218,7 @@ export function createPanelFade(panel, { storageKey }) {
     },
     destroy() {
       observer.disconnect();
-      MOBILE_QUERIES.forEach((mq) => mq.removeEventListener("change", refresh));
+      NO_WALLPAPER_QUERIES.forEach((mq) => mq.removeEventListener("change", refresh));
       window.removeEventListener(APP_EVT.WALLPAPER_TOGGLED, rescan);
       liveFaders.get(storageKey).delete(fader);
       release();
@@ -284,7 +281,7 @@ export function attachPanelMenu(panel, {
 
   // Desktop only: on a phone a long-press would pop it.
   function onContextMenu(ev) {
-    if (isContextMenuClaimed(ev) || isMobile() || !shown(ev)) return;
+    if (isContextMenuClaimed(ev) || noWallpaper() || !shown(ev)) return;
     // All grayed out (a lone Transparency with no wallpaper): leave the
     // right-click to the browser or an outer menu.
     if (![...actions, ...allSliders, ...tailActions].some((item) => !item.disabled?.())) return;

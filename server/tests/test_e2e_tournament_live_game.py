@@ -32,6 +32,7 @@ from .conftest import (  # noqa: E402
     LIVE_PROXY_ID,
     TOURNAMENT_UX_KEY,
     TOURNAMENT_UX_STUDIO,
+    on_server_loop,
     open_arena_engines_window,
     pin_arena_tournament_ux,
     post_proxy,
@@ -128,7 +129,7 @@ async def _wait_eval_change(page, previous):
 
 @pytest.mark.asyncio
 async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_page):
-    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+    async with running_tournament(tmp_path, monkeypatch, make_page) as (app, base, t, secret):
         page, page_errors = await _open_page(make_page)
         await _watch_proxy(page, base, secret)
 
@@ -192,7 +193,7 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
         assert await page.locator(".winbox.sturddle-wb").count() == 5
         assert await page.locator(".winbox.sturddle-wb-live").count() == 1
 
-        await app.state.tournament_orch.stop(t.id)
+        await on_server_loop(app, app.state.tournament_orch.stop(t.id))
 
         # Live window goes away (proxy-id, stale on terminal).
         await page.wait_for_function(
@@ -208,7 +209,7 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
 async def test_live_game_window_survives_dropped_socket(tmp_path, monkeypatch, make_page):
     """Mobile backgrounding drops the watcher socket; the window must stay
     open, reconnect, and repaint from the server's snapshot replay."""
-    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+    async with running_tournament(tmp_path, monkeypatch, make_page) as (app, base, t, secret):
         page, page_errors = await _open_page(make_page)
         # (page side, server side) per watcher connection.
         connections = []
@@ -281,7 +282,7 @@ async def _wait_clock(page, run, idle):
 async def test_live_game_clock_hands_off_on_bestmove(tmp_path, monkeypatch, make_page):
     """`go` runs the watched (Black) engine's clock from its own budget;
     `bestmove` hands the run to the opponent's clock from theirs."""
-    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+    async with running_tournament(tmp_path, monkeypatch, make_page) as (app, base, t, secret):
         page, page_errors = await _open_page(make_page)
         # Leaves the own (bottom) clock running from _watch_proxy's `go`; hand
         # it off first so each step below is an observable switch.
@@ -329,13 +330,13 @@ async def _reconcile_while_away(app, t, pair_id):
     """Resolve the ended game (PGN on disk + game_reconciled in the event
     history) before any page connects."""
     app.state.tournament_store.pgn_path(t.id).write_text(_RECONCILED_PGN, encoding="utf-8")
-    await app.state.tournament_orch._emit_reconciled(ReconciledMatch(
+    await on_server_loop(app, app.state.tournament_orch._emit_reconciled(ReconciledMatch(
         pair_id=pair_id, white_proxy=LIVE_PROXY_ID, black_proxy=_PROXY_ID_BLACK,
         white_engine=LIVE_ENGINE_A, black_engine=LIVE_ENGINE_B,
         pgn_white=LIVE_ENGINE_A, pgn_black=LIVE_ENGINE_B,
         result=_RECONCILED_RESULT, termination=UNKNOWN_TERMINATION,
         game_n=1, ply_count=2,
-    ))
+    )))
 
 
 async def _load_studio(page, base, t, board):
@@ -403,7 +404,7 @@ _UIS = pytest.mark.parametrize(
 async def test_reload_restores_finished_game_board(tmp_path, monkeypatch, make_page, load_ui):
     """Mobile discards the backgrounded tab; on reload a saved board whose
     game ended while away must come back with its result banner."""
-    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+    async with running_tournament(tmp_path, monkeypatch, make_page) as (app, base, t, secret):
         pair_id = await _finished_game(app, base, secret)
         page, page_errors = await _open_page(make_page)
         await load_ui(page, base, t, _saved_game_board(pair_id))
@@ -417,7 +418,7 @@ async def test_reload_restores_finished_game_board(tmp_path, monkeypatch, make_p
 async def test_reload_restores_reconciled_game_board_frozen(tmp_path, monkeypatch, make_page, load_ui):
     """Reconciled while away: the backfilled game_reconciled resolves the
     board, so it reopens frozen (with Replay) instead of live."""
-    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+    async with running_tournament(tmp_path, monkeypatch, make_page) as (app, base, t, secret):
         pair_id = await _finished_game(app, base, secret)
         await _reconcile_while_away(app, t, pair_id)
         page, page_errors = await _open_page(make_page)
@@ -437,7 +438,7 @@ async def test_reload_resolves_board_whose_reconcile_left_history(
     game's game_reconciled is gone, so the board reattaches live. The
     replay's end message must still carry the game number (Review) and the
     opponent's name, and the resolution must persist for the next reload."""
-    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+    async with running_tournament(tmp_path, monkeypatch, make_page) as (app, base, t, secret):
         pair_id = await _finished_game(app, base, secret)
         await _reconcile_while_away(app, t, pair_id)
         # Stand-in for ring eviction after many later games.
@@ -510,7 +511,7 @@ async def _rebuilt_scores(page):
 async def test_perspective_round_trip_keeps_both_eval_rows(tmp_path, monkeypatch, make_page, load_ui):
     """Leaving for Play and coming back rebuilds the board; both rows must
     repaint at once, not wait for each engine's next search."""
-    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+    async with running_tournament(tmp_path, monkeypatch, make_page) as (app, base, t, secret):
         page, page_errors = await _open_page(make_page)
         scores = await _board_with_both_scores(page, base, t, secret, load_ui)
 
@@ -528,7 +529,7 @@ async def test_perspective_round_trip_keeps_both_eval_rows(tmp_path, monkeypatch
 async def test_reload_keeps_both_eval_rows(tmp_path, monkeypatch, make_page):
     """Board-style and theme changes reload the page; both rows must
     repaint from the saved cache."""
-    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+    async with running_tournament(tmp_path, monkeypatch, make_page) as (app, base, t, secret):
         page, page_errors = await _open_page(make_page)
         scores = await _board_with_both_scores(page, base, t, secret, _load_studio)
 
@@ -545,7 +546,7 @@ async def test_arena_restore_waits_for_board_style(tmp_path, monkeypatch, make_p
     """Arena restores saved boards once the tournament detail and event
     history are in. On a slow link the board-style fetch can land after
     them: the restored board must still wear the saved style."""
-    async with running_tournament(tmp_path, monkeypatch) as (app, base, t, secret):
+    async with running_tournament(tmp_path, monkeypatch, make_page) as (app, base, t, secret):
         async with AsyncClient(base_url=base) as http:
             r = await http.put(_SETTINGS_PATH, json={"board_style": _BOARD_STYLE})
             assert r.is_success, r.text

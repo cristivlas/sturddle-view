@@ -124,7 +124,7 @@ async def test_system_window_rows_touch(server, make_page, dpr):
 async def test_board_row_touches_system_windows(tmp_path, monkeypatch, make_page):
     """Clean layout with a live board: the board row's bottom is the system
     windows' top -- no gap between them."""
-    async with running_tournament(tmp_path, monkeypatch) as (_app, base, _t, _secret):
+    async with running_tournament(tmp_path, monkeypatch, make_page) as (_app, base, _t, _secret):
         _ctx, page = await make_page(viewport=VIEWPORT)
         errors = watch_page_errors(page)
         await open_arena_engines_window(page, base)
