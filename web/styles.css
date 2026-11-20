@@ -2459,16 +2459,17 @@ body .side-popover.popover-floating {
 .cm-chessboard.blue { --sb-arrow-secondary: var(--theme-arrow-secondary, #7e22ce); --sb-arrow-alt: var(--theme-arrow-alt, #15803d); }
 .cm-chessboard.black-and-white { --sb-arrow-secondary: var(--theme-arrow-secondary, #286586); }
 .cm-chessboard.chess-club { --sb-arrow: var(--theme-arrow, #334155); --sb-arrow-secondary: var(--theme-arrow-secondary, #166534); }
-/* One end shape: the vendor's butt-ended secondary would leave a stacked
-   round end showing. */
-.cm-chessboard .arrow { filter: drop-shadow(0 0 1px #333); }
-.cm-chessboard .arrow .arrow-line { stroke-linecap: round; }
+/* Dark outline, then a white halo around it. One end shape and opacity for
+   every line: the vendor's butt-ended secondary would leave a stacked round
+   end showing. */
+.cm-chessboard .arrow { filter: drop-shadow(0 0 1px #333) drop-shadow(0 0 2px rgba(255, 255, 255, 0.7)); }
+.cm-chessboard .arrow .arrow-line { stroke-linecap: round; opacity: 0.45; }
 .cm-chessboard .arrow-success .arrow-head { fill: var(--sb-arrow); }
-.cm-chessboard .arrow-success .arrow-line { stroke: var(--sb-arrow); opacity: 0.75; }
+.cm-chessboard .arrow-success .arrow-line { stroke: var(--sb-arrow); }
 .cm-chessboard .arrow-secondary .arrow-head { fill: var(--sb-arrow-secondary); }
-.cm-chessboard .arrow-secondary .arrow-line { stroke: var(--sb-arrow-secondary); opacity: 0.75; }
+.cm-chessboard .arrow-secondary .arrow-line { stroke: var(--sb-arrow-secondary); }
 .cm-chessboard .arrow-info .arrow-head { fill: var(--sb-arrow-alt); }
-.cm-chessboard .arrow-info .arrow-line { stroke: var(--sb-arrow-alt); opacity: 0.75; }
+.cm-chessboard .arrow-info .arrow-line { stroke: var(--sb-arrow-alt); }
 /* MultiPV line number on its arrow (numbered-arrows.js). */
 .cm-chessboard .arrow-badge { pointer-events: none; }
 .cm-chessboard .arrow-badge circle { fill: #111; }
