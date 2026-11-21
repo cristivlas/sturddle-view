@@ -1,7 +1,7 @@
 // Arrows extension stamping a numbered dark-circle badge on arrows whose type
-// has a `label` (MultiPV line numbers), drawn after all arrows so none covers
-// one, and giving each arrow its own head. Uses Arrows internals: re-verify
-// on a cm-chessboard upgrade (board.js).
+// has a `label` (MultiPV line numbers), at its arrow's z-order, and giving
+// each arrow its own head. Uses Arrows internals: re-verify on a
+// cm-chessboard upgrade (board.js).
 
 import { Arrows } from "../vendor/cm-chessboard/src/extensions/arrows/Arrows.js";
 import { Svg } from "../vendor/cm-chessboard/src/lib/Svg.js";
@@ -17,13 +17,6 @@ const HEAD_REF_ATTR = "marker-end";
 let headSeq = 0;
 
 export class NumberedArrows extends Arrows {
-  onRedrawBoard() {
-    super.onRedrawBoard();
-    for (const arrow of this.arrows) {
-      if (arrow.type.label != null) this.drawBadge(arrow);
-    }
-  }
-
   // The vendor ids a head by its squares alone: two arrows on one move (the
   // engine's and the AI's) would share the first one's head and color.
   drawArrow(arrow) {
@@ -32,6 +25,7 @@ export class NumberedArrows extends Arrows {
     const head = g.querySelector("marker");
     head.id = `${head.id}-${++headSeq}`;
     g.querySelector(`[${HEAD_REF_ATTR}]`).setAttribute(HEAD_REF_ATTR, `url(#${head.id})`);
+    if (arrow.type.label != null) this.drawBadge(arrow);
   }
 
   drawBadge(arrow) {

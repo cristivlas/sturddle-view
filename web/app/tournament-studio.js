@@ -912,6 +912,7 @@ function regridBoards(ctx) {
   syncRovingTabStop(ctx.boardsEl, BOARD_SEL, BOARD_CONTROL_SELS);
   // Single source of truth for board presence (laid-out or maximized).
   const hasBoards = anyBoardsShown();
+  if (!hasBoards) ctx._fromNoBoards = true;
   // The info wall fills the region when no boards are shown; boards hide it
   // (paintWall also toggles the .no-boards scroll-clip class).
   paintWall(ctx, hasBoards);
@@ -942,9 +943,17 @@ function showSnap(ctx) {
 // Row grip release (region px tall): snap it (snapToGrid), and note whether
 // it now sits at the grid's bottom (within a device px), snapped or dragged.
 function releaseRowGrip(ctx, px) {
+  ctx._fromNoBoards = false;
   const snapped = snapToGrid(ctx, px);
   setSnapRows(ctx, bottomRows(ctx, snapped ?? px));
   return snapped;
+}
+
+// Boards opened from none: a split already at the grid's bottom snaps.
+function adoptSnap(ctx) {
+  if (!ctx._fromNoBoards || ctx._snapRows !== null) return;
+  const rows = bottomRows(ctx, regionSize(ctx.boardsEl).outerH);
+  if (rows !== null) setSnapRows(ctx, rows);
 }
 
 // The grid's row count when a region px tall ends at its bottom (within a
@@ -1282,6 +1291,7 @@ function placeBoard(ctx, res) {
   if (res?.wb && !res.alreadyOpen) wireBoardHooks(ctx, res.wb);
   if (res?.wb && !res.wb.min) unmaximizeOthers(res.wb);
   regridBoards(ctx);
+  adoptSnap(ctx);
   renderTray(ctx);
   // Overlay state for a freshly opened idle board -- next event is too late.
   if (ctx.live) syncWaitingOverlays(ctx.live);
@@ -1581,6 +1591,8 @@ export function mountTournamentStudio({ container, api, events, log }) {
     endTimesReady: null,
     // Row count of the grid the row grip is snapped to (setSnapRows).
     _snapRows: null,
+    // Boards opened since there were none, the row grip not released since.
+    _fromNoBoards: true,
     // Standings/Event Log bound to the selected tourney (any).
     selDetail: null, selEvents: [], selGen: 0, selLoadedId: null,
     // Selection-change fetch in flight: dims the selDetail-fed panes after a
