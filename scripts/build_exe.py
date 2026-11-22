@@ -5,9 +5,16 @@ Steps:
   1. Read version from server/sturddle_view/__init__.py.
   2. Delete and recreate build_venv/ with a stock pip.
   3. Install .[desktop] + pyinstaller (Linux --linux-webview qt: + PyQt6).
-  4. Write a PyInstaller --onefile --windowed spec with full data + hidden
+  4. Write a PyInstaller --onefile (--installer: --onedir) --windowed spec with full data + hidden
      imports + hooks config, and build it.
   5. Write dist/<name>.sha256 next to the exe.
+
+--installer (Windows): build --onedir instead, then compile
+scripts/installer.iss with Inno Setup 6 into dist/<name>-setup.exe.
+ISCC.exe is taken from SV_ISCC, else PATH, else Inno's default location.
+--engine PATH (repeatable, with --installer): bundle that engine exe; the
+installer registers it. --engine-doc PATH (repeatable): ship a license or
+readme next to the bundled engines.
 
 Linux web view backend, --linux-webview:
   gtk     (default) GTK bundled; PyGObject comes from the distro (python3-gi),
@@ -22,6 +29,7 @@ Run from the repository root:
 """
 from __future__ import annotations
 
+import argparse
 import ctypes.util
 import hashlib
 import os
@@ -37,6 +45,16 @@ PLAYBOOK_DATA = ROOT / "server" / "sturddle_view" / "play" / "playbook_data"
 VENV_DIR = ROOT / "build_venv"
 BUILDS_DIR = ROOT / "dist"
 IS_LINUX = sys.platform.startswith("linux")
+APP_NAME = "sturddle-view"
+INSTALLER_SCRIPT = ROOT / "scripts" / "installer.iss"
+# Must match installer.iss's engines folder.
+BUNDLED_ENGINES_DIRNAME = "engines"
+# Not valid in Windows file names; installer_engines.ps1 splits on it.
+_ENGINE_NAMES_SEP = "|"
+_HASH_CHUNK_BYTES = 64 * 1024
+_ISCC = "ISCC.exe"
+_PROGRAM_FILES_X86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+_ISCC_DEFAULT = Path(_PROGRAM_FILES_X86) / "Inno Setup 6" / _ISCC
 LINUX_WEBVIEWS = ("gtk", "qt", "system")
 # Qt 6.5+'s xcb plugin needs it; bundled only if the build machine has it.
 _QT_XCB_CURSOR_LIB = "xcb-cursor"
@@ -130,7 +148,10 @@ def _make_venv(system_site: bool) -> Path:
     print(f"Creating venv at {VENV_DIR} (may take a minute) ...")
     sys.stdout.flush()
     subprocess.run(
-        [sys.executable, "-m", "venv", *(["--system-site-packages"] if system_site else []), str(VENV_DIR)],
+        [
+            sys.executable, "-m", "venv",
+            *(["--system-site-packages"] if system_site else []), str(VENV_DIR),
+        ],
         check=True,
         env={**os.environ, "PYTHONUNBUFFERED": "1"},
     )
@@ -144,26 +165,69 @@ def _make_venv(system_site: bool) -> Path:
 def _pip(python: Path, system_site: bool, *args: str) -> None:
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     subprocess.run(
-        [str(python), "-m", "pip", "install", *(["--ignore-installed"] if system_site else []), *args],
+        [
+            str(python), "-m", "pip", "install",
+            *(["--ignore-installed"] if system_site else []), *args,
+        ],
         check=True,
         env=env,
     )
 
 
-
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
+        for chunk in iter(lambda: f.read(_HASH_CHUNK_BYTES), b""):
             h.update(chunk)
     return h.hexdigest()
 
 
-def _makespec_cmd(python: Path, exe_name: str, icon: Path, console: bool, webview: str | None) -> list[str]:
+def _write_sha256(path: Path) -> None:
+    digest = _sha256(path)
+    # sha256sum-compatible format: "<digest>  <filename>"
+    sha_path = path.parent / f"{path.name.removesuffix('.exe')}.sha256"
+    sha_path.write_text(f"{digest}  {path.name}\n", encoding="utf-8")
+    print(f"Built:   {path}")
+    print(f"SHA-256: {digest}")
+    print(f"Written: {sha_path}")
+
+
+def _find_iscc() -> Path:
+    found = os.environ.get("SV_ISCC") or shutil.which(_ISCC) or _ISCC_DEFAULT
+    if not Path(found).exists():
+        sys.exit(f"{_ISCC} not found: install Inno Setup 6 or set SV_ISCC")
+    return Path(found)
+
+
+def _bundle_engine_files(files: list[Path], app_dir: Path) -> None:
+    dest = app_dir / BUNDLED_ENGINES_DIRNAME
+    for src in files:
+        dest.mkdir(exist_ok=True)
+        shutil.copy2(src, dest / src.name)
+        print(f"Bundled: {src.name}")
+
+
+def _build_installer(version: str, app_dir: Path, engines: list[Path]) -> Path:
+    print("--- running inno setup ---")
+    base = f"{APP_NAME}-{version}-setup"
+    names = _ENGINE_NAMES_SEP.join(e.name for e in engines)
+    subprocess.run([
+        str(_find_iscc()),
+        *([f"/DBundledEngines={names}"] if engines else []),
+        f"/DAppVersion={version}", f"/DAppExe={APP_NAME}.exe",
+        f"/DSourceDir={app_dir}", f"/DIconFile={ROOT / 'web' / 'app.ico'}",
+        f"/O{BUILDS_DIR}", f"/F{base}", str(INSTALLER_SCRIPT),
+    ], check=True)
+    return BUILDS_DIR / f"{base}.exe"
+
+
+def _makespec_cmd(
+    python: Path, exe_name: str, icon: Path, console: bool, webview: str | None, onedir: bool,
+) -> list[str]:
     sep = os.pathsep  # ; on Windows, : on POSIX
     cmd: list[str] = [
         str(python), "-m", "PyInstaller.utils.cliutils.makespec",
-        "--onefile",
+        "--onedir" if onedir else "--onefile",
         "--console" if console else "--windowed",
         f"--icon={icon}",
         f"--name={exe_name}",
@@ -186,18 +250,20 @@ def _makespec_cmd(python: Path, exe_name: str, icon: Path, console: bool, webvie
 
 
 # The command line can't pass hooks config, so it goes into the spec.
-def _write_spec(python: Path, exe_name: str, icon: Path, console: bool, webview: str | None) -> Path:
-    subprocess.run(_makespec_cmd(python, exe_name, icon, console, webview), check=True)
+def _write_spec(
+    python: Path, exe_name: str, icon: Path, console: bool, webview: str | None, onedir: bool,
+) -> Path:
+    subprocess.run(_makespec_cmd(python, exe_name, icon, console, webview, onedir), check=True)
     spec = VENV_DIR / f"{exe_name}.spec"
     text = spec.read_text(encoding="utf-8")
     if text.count(_SPEC_HOOKS_SLOT) != 1:
         raise RuntimeError(f"{spec}: expected one '{_SPEC_HOOKS_SLOT}' to fill")
-    spec.write_text(text.replace(_SPEC_HOOKS_SLOT, f"hooksconfig={_HOOKS_CONFIG!r},"), encoding="utf-8")
+    filled = text.replace(_SPEC_HOOKS_SLOT, f"hooksconfig={_HOOKS_CONFIG!r},")
+    spec.write_text(filled, encoding="utf-8")
     return spec
 
 
 def main() -> None:
-    import argparse
     parser = argparse.ArgumentParser(description="Build standalone desktop exe")
     parser.add_argument(
         "--reuse-venv", action="store_true",
@@ -211,19 +277,47 @@ def main() -> None:
         "--linux-webview", choices=LINUX_WEBVIEWS, default=LINUX_WEBVIEWS[0],
         help="Linux web view backend to bundle (see module docstring); ignored elsewhere",
     )
+    parser.add_argument(
+        "--installer", action="store_true",
+        help="Windows: build --onedir and wrap it in an Inno Setup installer",
+    )
+    parser.add_argument(
+        "--engine", action="append", type=Path, default=[], metavar="PATH",
+        help="With --installer: bundle this engine exe (repeatable)",
+    )
+    parser.add_argument(
+        "--engine-doc", action="append", type=Path, default=[], metavar="PATH",
+        help="With --engine: ship this license/readme beside the engines (repeatable)",
+    )
     args = parser.parse_args()
+    engine_files = args.engine + args.engine_doc
+    if args.installer and sys.platform != "win32":
+        sys.exit("--installer is Windows-only")
+    if args.engine and not args.installer:
+        sys.exit("--engine requires --installer")
+    if args.engine_doc and not args.engine:
+        sys.exit("--engine-doc requires --engine")
+    for src in engine_files:
+        if not src.is_file():
+            sys.exit(f"file not found: {src}")
+    if len({src.name.casefold() for src in engine_files}) != len(engine_files):
+        sys.exit("--engine/--engine-doc file names must be unique")
     webview = args.linux_webview if IS_LINUX else None
     system_site = webview == "gtk"
     if webview == "qt" and ctypes.util.find_library(_QT_XCB_CURSOR_LIB) is None:
         sys.exit(_QT_XCB_CURSOR_HINT)
 
     version = _read_version()
-    exe_name = f"sturddle-view-{version}"
-    print(f"Building {exe_name} ...")
+    # Installed exe keeps one name across versions so upgrades replace it.
+    exe_name = APP_NAME if args.installer else f"{APP_NAME}-{version}"
+    print(f"Building {exe_name} {version} ...")
 
     python = _venv_python()
     # No marker: a venv from before --linux-webview, which was always gtk.
-    built_for = _WEBVIEW_MARKER.read_text(encoding="utf-8") if _WEBVIEW_MARKER.exists() else LINUX_WEBVIEWS[0]
+    built_for = (
+        _WEBVIEW_MARKER.read_text(encoding="utf-8") if _WEBVIEW_MARKER.exists()
+        else LINUX_WEBVIEWS[0]
+    )
     if args.reuse_venv and VENV_DIR.exists() and IS_LINUX and built_for != webview:
         print(f"{VENV_DIR} was built for --linux-webview {built_for}, not {webview}: recreating it")
         args.reuse_venv = False
@@ -258,25 +352,21 @@ def main() -> None:
     BUILDS_DIR.mkdir(exist_ok=True)
 
     print("--- running pyinstaller ---")
-    spec = _write_spec(python, exe_name, icon, args.console, webview)
+    spec = _write_spec(python, exe_name, icon, args.console, webview, args.installer)
     subprocess.run([
         str(python), "-m", "PyInstaller", "--noconfirm",
         f"--distpath={BUILDS_DIR}", f"--workpath={VENV_DIR / 'pyinstaller_work'}", str(spec),
     ], check=True)
 
     suffix = ".exe" if sys.platform == "win32" else ""
-    exe_path = BUILDS_DIR / f"{exe_name}{suffix}"
+    out_dir = BUILDS_DIR / exe_name if args.installer else BUILDS_DIR
+    exe_path = out_dir / f"{exe_name}{suffix}"
     if not exe_path.exists():
         raise FileNotFoundError(f"Expected output not found: {exe_path}")
 
-    digest = _sha256(exe_path)
-    # sha256sum-compatible format: "<digest>  <filename>"
-    sha_path = BUILDS_DIR / f"{exe_name}.sha256"
-    sha_path.write_text(f"{digest}  {exe_path.name}\n", encoding="utf-8")
-
-    print(f"Exe:     {exe_path}")
-    print(f"SHA-256: {digest}")
-    print(f"Written: {sha_path}")
+    if args.installer:
+        _bundle_engine_files(engine_files, out_dir)
+    _write_sha256(_build_installer(version, out_dir, args.engine) if args.installer else exe_path)
 
 
 if __name__ == "__main__":

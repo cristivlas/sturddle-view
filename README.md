@@ -167,3 +167,11 @@ This provisions an isolated `build_venv/`, installs the package with its
 - `--reuse-venv` -- skip venv creation / dependency install when `build_venv/`
   already exists (reinstalls only the local package to pick up code changes).
 - `--console` -- keep a console window for debugging (omit for release builds).
+- `--installer` -- Windows: build `--onedir` and wrap it in an Inno Setup 6
+  installer, `dist/sturddle-view-<version>-setup.exe` (per-user, no admin;
+  runs as instance `desktop`). Needs `ISCC.exe` on PATH, at `SV_ISCC`, or in
+  Inno's default location.
+- `--engine PATH` -- with `--installer`: bundle and pre-register an engine exe
+  (repeatable).
+- `--engine-doc PATH` -- with `--engine`: ship a license/readme beside the
+  bundled engines (repeatable).
