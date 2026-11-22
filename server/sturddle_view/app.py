@@ -36,7 +36,6 @@ from .auth import (
     require_token,
     token_role,
 )
-from .api import chess_utils as chess_api
 from .api import connect as connect_api
 from .api import engines as engines_api
 from .api import fs as fs_api
@@ -480,7 +479,6 @@ def create_app(
     _setup_ai(app)
     _setup_tournament(app, settings)
 
-    app.include_router(chess_api.remote_router)
     app.include_router(connect_api.router)
     app.include_router(settings_api.remote_router)
     app.include_router(settings_api.router)

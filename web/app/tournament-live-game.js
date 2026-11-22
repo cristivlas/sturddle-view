@@ -510,7 +510,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, tourn
 
 // oversized-ok: stateful live-game controller -- a WebSocket feed, clock
 // timers, and board paint all coordinate over shared state (conn, engineColor,
-// currentFen, positionGen, clock fields). Closures return a control API;
+// currentFen, clock fields). Closures return a control API;
 // splitting would scatter the feed/clock/paint coordination.
 export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, tournamentId = null, top = 0, left = 0, right = 0, bottom = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, max = false, flash = true, root = null, variantClass = null }) {
   if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
@@ -569,7 +569,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   let timerInterval = null;
   let activeDeadline = 0;
   let currentFen = null;
-  let positionGen = 0;
   let lastWtime = null;
   let lastBtime = null;
   // rAF coalescer for board.setPosition. Bursts of position events
@@ -582,8 +581,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   const schedulePositionPaint = rafCoalesce(() => {
     const p = pendingPosition;
     pendingPosition = null;
-    // wbClosed: a producer that resumed after close (e.g. applyBestMove's
-    // fetch) must not repaint a destroyed board.
+    // wbClosed: a paint queued before close must not repaint a destroyed board.
     if (!p || wbClosed) return;
     // Animate only a single forward ply (a move being watched); first paint
     // and multi-ply backlog jumps snap so pieces don't glide catching up.
@@ -808,34 +806,12 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     topTimeEl.textContent = fmtClock((engineColor === SIDE.WHITE ? btime : wtime) / 1000, { tenthsBelow: 60 });
   }
 
-  async function applyBestMove(uciMove) {
-    const fen = currentFen;
-    const gen = positionGen;
-    try {
-      const headers = { "Content-Type": "application/json" };
-      const res = await fetch("/api/chess/apply-move", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ fen, move: uciMove }),
-      });
-      if (res.status === 204) { console.warn("late bestmove skipped:", uciMove); return; }
-      if (!res.ok) return;
-      const { fen: newFen } = await res.json();
-      // Discard if a newer `position` message arrived while the fetch was in flight.
-      if (positionGen === gen) {
-        currentFen = newFen;
-        queuePositionPaint(newFen, uciMove);
-      }
-    } catch { /* non-fatal: next position message will correct the board */ }
-  }
-
   // `snapshot`: replayed state from a fresh subscribe -- paint values but
   // never start clock timers (the `go` may predate the game's end).
   function handleParsed(p, snapshot = false) {
     switch (p.kind) {
       case UCI_KIND.POSITION:
         if (p.fen) {
-          positionGen++;
           currentFen = p.fen;
           const color = fenSide(p.fen);
           if (color !== engineColor) {
@@ -880,7 +856,11 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
           addEvalSample(pendingOwnPly, lastOwnInfo, engineColor);
           lastOwnInfo = null;
         }
-        if (currentFen && p.move) applyBestMove(p.move);
+        // board after the move; absent on a null move
+        if (p.fen) {
+          currentFen = p.fen;
+          queuePositionPaint(p.fen, p.move);
+        }
         if (snapshot) break;
         startCountdown(clockTopEl, topTimeEl,
           clockMs(lastWtime, lastBtime, engineColor === SIDE.WHITE ? SIDE.BLACK : SIDE.WHITE));
@@ -1126,7 +1106,9 @@ function parkFeed(path, watch) {
         }
         const opp = isOpponentMsg(msg, watch);
         if (opp && msg.engine_name) cacheLiveInfo(path, OPP_NAME_KEY, msg.engine_name);
-        if (!opp && msg.parsed?.fen) engineColor = fenSide(msg.parsed.fen);
+        if (!opp && msg.parsed?.kind === UCI_KIND.POSITION && msg.parsed.fen) {
+          engineColor = fenSide(msg.parsed.fen);
+        }
         const edge = infoEdge(msg, watch, engineColor);
         if (edge) cacheLiveInfo(path, edge, msg.parsed);
       },

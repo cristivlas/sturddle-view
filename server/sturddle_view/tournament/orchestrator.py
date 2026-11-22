@@ -20,7 +20,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable, Iterable, Iterator, Mapping
 
 import chess
 
@@ -108,10 +108,10 @@ _SIDE_B_KEY = "side_b"
 _EVT_STATUS_CHANGE = "status_change"
 # Latest line per command, replayed to a new subscriber.
 # ``bestmove`` last: it is cleared on each ``position``, so when present it
-# follows the snapshotted board and the client applies it on top.
+# follows the snapshotted board and is replayed with the fen it leads to.
 _SNAPSHOT_COMMANDS = (UCI_POSITION, UCI_GO, UCI_INFO, UCI_BESTMOVE)
 _FINAL_BOARD_COMMANDS = (UCI_POSITION, UCI_BESTMOVE)
-_NULL_MOVE = "(none)"
+_NULL_MOVES = ("(none)", chess.Move.null().uci())
 # Placeholder in debug logs for a missing engine name / pairing state.
 _UNKNOWN = "?"
 _FASTCHESS_LOG_NAME = "fastchess.log"
@@ -327,16 +327,42 @@ def _game_end_sentinel(
     return sentinel
 
 
-def _snapshot_payload(
-    proxy_id: str, line: str, *, with_parsed: bool, engine_name: str | None = None,
-) -> dict:
-    payload = {_PROXY_ID_KEY: proxy_id, LINE_KEY: line}
-    if with_parsed:
-        payload[PARSED_KEY] = parse_uci_line(line)
-    payload[_SNAPSHOT_KEY] = True
-    if engine_name:
-        payload[_ENGINE_NAME_KEY] = engine_name
-    return payload
+def _fen_after(fen: str | None, move: str | None) -> str | None:
+    """board after ``move`` from ``fen``; None for a null or illegal move"""
+    if not fen or not move or move in _NULL_MOVES:
+        return None
+    try:
+        board = chess.Board(fen)
+        board.push_uci(move)
+    except (ValueError, chess.IllegalMoveError, chess.InvalidMoveError):
+        return None
+    return board.fen()
+
+
+def _clean_fen(parsed: dict | None) -> str | None:
+    """a position's fen, unless a move in it failed to apply"""
+    if parsed and SIDE_TO_MOVE_KEY in parsed:
+        return parsed.get(FEN_KEY)
+    return None
+
+
+def _snapshot_payloads(
+    lines: Iterable[tuple[str, str]], engine_names: Mapping[str, str],
+) -> Iterator[dict]:
+    """replayed lines in order; a bestmove gets the fen it leads to,
+    played on its proxy's preceding position"""
+    fens: dict[str, str | None] = {}
+    for proxy_id, line in lines:
+        parsed = parse_uci_line(line)
+        payload = {_PROXY_ID_KEY: proxy_id, LINE_KEY: line, PARSED_KEY: parsed, _SNAPSHOT_KEY: True}
+        if engine_name := engine_names.get(proxy_id):
+            payload[_ENGINE_NAME_KEY] = engine_name
+        kind = parsed.get(KIND_KEY) if parsed else None
+        if kind == UCI_POSITION:
+            fens[proxy_id] = _clean_fen(parsed)
+        elif kind == UCI_BESTMOVE and (fen := _fen_after(fens.get(proxy_id), parsed.get(MOVE_KEY))):
+            parsed[FEN_KEY] = fen
+        yield payload
 
 
 @dataclass
@@ -385,6 +411,8 @@ class Orchestrator:
         # of the engine's state instead of waiting for the next event
         # (which under long time controls can be >=10s away).
         self._proxy_snapshot: dict[str, dict[str, str]] = {}
+        # board of each proxy's last clean ``position``; its bestmove is played on it
+        self._proxy_fen: dict[str, str | None] = {}
         # Pairing detection. Map from FEN -> list of ``(proxy_id, color)``
         # tuples. The thinker registers via ``position`` at F (its own
         # color); the waiter registers via ``bestmove`` at F-after-m
@@ -459,6 +487,7 @@ class Orchestrator:
         start rollback and on terminal runner events."""
         self._proxy_engine_names.clear()
         self._proxy_snapshot.clear()
+        self._proxy_fen.clear()
         self._pairing_map.clear()
         self._pairing_state.clear()
         self._pairing_color.clear()
@@ -845,6 +874,7 @@ class Orchestrator:
                 snap.pop(UCI_INFO, None)
                 snap.pop(UCI_BESTMOVE, None)
                 parsed = parse_uci_line(stripped)
+                self._proxy_fen[proxy_id] = _clean_fen(parsed)
                 if parsed is not None and FEN_KEY in parsed and SIDE_TO_MOVE_KEY in parsed:
                     if self._pairing_color.get(proxy_id) is None:
                         self._pairing_color[proxy_id] = parsed[SIDE_TO_MOVE_KEY]
@@ -868,6 +898,7 @@ class Orchestrator:
                             pair_id, UNKNOWN_RESULT, UNKNOWN_TERMINATION,
                         )
                 self._pairing_unregister(proxy_id)
+                self._proxy_fen.pop(proxy_id, None)
                 new_pairs, orphaned = self._recompute_groups()
                 self._pairing_color[proxy_id] = None
                 await self._emit_group_events(new_pairs, orphaned)
@@ -876,7 +907,10 @@ class Orchestrator:
             elif stripped.startswith(command_prefix(UCI_BESTMOVE)):
                 snap[UCI_BESTMOVE] = line
                 parsed = parse_uci_line(stripped)
-                new_pairs, orphaned = self._pairing_apply_bestmove(proxy_id, parsed)
+                fen = _fen_after(self._proxy_fen.pop(proxy_id, None), parsed.get(MOVE_KEY))
+                if fen:
+                    parsed[FEN_KEY] = fen
+                new_pairs, orphaned = self._pairing_apply_bestmove(proxy_id, fen)
                 await self._emit_group_events(new_pairs, orphaned)
             elif _is_info_line(stripped):
                 # Scoreless infos (currmove/nodes/string) have no consumer;
@@ -1047,22 +1081,13 @@ class Orchestrator:
             del self._pairing_map[fen]
 
     def _pairing_apply_bestmove(
-        self, proxy_id: str, parsed: dict | None
+        self, proxy_id: str, fen_after: str | None
     ) -> tuple[set[frozenset], set[str]]:
         """Re-register at post-move FEN (waiting for opponent)."""
         state = self._pairing_state.get(proxy_id)
-        if state is None or not parsed:
+        if state is None or not fen_after:
             return set(), set()
-        move_uci = parsed.get(MOVE_KEY)
-        if not move_uci or move_uci == _NULL_MOVE:
-            return set(), set()
-        fen, my_color = state
-        try:
-            board = chess.Board(fen)
-            board.push_uci(move_uci)
-        except (ValueError, chess.IllegalMoveError, chess.InvalidMoveError):
-            return set(), set()
-        return self._pairing_register(proxy_id, board.fen(), my_color)
+        return self._pairing_register(proxy_id, fen_after, state[1])
 
     async def _emit_group_events(
         self, new_pairs: set[frozenset], orphaned: set[str]
@@ -1395,6 +1420,7 @@ class Orchestrator:
                 )
         self._proxy_engine_names.pop(proxy_id, None)
         self._proxy_snapshot.pop(proxy_id, None)
+        self._proxy_fen.pop(proxy_id, None)
         self._pairing_unregister(proxy_id)
         new_pairs, orphaned = self._recompute_groups()
         self._pairing_color.pop(proxy_id, None)
@@ -1432,22 +1458,16 @@ class Orchestrator:
         # values already, no benefit to slotting. ``snapshot`` tells the
         # client to paint state without starting clock timers (the ``go``
         # may be stale).
-        self._replay_snapshot(q, proxy_id, with_parsed=False)
+        self._replay_snapshot(q, proxy_id)
         return q
 
-    def _replay_snapshot(self, q: CoalescingQueue, proxy_id: str, *, with_parsed: bool) -> None:
+    def _replay_snapshot(self, q: CoalescingQueue, proxy_id: str) -> None:
         snap = self._proxy_snapshot.get(proxy_id)
         if not snap:
             return
-        for command in _SNAPSHOT_COMMANDS:
-            line = snap.get(command)
-            if not line:
-                continue
-            payload = _snapshot_payload(
-                proxy_id, line, with_parsed=with_parsed,
-                engine_name=self._proxy_engine_names.get(proxy_id),
-            )
-            if command == UCI_INFO:
+        lines = [(proxy_id, snap[c]) for c in _SNAPSHOT_COMMANDS if snap.get(c)]
+        for payload in _snapshot_payloads(lines, self._proxy_engine_names):
+            if _is_info_line(payload[LINE_KEY]):
                 q.put_info(payload)
             else:
                 q.put_other(payload)
@@ -1476,11 +1496,8 @@ class Orchestrator:
             if dissolved is None:
                 q.put_sentinel(_game_end_sentinel("", UNKNOWN_RESULT, UNKNOWN_TERMINATION))
                 return q
-            for pid, line in dissolved.lines:
-                q.put_other(_snapshot_payload(
-                    pid, line, with_parsed=True,
-                    engine_name=dissolved.engine_names.get(pid),
-                ))
+            for payload in _snapshot_payloads(dissolved.lines, dissolved.engine_names):
+                q.put_other(payload)
             q.put_sentinel(_game_end_sentinel(
                 dissolved.white_pid, dissolved.result, dissolved.termination,
                 dissolved.game_n,
@@ -1490,7 +1507,7 @@ class Orchestrator:
         # Replay snapshot for both proxies so a late subscriber gets
         # instant board state without waiting for the next UCI event.
         for pid in proxies:
-            self._replay_snapshot(q, pid, with_parsed=True)
+            self._replay_snapshot(q, pid)
         return q
 
     def unsubscribe_from_game(self, pair_id: str, queue: CoalescingQueue) -> None:

@@ -19,6 +19,7 @@ import chess
 import httpx
 import pytest
 
+from sturddle_view.tournament import orchestrator as orchestrator_mod
 from sturddle_view.tournament.orchestrator import (
     Orchestrator,
 )
@@ -391,44 +392,26 @@ def test_recompute_no_orphan_when_proxy_just_moved_fen(orch):
 
 
 def test_apply_bestmove_no_state_returns_empty(orch):
-    """proxy_id not in _pairing_state → (set(), set()). Kills AddNot on
-    `state is None` (left operand of guard)."""
-    new_pairs, orphaned = orch._pairing_apply_bestmove(
-        "ghost", {"move": "e2e4"}
-    )
+    """proxy_id not in _pairing_state → (set(), set())."""
+    new_pairs, orphaned = orch._pairing_apply_bestmove("ghost", chess.Board().fen())
     assert new_pairs == set() and orphaned == set()
 
 
-def test_apply_bestmove_none_parsed_returns_empty(orch):
-    """parsed=None with valid state → (set(), set()). Kills `or`→`and`
-    on the state-or-parsed guard so both sides are covered."""
+def test_apply_bestmove_no_fen_returns_empty(orch):
+    """null or illegal move (no post-move fen) → (set(), set())."""
     _seed_proxy(orch, "pa", "A")
-    fen = chess.Board().fen()
-    orch._pairing_state["pa"] = (fen, "white")
+    orch._pairing_state["pa"] = (chess.Board().fen(), "white")
     new_pairs, orphaned = orch._pairing_apply_bestmove("pa", None)
     assert new_pairs == set() and orphaned == set()
 
 
-def test_apply_bestmove_none_move_returns_empty(orch):
-    """parsed has no 'move' key → (set(), set()). Kills `or`→`and`
-    on the move-presence guard."""
-    _seed_proxy(orch, "pa", "A")
-    fen = chess.Board().fen()
-    orch._pairing_state["pa"] = (fen, "white")
-    new_pairs, orphaned = orch._pairing_apply_bestmove("pa", {"kind": "bestmove"})
-    assert new_pairs == set() and orphaned == set()
+@pytest.mark.parametrize("move", [None, "", "(none)", "0000", "e2e5", "zz"])
+def test_fen_after_rejects_null_and_illegal_moves(move):
+    assert orchestrator_mod._fen_after(chess.Board().fen(), move) is None
 
 
-def test_apply_bestmove_none_move_string_returns_empty(orch):
-    """move == '(none)' → (set(), set()). Kills `==`→`!=` / `Is` and
-    `or`→`and` on the move-validity guard."""
-    _seed_proxy(orch, "pa", "A")
-    fen = chess.Board().fen()
-    orch._pairing_state["pa"] = (fen, "white")
-    new_pairs, orphaned = orch._pairing_apply_bestmove(
-        "pa", {"move": "(none)"}
-    )
-    assert new_pairs == set() and orphaned == set()
+def test_fen_after_needs_a_fen():
+    assert orchestrator_mod._fen_after(None, "e2e4") is None
 
 
 # ---------------------------------------------------------------------------
