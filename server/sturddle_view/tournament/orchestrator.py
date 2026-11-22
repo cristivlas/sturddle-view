@@ -907,7 +907,8 @@ class Orchestrator:
             elif stripped.startswith(command_prefix(UCI_BESTMOVE)):
                 snap[UCI_BESTMOVE] = line
                 parsed = parse_uci_line(stripped)
-                fen = _fen_after(self._proxy_fen.pop(proxy_id, None), parsed.get(MOVE_KEY))
+                move = parsed.get(MOVE_KEY) if parsed else None
+                fen = _fen_after(self._proxy_fen.pop(proxy_id, None), move)
                 if fen:
                     parsed[FEN_KEY] = fen
                 new_pairs, orphaned = self._pairing_apply_bestmove(proxy_id, fen)
@@ -1443,7 +1444,7 @@ class Orchestrator:
         ``{proxy_id, ended: True}`` when the proxy session ends.
 
         Replays the proxy's current snapshot (latest ``position`` /
-        ``go`` / ``info``) onto the queue so a window opened mid-game
+        ``go`` / ``info`` / ``bestmove``) onto the queue so a window opened mid-game
         gets an instant render of the engine's state instead of having
         to wait for the engine's next event (>=10s under long TC).
 

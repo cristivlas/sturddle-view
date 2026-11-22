@@ -433,6 +433,14 @@ async def test_null_bestmove_carries_no_fen(orch):
 
 
 @pytest.mark.asyncio
+async def test_empty_bestmove_does_not_drop_the_batch(orch):
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    q = orch.subscribe_to_proxy(_PROXY_A)
+    await orch.ingest_proxy_lines(_PROXY_A, ["position startpos", "bestmove ", "position startpos moves e2e4"])
+    assert [m["line"] for m in _drain(q)][-1] == "position startpos moves e2e4"
+
+
+@pytest.mark.asyncio
 async def test_bestmove_after_broken_position_carries_no_fen(orch):
     """a position whose moves don't apply leaves no board to play the bestmove on"""
     await orch.proxy_session_started(_PROXY_A, _ENGINE_A)

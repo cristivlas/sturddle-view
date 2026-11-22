@@ -894,9 +894,15 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     const pv = p.pv_uci;
     if (pvSidesVisible) row.pvSide().update(p, pv?.join(" "));
     if (pv?.length) row.pvEl.textContent = pv.slice(0, PV_PREVIEW_PLIES).join(" ");
-    if (!arrow) return;
+    if (!arrow || !rowToMove(row)) return;
     const squares = pvArrowSquares(p);
     if (squares) row.setArrow(...squares);
+  }
+
+  // a late info (board already moved on) must not draw a stale arrow
+  function rowToMove(row) {
+    if (!currentFen || !engineColor) return true;
+    return (fenSide(currentFen) === engineColor) === (row === ownRow);
   }
 
   return {

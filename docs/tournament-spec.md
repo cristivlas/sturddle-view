@@ -940,7 +940,8 @@ Future work:
 
 A `bestmove` event's `parsed.fen` is the board after the move, played
 server-side on the same proxy's `position` (live fan-out and snapshot
-replays alike; absent on a null move). The live board paints it
+replays alike; absent on a null move or when that `position`
+didn't apply). The live board paints it
 directly, no round trip. A window paints only its own proxy's
 `position`/`bestmove`, which arrive in order, so cross-proxy ordering
 (a `position` and the other engine's prior `bestmove` can land either
