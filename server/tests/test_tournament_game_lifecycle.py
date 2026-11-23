@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 
+import chess
 import pytest
 
 from sturddle_view.chess.results import UNKNOWN_RESULT, UNKNOWN_TERMINATION
@@ -401,6 +402,81 @@ async def test_proxy_snapshot_replays_bestmove_after_position(orch):
     await orch.ingest_proxy_lines(_PROXY_A, ["position startpos moves e2e4 e7e5"])
     lines = [m["line"] for m in _drain(orch.subscribe_to_proxy(_PROXY_A))]
     assert lines == ["position startpos moves e2e4 e7e5"]
+
+
+def _fen_after(*moves: str) -> str:
+    board = chess.Board()
+    for move in moves:
+        board.push_uci(move)
+    return board.fen()
+
+
+def _bestmove_fens(msgs: list[dict]) -> list[str | None]:
+    return [m["parsed"].get("fen") for m in msgs if m["line"].startswith("bestmove ")]
+
+
+@pytest.mark.asyncio
+async def test_bestmove_fanout_carries_fen_after_move(orch):
+    """Watchers paint the engine's move from the event, no server round trip."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    q = orch.subscribe_to_proxy(_PROXY_A)
+    await orch.ingest_proxy_lines(_PROXY_A, ["position startpos moves e2e4", "bestmove e7e5"])
+    assert _bestmove_fens(_drain(q)) == [_fen_after("e2e4", "e7e5")]
+
+
+@pytest.mark.asyncio
+async def test_null_bestmove_carries_no_fen(orch):
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    q = orch.subscribe_to_proxy(_PROXY_A)
+    await orch.ingest_proxy_lines(_PROXY_A, ["position startpos", "bestmove (none)"])
+    assert _bestmove_fens(_drain(q)) == [None]
+
+
+@pytest.mark.asyncio
+async def test_empty_bestmove_does_not_drop_the_batch(orch):
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    q = orch.subscribe_to_proxy(_PROXY_A)
+    await orch.ingest_proxy_lines(_PROXY_A, ["position startpos", "bestmove ", "position startpos moves e2e4"])
+    assert [m["line"] for m in _drain(q)][-1] == "position startpos moves e2e4"
+
+
+@pytest.mark.asyncio
+async def test_bestmove_after_broken_position_carries_no_fen(orch):
+    """a position whose moves don't apply leaves no board to play the bestmove on"""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    q = orch.subscribe_to_proxy(_PROXY_A)
+    await orch.ingest_proxy_lines(_PROXY_A, [
+        "position startpos", "bestmove e2e4",
+        "position startpos moves e2e4 zz", "bestmove e7e5",
+    ])
+    assert _bestmove_fens(_drain(q)) == [_fen_after("e2e4"), None]
+
+
+@pytest.mark.asyncio
+async def test_proxy_snapshot_bestmove_carries_fen_after_move(orch):
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.ingest_proxy_lines(_PROXY_A, ["position startpos", "bestmove e2e4"])
+    assert _bestmove_fens(_drain(orch.subscribe_to_proxy(_PROXY_A))) == [_fen_after("e2e4")]
+
+
+@pytest.mark.asyncio
+async def test_game_snapshot_bestmove_carries_fen_after_move(orch):
+    """A watcher attaching mid-game paints the move from the replay too."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    pair_id = next(iter(orch._pair_proxies))
+    assert _bestmove_fens(_drain(orch.subscribe_to_game(pair_id))) == [_fen_after("e2e4")]
+
+
+@pytest.mark.asyncio
+async def test_dissolved_replay_bestmove_carries_fen_after_move(orch):
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    pair_id = next(iter(orch._pair_proxies))
+    await orch._dissolve_pair(pair_id, "1-0", "adjudication")
+    assert _bestmove_fens(_drain(orch.subscribe_to_game(pair_id))) == [_fen_after("e2e4")]
 
 
 @pytest.mark.asyncio

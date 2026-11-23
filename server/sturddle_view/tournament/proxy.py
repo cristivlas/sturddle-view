@@ -24,6 +24,7 @@ import argparse
 import asyncio
 import os
 import queue
+import signal
 import subprocess
 import sys
 import threading
@@ -34,6 +35,7 @@ from http import HTTPStatus
 import httpx
 
 from .. import APP_NAME, is_windows
+from .._pdeathsig import die_with_parent
 from ..env_utils import env_bool, env_float, env_int
 
 
@@ -50,6 +52,8 @@ _BROADCAST_INFO = env_bool("SV_BROADCAST_INFO", True)
 _POST_TIMEOUT_S = env_float("SV_PROXY_POST_TIMEOUT_S", 2.0, min_value=0.0)
 # How long end() waits for queued posts to drain before giving up.
 _END_DRAIN_TIMEOUT_S = env_float("SV_PROXY_END_DRAIN_S", 2.0, min_value=0.0)
+# After upstream EOF: how long the engine gets to exit on its own.
+_ENGINE_EXIT_GRACE_S = env_float("SV_PROXY_ENGINE_EXIT_GRACE_S", 2.0, min_value=0.0)
 
 # The orchestrator hands the per-tournament secret over in this env var.
 PROXY_SECRET_ENV = "SV_PROXY_SECRET"
@@ -218,6 +222,23 @@ async def _pump(
                 print(f"proxy add_line failed: {e}", file=sys.stderr, flush=True)
 
 
+async def _reap_engine(
+    parent_gone: asyncio.Event, proc: asyncio.subprocess.Process,
+) -> None:
+    """Once fastchess is gone (stdin EOF) or Stop SIGINTs us: close the
+    engine's stdin, kill it after a grace."""
+    await parent_gone.wait()
+    assert proc.stdin
+    proc.stdin.close()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=_ENGINE_EXIT_GRACE_S)
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+
+
 async def _periodic_flush(broadcaster: Broadcaster, stop_event: asyncio.Event) -> None:
     """Time-based flush: ensures we don't sit on buffered lines longer
     than ``BATCH_INTERVAL_S`` even when no new lines are arriving."""
@@ -264,7 +285,12 @@ async def _run(
     spawn_env = None
     if engine_env:
         spawn_env = {**os.environ, **engine_env}
-    extra = {"creationflags": subprocess.CREATE_NO_WINDOW} if is_windows() else {}
+    # fastchess SIGKILLs the proxy on shutdown; take the engine with it.
+    # SIGTERM, not SIGKILL: Stop's grace covers engine cleanup too.
+    extra = (
+        {"creationflags": subprocess.CREATE_NO_WINDOW} if is_windows()
+        else {"preexec_fn": die_with_parent(signal.SIGTERM)}
+    )
     proc = await asyncio.create_subprocess_exec(
         *engine_argv,
         stdin=asyncio.subprocess.PIPE,
@@ -289,10 +315,16 @@ async def _run(
 
     upstream = asyncio.create_task(_pump(stdin_reader, proc.stdin, broadcaster))
     downstream = asyncio.create_task(_pump(proc.stdout, sys.stdout.buffer, broadcaster))
+    parent_gone = asyncio.Event()
+    upstream.add_done_callback(lambda _: parent_gone.set())
+    if not is_windows():
+        # in-loop, so a Stop exits through the normal cleanup below
+        loop.add_signal_handler(signal.SIGINT, parent_gone.set)
+    reaper = asyncio.create_task(_reap_engine(parent_gone, proc))
 
     rc = await proc.wait()
-    upstream.cancel()
-    downstream.cancel()
+    for t in (upstream, downstream, reaper):
+        t.cancel()
     stop_event.set()
     if flush_task is not None:
         try:

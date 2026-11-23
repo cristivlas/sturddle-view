@@ -235,7 +235,7 @@ async def test_probe_success_removes_dir(tmp_root, monkeypatch):
 async def test_probe_survives_spawn_dir_failure(tmp_root, monkeypatch):
     import chess.engine
 
-    import sturddle_view.engines as engines_mod
+    import sturddle_view.engine_tmp as engine_tmp_mod
 
     def boom_mkdir():
         raise OSError("disk full")
@@ -246,7 +246,7 @@ async def test_probe_survives_spawn_dir_failure(tmp_root, monkeypatch):
         return (stub.transport, stub)
 
     fake_popen_uci.last_kwargs = None
-    monkeypatch.setattr(engines_mod, "create_spawn_dir", boom_mkdir)
+    monkeypatch.setattr(engine_tmp_mod, "create_spawn_dir", boom_mkdir)
     monkeypatch.setattr(chess.engine, "popen_uci", fake_popen_uci)
     name, schema, err = await probe_engine("/fake/engine")
     assert err is None

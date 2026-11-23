@@ -32,9 +32,9 @@ Own the temp location instead of chasing the extractor.
 - HvE play engine and AI-analysis throwaway engines: both spawn via
   `EngineSupervisor._open_uci` -> `_popen_kwargs`; covered.
 - Engine probe (`probe_engine`): same `_popen_kwargs`; covered.
-- Tournament engines run under fastchess, which spawns them itself;
-  out of scope here. Optional follow-up: inject the same env vars
-  into the fastchess subprocess so its engines inherit them.
+- Tournament engines: fastchess spawns them itself, so the env vars
+  go on the fastchess subprocess (one dir per run) and its engines,
+  proxied or not, inherit them. Removed when fastchess exits.
 
 ## Limits
 

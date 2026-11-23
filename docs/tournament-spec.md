@@ -936,14 +936,15 @@ Future work:
 
 ---
 
-## Cross-proxy bestmove race
+## Bestmove board update
 
-Each engine runs as a separate proxy process and POSTs UCI traffic
-independently, so between proxies a `position` and the prior turn's
-`bestmove` can arrive in either order. The client handles this
-gracefully: `/api/chess/apply-move` returns **204** on a stale-FEN
-illegal move, the client logs a `console.warn` and skips, and the next
-`position` event self-corrects the board. Tradeoff: the move animation
-is skipped for the affected half-move. A server-side reorder buffer was
+A `bestmove` event's `parsed.fen` is the board after the move, played
+server-side on the same proxy's `position` (live fan-out and snapshot
+replays alike; absent on a null move or when that `position`
+didn't apply). The live board paints it
+directly, no round trip. A window paints only its own proxy's
+`position`/`bestmove`, which arrive in order, so cross-proxy ordering
+(a `position` and the other engine's prior `bestmove` can land either
+way) never feeds it a stale board. A server-side reorder buffer was
 tried and reverted (held clock updates and silently coalesced
 mid-turn `info` lines).

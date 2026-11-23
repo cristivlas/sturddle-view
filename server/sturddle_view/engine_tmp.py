@@ -46,6 +46,16 @@ def create_spawn_dir() -> Path:
     return d
 
 
+def try_create_spawn_dir(purpose: str) -> Path | None:
+    """``create_spawn_dir`` for callers that must not fail on a
+    filesystem hiccup: log and fall back to the OS temp dir."""
+    try:
+        return create_spawn_dir()
+    except OSError as e:
+        log.warning("could not create engine temp dir for %s: %s", purpose, e)
+        return None
+
+
 def temp_env(spawn_dir: Path) -> dict[str, str]:
     """Env overlay pointing all temp-dir conventions at *spawn_dir*."""
     return {name: str(spawn_dir) for name in TEMP_ENV_VARS}

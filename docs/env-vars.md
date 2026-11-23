@@ -81,7 +81,7 @@ the workload.
 | `SV_RESCHECK_ENGINE_OVERHEAD_MB` | `256` | Per-engine memory assumed beyond Hash when checking a tournament's RAM budget. | `server/sturddle_view/tournament/rescheck.py` |
 | `SV_RESCHECK_RAM_HEADROOM` | `0.75` | Share of total RAM a tournament's engines may use. | `server/sturddle_view/tournament/rescheck.py` |
 | `SV_ALLOW_OVERSUBSCRIBE` | `0` | Boolean: lets tournaments exceed host CPU/RAM (rescheck blockers become warnings; fastchess gets `-force-concurrency`). The affinity check still blocks. Don't use for SPRT. | `server/sturddle_view/api/tournaments.py` |
-| `SV_FASTCHESS_STOP_GRACE_S` | `2.0` | POSIX: SIGTERM -> SIGKILL grace when stopping fastchess. | `server/sturddle_view/tournament/fastchess.py` |
+| `SV_FASTCHESS_STOP_GRACE_S` | `2.0` | POSIX: SIGINT -> SIGKILL grace when stopping fastchess. | `server/sturddle_view/tournament/fastchess.py` |
 | `SV_FASTCHESS_DRAIN_TIMEOUT_S` | `2.0` | Wait for each fastchess output drain after it exits. | `server/sturddle_view/tournament/fastchess.py` |
 | `SV_FASTCHESS_LOG_LEVEL` | `info` | fastchess log level for `logs/fastchess.log`: `trace`, `info`, `warn`, `err` or `fatal`. | `server/sturddle_view/tournament/fastchess.py` |
 | `SV_ANALYSIS_STOP_GRACE_S` | `2.0` | How long a stopped engine analysis may wind down before its task is cancelled. | `server/sturddle_view/play/human_vs_engine.py` |
@@ -128,6 +128,7 @@ Set on the proxy subprocess environment, not via the CLI.
 | `SV_PROXY_BATCH_MAX_LINES` | `32` | Lines that trigger an immediate post. | `server/sturddle_view/tournament/proxy.py` |
 | `SV_PROXY_POST_TIMEOUT_S` | `2.0` | Per-post HTTP timeout to the server. | `server/sturddle_view/tournament/proxy.py` |
 | `SV_PROXY_END_DRAIN_S` | `2.0` | On engine exit, how long queued posts may drain. | `server/sturddle_view/tournament/proxy.py` |
+| `SV_PROXY_ENGINE_EXIT_GRACE_S` | `2.0` | After stdin EOF (fastchess gone), how long the engine may exit on its own before the proxy kills it. | `server/sturddle_view/tournament/proxy.py` |
 
 ## AI agent
 

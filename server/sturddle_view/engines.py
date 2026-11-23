@@ -20,7 +20,7 @@ import chess.engine
 
 from . import app_config_dir, is_windows
 from ._atomic import atomic_write_json
-from .engine_tmp import cleanup_spawn_dir, create_spawn_dir, temp_env
+from .engine_tmp import cleanup_spawn_dir, temp_env, try_create_spawn_dir
 from .env_utils import env_float, env_path
 from .error_detail import CODE_KEY, MESSAGE_KEY, error_detail
 
@@ -142,11 +142,7 @@ async def probe_engine(
     command: str | list[str] = [engine_path, *args] if args else engine_path
     # Probe never raises: a filesystem hiccup here must not fail the
     # endpoint -- degrade to no temp-dir injection instead.
-    try:
-        tmp_dir = create_spawn_dir()
-    except OSError as e:
-        log.warning("could not create engine temp dir for probe: %s", e)
-        tmp_dir = None
+    tmp_dir = try_create_spawn_dir("probe")
     popen_kwargs = _popen_kwargs(env, tmp_dir)
     timeout = _probe_timeout_sec()
     try:
