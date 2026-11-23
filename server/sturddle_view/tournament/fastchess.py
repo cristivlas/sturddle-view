@@ -20,8 +20,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .. import is_windows
+from .._pdeathsig import die_with_parent
 from .._runtime import proxy_argv_prefix
 from .._win_job import assign_to_job, close_job, create_job, spawn_in_job, wait_for_pid_exit
+from ..engine_tmp import cleanup_spawn_dir, temp_env, try_create_spawn_dir
 from ..engines import (
     UCI_OPT_HASH,
     UCI_OPT_OWNBOOK,
@@ -422,7 +424,8 @@ def _popen_kwargs() -> dict:
     """Cross-platform process-group isolation kwargs (POSIX vs Windows)."""
     if is_windows():
         return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW}
-    return {"start_new_session": True}
+    # fastchess cleans up its slots only on SIGINT
+    return {"start_new_session": True, "preexec_fn": die_with_parent(signal.SIGINT)}
 
 
 class FastchessNotFoundError(FileNotFoundError):
@@ -452,6 +455,8 @@ class FastchessRunner:
         # Per-tournament Windows Job: KILL_ON_JOB_CLOSE means closing
         # this handle synchronously kills fastchess + all descendants.
         self._job_handle: int | None = None
+        # per-run temp dir, inherited by fastchess and every engine it spawns
+        self._tmp_dir: Path | None = None
 
     @property
     def binary_path(self) -> str | None:
@@ -527,6 +532,9 @@ class FastchessRunner:
         env = os.environ.copy()
         if spec.proxy_secret:
             env[PROXY_SECRET_ENV] = spec.proxy_secret
+        self._tmp_dir = try_create_spawn_dir("fastchess")
+        if self._tmp_dir is not None:
+            env.update(temp_env(self._tmp_dir))
 
         # Create the per-tournament Job BEFORE spawn so the process can
         # be created already inside it (atomic via spawn_in_job).
@@ -536,15 +544,19 @@ class FastchessRunner:
             except OSError:
                 log.error("Job Object creation failed", exc_info=True)
 
-        with spawn_in_job(self._job_handle):
-            self._proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(spec.work_dir),
-                env=env,
-                **_popen_kwargs(),
-            )
+        try:
+            with spawn_in_job(self._job_handle):
+                self._proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(spec.work_dir),
+                    env=env,
+                    **_popen_kwargs(),
+                )
+        except BaseException:
+            self._release_tmp_dir()
+            raise
 
         # Post-spawn setup: any failure here must kill the proc, otherwise
         # we leak a running fastchess (no supervisor => no auto-cleanup).
@@ -583,7 +595,7 @@ class FastchessRunner:
             await self._abort_setup()
             raise
 
-    # How long to wait between SIGTERM and SIGKILL on Stop. Long enough
+    # How long to wait between SIGINT and SIGKILL on Stop. Long enough
     # for fastchess to flush a final saveJson() (post-game bookkeeping is
     # microseconds, but the in-flight game's engines may need to drain
     # UCI traffic). Short enough that the UI doesn't hang on a runaway
@@ -594,7 +606,7 @@ class FastchessRunner:
         """Stop the subprocess. Idempotent.
 
         Windows: closes the per-tournament Job -> KILL_ON_JOB_CLOSE
-        kills the entire tree synchronously. POSIX: SIGTERM + grace
+        kills the entire tree synchronously. POSIX: SIGINT + grace
         for fastchess to flush resume state, escalates to SIGKILL.
         """
         if self._proc is None or self._supervisor is None:
@@ -619,23 +631,24 @@ class FastchessRunner:
             close_job(self._job_handle)
             self._job_handle = None
         else:
-            # SIGTERM the whole process group (set via start_new_session in
+            # SIGINT the whole process group (set via start_new_session in
             # _popen_kwargs) so engines + proxies get the chance to clean
             # up too -- proc.terminate() would only signal fastchess.
+            # SIGINT, not SIGTERM: fastchess cleans up only on SIGINT.
             try:
                 pgid = os.getpgid(pid)
             except ProcessLookupError:
-                log.info("stop: pid=%d already gone before SIGTERM", pid)
+                log.info("stop: pid=%d already gone before SIGINT", pid)
                 pgid = None
             if pgid is not None:
-                log.info("stop: SIGTERM pgid=%d (leader=%d)", pgid, pid)
+                log.info("stop: SIGINT pgid=%d (leader=%d)", pgid, pid)
                 try:
-                    os.killpg(pgid, signal.SIGTERM)
+                    os.killpg(pgid, signal.SIGINT)
                 except ProcessLookupError:
-                    log.info("stop: pgid=%d already gone before SIGTERM", pgid)
+                    log.info("stop: pgid=%d already gone before SIGINT", pgid)
             # TODO(#7): the grace timeout fires when the supervisor's
             # terminal chain outlasts the grace -- not necessarily because fastchess
-            # ignored SIGTERM. Only escalate to SIGKILL if proc.returncode
+            # ignored SIGINT. Only escalate to SIGKILL if proc.returncode
             # is None. Needs Linux/macOS to test.
             try:
                 await asyncio.wait_for(
@@ -645,7 +658,7 @@ class FastchessRunner:
                 log.info("stop: pgid=%s exited gracefully", pgid)
                 return
             except asyncio.TimeoutError:
-                log.warning("stop: pgid=%d ignored SIGTERM; SIGKILL pgrp", pgid)
+                log.warning("stop: pgid=%d ignored SIGINT; SIGKILL pgrp", pgid)
                 try:
                     os.killpg(pgid, signal.SIGKILL)
                 except ProcessLookupError:
@@ -682,6 +695,11 @@ class FastchessRunner:
             except Exception:  # noqa: BLE001
                 log.error("abort_setup: proc.wait raised", exc_info=True)
         self._proc = None
+        self._release_tmp_dir()
+
+    def _release_tmp_dir(self) -> None:
+        cleanup_spawn_dir(self._tmp_dir)
+        self._tmp_dir = None
 
     # ----- internals --------------------------------------------------------
 
@@ -765,6 +783,7 @@ class FastchessRunner:
         # underlying transport is released immediately rather than waiting for GC.
         if hasattr(self._proc, "close"):
             self._proc.close()
+        self._release_tmp_dir()
 
         payload: dict = {RC_KEY: rc}
         if self._stop_requested:

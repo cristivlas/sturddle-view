@@ -811,6 +811,29 @@ async def test_runner_clean_exit_emits_done(tmp_path, patched_runner):
     assert "out 2" in out_lines
 
 
+async def test_runner_points_temp_vars_at_managed_dir_and_removes_it(
+    tmp_path, patched_runner, monkeypatch,
+):
+    from sturddle_view.engine_tmp import TEMP_ENV_VARS, engine_tmp_root
+
+    spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
+    rec = _Recorder()
+    runner = patched_runner([])
+    script = f"import os; print(*(os.environ[k] for k in {TEMP_ENV_VARS!r}), sep='|')"
+    monkeypatch.setattr(fc_mod, "build_command", lambda spec: [sys.executable, "-c", script])
+
+    await runner.start(spec, rec)
+    await rec.done.wait()
+
+    assert rec.events[-1][0] == "done"
+    line = next(p["line"] for k, p in rec.events if k == "runner_log" and p.get("stream") == "out")
+    dirs = set(line.split("|"))
+    assert len(dirs) == 1
+    tmp_dir = Path(dirs.pop())
+    assert tmp_dir.parent == engine_tmp_root()
+    assert not tmp_dir.exists()
+
+
 async def test_runner_emits_runner_log_per_stdout_line(tmp_path, patched_runner):
     """fastchess stdout is forwarded to the event bus as ``runner_log``
     events so the workspace's Event log window can show each line."""
@@ -893,10 +916,10 @@ async def test_runner_stop_emits_stopped_not_crash(tmp_path, patched_runner):
     assert not runner.is_running()
 
 
-async def test_runner_stop_falls_back_to_sigkill_when_sigterm_ignored(
+async def test_runner_stop_falls_back_to_sigkill_when_sigint_ignored(
     tmp_path, patched_runner, monkeypatch
 ):
-    # Spawn a fake fastchess that ignores SIGTERM (like a misbehaving
+    # Spawn a fake fastchess that ignores SIGINT (like a misbehaving
     # real one would). Verify Stop still terminates the process via the
     # SIGKILL fallback. Skip on Windows because terminate()/kill() are
     # both TerminateProcess (no graceful path to test).
@@ -905,23 +928,23 @@ async def test_runner_stop_falls_back_to_sigkill_when_sigterm_ignored(
     spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
     rec = _Recorder()
     runner = patched_runner([])
-    # Replace the fake-fastchess argv with one that ignores SIGTERM.
-    sigterm_ignoring = (
+    # Replace the fake-fastchess argv with one that ignores SIGINT.
+    sigint_ignoring = (
         "import signal, time\n"
-        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "signal.signal(signal.SIGINT, signal.SIG_IGN)\n"
         "time.sleep(60)\n"
     )
     from sturddle_view.tournament import fastchess as fc_mod
     monkeypatch.setattr(
         fc_mod, "build_command",
-        lambda spec: [sys.executable, "-c", sigterm_ignoring],
+        lambda spec: [sys.executable, "-c", sigint_ignoring],
     )
     # Tighten the grace window so the test stays fast.
     monkeypatch.setattr(FastchessRunner, "_STOP_GRACE_SECONDS", 0.5)
 
     await runner.start(spec, rec)
     assert runner.is_running()
-    # Give the child a moment to install its SIGTERM handler before we send.
+    # Give the child a moment to install its SIGINT handler before we send.
     await asyncio.sleep(0.2)
     await runner.stop()
     await rec.done.wait()
@@ -932,7 +955,7 @@ async def test_runner_stop_falls_back_to_sigkill_when_sigterm_ignored(
 
 
 async def test_runner_stop_signals_whole_process_group_posix(tmp_path, patched_runner):
-    """POSIX: stop() must SIGTERM the whole process group so children
+    """POSIX: stop() must SIGINT the whole process group so children
     fastchess spawned (engines + proxies) get cleaned up too — not just
     the leader. Regression for orphaned proxies on Linux Ctrl+C."""
     if sys.platform == "win32":
@@ -950,7 +973,7 @@ async def test_runner_stop_signals_whole_process_group_posix(tmp_path, patched_r
     await runner.stop()
     await rec.done.wait()
 
-    # Allow a brief moment for the OS to reap the child after SIGTERM.
+    # Allow a brief moment for the OS to reap the child after SIGINT.
     for _ in range(50):
         try:
             os.kill(child_pid, 0)
