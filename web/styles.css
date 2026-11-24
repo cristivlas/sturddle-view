@@ -3905,6 +3905,9 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
   flex: 1 1 0; min-height: 0;
   position: relative;
   overflow: auto;
+  /* Wall insets, shared by the title so it lines up with the footer. */
+  --studio-wall-pad: clamp(24px, 5vw, 68px);
+  --studio-wall-edge: 12px;
 }
 /* Its scrollbar gutter is solid app background, not the backdrop. */
 .studio-boards::-webkit-scrollbar-track,
@@ -3916,19 +3919,28 @@ button.recents-btn:disabled { opacity: 0.4; cursor: default; }
    whatever the split height. */
 .studio-boards.no-boards { overflow: hidden; }
 .studio-boards-canvas { width: 1px; height: 0; pointer-events: none; }
+/* Selected tourney's name, top-left of the Boards region; boards cover it. */
+.studio-boards-title {
+  position: absolute; z-index: 0; top: var(--studio-wall-edge); left: var(--studio-wall-pad); right: var(--studio-wall-pad);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* One line even while empty, so fitWallToStrip's fit check holds. */
+  min-height: 1lh;
+  pointer-events: none;
+  color: var(--muted-bright);
+}
 
 /* Info wall: the selected tourney's progress footer, pinned to the bottom of
    the empty Boards region; boards cover it when present. */
 .studio-boards-wall {
   position: absolute; inset: 0; z-index: 0;
   display: flex; flex-direction: column; justify-content: center; align-items: stretch;
-  padding: clamp(24px, 5vw, 68px);
+  padding: var(--studio-wall-pad);
   overflow: hidden;
   pointer-events: none;
   color: var(--muted-bright);
 }
 /* The footer sits close to the bottom tabs; the empty state stays centered. */
-.studio-boards-wall:not(.is-empty) { padding-bottom: 12px; }
+.studio-boards-wall:not(.is-empty) { padding-bottom: var(--studio-wall-edge); }
 .studio-boards-wall > * { width: 100%; }
 /* Boards laid out (tournament-studio.js fitWallToStrip): the wall is the strip
    under the centered grid; its footer centers there, hidden below 36px (the
