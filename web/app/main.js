@@ -23,6 +23,12 @@ installScrollEdgeTracking();
 // No browser context menu anywhere in the app. Capture beats stopPropagation.
 document.addEventListener("contextmenu", (ev) => ev.preventDefault(), true);
 
+// A press outside an open menu closes it, whatever handles the press.
+window.addEventListener("pointerdown", (ev) => {
+  for (const m of document.querySelectorAll("[popover=auto]:popover-open"))
+    if (!m.contains(ev.target)) m.hidePopover();
+});
+
 // F11 toggles native fullscreen ("theater mode") in the desktop shell via the
 // pywebview bridge -- the OS/browser F11 handling doesn't apply to the
 // chromeless native window, so this is a no-op outside desktop mode.
