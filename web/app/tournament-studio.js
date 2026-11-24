@@ -845,7 +845,7 @@ function studioCols() {
 
 // Cell size: width fills the region across the columns (>= the Arena board
 // minimum), height keeps the board square (width + the fixed window chrome).
-// Desktop: fewer boards than columns widen, at the full grid's height.
+// Fewer boards than columns widen, at the full grid's height.
 // Height is whole device px off the narrowest column (snapped widths vary by
 // 1px), so no board's own square cap (width + chrome) trims it shorter.
 // x0/dpr: the region's page x and the device pixel ratio, for slotRect.
@@ -859,7 +859,7 @@ function boardCell(ctx, pending = 0, width = ctx.boardsEl ? regionSize(ctx.board
   const el = ctx.boardsEl;
   const dpr = window.devicePixelRatio;
   const laidOut = laidOutCount() + pending;
-  const cols = mqMobile.matches ? gridCols : Math.max(1, Math.min(gridCols, laidOut));
+  const cols = Math.max(1, Math.min(gridCols, laidOut));
   const fit = width / cols;
   const cw = Math.max(LIVE_MIN_WIDTH, fit);
   const gridCw = Math.max(LIVE_MIN_WIDTH, width / gridCols);
