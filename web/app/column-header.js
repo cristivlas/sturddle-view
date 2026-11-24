@@ -19,7 +19,7 @@ import {
 } from "./menu-nav.js";
 import { fadeMenuHtml, RESET_LABEL } from "./panel-fade.js";
 import { applySplitColWidths, wireSplitScroll } from "./split-table.js";
-import { escapeHtml } from "./wb-utils.js";
+import { escapeHtml, rafCoalesce } from "./wb-utils.js";
 
 export const WIDTH_UNIT = Object.freeze({ PCT: "pct", PX: "px" });
 
@@ -72,7 +72,7 @@ const syncRegistry = new Map(); // layoutKey -> Set<reload fn>
 
 const sum = (sizes) => sizes.reduce((s, w) => s + w, 0);
 
-// Saved { unit, order, hidden, widths } fit to the current columns. Widths in
+// Saved { unit, order, hidden, widths, auto } fit to the current columns. Widths in
 // another unit (none = pct) drop; without reorder the declared order wins,
 // so a varying column list (one per engine) doesn't append new keys last.
 function reconcileLayout(columns, saved, fixedOrder, unit) {
@@ -93,7 +93,7 @@ function reconcileLayout(columns, saved, fixedOrder, unit) {
     const w = savedWidths?.[c.key];
     widths[c.key] = Number.isFinite(w) && w > 0 ? w : c.width;
   }
-  return { order: ordered, hidden, widths };
+  return { order: ordered, hidden, widths, auto: saved.auto === true };
 }
 
 // Column widths (% of the body) from each column's natural (max-content) px
@@ -206,10 +206,10 @@ function menuHtml(layout, byKey, traits, visibleCount) {
       { disabled: lockToggle, attrs: ` data-action="${MENU_ACTION.TOGGLE}"` });
     return `<li class="${MENU_COL_CLASS}" data-key="${escapeHtml(key)}">${toggle}${moves}</li>`;
   }).join("");
-  const action = (name, label) =>
-    `<li>${menuBtnHtml(name, "tmb-dd-item", label, { attrs: ` data-action="${name}"` })}</li>`;
+  const action = (name, label, checked = false) => `<li>${menuBtnHtml(name,
+    `tmb-dd-item${checked ? ` ${MENU_CHECKED_CLASS}` : ""}`, label, { attrs: ` data-action="${name}"` })}</li>`;
   const fade = traits.fade ? fadeMenuHtml(traits.fade.pct) : "";
-  return items + MENU_SEPARATOR_HTML + (traits.fit ? action(MENU_ACTION.FIT, FIT_LABEL) : "")
+  return items + MENU_SEPARATOR_HTML + (traits.fit ? action(MENU_ACTION.FIT, FIT_LABEL, layout.auto) : "")
     + action(MENU_ACTION.RESET, RESET_LABEL) + (fade ? MENU_SEPARATOR_HTML + fade : "");
 }
 
@@ -476,7 +476,7 @@ function createColumnsMenu({ wrap, thead, html, onAction, onFade }) {
     const dir = btn.dataset.dir ? Number(btn.dataset.dir) : null;
     if (dir === null && !Object.values(MENU_ACTION).includes(action)) return;
     onAction({ action, key: btn.closest(`.${MENU_COL_CLASS}`)?.dataset.key, dir });
-    // Fit and Reset are one-shot table commands: close so the result shows.
+    // Auto-fit and Reset are table commands: close so the result shows.
     if (action === MENU_ACTION.FIT || action === MENU_ACTION.RESET) {
       close();
       return;
@@ -536,6 +536,22 @@ function createColumnsMenu({ wrap, thead, html, onAction, onFade }) {
   };
 }
 
+// Auto-fit: while isOn(), refit() once a frame after any body change and on
+// schedule() (layout, table resize). Returns { schedule, destroy }.
+function watchAutoFit(tbody, isOn, refit) {
+  const frame = rafCoalesce(refit);
+  const schedule = () => { if (isOn()) frame(); };
+  const observer = new MutationObserver(schedule);
+  observer.observe(tbody, { childList: true, subtree: true, characterData: true });
+  return {
+    schedule,
+    destroy() {
+      observer.disconnect();
+      frame.cancel();
+    },
+  };
+}
+
 // The caller fills the tbody, then calls relayout() once its body is ready.
 export function createColumnHeader({
   columns,
@@ -585,11 +601,12 @@ export function createColumnHeader({
   let applyLive = null;
   let buttonRoom = 0;
   const room = BUTTON_ROOM[unit];
+  const px = unit === WIDTH_UNIT.PX;
 
   const visibleCols = () => layout.order.filter((k) => !layout.hidden.has(k)).map((k) => byKey.get(k));
   const saveLayout = () => {
     saveJson(layoutKey, {
-      unit, order: layout.order, hidden: [...layout.hidden], widths: layout.widths,
+      unit, order: layout.order, hidden: [...layout.hidden], widths: layout.widths, auto: layout.auto,
     });
     if (!sync) return;
     for (const reload of syncRegistry.get(layoutKey)) if (reload !== reloadFromSaved) reload();
@@ -616,7 +633,7 @@ export function createColumnHeader({
   // The button room in this unit: px, or its share of the head table.
   function measureButtonRoom() {
     const btnPx = menuButtonPx(thead);
-    if (unit === WIDTH_UNIT.PX) return btnPx;
+    if (px) return btnPx;
     const tableW = headTable.getBoundingClientRect().width;
     return tableW > btnPx ? (btnPx / tableW) * FULL_PCT : 0;
   }
@@ -630,7 +647,7 @@ export function createColumnHeader({
     buttonRoom = next;
     applyLive(liveSizes);
   }
-  const roomObserver = hasMenu ? new ResizeObserver(refreshButtonRoom) : null;
+  const roomObserver = hasMenu ? new ResizeObserver(() => { refreshButtonRoom(); autoFit?.schedule(); }) : null;
   roomObserver?.observe(headTable);
   // The table's share of its panel's fade: its own backgrounds, header cells
   // and lines.
@@ -639,21 +656,26 @@ export function createColumnHeader({
     lineTables: [headTable, bodyTable],
   });
   // Floors per shown column; the first also keeps its button room.
-  const minAt = (i) => (unit === WIDTH_UNIT.PX ? MIN_COL_PX : minPct) + (i ? 0 : buttonRoom);
+  const minAt = (i) => (px ? MIN_COL_PX : minPct) + (i ? 0 : buttonRoom);
+
+  // The sized columns (shown; px: the fixed ones) and their shown sizes.
+  function shownSizes(cols) {
+    const sized = px ? cols.filter((c) => !c.pinEnd) : cols;
+    const total = weightSum(layout, sized);
+    const stored = sized.map((c) => (px ? layout.widths[c.key] : (layout.widths[c.key] / total) * FULL_PCT));
+    buttonRoom = stored.length ? measureButtonRoom() : 0;
+    return { sized, sizes: room.show(stored, buttonRoom) };
+  }
 
   // Widths for the shown columns: pct of the table, or px for the fixed
   // ones (the pinEnd column is auto).
   function attachWidths(cols) {
     const colEls = [Array.from(headColgroup.children), Array.from(bodyColgroup.children)];
-    const px = unit === WIDTH_UNIT.PX;
-    const sized = px ? cols.filter((c) => !c.pinEnd) : cols;
-    const total = weightSum(layout, sized);
-    const stored = sized.map((c) => (px ? layout.widths[c.key] : (layout.widths[c.key] / total) * FULL_PCT));
-    buttonRoom = stored.length ? measureButtonRoom() : 0;
-    const sizes = room.show(stored, buttonRoom);
+    const { sized, sizes } = shownSizes(cols);
     liveSizes = sizes;
     const apply = px ? makePxApplySizes(colEls, [headTable, bodyTable], minAt, () => bodyScroll.clientWidth) : makePctApplySizes(colEls, minAt);
-    const applySizes = (s, rctx) => { apply(s, rctx); onSizes?.(); };
+    // A resize drag is a manual width: it ends Auto-fit (saved on release).
+    const applySizes = (s, rctx) => { if (rctx) layout.auto = false; apply(s, rctx); onSizes?.(); };
     applyLive = applySizes;
     resizeCtrl?.destroy();
     resizeCtrl = null;
@@ -700,6 +722,7 @@ export function createColumnHeader({
     traits.fade?.rescan();
     menu?.refresh();
     onLayout?.(cols);
+    autoFit?.schedule();
   }
 
   // Stored widths fit to content. The first column's measure includes the
@@ -711,7 +734,7 @@ export function createColumnHeader({
     const { natural, minimum } = naturalWidths({ wrap, headTable, bodyTable, thead, tbody });
     natural[0] -= btnPx;
     minimum[0] -= btnPx;
-    if (unit === WIDTH_UNIT.PX) {
+    if (px) {
       cols.forEach((c, i) => { if (!c.pinEnd) layout.widths[c.key] = Math.max(MIN_COL_PX, minimum[i]); });
       return;
     }
@@ -719,11 +742,24 @@ export function createColumnHeader({
     storeVisiblePcts(layout, cols, fitPcts(natural, minimum, available, minPct));
   }
 
+  // Auto-fit's refit: widths applied in place (a full relayout would rebuild
+  // the header and the rows), not saved. Waits for the first layout; an
+  // unrendered table, for a resize.
+  function refit() {
+    if (!layout.auto || !applyLive || !bodyTable.getBoundingClientRect().width) return;
+    fitColumns();
+    liveSizes.splice(0, liveSizes.length, ...shownSizes(visibleCols()).sizes);
+    applyLive(liveSizes);
+  }
+  const autoFit = traits.fit ? watchAutoFit(tbody, () => layout.auto, refit) : null;
+
   function applyMenuAction({ action, key, dir }) {
     if (dir !== null) moveColumn(layout, byKey, key, dir);
     else if (action === MENU_ACTION.TOGGLE) toggleColumn(layout, key, visibleCols().length);
-    else if (action === MENU_ACTION.FIT) fitColumns();
-    else {
+    else if (action === MENU_ACTION.FIT) {
+      layout.auto = !layout.auto;
+      if (layout.auto) fitColumns();
+    } else {
       layout = reconcileLayout(columns, {}, !traits.reorder, unit);
       traits.fade?.reset();
     }
@@ -755,6 +791,7 @@ export function createColumnHeader({
     destroy() {
       resizeCtrl?.destroy();
       roomObserver?.disconnect();
+      autoFit?.destroy();
       removeFadePart?.();
       if (!sync) return;
       const set = syncRegistry.get(layoutKey);

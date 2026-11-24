@@ -123,7 +123,7 @@ _STORED_LAYOUT = "(k) => localStorage.getItem(k)"
 
 
 async def _fit(page):
-    """Fit; its handler stores the layout, then relayouts in the same task."""
+    """Toggle Auto-fit; its handler stores the layout, then relayouts in the same task."""
     before = await page.evaluate(_STORED_LAYOUT, LAYOUT_KEY)
     await _open_menu(page)
     await page.click(f'{MENU} [data-action="fit"]')
@@ -590,4 +590,69 @@ async def test_rerender_keeps_cursor_row(server, make_page):
     await _open_standings(page, server)
     before, after = await page.evaluate(_RERENDER_KEEPS_CURSOR)
     assert before is not None and after == before, (before, after)
+    assert_no_page_errors(errors)
+
+
+_STORED_AUTO = "(k) => JSON.parse(localStorage.getItem(k)).auto"
+_FIT_CHECKED = f"""() => document.querySelector('{MENU} [data-action="fit"]').classList.contains('tmb-active')"""
+_ENGINE_WIDER = f"(w) => ({_HEAD_WIDTHS})().Engine > w"
+# New data: the first engine's name grows.
+NAME_SUFFIX = "-more"
+_LENGTHEN_NAME = (
+    "(s) => { document.querySelector('.wb-standings-body-tbl tbody td.wb-eng-name').textContent += s; }"
+)
+GRIP_DRAG_PX = -30
+
+
+@pytest.mark.asyncio
+async def test_auto_fit_refits_on_new_data(server, make_page):
+    """With Auto-fit on, a body change refits: a longer name widens Engine."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_standings(page, server)
+    await _fit(page)
+    before = (await page.evaluate(_HEAD_WIDTHS))["Engine"]
+
+    await page.evaluate(_LENGTHEN_NAME, NAME_SUFFIX)
+    await wait_eval(page, _ENGINE_WIDER, True, before)
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_auto_fit_resize_drag_turns_it_off(server, make_page):
+    """A column resize drag is a manual width: Auto-fit goes off, saved and
+    unchecked."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_standings(page, server)
+    await _fit(page)
+    await wait_eval(page, _STORED_AUTO, True, LAYOUT_KEY)
+
+    grip = await page.locator(f"{_th_at('Engine')} .th-grip").bounding_box()
+    x, y = grip["x"] + grip["width"] / 2, grip["y"] + grip["height"] / 2
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.move(x + GRIP_DRAG_PX, y, steps=DRAG_STEPS)
+    await page.mouse.up()
+    await wait_eval(page, _STORED_AUTO, False, LAYOUT_KEY)
+
+    await _open_menu(page)
+    await wait_eval(page, _FIT_CHECKED, False)
+    assert_no_page_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_auto_fit_persists_and_reset_clears(server, make_page):
+    """Auto-fit stays on across a reload; Reset turns it off."""
+    _ctx, page = await make_page(viewport=VIEWPORT)
+    errors = watch_page_errors(page)
+    await _open_standings(page, server)
+    await _fit(page)
+
+    await _reload_standings(page)
+    await _open_menu(page)
+    await wait_eval(page, _FIT_CHECKED, True)
+
+    await page.click(f'{MENU} [data-action="reset"]')
+    await wait_eval(page, _STORED_AUTO, False, LAYOUT_KEY)
     assert_no_page_errors(errors)
