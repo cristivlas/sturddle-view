@@ -135,7 +135,7 @@ const STUDIO_HTML = `
       ${ribbonHtml({ className: "studio-ribbon", ariaLabel: "Studio actions", prefix: "studio", withWorkspace: false })}
 
       <div class="studio-main">
-        <div class="studio-boards"><div class="studio-boards-wall" hidden></div><div class="studio-boards-canvas"></div></div>
+        <div class="studio-boards"><div class="studio-boards-title"></div><div class="studio-boards-wall" hidden></div><div class="studio-boards-canvas"></div></div>
         <div class="studio-boards-tray" hidden></div>
         <div class="studio-grip-row" role="separator" aria-orientation="horizontal"></div>
         <div class="studio-bottom">
@@ -1061,11 +1061,13 @@ function paintWall(ctx, hasBoards = anyBoardsShown()) {
   const empty = ctx.tournaments.length === 0 || fastchessMissing(ctx.tournSettings);
   ctx.boardsWallEl.classList.toggle("is-empty", empty);
   if (empty) {
+    ctx.boardsTitleEl.textContent = "";
     renderEmptyWall(ctx);
     return;
   }
   const t = ctx.selDetail && ctx.selDetail.id === ctx.selectedId
     ? ctx.selDetail : selectedTournament(ctx);
+  ctx.boardsTitleEl.textContent = t?.name ?? "";
   renderInfoWall(ctx.boardsWallEl, t);
 }
 
@@ -1121,13 +1123,16 @@ function gridSnap(ctx, px) {
 }
 
 // Desktop with laid-out boards: the wall is only the strip below the
-// (centered) grid, its footer centered there (hidden when too short).
+// (centered) grid, its footer centered there (hidden when too short); the
+// title, in the gap above the grid, hides when that gap would cut it.
 function fitWallToStrip(ctx, count, cell) {
-  const wall = ctx.boardsWallEl;
+  const wall = ctx.boardsWallEl, title = ctx.boardsTitleEl;
   if (!wall) return;
   const inStrip = count > 0 && !mqMobile.matches && !ctx._maxWb;
   wall.style.top = inStrip ? `${cell.gridBottom}px` : "";
   wall.classList.toggle(WALL_STRIP_CLASS, inStrip);
+  const cut = inStrip && cell.y0 < title.offsetTop + title.offsetHeight;
+  title.style.visibility = cut ? HIDDEN_VISIBILITY : "";
 }
 
 // Size a board to fill the visible region, pinned to its top-left. CSS
@@ -1562,6 +1567,7 @@ export function mountTournamentStudio({ container, api, events, log }) {
     boardsEl: q(".studio-boards"),
     boardsCanvasEl: q(".studio-boards-canvas"),
     boardsWallEl: q(".studio-boards-wall"),
+    boardsTitleEl: q(".studio-boards-title"),
     boardsTrayEl: q(".studio-boards-tray"),
     bottomEl: q(".studio-bottom"),
     bottomLeftEl: q(".studio-bottom-left"),
@@ -1755,7 +1761,7 @@ function unmountStudio(ctx) {
   ctx.ribbonOverflow?.detach();
   ctx.panel.remove();
   ctx.panel = ctx.ribbonEl = null;
-  ctx.mainEl = ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.leftTabsEl = ctx.bottomRightEl = ctx.rightTabsEl = null;
+  ctx.mainEl = ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTitleEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.leftTabsEl = ctx.bottomRightEl = ctx.rightTabsEl = null;
   ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = ctx.tourneyTable = ctx.boardsResizeObs = null;
   ctx.enginesPaneEl = ctx.gamesPaneEl = null;
   ctx.standingsPaneEl = ctx.standingsBodyEl = ctx.h2hPaneEl = ctx.h2hBodyEl = ctx.historyPaneEl = ctx.historyTable = ctx.logPaneEl = ctx.logListEl = null;
