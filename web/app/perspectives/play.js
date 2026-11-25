@@ -229,8 +229,11 @@ function formatGameOver(payload, humanWhite) {
   return `${reason} -- Draw.`;
 }
 
-const ANALYZE_ICON_STOP = "magnifying-glass-minus";
-const ANALYZE_ICON_START = "magnifying-glass-plus";
+const WA_ICON_TAG = "wa-icon";
+// Analysis button: an outline bulb, lit (solid) while analysis runs.
+const ANALYZE_ICON = "lightbulb";
+const ANALYZE_IDLE_VARIANT = "regular";
+const ANALYZE_ACTIVE_VARIANT = "solid";
 
 // Board-terminal endings, mirroring the server's start_analysis guard
 // (python-chess is_game_over: no claimable draws, no variant_* -- standard
@@ -388,7 +391,7 @@ function makeToastIconBtn(iconName, label, onClick) {
   btn.className = "toast-icon-btn";
   btn.setAttribute("aria-label", label);
   btn.setAttribute("title", label);
-  const ic = document.createElement("wa-icon");
+  const ic = document.createElement(WA_ICON_TAG);
   ic.setAttribute("name", iconName);
   btn.appendChild(ic);
   btn.addEventListener("click", onClick);
@@ -427,6 +430,7 @@ function configureBtn(btn, {
   active,
   label,
   icon,
+  variant,
 }) {
   if (disabled !== undefined) setDisabled(btn, disabled);
   if (active !== undefined) btn.classList.toggle("is-active", active);
@@ -434,9 +438,9 @@ function configureBtn(btn, {
     btn.setAttribute("aria-label", label);
     btn.setAttribute("title", label);
   }
-  if (icon !== undefined) {
-    btn.querySelector("wa-icon").setAttribute("name", icon);
-  }
+  const ic = btn.querySelector(WA_ICON_TAG);
+  if (icon !== undefined) ic.setAttribute("name", icon);
+  if (variant !== undefined) ic.setAttribute("variant", variant);
 }
 
 // Apply one AI analysis event to the panel/board. `aiCtx` holds view, api,
@@ -678,7 +682,7 @@ const PLAY_PERSPECTIVE_HTML = `
         </button>
         <span class="ribbon-sep" aria-hidden="true"></span>
         <button id="analyze" class="ribbon-btn" disabled aria-label="Analysis mode" title="Analysis mode">
-          <wa-icon name="magnifying-glass-plus"></wa-icon>
+          <wa-icon name="${ANALYZE_ICON}" variant="${ANALYZE_IDLE_VARIANT}"></wa-icon>
         </button>
         <button id="switch-sides" class="ribbon-btn" disabled aria-label="Switch sides" title="Switch sides">
           <wa-icon name="arrows-rotate"></wa-icon>
@@ -723,7 +727,7 @@ const PLAY_PERSPECTIVE_HTML = `
         </button>
         <span class="ribbon-sep" aria-hidden="true"></span>
         <button id="view-analyze" class="ribbon-btn" aria-label="Analysis mode" title="Analysis mode">
-          <wa-icon name="magnifying-glass-plus"></wa-icon>
+          <wa-icon name="${ANALYZE_ICON}" variant="${ANALYZE_IDLE_VARIANT}"></wa-icon>
         </button>
         <button id="view-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
           <wa-icon name="arrows-rotate"></wa-icon>
@@ -846,7 +850,7 @@ function buildParentToast(state) {
   // dismiss. No collapse -- there is only one parent.
   const node = document.createElement("div");
   node.className = "xgame-toast";
-  const icon = document.createElement("wa-icon");
+  const icon = document.createElement(WA_ICON_TAG);
   icon.setAttribute("name", "code-fork");
   icon.className = "xgame-toast-icon";
   node.append(icon);
@@ -903,7 +907,7 @@ function buildChildrenToast(state, childrenHere) {
   // Header row.
   const header = document.createElement("div");
   header.className = "xgame-toast-header";
-  const icon = document.createElement("wa-icon");
+  const icon = document.createElement(WA_ICON_TAG);
   icon.setAttribute("name", "code-fork");
   icon.className = "xgame-toast-icon";
   header.append(icon);
@@ -918,7 +922,7 @@ function buildChildrenToast(state, childrenHere) {
   arrow.type = "button";
   arrow.setAttribute("aria-label", MSG.SHOW_VARIATIONS);
   arrow.title = MSG.SHOW_VARIATIONS;
-  const arrowIcon = document.createElement("wa-icon");
+  const arrowIcon = document.createElement(WA_ICON_TAG);
   arrowIcon.setAttribute("name", "chevron-up");
   arrow.append(arrowIcon);
   arrow.addEventListener("click", () => {
@@ -1402,7 +1406,7 @@ function refreshButtons(state) {
         : state.noEngine
           ? MSG.ANALYZE_NEEDS_ENGINE
           : MSG.ANALYSIS_MODE,
-      icon: viewShowAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
+      variant: viewShowAsActive ? ANALYZE_ACTIVE_VARIANT : ANALYZE_IDLE_VARIANT,
     });
     return;
   }
@@ -1442,7 +1446,7 @@ function refreshButtons(state) {
     disabled: !showAsActive && !analyzeReachable,
     active: showAsActive,
     label: showAsActive ? MSG.STOP_ANALYSIS : MSG.ANALYSIS_MODE,
-    icon: showAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
+    variant: showAsActive ? ANALYZE_ACTIVE_VARIANT : ANALYZE_IDLE_VARIANT,
   });
 }
 
@@ -1826,7 +1830,8 @@ function showAnalysisToastImpl(state) {
   uciLogBtn.classList.add("desktop-only");
   wireShowHideLabel(uciLogBtn, UCI_LOG_TITLE, isUciLogOpen);
   msg.append(uciLogBtn);
-  const stopBtn = makeToastIconBtn(ANALYZE_ICON_STOP, MSG.STOP_ANALYSIS, () => onAnalyzeImpl(state));
+  // No variant: solid, the icon's default -- the lit bulb.
+  const stopBtn = makeToastIconBtn(ANALYZE_ICON, MSG.STOP_ANALYSIS, () => onAnalyzeImpl(state));
   stopBtn.classList.add("is-active");
   msg.append(stopBtn);
   state.aiShared.dismissAnalysisToast = toast(msg, {
