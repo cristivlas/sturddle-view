@@ -459,6 +459,7 @@ async def test_reload_resolves_board_whose_reconcile_left_history(
 _OWN_SCORE = ".wb-livegame .lg-eval-score-bottom"
 _OPP_SCORE = ".wb-livegame .lg-eval-score-top"
 _OPP_NAME = ".wb-livegame .lg-top-name"
+_WAITING_OVERLAY = ".wb-livegame .lg-waiting-overlay"
 _GO = "go wtime 300000 btime 300000"
 _SCORE_SHOWN = "(sel) => !!document.querySelector(sel)?.textContent"
 
@@ -538,6 +539,22 @@ async def test_reload_keeps_both_eval_rows(tmp_path, monkeypatch, make_page):
         await wait_perspective_ready(page)
 
         assert await _rebuilt_scores(page) == scores
+        assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
+
+
+@_LOADERS
+@pytest.mark.asyncio
+async def test_game_end_clears_eval_rows(tmp_path, monkeypatch, make_page, load_ui):
+    """An engine board outlives its game: once the engine is unpaired
+    (waiting), neither row may keep the finished game's score."""
+    async with running_tournament(tmp_path, monkeypatch, make_page) as (app, base, t, secret):
+        page, page_errors = await _open_page(make_page)
+        await _board_with_both_scores(page, base, t, secret, load_ui)
+
+        await post_proxy(base, secret, ["ucinewgame"])
+        await page.wait_for_selector(_WAITING_OVERLAY, state="visible")
+
+        assert (await _shown_info(page))[:2] == ("", "")
         assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
 
 

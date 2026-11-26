@@ -247,7 +247,7 @@ const PV_SIDE_GAP = 8;
 // machinery, registers in `liveWindows`. Caller adds WS (live) or
 // final-state painting (frozen) and assigns a real `wb.onclose` that
 // cleans up its own resources after invoking `disposeShared`.
-function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, tournamentId, top, left, right = 0, bottom = 0, boardStyle, avoidRect, initialRect, min, max = false, flash, variantClass, root = null, onPvSides = null }) {
+function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, tournamentId, top, left, right = 0, bottom = 0, boardStyle, avoidRect, initialRect, min, max = false, flash, variantClass, root = null, onPvSides = null, onWaiting = null }) {
   const body = document.createElement("div");
   body.className = "wb-livegame lg-measuring";
   body.innerHTML = `
@@ -353,7 +353,12 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, tourn
     class: variantClass ? `${defaultClass} ${variantClass}` : defaultClass,
   });
   wb._watchOpts = { proxyId, gameId, label, engineName };
-  wb._setWaiting = (on) => { waitingOverlayEl.hidden = !on; };
+  // onWaiting: fired once as the overlay comes up (the engine left its game).
+  wb._setWaiting = (on) => {
+    const entering = on && waitingOverlayEl.hidden;
+    waitingOverlayEl.hidden = !on;
+    if (entering) onWaiting?.();
+  };
   // Reveals this window's body once drawn; surfaced so the opener can gate a
   // perspective-wide reveal until every restored board is ready.
   wb._ready = board.ready.then(() => { body.style.visibility = ""; });
@@ -547,6 +552,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       // (display:none) measured a scrollWidth of 0.
       if (visible) { pvSideWhite.fit(); pvSideBlack.fit(); }
     },
+    onWaiting: clearFinishedGame,
   });
   const { wb, board, refs, showResult, setReplayGameN, disposeShared } = built;
   const {
@@ -744,14 +750,20 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   let lastOppInfo = null;
   let pendingOwnPly = null;
   let lastSampledPly = -1;
+  let positionPly = null;
 
   function addEvalSample(ply, info, mover) {
     if (ply == null || ply < 0 || !info?.score) return;
     // Ply moving backwards = a new game on a reused proxy window.
-    if (ply < lastSampledPly) { lastSampledPly = -1; evalGraph.clear(); }
+    if (ply < lastSampledPly) resetEvalGraph();
     if (evalGraph.add(ply, info.score, mover === SIDE.WHITE) && ply > lastSampledPly) {
       lastSampledPly = ply;
     }
+  }
+
+  function resetEvalGraph() {
+    lastSampledPly = -1;
+    evalGraph.clear();
   }
 
   function setEngineColor(color) {
@@ -819,6 +831,9 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
             board.setSide(color);
           }
           const ply = fenPly(p.fen);
+          // Ply moving backwards = a new game; backstop for a missed waiting.
+          if (positionPly !== null && ply < positionPly) clearFinishedGame();
+          positionPly = ply;
           // Opponent just completed ply-1; bank their final eval.
           if (lastOppInfo) {
             addEvalSample(ply - 1, lastOppInfo, color === SIDE.WHITE ? SIDE.BLACK : SIDE.WHITE);
@@ -897,6 +912,23 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     if (!arrow || !rowToMove(row)) return;
     const squares = pvArrowSquares(p);
     if (squares) row.setArrow(...squares);
+  }
+
+  // Game over for this engine: drop both rows' last game (text, tint, PV
+  // tables, arrows, eval graph and its unbanked samples, the cached rows).
+  function clearFinishedGame() {
+    for (const row of [ownRow, oppRow]) {
+      row.score = null;
+      row.scoreEl.textContent = "";
+      _applyEvalInfo(row, {});
+      row.pvEl.textContent = "";
+      row.pvSide().clear();
+    }
+    _tintScorePair(ownRow, oppRow);
+    board.clearArrows();
+    lastOwnInfo = lastOppInfo = null;
+    resetEvalGraph();
+    uncacheLiveRows(path);
   }
 
   // a late info (board already moved on) must not draw a stale arrow
@@ -1079,6 +1111,13 @@ function cacheLiveInfo(path, key, value) {
   const info = liveInfoCache.get(path) ?? {};
   info[key] = value;
   liveInfoCache.set(path, info);
+}
+
+function uncacheLiveRows(path) {
+  const info = liveInfoCache.get(path);
+  if (!info) return;
+  delete info[EVAL_ROW_EDGE.OWN];
+  delete info[EVAL_ROW_EDGE.OPP];
 }
 
 // Bare sockets holding the server's info gate open while the tournament
