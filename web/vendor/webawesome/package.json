@@ -4,11 +4,11 @@
     "access": "public"
   },
   "description": "A forward-thinking library of web components.",
-  "version": "3.5.0",
+  "version": "3.15.0",
   "homepage": "https://webawesome.com/",
   "author": "Web Awesome",
   "license": "MIT",
-  "customElements": "dist-cdn/custom-elements.json",
+  "customElements": "dist/custom-elements.json",
   "web-types": "./dist/web-types.json",
   "type": "module",
   "types": "dist/webawesome.d.ts",
@@ -22,6 +22,7 @@
     "./dist/custom-elements-jsx.d.ts": "./dist/custom-elements-jsx.d.ts",
     "./dist/webawesome.js": "./dist/webawesome.js",
     "./dist/webawesome.loader.js": "./dist/webawesome.loader.js",
+    "./dist/webawesome.ssr-loader.js": "./dist/webawesome.ssr-loader.js",
     "./dist/styles": "./dist/styles",
     "./dist/styles/*": "./dist/styles/*",
     "./dist/components": "./dist/components",
@@ -34,6 +35,7 @@
     "./dist/utilities/*": "./dist/utilities/*",
     "./dist/events": "./dist/events",
     "./dist/events/*": "./dist/events/*",
+    "./dist/ssr/*": "./dist/ssr/*",
     "./package.json": "./package.json"
   },
   "files": [
@@ -63,13 +65,21 @@
     "build:serve": "npm run build && npx http-server _site -p 4000",
     "publish-alpha-cdn": "./publish-alpha-cdn.sh",
     "create": "plop --plopfile scripts/plop/plopfile.js",
-    "test": "CSR_ONLY=\"true\" web-test-runner --group default",
-    "test:component": "CSR_ONLY=\"true\" web-test-runner -- --watch --group",
+    "test": "web-test-runner --group default",
+    "test:server": "SSR_ONLY=\"true\" npm run test",
+    "test:client": "CSR_ONLY=\"true\" npm run test",
+    "test:component": "web-test-runner -- --watch --group",
+    "test:component:server": "SSR_ONLY=\"true\" npm run test:component",
+    "test:component:client": "CSR_ONLY=\"true\" npm run test:component",
+    "test:anatomy": "node scripts/check-anatomy.js",
+    "test:hydration": "node scripts/check-hydration.js",
+    "test:parts": "node scripts/check-css-parts.js",
     "test:watch": "web-test-runner --watch --group default",
     "prettier": "prettier --check --log-level=warn --ignore-path=\"../../.prettierignore\" .",
     "prettier:fix": "prettier --write --log-level=warn --ignore-path=\"../../.prettierignore\" .",
     "spellcheck": "cspell \"**/*.{js,ts,json,html,css,md}\" --no-progress --config=\"../../cspell.json\"",
-    "verify": "npm run prettier && npm run build && npm run test",
+    "verify:skills": "node scripts/verify-skills.js",
+    "verify": "npm run prettier && npm run test:parts && npm run test:anatomy && npm run build && npm run verify:skills && npm run test",
     "prepublishOnly": "npm run verify",
     "check-updates": "npm-check-updates --cooldown 7 --interactive --format group",
     "print-version": "echo $npm_package_version",
@@ -82,14 +92,18 @@
   "dependencies": {
     "@ctrl/tinycolor": "4.1.0",
     "@floating-ui/dom": "^1.6.13",
+    "@konnorr/qr-creator": "^1.0.1",
+    "@lit-labs/ssr": "^4.1.0",
+    "@lit-labs/ssr-client": "^1.1.8",
+    "@lit/context": "^1.1.6",
     "@lit/react": "^1.0.8",
     "@shoelace-style/animations": "^1.2.0",
-    "@shoelace-style/localize": "^3.2.1",
+    "@shoelace-style/localize": "^3.2.3",
     "composed-offset-position": "^0.0.6",
     "lit": "^3.2.1",
     "marked": "^11.2.0",
-    "nanoid": "^5.1.5",
-    "qr-creator": "^1.0.0"
+    "microlighter": "^2.2.0",
+    "nanoid": "^5.1.5"
   },
   "lint-staged": {
     "*.{ts,js}": [
@@ -98,12 +112,13 @@
   },
   "devDependencies": {
     "@wc-toolkit/cem-validator": "^1.0.3",
-    "@wc-toolkit/jsx-types": "^1.3.0",
+    "@wc-toolkit/jsx-types": "^1.6.0",
+    "cookie-parser": "^1.4.7",
     "eleventy-plugin-git-commit-date": "^0.1.3",
-    "esbuild": "^0.25.11",
     "gray-matter": "^4.0.3",
     "npm-check-updates": "^19.1.2",
     "open": "^11.0.0",
+    "semver": "^7.8.5",
     "turndown": "^7.2.2"
   }
 }

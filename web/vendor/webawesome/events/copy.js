@@ -2,7 +2,7 @@
 import {
   WaCopyEvent
 } from "../chunks/chunk.NY2PQ35L.js";
-import "../chunks/chunk.JHZRD2LV.js";
+import "../chunks/chunk.763SWQQU.js";
 export {
   WaCopyEvent
 };

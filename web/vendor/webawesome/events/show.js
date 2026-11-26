@@ -2,7 +2,7 @@
 import {
   WaShowEvent
 } from "../chunks/chunk.4ZAKP7NY.js";
-import "../chunks/chunk.JHZRD2LV.js";
+import "../chunks/chunk.763SWQQU.js";
 export {
   WaShowEvent
 };

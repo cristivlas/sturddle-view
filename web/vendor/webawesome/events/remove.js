@@ -2,7 +2,7 @@
 import {
   WaRemoveEvent
 } from "../chunks/chunk.HPULLNVR.js";
-import "../chunks/chunk.JHZRD2LV.js";
+import "../chunks/chunk.763SWQQU.js";
 export {
   WaRemoveEvent
 };

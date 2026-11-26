@@ -3,8 +3,8 @@ import "../chunks/chunk.KBS6YHTA.js";
 import {
   getAnimationNames,
   getEasingNames
-} from "../chunks/chunk.LN7M2NWC.js";
-import "../chunks/chunk.JHZRD2LV.js";
+} from "../chunks/chunk.IUGEPFVM.js";
+import "../chunks/chunk.763SWQQU.js";
 export {
   getAnimationNames,
   getEasingNames

@@ -1,5 +1,5 @@
 /*! Copyright 2026 Fonticons, Inc. - https://webawesome.com/license */
-import "../chunks/chunk.JHZRD2LV.js";
+import "../chunks/chunk.763SWQQU.js";
 
 // src/events/video-change.ts
 var WaVideoChangeEvent = class extends Event {
