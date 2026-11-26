@@ -37,6 +37,7 @@ from .conftest import (  # noqa: E402
     pin_arena_tournament_ux,
     post_proxy,
     running_tournament,
+    wait_eval,
     wait_perspective_ready,
 )
 
@@ -460,6 +461,9 @@ _OWN_SCORE = ".wb-livegame .lg-eval-score-bottom"
 _OPP_SCORE = ".wb-livegame .lg-eval-score-top"
 _OPP_NAME = ".wb-livegame .lg-top-name"
 _WAITING_OVERLAY = ".wb-livegame .lg-waiting-overlay"
+_CLOCK_TIMES = (".wb-livegame .lg-top-time", ".wb-livegame .lg-bottom-time")
+_NO_CLOCK = "--"
+_CLOCKS_ACTIVE = f"() => {{ const c = ({_CLOCK_STATE})(); return [c.topActive, c.bottomActive]; }}"
 _GO = "go wtime 300000 btime 300000"
 _SCORE_SHOWN = "(sel) => !!document.querySelector(sel)?.textContent"
 
@@ -544,9 +548,10 @@ async def test_reload_keeps_both_eval_rows(tmp_path, monkeypatch, make_page):
 
 @_LOADERS
 @pytest.mark.asyncio
-async def test_game_end_clears_eval_rows(tmp_path, monkeypatch, make_page, load_ui):
+async def test_game_end_clears_finished_game(tmp_path, monkeypatch, make_page, load_ui):
     """An engine board outlives its game: once the engine is unpaired
-    (waiting), neither row may keep the finished game's score."""
+    (waiting), neither row may keep the finished game's score, and both
+    clocks stop and blank."""
     async with running_tournament(tmp_path, monkeypatch, make_page) as (app, base, t, secret):
         page, page_errors = await _open_page(make_page)
         await _board_with_both_scores(page, base, t, secret, load_ui)
@@ -555,6 +560,9 @@ async def test_game_end_clears_eval_rows(tmp_path, monkeypatch, make_page, load_
         await page.wait_for_selector(_WAITING_OVERLAY, state="visible")
 
         assert (await _shown_info(page))[:2] == ("", "")
+        assert [await page.text_content(c) for c in _CLOCK_TIMES] == [_NO_CLOCK] * 2
+        # The on-move highlight flips in the next frame.
+        await wait_eval(page, _CLOCKS_ACTIVE, [False, False])
         assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
 
 

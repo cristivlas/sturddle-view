@@ -49,6 +49,8 @@ const EVAL_ROW_EDGE = Object.freeze({ OWN: "bottom", OPP: "top" });
 // `kind` of a server-parsed UCI line.
 const UCI_KIND = Object.freeze({ POSITION: "position", GO: "go", INFO: "info", BESTMOVE: "bestmove" });
 const PV_PREVIEW_PLIES = 12;
+// A name, clock or score with nothing to show yet (or any more).
+const NO_VALUE = "--";
 function _evalRowRefs(body, edge) {
   const q = (part) => body.querySelector(`.lg-${part}-${edge}`);
   return {
@@ -260,8 +262,8 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, tourn
       <span class="lg-eval-tbhits lg-eval-tbhits-top muted"></span>
     </div>
     <div class="clock-row lg-clock-top">
-      <span class="clock-name lg-top-name">--</span>
-      <span class="clock-time lg-top-time">--</span>
+      <span class="clock-name lg-top-name">${NO_VALUE}</span>
+      <span class="clock-time lg-top-time">${NO_VALUE}</span>
     </div>
     <div class="lg-board">
       <div class="lg-result-overlay" hidden>
@@ -272,8 +274,8 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, tourn
       <div class="lg-waiting-overlay" hidden>Waiting for next game</div>
     </div>
     <div class="clock-row lg-clock-bottom">
-      <span class="clock-name lg-bottom-name">--</span>
-      <span class="clock-time lg-bottom-time">--</span>
+      <span class="clock-name lg-bottom-name">${NO_VALUE}</span>
+      <span class="clock-time lg-bottom-time">${NO_VALUE}</span>
     </div>
     <div class="lg-eval lg-eval-bottom">
       <span class="lg-eval-score lg-eval-score-bottom"></span>
@@ -903,7 +905,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   function renderEvalRow(row, p, arrow = true) {
     cacheLiveInfo(path, row.edge, p);
     row.score = p.score;
-    row.scoreEl.textContent = fmtScore(p.score, { empty: "--", matePrefix: "M", signed: true });
+    row.scoreEl.textContent = fmtScore(p.score, { empty: NO_VALUE, matePrefix: "M", signed: true });
     _tintScorePair(ownRow, oppRow);
     _applyEvalInfo(row, p);
     const pv = p.pv_uci;
@@ -914,9 +916,13 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     if (squares) row.setArrow(...squares);
   }
 
-  // Game over for this engine: drop both rows' last game (text, tint, PV
-  // tables, arrows, eval graph and its unbanked samples, the cached rows).
+  // Game over for this engine: stop and blank both clocks; drop both rows'
+  // last game (text, tint, PV tables, arrows, eval graph and its unbanked
+  // samples, the cached rows).
   function clearFinishedGame() {
+    stopTimer();
+    lastWtime = lastBtime = null;
+    topTimeEl.textContent = bottomTimeEl.textContent = NO_VALUE;
     for (const row of [ownRow, oppRow]) {
       row.score = null;
       row.scoreEl.textContent = "";
