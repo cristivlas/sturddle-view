@@ -396,12 +396,18 @@ _DRAG_STEPS = 8
 
 async def drag_piece_one_rank_up(page, square: str) -> None:
     """Drag the piece on ``square`` one rank toward Black (White at bottom)."""
-    box = await page.locator(PIECE_ON.format(square)).bounding_box()
-    x = box["x"] + box["width"] / 2
-    y = box["y"] + box["height"] / 2
+    piece = page.locator(PIECE_ON.format(square))
+    # wait + evaluate re-resolve across board redraws, unlike bounding_box
+    # which returns None mid-redraw. not hover(): the pieces layer is
+    # pointer-events:none, so its hit-target check never passes
+    await piece.wait_for(state="visible")
+    x, y, h = await piece.evaluate(
+        "e => { const r = e.getBoundingClientRect();"
+        " return [r.x + r.width / 2, r.y + r.height / 2, r.height]; }"
+    )
     await page.mouse.move(x, y)
     await page.mouse.down()
-    await page.mouse.move(x, y - box["height"], steps=_DRAG_STEPS)
+    await page.mouse.move(x, y - h, steps=_DRAG_STEPS)
     await page.mouse.up()
 
 
