@@ -16,6 +16,8 @@ pytestmark = pytest.mark.e2e
 from .conftest import (  # noqa: E402
     assert_no_page_errors,
     open_studio_tab,
+    press,
+    rect,
     run_uvicorn_subprocess,
     seed_tournament,
     server_scope,
@@ -207,11 +209,8 @@ _GHOST_PARTS = (
 
 async def _press_and_drag(page, label, onto):
     """Press `label`'s header and drag it over `onto`'s; the button stays down."""
-    src = await page.locator(_th_at(label)).bounding_box()
-    dst = await page.locator(_th_at(onto)).bounding_box()
-    y = src["y"] + src["height"] / 2
-    await page.mouse.move(src["x"] + src["width"] / 2, y)
-    await page.mouse.down()
+    _x, y = await press(page, _th_at(label))
+    dst = await rect(page, _th_at(onto))
     await page.mouse.move(dst["x"] + dst["width"] * DROP_FRAC, y, steps=DRAG_STEPS)
 
 
@@ -628,10 +627,7 @@ async def test_auto_fit_resize_drag_turns_it_off(server, make_page):
     await _fit(page)
     await wait_eval(page, _STORED_AUTO, True, LAYOUT_KEY)
 
-    grip = await page.locator(f"{_th_at('Engine')} .th-grip").bounding_box()
-    x, y = grip["x"] + grip["width"] / 2, grip["y"] + grip["height"] / 2
-    await page.mouse.move(x, y)
-    await page.mouse.down()
+    x, y = await press(page, f"{_th_at('Engine')} .th-grip")
     await page.mouse.move(x + GRIP_DRAG_PX, y, steps=DRAG_STEPS)
     await page.mouse.up()
     await wait_eval(page, _STORED_AUTO, False, LAYOUT_KEY)

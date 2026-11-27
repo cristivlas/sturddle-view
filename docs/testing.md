@@ -21,6 +21,32 @@ python -m pytest server/tests/test_tournament_pgn_stats.py -q
 python -m pytest -k frozen_window -q
 ```
 
+#### Rule: no live resources
+
+Tests must never read, write or depend on the machine's live resources,
+on any OS. That includes:
+
+- The OS keyring: macOS Keychain, Windows Credential Manager, Linux
+  Secret Service.
+- The developer's API keys, including `SV_AI_API_KEY` in the shell.
+- The developer's config and data dirs (`~/.config`, platformdirs).
+- Network services. The only exception is the explicit `--ollama`
+  opt-in.
+
+The suite enforces this in `conftest.py`, for the pytest process and
+for every process it starts:
+
+- `_isolate_keyring` (autouse) swaps in an in-memory keyring for
+  in-process tests.
+- At import, `conftest.py` sets `PYTHON_KEYRING_BACKEND` to keyring's
+  fail backend and removes `SV_AI_API_KEY`. Subprocess app servers
+  inherit both, so they see no keyring and no key.
+- `_isolate_user_config` (autouse) and `e2e_env` root every store under
+  `tmp_path`.
+
+A new fixture that launches a process must pass it `os.environ` (or a
+copy of it), never a fresh environment.
+
 #### Shared fixtures (`conftest.py`)
 
 - `browser` (session scope): one headless Chromium for all e2e tests.

@@ -34,6 +34,8 @@ from .conftest import (  # noqa: E402
 
 VIEWPORT = {"width": 1400, "height": 900}
 ENGINES = ("engine-A", "engine-B")
+# A hover point off the row's center (from its top-left).
+HOVER_NUDGE = {"x": 2, "y": 2}
 GAMES = [
     ("1", ENGINES[0], ENGINES[1], "1-0"),
     ("2", ENGINES[1], ENGINES[0], "0-1"),
@@ -115,13 +117,14 @@ async def test_engines_selection_row_ring(tmp_path, make_page):
         await page.wait_for_function(
             f"(b) => ({_CURRENT_ID})(b) === document.querySelector(`${{b}} tbody tr`).dataset.id", arg=body,
         )
-        box = await page.locator(f"{body} tr.engines-list-item").last.bounding_box()
-        await page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        last_row = page.locator(f"{body} tr.engines-list-item").last
+        await last_row.hover()
         await wait_eval(page, _LAST_HOVERED, True, body)
         tinted = await page.evaluate(_LAST_BG, body)
         await page.keyboard.press("ArrowDown")
         await wait_eval_not(page, _LAST_BG, tinted, body)
-        await page.mouse.move(box["x"] + box["width"] / 2 + 1, box["y"] + box["height"] / 2)
+        # another point on the row: the mouse moves
+        await last_row.hover(position=HOVER_NUDGE)
         await wait_eval(page, _LAST_BG, tinted, body)
         assert_no_page_errors(errors)
 

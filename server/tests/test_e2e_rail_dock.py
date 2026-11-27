@@ -22,7 +22,9 @@ pytestmark = pytest.mark.e2e
 
 from .conftest import (  # noqa: E402
     assert_no_page_errors,
+    center,
     e2e_env,
+    press,
     run_uvicorn_subprocess,
     wait_perspective_ready,
     watch_page_errors,
@@ -166,11 +168,6 @@ async def _rect(page, selector):
     )
 
 
-async def _center(page, selector):
-    box = await page.locator(selector).bounding_box()
-    return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
-
-
 async def _stack_floor_px(page):
     """Band height that fits a full stack, at the page's root font size."""
     root_px = await page.evaluate(
@@ -280,13 +277,12 @@ async def test_drop_onto_occupied_rail_docks_as_second_slot(server, make_page):
     assert await _titles(page, RAIL) == [SEARCH_LINES]
     floor = await _stack_floor_px(page)
 
-    header = await _rect(page, f"{MAIN_DOCK} {SLOT_HEADER}")
-    grab_x = header["x"] + HEADER_GRAB_X_PX
-    grab_y = header["y"] + header["height"] / 2
-    await page.mouse.move(grab_x, grab_y)
-    await page.mouse.down()
+    header = f"{MAIN_DOCK} {SLOT_HEADER}"
+    grab_x, grab_y = await press(
+        page, header, position={"x": HEADER_GRAB_X_PX, "y": (await _rect(page, header))["height"] / 2},
+    )
     await page.mouse.move(grab_x + UNDOCK_TRAVEL_PX, grab_y + UNDOCK_TRAVEL_PX)
-    rail_x, rail_y = await _center(page, RAIL)
+    rail_x, rail_y = await center(page, RAIL)
     await page.mouse.move(rail_x, rail_y, steps=DRAG_STEPS)
     await page.wait_for_selector(RAIL_GHOST, state="attached")
     await _wait_band_at_least(page, floor)
@@ -308,11 +304,9 @@ async def test_rail_grip_resizes_the_stacked_slots(server, make_page):
     )
     await _wait_band_at_least(page, await _stack_floor_px(page))
     top_slot = f"{RAIL} {SLOT}"
+    grip_x, grip_y = await press(page, RAIL_GRIP)
+    # measured once pressed: the press waited for the grip to hold still
     before = (await _rect(page, top_slot))["height"]
-
-    grip_x, grip_y = await _center(page, RAIL_GRIP)
-    await page.mouse.move(grip_x, grip_y)
-    await page.mouse.down()
     await page.mouse.move(grip_x, grip_y + GRIP_DRAG_PX, steps=DRAG_STEPS)
     await page.mouse.up()
 
@@ -351,9 +345,7 @@ async def test_lift_grip_stops_at_the_stack_floor(server, make_page):
     floor = await _stack_floor_px(page)
     await _wait_band_near(page, floor)
 
-    grip_x, grip_y = await _center(page, RAIL_LIFT_GRIP)
-    await page.mouse.move(grip_x, grip_y)
-    await page.mouse.down()
+    grip_x, grip_y = await press(page, RAIL_LIFT_GRIP)
     await page.mouse.move(grip_x, grip_y - LIFT_UP_PX, steps=DRAG_STEPS)
     await _wait_band_near(page, floor + LIFT_UP_PX)
     await page.mouse.move(grip_x, grip_y + LIFT_DOWN_PX, steps=DRAG_STEPS)

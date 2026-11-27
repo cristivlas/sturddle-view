@@ -20,6 +20,8 @@ from .conftest import (  # noqa: E402
     assert_no_page_errors,
     goto_arena_tournaments,
     open_arena_workspace,
+    press,
+    rect,
     run_uvicorn_subprocess,
     seed_tournament,
     server_scope,
@@ -64,9 +66,8 @@ async def _cursor_at(page, x, y):
 
 
 async def _rect(page, sel):
-    return await page.locator(sel).evaluate(
-        "(el) => { const r = el.getBoundingClientRect(); return { l: r.left, t: r.top, w: r.width, h: r.height }; }"
-    )
+    r = await rect(page, sel)
+    return {"l": r["x"], "t": r["y"], "w": r["width"], "h": r["height"]}
 
 
 # The title bar's drag span: header minus its right-floated controls.
@@ -92,11 +93,8 @@ async def test_drag_from_maximized_keeps_pointer_on_title_bar(server, make_page,
     await open_arena_workspace(page)
 
     # Shrink the restored window by dragging its right edge in.
-    edge = await _rect(page, f"{WIN} .wb-e")
+    ex, ey = await press(page, f"{WIN} .wb-e")
     win = await _rect(page, WIN)
-    ex, ey = edge["l"] + edge["w"] / 2, edge["t"] + edge["h"] / 2
-    await page.mouse.move(ex, ey)
-    await page.mouse.down()
     await page.mouse.move(ex - (win["w"] - NARROW_PX), ey, steps=STEPS)
     await page.mouse.up()
     await page.wait_for_function(
@@ -109,13 +107,11 @@ async def test_drag_from_maximized_keeps_pointer_on_title_bar(server, make_page,
     # WinBox animates maximize: let it settle before grabbing the title bar.
     await wait_winbox_settled(page, WIN, TOL_PX)
     bar = await page.evaluate(_SPAN, WIN)
-    x0 = bar["l"] + bar["w"] * grab_frac
-    y0 = bar["t"] + bar["h"] / 2
+    grab = {"x": bar["w"] * grab_frac, "y": bar["h"] / 2}
     # A maximized title bar is still a drag handle: WinBox's move cursor.
-    assert await _cursor_at(page, x0, y0) == MOVE_CURSOR
+    assert await _cursor_at(page, bar["l"] + grab["x"], bar["t"] + grab["y"]) == MOVE_CURSOR
 
-    await page.mouse.move(x0, y0)
-    await page.mouse.down()
+    x0, y0 = await press(page, f"{WIN} .wb-header", position=grab)
     for i in range(1, STEPS + 1):
         await page.mouse.move(x0 + i * STEP_PX, y0 + i * STEP_PX)
     x1, y1 = x0 + STEPS * STEP_PX, y0 + STEPS * STEP_PX
