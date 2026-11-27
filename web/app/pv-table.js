@@ -214,12 +214,15 @@ export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, curr
   // The row currently playing a show, or null. Engine-info conflicts and
   // table clears pin this row instead of touching it (see update()/clear()).
   let playingRow = null;
+  // horizontal scroll from before the show (kept across retargets), put back when it ends
+  let preShowScrollLeft = 0;
 
   function activateRow(tr) {
     if (!onActivate || !isShowable(tr)) return;
     const st = rowState.get(tr);
     const myShowGen = (st.showGen || 0) + 1;
     st.showGen = myShowGen;
+    if (!playingRow && !scrollRestorePending) preShowScrollLeft = scrollEl.scrollLeft;
     playingRow = tr;
     tr.classList.add(PLAYING_ROW_CLASS);
     const handle = {
@@ -235,7 +238,11 @@ export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, curr
         if (rowState.get(tr)?.showGen !== myShowGen) return;
         tr.classList.remove(PLAYING_ROW_CLASS);
         clearPlyHighlight(tr);
-        if (playingRow === tr) playingRow = null;
+        if (playingRow === tr) {
+          playingRow = null;
+          scrollRestorePending = true;
+          fit();
+        }
         if (rowMap.get(rowKey(st.depth, st.rank)) !== tr && tr.parentElement === tbody) {
           tbody.removeChild(tr);
         }
@@ -290,6 +297,8 @@ export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, curr
       for (const tr of Array.from(tbody.rows)) {
         if (tr !== playingRow) tbody.removeChild(tr);
       }
+      // the new search's lines start at 0 once the show ends
+      preShowScrollLeft = 0;
     } else {
       tbody.textContent = "";
       // Reset the old offset before the new search's lines lay out, in the
@@ -319,6 +328,7 @@ export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, curr
   // Coalesced: scrollWidth is a layout probe; per-info-event sync reads
   // would force a reflow on every engine info line.
   let scrollResetPending = false;
+  let scrollRestorePending = false;
   const fit = rafCoalesce(() => {
     if (scrollResetPending) {
       scrollResetPending = false;
@@ -326,6 +336,11 @@ export function createPvTable({ layoutKey, onActivate, cancelLine, canPlay, curr
       scrollEl.scrollTop = 0;
     }
     fitTableToPvContent();
+    // after the refit, so the new width doesn't clamp it
+    if (scrollRestorePending) {
+      scrollRestorePending = false;
+      scrollEl.scrollLeft = preShowScrollLeft;
+    }
   });
 
   const rowKey = (depth, rank) => `${depth}:${rank}`;

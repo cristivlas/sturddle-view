@@ -2,7 +2,7 @@
 import {
   WaErrorEvent
 } from "../chunks/chunk.YDQCS2HK.js";
-import "../chunks/chunk.JHZRD2LV.js";
+import "../chunks/chunk.763SWQQU.js";
 export {
   WaErrorEvent
 };

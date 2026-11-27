@@ -225,8 +225,7 @@ async def test_live_game_window_survives_dropped_socket(tmp_path, monkeypatch, m
         first_eval = await _watch_proxy(page, base, secret)
 
         page_side, server_side = connections[0]
-        # Playwright's server-side close is synchronous; the page side's is not.
-        server_side.close()
+        await server_side.close()
         await page_side.close()
         # Whichever comes first: the reconnect, or the window closing. The
         # latter's default Playwright timeout bounds the wait if neither fires.

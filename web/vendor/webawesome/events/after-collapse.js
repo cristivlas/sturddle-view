@@ -2,7 +2,7 @@
 import {
   WaAfterCollapseEvent
 } from "../chunks/chunk.AG44H7MD.js";
-import "../chunks/chunk.JHZRD2LV.js";
+import "../chunks/chunk.763SWQQU.js";
 export {
   WaAfterCollapseEvent
 };

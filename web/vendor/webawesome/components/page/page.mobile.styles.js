@@ -2,7 +2,7 @@
 import {
   page_mobile_styles_default
 } from "../../chunks/chunk.WKX3BKNK.js";
-import "../../chunks/chunk.JHZRD2LV.js";
+import "../../chunks/chunk.763SWQQU.js";
 export {
   page_mobile_styles_default as default
 };

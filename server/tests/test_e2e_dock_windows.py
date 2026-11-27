@@ -14,7 +14,9 @@ pytestmark = pytest.mark.e2e
 
 from .conftest import (  # noqa: E402
     assert_no_page_errors,
+    center,
     e2e_env,
+    press,
     run_uvicorn_subprocess,
     server_scope,
     wait_winbox_settled,
@@ -285,7 +287,7 @@ async def test_short_laptop_overflow_scrolls_with_overlays_aligned(server, make_
     # The dock runs past the window bottom: the footer covers it there.
     assert await page.evaluate(_FOOTER_COVERS_DOCK_JS), "dock paints over the footer"
 
-    await page.mouse.move(*await _center(page, f"{DOCK_LEFT} .dock-slot-body"))
+    await page.mouse.move(*await center(page, f"{DOCK_LEFT} .dock-slot-body"))
     await page.mouse.wheel(0, WHEEL_PX)
     await page.wait_for_function(
         f"() => ({_GEOM_JS})().clockTop < {before['clockTop']}",
@@ -313,12 +315,6 @@ async def test_short_touch_viewport_stacks_mobile(server, make_page):
 DOCK_DRAG_STEPS = 12
 
 
-async def _center(page, sel):
-    return await page.locator(sel).evaluate(
-        "(el) => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }"
-    )
-
-
 @pytest.mark.asyncio
 async def test_drag_maximized_float_onto_dock_docks(server, make_page):
     """A maximized floating window dragged by its title bar un-maximizes under
@@ -335,10 +331,8 @@ async def test_drag_maximized_float_onto_dock_docks(server, make_page):
     await page.wait_for_selector(f"{UCI_WB}.max")
     await wait_winbox_settled(page, UCI_WB)
 
-    x0, y0 = await _center(page, f"{UCI_WB} .wb-title")
-    x1, y1 = await _center(page, DOCK_LEFT)
-    await page.mouse.move(x0, y0)
-    await page.mouse.down()
+    await press(page, f"{UCI_WB} .wb-title")
+    x1, y1 = await center(page, DOCK_LEFT)
     await page.mouse.move(x1, y1, steps=DOCK_DRAG_STEPS)
     await page.wait_for_selector(f"{DOCK_LEFT} .dock-ghost")  # drop ghost over the dock
     await page.mouse.up()

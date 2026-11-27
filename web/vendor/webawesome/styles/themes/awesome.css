@@ -1,6 +1,6 @@
 @import url('../layers.css');
 @import url('../color/palettes/bright.css'); /* To use this palette, add class="wa-palette-bright" to the <html> element */
-@import url('https://fonts.bunny.net/css2?family=Crimson+Pro:ital,wght@0,200..900;1,200..900&family=Quicksand:wght@300..700&display=swap');
+@import url('https://fonts.bunny.net/css?family=crimson-pro:200,200i,300,300i,400,400i,500,500i,600,600i,700,700i,800,800i,900,900i|quicksand:300,400,500,600,700&display=swap');
 
 @layer wa-theme {
   .wa-theme-awesome,
@@ -13,6 +13,7 @@
   .wa-dark .wa-theme-awesome .wa-invert {
     /* #region Colors (Light) ~~~~~~~~~~~~~~~~~~~~~ */
     color-scheme: light;
+    --wa-color-scheme: light;
     color: var(--wa-color-text-normal);
 
     --wa-color-surface-raised: white;
@@ -25,6 +26,7 @@
     --wa-color-text-link: var(--wa-color-brand-40);
 
     --wa-color-overlay-modal: color-mix(in oklab, var(--wa-color-neutral-05) 50%, transparent);
+    --wa-color-overlay-media: color-mix(in oklab, black 90%, transparent);
     --wa-color-overlay-inline: color-mix(in oklab, var(--wa-color-neutral-80) 25%, transparent);
 
     --wa-color-shadow: color-mix(
@@ -35,8 +37,8 @@
 
     --wa-color-focus: var(--wa-color-brand-60);
 
-    --wa-color-mix-hover: black 10%;
-    --wa-color-mix-active: black 20%;
+    --wa-color-mix-hover: oklch(from currentColor calc(1 - l) c h) 15%;
+    --wa-color-mix-active: var(--wa-color-surface-default) 10%;
 
     --wa-color-brand-fill-quiet: var(--wa-color-brand-95);
     --wa-color-brand-fill-normal: var(--wa-color-brand-90);
@@ -99,6 +101,7 @@
   .wa-light .wa-theme-awesome .wa-invert {
     /* #region Colors (Dark) ~~~~~~~~~~~~~~~~~~~~~~ */
     color-scheme: dark;
+    --wa-color-scheme: dark;
     color: var(--wa-color-text-normal);
 
     --wa-color-surface-raised: var(--wa-color-neutral-10);
@@ -111,6 +114,7 @@
     --wa-color-text-link: var(--wa-color-brand-70);
 
     --wa-color-overlay-modal: color-mix(in oklab, black 60%, transparent);
+    --wa-color-overlay-media: color-mix(in oklab, black 90%, transparent);
     --wa-color-overlay-inline: color-mix(in oklab, var(--wa-color-neutral-50) 10%, transparent);
 
     --wa-color-shadow: color-mix(
@@ -121,8 +125,8 @@
 
     --wa-color-focus: var(--wa-color-brand-60);
 
-    --wa-color-mix-hover: black 8%;
-    --wa-color-mix-active: black 16%;
+    --wa-color-mix-hover: oklch(from currentColor calc(1 - l) c h) 20%;
+    --wa-color-mix-active: var(--wa-color-surface-default) 20%;
 
     --wa-color-brand-fill-quiet: var(--wa-color-brand-10);
     --wa-color-brand-fill-normal: var(--wa-color-brand-20);
@@ -346,6 +350,10 @@
     );
     --wa-form-control-toggle-size: round(1.25em, 1px);
 
+    /* Buttons */
+    --wa-button-transform-hover: none;
+    --wa-button-transform-active: translate(var(--wa-shadow-offset-x-s), var(--wa-shadow-offset-y-s));
+
     /* Panels */
     --wa-panel-border-style: var(--wa-border-style);
     --wa-panel-border-width: var(--wa-border-width-s);
@@ -391,7 +399,7 @@
         /* Give buttons a raised effect via solid box-shadow
          * and adjust height to visually match other inputs */
         &:where(:not(wa-button)),
-        &::part(base) {
+        &::part(button) {
           height: calc(var(--wa-form-control-height) - var(--wa-shadow-offset-y-s));
           box-shadow: var(--wa-shadow-offset-x-s) var(--wa-shadow-offset-y-s) 0 0 var(--wa-color-shadow);
 
@@ -404,12 +412,11 @@
         /* Give active buttons a "punch in" effect */
         &:not([disabled], :disabled):active {
           &:where(:not(wa-button)),
-          &::part(base) {
+          &::part(button) {
             color: var(--wa-color-fill-quiet);
             background-color: var(--wa-color-shadow);
             border-color: var(--wa-color-shadow);
             box-shadow: none;
-            transform: translate(var(--wa-shadow-offset-x-s), var(--wa-shadow-offset-y-s));
           }
         }
       }
@@ -421,14 +428,14 @@
       & > *:not(:last-child) {
         &:is(wa-button:not([appearance='plain'], .wa-plain)),
         & wa-button:not([appearance='plain'], .wa-plain) {
-          &::part(base) {
+          &::part(button) {
             height: var(--wa-form-control-height);
             margin-bottom: 0;
             margin-right: 0;
             box-shadow: none;
           }
           &:not([disabled], :disabled):active {
-            &::part(base) {
+            &::part(button) {
               height: calc(var(--wa-form-control-height) - var(--wa-shadow-offset-y-s));
               margin-top: var(--wa-shadow-offset-y-s);
               transform: none;
@@ -440,7 +447,7 @@
         &:is(wa-button:not([appearance='plain'], .wa-plain)),
         & wa-button:not([appearance='plain'], .wa-plain) {
           &:not([disabled], :disabled):active {
-            &::part(base) {
+            &::part(button) {
               box-shadow: var(--wa-shadow-offset-x-s) calc(var(--wa-shadow-offset-y-s) * -1) 0 0 var(--wa-color-shadow);
             }
           }
@@ -462,6 +469,8 @@
         wa-textarea,
         wa-select,
         wa-combobox,
+        wa-tag-input,
+        wa-rich-text-editor,
         input:not(
             [type='button'],
             [type='checkbox'],
@@ -477,11 +486,13 @@
         textarea,
         select
       ):not(:focus, [appearance='filled']) {
-      &:where(:not(wa-input, wa-textarea, wa-select, wa-combobox)),
-      &:where(wa-input)::part(base),
-      &:where(wa-textarea)::part(base),
+      &:where(:not(wa-input, wa-textarea, wa-select, wa-combobox, wa-tag-input, wa-rich-text-editor)),
+      &:where(wa-input)::part(input-wrapper),
+      &:where(wa-textarea)::part(textarea-wrapper),
       &:where(wa-select)::part(combobox),
-      &:where(wa-combobox)::part(combobox) {
+      &:where(wa-combobox)::part(combobox),
+      &:where(wa-tag-input)::part(tag-input),
+      &:where(wa-rich-text-editor)::part(rich-text-editor) {
         box-shadow: inset var(--wa-shadow-offset-x-s)
           max(var(--wa-shadow-offset-y-s), var(--wa-form-control-border-width)) 0 0 var(--wa-color-shadow);
       }
@@ -507,7 +518,7 @@
 
         &:not([disabled], :disabled):active {
           &:where(:not(wa-button)),
-          &::part(base) {
+          &::part(button) {
             color: var(--wa-color-on-quiet);
           }
         }
@@ -529,7 +540,7 @@
         --wa-color-shadow: var(--wa-color-on-loud);
 
         &:where(:not(wa-button)),
-        &::part(base) {
+        &::part(button) {
           border-color: var(--wa-color-shadow);
         }
       }
@@ -572,6 +583,11 @@
     wa-tree-item::part(checkbox),
     input[type='checkbox'] {
       --checked-icon-color: var(--wa-color-surface-default);
+    }
+
+    wa-option,
+    wa-rich-text-editor {
+      --current-text-color: var(--wa-color-surface-default);
     }
 
     wa-switch {

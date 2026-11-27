@@ -23,16 +23,18 @@ from .conftest import (  # noqa: E402
     open_arena_workspace,
     pin_arena_tournament_ux,
     run_uvicorn_subprocess,
+    wait_eval,
     wait_for_async_predicate,
     wait_perspective_ready,
 )
 
 
-_STICKY_TOAST_X = "#toast-stack .toast-danger .xgame-toast-x"
+_DANGER_TOAST = "#toast-stack .toast-danger"
+_STICKY_TOAST_X = f"{_DANGER_TOAST} .xgame-toast-x"
 
 
 def _danger_toast(page):
-    return page.locator("#toast-stack .toast-danger")
+    return page.locator(_DANGER_TOAST)
 
 
 def _server_env(tmp_path, *, fastchess_path=None):
@@ -241,7 +243,9 @@ async def test_start_without_fastchess_gear_opens_tournament_settings(tmp_path, 
         first = await _danger_toast(page).element_handle()
         await page.click(".tournaments-ribbon .t-start")
         await page.wait_for_function("(el) => !el.isConnected", arg=first)
-        assert await _danger_toast(page).count() == 1
+        # the old toast fades out on the retry, the new one comes with the
+        # start's failure: either can land first
+        await wait_eval(page, "(sel) => document.querySelectorAll(sel).length", 1, _DANGER_TOAST)
         await _assert_gear_opens_tournament_settings(page)
 
 

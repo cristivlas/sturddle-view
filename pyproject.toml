@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sturddle-view"
-version = "0.8.3"
+version = "0.8.4"
 description = "Browser-based chess GUI for human vs engine play and tournament observation."
 requires-python = ">=3.12"
 readme = "README.md"
@@ -33,7 +33,8 @@ dev = [
     # Parallel e2e: -n auto --dist loadfile (docs/testing.md)
     "pytest-xdist>=3.5",
     "ruff>=0.4",
-    "playwright>=1.40",
+    # WebSocketRoute.close() is async on both sides from 1.65.
+    "playwright>=1.65",
     # Starlette >=1.3 moved its TestClient backend from httpx to httpx2.
     "httpx2>=2.0",
     # scripts/prep_wallpaper.py

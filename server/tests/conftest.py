@@ -47,6 +47,13 @@ from sturddle_view.tournament import fastchess as fc_mod
 from sturddle_view.tournament.fastchess import FastchessRunner
 
 
+# No test may reach the OS keyring. _isolate_keyring covers this process;
+# this covers every subprocess (app servers inherit the environment): keyring
+# reports no backend, so key_store falls back to SV_AI_API_KEY.
+os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
+# Nor the developer's own key through that fallback.
+os.environ.pop("SV_AI_API_KEY", None)
+
 SNAPSHOT_UPDATE_FLAG = "--snapshot-update"
 SERVER_PER_TEST_FLAG = "--server-per-test"
 # How often a blocking accept() wakes so Ctrl+C lands; a wake only retries.
@@ -212,6 +219,9 @@ def make_fake_uci(root: Path, name: str) -> str:
     return _write_uci_stub(root, name)
 
 
+_PAGEOBS_SEQ = itertools.count()
+
+
 class PageObserver:
     """Tracks HTTP request lifecycles and WS board_update frames for a
     Playwright page. All observation happens on the Playwright (CDP) side
@@ -229,7 +239,7 @@ class PageObserver:
 
     # Eager forensic log: every event is written and flushed immediately
     # so a Ctrl+C of a hanging test still leaves us a usable trace at
-    # %TEMP%/sturddle-test-pageobs-<pid>-<ts>.log. The path is also
+    # %TEMP%/sturddle-test-pageobs-<pid>-<n>-<ts>.log. The path is also
     # printed once at construction so the user can find it.
     def __init__(self, page):
         self._page = page
@@ -237,8 +247,9 @@ class PageObserver:
         self._quiet_waiters: list[tuple[str, asyncio.Future]] = []
         self._last_board: dict | None = None
         self._board_waiters: list[tuple[callable, asyncio.Future]] = []
+        # pid: xdist workers share argv[0] ("-c") and can hit the same ms
         log_path = Path(tempfile.gettempdir()) / (
-            f"sturddle-test-pageobs-{Path(sys.argv[0]).stem}-"
+            f"sturddle-test-pageobs-{os.getpid()}-{next(_PAGEOBS_SEQ)}-"
             f"{int(time.time() * 1000)}.log"
         )
         self._log_fh = open(log_path, "w", encoding="utf-8")
@@ -391,33 +402,65 @@ async def reset_xgame_apply_count(page) -> None:
 
 BOARD_SVG = ".game-view-board svg.cm-chessboard"
 PIECE_ON = BOARD_SVG + ' [data-piece][data-square="{}"]'
+# the square rect, not the piece: pieces are pointer-events:none, so the rect
+# is what the press and drop hit (and what cm-chessboard reads data-square off)
+SQUARE = BOARD_SVG + ' rect.square[data-square="{}"]'
 _DRAG_STEPS = 8
 
 
-async def drag_piece_one_rank_up(page, square: str) -> None:
-    """Drag the piece on ``square`` one rank toward Black (White at bottom)."""
-    box = await page.locator(PIECE_ON.format(square)).bounding_box()
-    x = box["x"] + box["width"] / 2
-    y = box["y"] + box["height"] / 2
-    await page.mouse.move(x, y)
+# query and measure in one JS turn: locator.bounding_box() / .evaluate() act
+# on a handle resolved a round trip earlier, so a re-render in between yields
+# None / an all-zero rect
+_RECT_JS = """(sel) => { const e = document.querySelector(sel); if (!e) return null;
+  const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
+  return { x: r.x, y: r.y, width: r.width, height: r.height,
+    borderLeft: parseInt(s.borderLeftWidth, 10) || 0, borderTop: parseInt(s.borderTopWidth, 10) || 0 }; }"""
+
+
+async def rect(page, sel: str) -> dict:
+    """Viewport rect of CSS ``sel``, once it exists."""
+    handle = await page.wait_for_function(_RECT_JS, arg=sel)
+    try:
+        return await handle.json_value()
+    finally:
+        await handle.dispose()
+
+
+async def center(page, sel: str) -> tuple[float, float]:
+    r = await rect(page, sel)
+    return r["x"] + r["width"] / 2, r["y"] + r["height"] / 2
+
+
+async def press(page, sel: str, position: dict | None = None) -> tuple[float, float]:
+    """Mouse down on CSS ``sel`` (its center, or ``position`` off its padding
+    box's top-left, as Playwright takes it) once hover's actionability holds:
+    visible, holding still, and the element actually hit there. Returns the
+    pressed point."""
+    r = await rect(page, sel)
+    while True:
+        at = position if position is not None else {
+            "x": r["width"] / 2 - r["borderLeft"], "y": r["height"] / 2 - r["borderTop"],
+        }
+        # explicit position: Playwright presses exactly there (its default
+        # point is clipped to the viewport); no scroll, which would move the
+        # layout
+        await page.locator(sel).hover(position=at, scroll="none")
+        was, r = r, await rect(page, sel)
+        # a center taken before a resize is no longer the center: re-aim
+        if position is not None or (r["width"], r["height"]) == (was["width"], was["height"]):
+            break
     await page.mouse.down()
-    await page.mouse.move(x, y - box["height"], steps=_DRAG_STEPS)
-    await page.mouse.up()
+    return r["x"] + r["borderLeft"] + at["x"], r["y"] + r["borderTop"] + at["y"]
 
 
-# cm-chessboard resizes, redrawing every piece node, in a task deferred from
-# its ResizeObserver: until then its container's width lags its host's.
-_BOARD_SETTLED_JS = (
-    "(sel) => { const c = document.querySelector(sel)?.parentElement;"
-    " return !!c && c.style.width === `${c.parentElement.clientWidth}px`; }"
-)
-
-
-async def wait_board_settled(page) -> None:
-    """Block until the board has redrawn at its host's current width, so a
-    piece located next isn't replaced by a pending resize redraw. Call once
-    the app has applied the layout change (e.g. a dock opening)."""
-    await page.wait_for_function(_BOARD_SETTLED_JS, arg=BOARD_SVG)
+async def drag_piece_one_rank_up(page, square: str) -> None:
+    """Drag the piece on ``square`` one rank toward Black."""
+    # drag_to waits for a stable, hit-testable square, so a board still being
+    # laid out (dock change -> rAF recompute) can't take a stale press
+    target = square[0] + str(int(square[1]) + 1)
+    await page.locator(SQUARE.format(square)).drag_to(
+        page.locator(SQUARE.format(target)), steps=_DRAG_STEPS,
+    )
 
 
 def free_port() -> int:
@@ -524,14 +567,15 @@ def _uvicorn_subprocess(port: int, env_overrides: dict[str, str] | None) -> Iter
     env["SV_TEST_MODE"] = "1"
     if env_overrides:
         env.update(env_overrides)
+    # per launch, not per port: two workers handed the same port must collide
+    # on bind (retried below), not on the lock or each other's log
+    run_dir = Path(tempfile.mkdtemp(prefix=f"sturddle-test-{port}-"))
     # Each subprocess gets a private instance-lock so the user's real
     # lock file doesn't collide with the test run.
     if "SV_INSTANCE_LOCK_PATH" not in env:
-        env["SV_INSTANCE_LOCK_PATH"] = str(
-            Path(tempfile.gettempdir()) / f"sturddle-test-{port}.lock"
-        )
+        env["SV_INSTANCE_LOCK_PATH"] = str(run_dir / "instance.lock")
 
-    log_path = Path(tempfile.gettempdir()) / f"sturddle-test-uvicorn-{port}.log"
+    log_path = run_dir / "uvicorn.log"
     base = f"http://127.0.0.1:{port}"
     log_fh = open(log_path, "wb")
 

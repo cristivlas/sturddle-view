@@ -21,10 +21,8 @@ async def _app(scope, receive, send):  # never driven; sockets only
     raise NotImplementedError
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind((LOOPBACK_HOST, 0))
-        return s.getsockname()[1]
+def _listening_port(server) -> int:
+    return server.servers[0].sockets[0].getsockname()[1]
 
 
 @pytest.fixture
@@ -32,7 +30,9 @@ async def server():
     """Just enough of uvicorn.Server for LanListener: a loaded Config, the
     shared ServerState, lifespan state, and the servers list it appends to."""
     # ws="wsproto": the "auto" choice imports websockets.legacy, which warns.
-    config = uvicorn.Config(_app, host=LOOPBACK_HOST, port=_free_port(), log_config=None, ws="wsproto")
+    # port 0: the listener's own bind picks one, so no other process can
+    # take it between a pick and the bind
+    config = uvicorn.Config(_app, host=LOOPBACK_HOST, port=0, log_config=None, ws="wsproto")
     config.load()
     srv = SimpleNamespace(
         config=config, server_state=ServerState(), lifespan=SimpleNamespace(state={}), servers=[],
@@ -58,12 +58,13 @@ async def test_ensure_listens_once_per_host(server, wanted):
     assert await listener.ensure() == [LAN_A]
     assert len(server.servers) == 1
     assert listener.hosts() == [LAN_A]
-    socket.create_connection((LAN_A, server.config.port)).close()  # really listening
+    socket.create_connection((LAN_A, _listening_port(server))).close()  # really listening
 
 
 async def test_ensure_skips_failed_bind_and_retries_later(server, wanted):
     blocker = socket.socket()
-    blocker.bind((LAN_A, server.config.port))
+    blocker.bind((LAN_A, 0))
+    server.config.port = blocker.getsockname()[1]
     blocker.listen(1)
     listener = ll.LanListener(server, LOOPBACK_HOST)
     try:

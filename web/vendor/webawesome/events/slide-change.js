@@ -2,7 +2,7 @@
 import {
   WaSlideChangeEvent
 } from "../chunks/chunk.EF25YJJE.js";
-import "../chunks/chunk.JHZRD2LV.js";
+import "../chunks/chunk.763SWQQU.js";
 export {
   WaSlideChangeEvent
 };

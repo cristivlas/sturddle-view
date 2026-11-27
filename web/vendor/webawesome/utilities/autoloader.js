@@ -4,9 +4,9 @@ import {
   preventTurboFouce,
   startLoader,
   stopLoader
-} from "../chunks/chunk.RSUSAXIB.js";
+} from "../chunks/chunk.ZFSRFTCP.js";
 import "../chunks/chunk.HGBRCPUS.js";
-import "../chunks/chunk.JHZRD2LV.js";
+import "../chunks/chunk.763SWQQU.js";
 export {
   discover,
   preventTurboFouce,
