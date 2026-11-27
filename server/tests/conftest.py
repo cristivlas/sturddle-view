@@ -391,39 +391,20 @@ async def reset_xgame_apply_count(page) -> None:
 
 BOARD_SVG = ".game-view-board svg.cm-chessboard"
 PIECE_ON = BOARD_SVG + ' [data-piece][data-square="{}"]'
+# the square rect, not the piece: pieces are pointer-events:none, so the rect
+# is what the press and drop hit (and what cm-chessboard reads data-square off)
+SQUARE = BOARD_SVG + ' rect.square[data-square="{}"]'
 _DRAG_STEPS = 8
 
 
 async def drag_piece_one_rank_up(page, square: str) -> None:
-    """Drag the piece on ``square`` one rank toward Black (White at bottom)."""
-    piece = page.locator(PIECE_ON.format(square))
-    # wait + evaluate re-resolve across board redraws, unlike bounding_box
-    # which returns None mid-redraw. not hover(): the pieces layer is
-    # pointer-events:none, so its hit-target check never passes
-    await piece.wait_for(state="visible")
-    x, y, h = await piece.evaluate(
-        "e => { const r = e.getBoundingClientRect();"
-        " return [r.x + r.width / 2, r.y + r.height / 2, r.height]; }"
+    """Drag the piece on ``square`` one rank toward Black."""
+    # drag_to waits for a stable, hit-testable square, so a board still being
+    # laid out (dock change -> rAF recompute) can't take a stale press
+    target = square[0] + str(int(square[1]) + 1)
+    await page.locator(SQUARE.format(square)).drag_to(
+        page.locator(SQUARE.format(target)), steps=_DRAG_STEPS,
     )
-    await page.mouse.move(x, y)
-    await page.mouse.down()
-    await page.mouse.move(x, y - h, steps=_DRAG_STEPS)
-    await page.mouse.up()
-
-
-# cm-chessboard resizes, redrawing every piece node, in a task deferred from
-# its ResizeObserver: until then its container's width lags its host's.
-_BOARD_SETTLED_JS = (
-    "(sel) => { const c = document.querySelector(sel)?.parentElement;"
-    " return !!c && c.style.width === `${c.parentElement.clientWidth}px`; }"
-)
-
-
-async def wait_board_settled(page) -> None:
-    """Block until the board has redrawn at its host's current width, so a
-    piece located next isn't replaced by a pending resize redraw. Call once
-    the app has applied the layout change (e.g. a dock opening)."""
-    await page.wait_for_function(_BOARD_SETTLED_JS, arg=BOARD_SVG)
 
 
 def free_port() -> int:
